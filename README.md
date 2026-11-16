@@ -41,12 +41,13 @@ assets-packed/ APK 拆包素材的 base64 打包（見下）
 tools/ unpack_assets.py（解包）/ pack_assets.py（打包）
 apps/api/ FastAPI 後端
 app/ main / config / models / schemas / routers / seed
-app/routers/ auth / home / coupons / wallet / search / notifications / vendor / cashback（線 D 返現）/ bargain（線 E 砍價）/ packages（線 C 套餐）
+app/routers/ auth / home / coupons / wallet / search / notifications / vendor / cashback（線 D 返現）/ bargain（線 E 砍價）/ packages（線 C 套餐）/ admin_v2 + uploads（線 F 後台 v2）
 app/models_cashback.py、app/cashback_service.py（線 D 返現，與 point_transactions 分開記賬）
 app/models_bargain.py、app/seed_bargain.py（線 E 砍價）
 app/models_packages.py、app/payments_gateway.py（線 C 套餐，Stripe 測試模式）
-alembic/ 數據庫遷移（0001 初始建表；0002_line_a 核銷加固；0002_line_b 評分 v1 + 後台 v1；0002_cashback 線 D 返現三表；0002_bargain_e 線 E 砍價；0002_line_c 線 C 套餐）
-tests/ pytest（69 個測試）
+app/models_line_f.py、app/permissions_line_f.py（線 F 後台 v2：結算 / 對賬 / 發票 / 內容 / 角色）
+alembic/ 數據庫遷移（0001 初始建表；0002_line_a 核銷加固；0002_line_b 評分 v1 + 後台 v1；0002_cashback 線 D 返現三表；0002_bargain_e 線 E 砍價；0002_line_c 線 C 套餐；0003_line_f 線 F 後台 v2）
+tests/ pytest（79 個測試）
 infra/ docker-compose（api + postgres + redis）、.env.example
 docs/ API.md（接口概覽）
 ```
@@ -134,6 +135,14 @@ flutter run --dart-define=API_BASE_URL=http://localhost:8000
 核銷數據查看，核銷記錄可導出 CSV）+ 用戶列表與操作日誌查看；目前
 只有 `admin` 單一角色，權限分權、結算、內容管理留給後台 v2（F 線）。
 
+**後台 v2（線 F）**：結算單（按核銷生成 → 確認 / 爭議 / 解決 → 付款）、
+對賬（核銷 vs 結算行差異記錄與處理）、發票（申請 → 批准 / 拒絕 →
+開具，掛結算單時不超過淨額）、內容管理（橫幅 / 公告 / 分類）、角色分權
+（admin / finance / auditor / support / merchant-admin，店員按店授權）、
+評價申訴解決（成立隱藏 / 不成立恢復計入星級）、晒圖上傳
+（`POST /uploads/review-images`，本地佔位儲存，未接對象儲存）。
+詳見 `docs/API.md`「後台 v2」「申訴解決」「晒圖上傳」三節。
+
 **登錄**：郵箱/密碼 + 6 位 OTP（註冊/忘記密碼）、Google/Facebook/Apple
 社交登錄（開發 stub，上線前須做服務端 token 驗證）、customer/vendor
 分開帳戶與錢包、JWT 鑑權。
@@ -147,6 +156,9 @@ flutter run --dart-define=API_BASE_URL=http://localhost:8000
 | demo@coupon-go.example | Demo123! | customer |
 | vendor@coupon-go.example | Demo123! | vendor |
 | admin@coupon-go.example | Demo123! | admin（審核發券） |
+| finance@coupon-go.example | Demo123! | finance（結算 / 對賬 / 發票） |
+| auditor@coupon-go.example | Demo123! | auditor（看板唯讀 + 申訴解決） |
+| support@coupon-go.example | Demo123! | support（申訴解決 + 看板唯讀） |
 
 種子數據：20 間商户、36 張券（13 張限時）、1 張 9 積分兌換券、
 3 個訂閱計劃。
@@ -156,7 +168,7 @@ flutter run --dart-define=API_BASE_URL=http://localhost:8000
 ```bash
 cd apps/api
 ../../.venv/bin/python -m pytest tests/ -v
-# 69 個測試：鑑權（註冊/登錄/OTP/忘記密碼）、首頁分區、搜尋三分支、
+# 79 個測試：鑑權（註冊/登錄/OTP/忘記密碼）、首頁分區、搜尋三分支、
 # 領券→QR→掃碼核銷→積分鏈（+10/+20/+15）、重複領取/重複核銷攔截、
 # 9 積分兌換、商戶發券預覽→建立→審核、用量數據、權限攔截
 # 線 A 新增 11 個：預核銷→核銷→重放冪等→撤销窗口（期內恢復 / 超時拒絕 /
@@ -173,6 +185,9 @@ cd apps/api
 # 退款後券作廢且不可再核銷、特價不退攔截、已用券退款攔截、
 # 支付失敗/逾時→重試/取消、過期自動退、webhook、下單冪等、
 # 代金券與套餐券並行。
+# 線 F 後台 v2 10 個：結算單生成→確認→付款、爭議→解決、對賬差異→處理、
+# 發票申請→批准→開具及淨額上限、角色變更與權限矩陣、評價申訴解決、
+# 橫幅/公告/分類內容管理、店員授權、晒圖上傳→評價帶圖。
 ```
 
 ## 返現 2B（線 D）
@@ -220,7 +235,7 @@ cd apps/api
 
 - Flutter 真機編譯與 `flutter analyze`（本機無 Flutter SDK，未驗證；線 A
   新增的 `url_launcher` / `geolocator` 依賴未跑過 `flutter pub get`，須在
-  有 SDK 的機器上驗證；含線 C 新增的套餐購買頁/訂單頁）
+  有 SDK 的機器上驗證；含線 C 新增的套餐購買頁/訂單頁；管理端頁面只做了括號平衡粗查）
 - Google Maps 實景瓦片地圖視圖（線 A 目前是位置示意 marker 圖；接
   `google_maps_flutter` 需原生 API Key 配置 + 真機驗證）
 - 出示頁原生防截屏（Android FLAG_SECURE / iOS 截屏遮罩；線 A 目前是動態
@@ -228,6 +243,11 @@ cd apps/api
 - 返現（線 D）：真實 FPS / 銀行打款集成與提現審核後台；`record` 入口改為僅
   商戶 / POS 憑據可調用；商戶佣金結算對接；返現比例、90 天規則、HK$50 門檻
   與商戶談判定稿（現為默認值假設）
+- 後台 v2 待定：auditor 暫不能審核入駐申請（v1 端點保持 admin-only，
+  未改 v1 契約）；首頁仍調寫死的 `GET /advertisement-banners`，未切到
+  CMS 的 `GET /banners`；晒圖上傳是本地磁盤佔位儲存，未接對象儲存，
+  無病毒掃描 / EXIF 清理 / 縮圖；結算佣金比例默認 0.10，需按商户談判
+  後逐個設定
 - 商店上架（App Store / Google Play）、應用簽名、深鏈
 - 真實商户數據對接、FCM 推送、社交登錄服務端驗證
 - 支付：Stripe 正式商戶號接入與 webhook 簽名驗證（現為測試模式）

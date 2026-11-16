@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'api_client.dart';
 import 'models.dart';
 import 'screens/account.dart';
+import 'screens/admin_v2.dart';
 import 'screens/bargain.dart';
 import 'screens/cashback.dart';
 import 'screens/customer.dart';
@@ -114,11 +115,35 @@ class _CouponGoAppState extends State<CouponGoApp> {
           case '/vendor/plans':
             return MaterialPageRoute(
                 builder: (_) => SubscriptionScreen(api: _api));
+          // Line F: admin v2 home. Line B's v1 dashboard moved to
+          // '/admin/v1' (same switch cannot have two '/admin' cases);
+          // AdminHomeScreen links to it (see screens/admin_v2.dart).
           case '/admin':
+            return MaterialPageRoute(
+                builder: (_) => AdminHomeScreen(api: _api));
+          case '/admin/v1':
             return MaterialPageRoute(builder: (_) => AdminScreen(api: _api));
           case '/admin/apply':
             return MaterialPageRoute(
                 builder: (_) => MerchantApplicationFormScreen(api: _api));
+          case '/admin/settlements':
+            return MaterialPageRoute(
+                builder: (_) => SettlementsScreen(api: _api));
+          case '/admin/reconciliation':
+            return MaterialPageRoute(
+                builder: (_) => ReconciliationScreen(api: _api));
+          case '/admin/invoices':
+            return MaterialPageRoute(
+                builder: (_) => InvoicesScreen(api: _api));
+          case '/admin/content':
+            return MaterialPageRoute(
+                builder: (_) => ContentScreen(api: _api));
+          case '/admin/roles':
+            return MaterialPageRoute(
+                builder: (_) => RolesScreen(api: _api));
+          case '/admin/disputes':
+            return MaterialPageRoute(
+                builder: (_) => ReviewDisputesScreen(api: _api));
         }
         return null;
       },

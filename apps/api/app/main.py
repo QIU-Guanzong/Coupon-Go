@@ -9,12 +9,13 @@ import os
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 from . import config
 from .database import init_db
-from .routers import (admin, auth, bargain, cashback, coupons, home,
-                      nearby, notifications, packages, redemption, reviews,
-                      search, vendor, wallet)
+from .routers import (admin, admin_v2, auth, bargain, cashback, coupons,
+                      home, nearby, notifications, packages, redemption,
+                      reviews, search, uploads, vendor, wallet)
 
 from . import models_cashback  # noqa: F401  (Line D: register cashback tables)
 
@@ -31,9 +32,14 @@ app.add_middleware(
 for router in (auth.router, home.router, coupons.router, wallet.router,
                search.router, notifications.router, vendor.router,
                redemption.router, nearby.router, reviews.router,
-               admin.router, cashback.router, bargain.router,
-               packages.router):
+               admin.router, admin_v2.router, uploads.router,
+               cashback.router, bargain.router, packages.router):
     app.include_router(router, prefix="/api/v3")
+
+# Line F: serve locally uploaded review images (placeholder storage;
+# see app/routers/uploads.py). Files live under <UPLOAD_DIR>/.
+os.makedirs(config.UPLOAD_DIR, exist_ok=True)
+app.mount("/uploads", StaticFiles(directory=config.UPLOAD_DIR), name="uploads")
 
 
 @app.get("/health")

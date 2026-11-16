@@ -120,7 +120,20 @@ def seed(db: Session) -> dict:
         email="admin@coupon-go.example", name="Admin",
         password_hash=security.hash_password("Demo123!"), role="admin",
     )
-    db.add_all([demo, vendor, admin])
+    # Line F demo accounts for the new admin-v2 roles (demo-only passwords).
+    finance = models.User(
+        email="finance@coupon-go.example", name="Finance",
+        password_hash=security.hash_password("Demo123!"), role="finance",
+    )
+    auditor = models.User(
+        email="auditor@coupon-go.example", name="Auditor",
+        password_hash=security.hash_password("Demo123!"), role="auditor",
+    )
+    support = models.User(
+        email="support@coupon-go.example", name="Support",
+        password_hash=security.hash_password("Demo123!"), role="support",
+    )
+    db.add_all([demo, vendor, admin, finance, auditor, support])
     db.flush()
 
     shops = []

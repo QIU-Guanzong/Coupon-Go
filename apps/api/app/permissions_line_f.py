@@ -1,0 +1,111 @@
+"""Line F permissions: role-based access for admin v2.
+
+v1 contract (line B) is untouched: the v1 admin endpoints stay
+require_role("admin"), and existing admin accounts keep working — admin
+is granted every v2 permission below, so the v1 single-admin setup
+upgrades with no account or endpoint change.
+
+Roles (users.role):
+- admin: everything (all permissions, plus the v1 endpoints).
+- finance: settlements + reconciliation + invoices (read/write).
+- auditor: read-only dashboard data + review-dispute resolution.
+- support: review-dispute resolution + read-only dashboard data.
+- merchant-admin: shop staff; powers are scoped per shop through the
+  shop_members table (see require_shop_access), not through platform
+  permissions.
+- vendor: shop owner; same shop-scoped powers as merchant-admin for the
+  shops they own.
+- customer: no admin powers.
+"""
+from fastapi import Depends, HTTPException
+from sqlalchemy.orm import Session
+
+from . import models
+from .database import get_db
+from .deps import get_current_user
+from .models_line_f import ShopMember
+
+ALL_ROLES = [
+    "customer", "vendor", "merchant-admin", "finance", "auditor",
+    "support", "admin",
+]
+
+# permission -> roles allowed (admin is always allowed on top).
+PERMISSIONS = {
+    "dashboard.read": {"finance", "auditor", "support"},
+    "settlements.read": {"finance", "auditor"},
+    "settlements.write": {"finance"},
+    "reconciliation.read": {"finance", "auditor"},
+    "reconciliation.write": {"finance"},
+    "invoices.read": {"finance", "auditor"},
+    "invoices.write": {"finance"},
+    "content.read": {"finance", "auditor", "support"},
+    "content.write": set(),          # admin only
+    "users.read": {"finance", "auditor", "support"},
+    "roles.write": set(),            # admin only
+    "members.read": {"finance", "auditor"},
+    "members.write": set(),          # admin only (+ shop owner, see below)
+    "reviews.dispute.resolve": {"auditor", "support"},
+    "reviews.disputes.read": {"auditor", "support"},
+}
+
+
+def has_perm(user: models.User, *perms: str) -> bool:
+    if user.role == "admin":
+        return True
+    allowed = set()
+    for p in perms:
+        allowed |= PERMISSIONS.get(p, set())
+    return user.role in allowed
+
+
+def require_perm(*perms: str):
+    def _check(user: models.User = Depends(get_current_user)):
+        if not has_perm(user, *perms):
+            raise HTTPException(status_code=403, detail="沒有權限")
+        return user
+    return _check
+
+
+def get_shop_or_404(db: Session, shop_id: int) -> models.Shop:
+    shop = db.query(models.Shop).filter(models.Shop.id == shop_id).first()
+    if shop is None:
+        raise HTTPException(status_code=404, detail="找不到此商户")
+    return shop
+
+
+def can_access_shop(db: Session, user: models.User, shop: models.Shop) -> bool:
+    """Platform staff with read perms, the shop owner, or a staff member."""
+    if user.role == "admin":
+        return True
+    if user.role in ("finance", "auditor"):
+        return True
+    if shop.vendor_id == user.id:
+        return True
+    member = (db.query(ShopMember)
+              .filter(ShopMember.shop_id == shop.id,
+                      ShopMember.user_id == user.id).first())
+    return member is not None
+
+
+def require_shop_access(shop_id: int):
+    """Dependency: load the shop and check the caller may access it."""
+    def _check(user: models.User = Depends(get_current_user),
+               db: Session = Depends(get_db)):
+        shop = get_shop_or_404(db, shop_id)
+        if not can_access_shop(db, user, shop):
+            raise HTTPException(status_code=403, detail="沒有權限查看此商户")
+        return shop
+    return _check
+
+
+def role_permissions() -> dict:
+    """Public view of the role -> permission map (for the admin UI)."""
+    out = {}
+    for role in ALL_ROLES:
+        if role == "admin":
+            out[role] = ["*"]
+        else:
+            out[role] = sorted(p for p, roles in PERMISSIONS.items()
+                               if role in roles)
+    return out

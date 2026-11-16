@@ -221,3 +221,163 @@ reviewed_by, reviewed_at, created_at}`。
 已核銷不可退。結算記賬字段（`settlement_status` /
 `commission_amount` / `net_amount`，佣金默認 0）隨支付成功記賬，
 對賬在 F 線。
+## 評分 v1（F6 v1，線 B；v1 檔案已併入本線工作區，合入時與線 B 同內容）
+
+三維 5 分評分（口味 / 環境 / 服務）+ 文字 + 晒圖（預留）+ 標籤。只允許
+已核銷用戶評價（`redemption_id` 即消費憑證；也可傳 `wallet_item_id`，
+取其最近一次核銷記錄）。每張券（每次核銷）只能評價一次；舊版
+`POST /review` 與新版共用 `wallet_items.reviewed` 去重標記。
+
+**積分與星級拆開（防誘導評價）**：`claim_points=true`（默認）時評價
+得 +15 分，但 `counts_toward_rating=false`，**不計入商户星級**；
+`claim_points=false` 時不得分，但 `counts_toward_rating=true`，計入
+星級聚合。`GET /shops/{id}/rating` 只聚合 `status=visible` 且
+`counts_toward_rating=true` 的評價；全是積分評價時
+`review_count=0`、`overall=null`。差評申訴後（`status=disputed`）
+的評價暫時退出聚合；申訴解決見後台 v2（`POST /reviews/{id}/resolve`）。
+
+| 方法 | 路徑 | 說明 |
+|---|---|---|
+| POST | `/reviews` | 寫評價。Body：`{wallet_item_id?, redemption_id?, taste 1–5, ambience 1–5, service 1–5, content ≤1000 字, images[] ≤9（晒圖連結，v1 預留欄位，v2 起由 POST /uploads/review-images 上傳後填入）, tags[] ≤10, claim_points=true}`；二者至少傳一個。未核銷 400、重複評價 400、維度越界 422。返回 `{message, review, balance}` |
+| GET | `/shops/{id}/reviews?page=&has_images=` | 商户評價列表（僅 `visible`，按新到舊，20/頁）；`has_images=true` 只看有圖 |
+| GET | `/shops/{id}/rating` | 商户評分聚合 `{shop_id, overall, taste, ambience, service, review_count, updated_at}`；無計入星級評價時分數為 `null`、`review_count=0` |
+| POST | `/reviews/{id}/reply` | 商户回覆。該店商户或 admin 可調；Body `{reply ≤500 字}` |
+| POST | `/reviews/{id}/dispute` | 差評申訴。作者 / 該店商户 / admin 可調；Body `{reason}`；申訴後評價退出聚合 |
+
+評價對象示例：`{id, user_id, user_name, shop_id, redemption_id,
+wallet_item_id, taste, ambience, service, overall（三分均值）, content,
+images[], tags[], points_given, counts_toward_rating, status
+（visible/disputed/hidden）, reply_text, replied_at, created_at}`。
+
+## 後台 v1（F4 v1，線 B，`/api/v3/admin` 前綴；v1 檔案已併入本線工作區）
+
+v1 角色：**只有 `admin` 單一角色**（`require_role("admin")`；入駐申請提交
+除外，任何登錄用戶可提交）。看板全部**隻讀**，唯一寫操作是
+入駐申請的審核決定；每次審核決定寫入 `admin_audit_logs`。
+
+| 方法 | 路徑 | 說明 |
+|---|---|---|
+| POST | `/admin/merchant-applications` | 提交入駐申請（登錄即可）。Body：`{shop_name*, contact_name, phone, address, business_license, id_card, shop_photos[]（門店照片連結，v1 預留）, industry_license}`；同一用戶已有 `pending` 申請時 400。201 返回 `{message, application}` |
+| GET | `/admin/merchant-applications?status=&page=` | 入駐申請列表（admin；`status=pending/approved/rejected` 篩選） |
+| GET | `/admin/merchant-applications/{id}` | 入駐申請詳情（admin） |
+| POST | `/admin/merchant-applications/{id}/review` | 審核（admin）。Body `{approve: bool, reject_reason}`；拒絕時 `reject_reason` 必填；已審核的重審 400。通過時申請人 `role` 由 `customer` 升為 `vendor`。被拒絕後可重新提交**新**申請。返回 `{message, application}` |
+| GET | `/admin/dashboard` | 看板總覽（admin，隻讀）：`{total_users, total_shops, total_coupons, coupons_by_status, wallet_by_status{1/2/3}, total_redemptions, total_reviews, rated_reviews, pending_applications, pending_coupons}` |
+| GET | `/admin/shops?page=` | 商户列表（admin，隻讀）：`shop_out` + `vendor_email, coupon_count, redemption_count, rating_overall, review_count` |
+| GET | `/admin/coupons?status=&shop_id=&page=` | 券列表（admin，隻讀） |
+| GET | `/admin/redemptions?shop_id=&page=&format=` | 核銷記錄（admin，隻讀）：`{id, wallet_item_id, coupon_id, coupon_name, shop_id, shop_name, scanned_by_vendor_id, scanned_at}`；`format=csv` 返回 `text/csv` 附件（核銷對賬導出） |
+| GET | `/admin/users?role=&page=` | 用戶列表（admin，**隻讀**；v1 無改角色接口） |
+| GET | `/admin/audit-logs?page=` | 後台操作日誌（admin，隻讀）：`{id, admin_id, action（merchant_application.approve/reject）, target_type, target_id, detail, created_at}` |
+
+入駐申請對象：`{id, user_id, applicant_email, shop_name, contact_name,
+phone, address, business_license, id_card, shop_photos[],
+industry_license, status（pending/approved/rejected）, reject_reason,
+reviewed_by, reviewed_at, created_at}`。
+
+## 後台 v2（F4 v2，線 F，`/api/v3/admin` 前綴）
+
+v2 在 v1 之上，不改任何 v1 路徑與欄位。權限改為角色制
+（`app/permissions_line_f.py`）：**admin 擁有全部權限**（v1 單一 admin
+帳戶無縫升級）；finance 可寫結算 / 對賬 / 發票；auditor 可讀看板數據 +
+處理評價申訴；support 可處理評價申訴 + 讀看板；merchant-admin 是商户
+店員，權限按店（`shop_members` 表）限定；vendor 是店主，對自家店有同
+等店內權限。v1 的 admin-only 端點保持不變（auditor 暫不能審核入駐申請，
+見 README「還沒做的事」）。
+
+結算口徑（報告 §5.1-8、§14 #6）：**按核銷結算**。毛額 = 該商户該週期
+核銷券的面值之和（`cash_amount`，否則 `discount_price`，否則
+`regular_price`，否則 0）；佣金 = 毛額 × 生成時傳入的
+`commission_rate`（默認 0.10；真實費率按商户逐個談判，v2 只記錄所用
+費率）；淨額 = 毛額 − 佣金。一張核銷最多進一張結算單。
+
+| 方法 | 路徑 | 權限 | 說明 |
+|---|---|---|---|
+| GET | `/admin/overview` | dashboard.read | v2 總覽：各狀態結算單數、待審核結算淨額、待審核發票數、未處理差異數、申訴中評價數、啟用中橫幅數 |
+| POST | `/admin/settlements/generate` | settlements.write | 生成結算單。Body `{shop_id, period: "YYYY-MM", commission_rate=0.10}`；同一商户同一週期重複生成 409。201 返回 `{message, settlement（含 items）}` |
+| GET | `/admin/settlements?shop_id=&status=&page=` | settlements.read | 結算單列表（`status=pending/approved/disputed/paid`） |
+| GET | `/admin/settlements/{id}` | settlements.read | 結算單詳情（含逐筆核銷行） |
+| POST | `/admin/settlements/{id}/approve` | settlements.write | pending → approved；非 pending 400 |
+| POST | `/admin/settlements/{id}/dispute` | settlements.write | pending/approved → disputed；Body `{reason*}` |
+| POST | `/admin/settlements/{id}/resolve` | settlements.write | disputed → approved（`decision=approve`）或 pending（`decision=reopen`）；Body `{decision, note}` |
+| POST | `/admin/settlements/{id}/pay` | settlements.write | approved → paid；非 approved 400 |
+| GET | `/merchant/shops/{shop_id}/settlements` | 店主 / 店員 / 平台財務·審核 | 該店結算單（商户端） |
+| POST | `/admin/reconciliation/run` | reconciliation.write | 執行對賬。Body `{shop_id, period}`；同一商户同一週期重跑會覆蓋上次的差異記錄後重新生成。201 返回 `{message, report（含 discrepancies）}`；無結算單時 `status=no_settlement` |
+| GET | `/admin/reconciliation/reports?shop_id=&period=&page=` | reconciliation.read | 對賬報告列表 |
+| GET | `/admin/reconciliation/reports/{id}` | reconciliation.read | 對賬報告詳情（含差異） |
+| POST | `/admin/reconciliation/discrepancies/{id}/resolve` | reconciliation.write | 處理一項差異；Body `{resolution*}`；全部差異處理完後報告自動變 `resolved` |
+| GET | `/merchant/shops/{shop_id}/reconciliation` | 店主 / 店員 / 平台財務·審核 | 該店對賬報告（商户端） |
+| POST | `/admin/invoices` | invoices.write 或店主 / 店員（自家店） | 申請開票。Body `{shop_id, settlement_id?, amount>0, title*, tax_id, invoice_type=receipt}`；掛結算單時，同一結算單未拒絕的開票總額不得超過淨額，否則 400。201 返回 `{message, invoice}` |
+| GET | `/admin/invoices?shop_id=&status=&page=` | invoices.read | 發票列表（`status=pending/approved/rejected/issued`） |
+| GET | `/admin/invoices/{id}` | invoices.read | 發票詳情 |
+| POST | `/admin/invoices/{id}/approve` | invoices.write | pending → approved |
+| POST | `/admin/invoices/{id}/reject` | invoices.write | pending → rejected；Body `{reason*}` |
+| POST | `/admin/invoices/{id}/issue` | invoices.write | approved → issued（記錄 `issued_at`） |
+| GET | `/merchant/shops/{shop_id}/invoices` | 店主 / 店員 / 平台財務·審核 | 該店發票（商户端） |
+| GET | `/admin/banners?status=&page=` | content.read | 橫幅列表 |
+| POST | `/admin/banners` | content.write（admin） | 新增橫幅。Body `{title*, image, link_type, link_target, sort_order, start_at, end_at, status=draft/active/archived}`；`end_at ≤ start_at` 時 400 |
+| PUT | `/admin/banners/{id}` | content.write（admin） | 更新橫幅（全量） |
+| DELETE | `/admin/banners/{id}` | content.write（admin） | 下架橫幅（軟刪除：狀態改 `archived`，不刪行） |
+| GET | `/banners` | 遊客可調 | 公開橫幅：`active` 且在展示窗口內，按 `sort_order` 排序。v0.1 的 `GET /advertisement-banners`（寫死演示橫幅）保持不變，首頁切 CMS 橫幅時改調此端點 |
+| GET | `/admin/announcements?status=&page=` | content.read | 公告列表 |
+| POST | `/admin/announcements` | content.write（admin） | 新增公告。Body `{title*, body, status, sort_order, start_at, end_at}` |
+| PUT | `/admin/announcements/{id}` | content.write（admin） | 更新公告（全量） |
+| DELETE | `/admin/announcements/{id}` | content.write（admin） | 下架公告（軟刪除：`archived`） |
+| GET | `/announcements` | 遊客可調 | 公開公告：`active` 且在展示窗口內 |
+| GET | `/admin/categories` | content.read | 全部分類（含停用，附 `is_active`） |
+| POST | `/admin/categories` | content.write（admin） | 新增分類；重名 400 |
+| PUT | `/admin/categories/{id}` | content.write（admin） | 更新分類 |
+| POST | `/admin/categories/{id}/deactivate` | content.write（admin） | 停用分類 |
+| POST | `/admin/categories/{id}/activate` | content.write（admin） | 重新啟用分類 |
+| GET | `/admin/roles` | admin | 角色清單 + 角色→權限對照表 |
+| POST | `/admin/users/{id}/role` | admin | 改用戶角色。Body `{role}`（customer/vendor/merchant-admin/finance/auditor/support/admin）；改自己 400、未知角色 400、停用最後一位管理員 400 |
+| GET | `/admin/shops/{shop_id}/members` | members.read | 店員列表 |
+| POST | `/admin/shops/{shop_id}/members` | admin 或店主 | 加店員。Body `{user_id}`；`customer` 會自動升為 `merchant-admin`；重複加入 400 |
+| DELETE | `/admin/shops/{shop_id}/members/{user_id}` | admin 或店主 | 移除店員（不改該用戶的平台角色） |
+
+結算單對象：`{id, shop_id, shop_name, period, redemption_count,
+gross_amount, commission_rate, commission, net_amount,
+status（pending/approved/disputed/paid）, dispute_reason, decided_by,
+decided_at, paid_at, created_at, updated_at, items?}`。
+
+對賬差異類型：`missing_settlement_line`（有核銷、無結算行）、
+`missing_redemption`（有結算行、無此週期核銷）、`amount_mismatch`
+（結算行金額 ≠ 券面值）。差異對象：`{id, report_id,
+discrepancy_type, redemption_id, settlement_item_id, expected_amount,
+actual_amount, status（open/resolved）, resolution, resolved_by,
+resolved_at, created_at}`。
+
+發票對象：`{id, shop_id, shop_name, settlement_id, user_id,
+applicant_email, amount, title, tax_id, invoice_type,
+status（pending/approved/rejected/issued）, reject_reason, decided_by,
+decided_at, issued_at, created_at}`。
+
+v2 所有寫操作都會寫入 `admin_audit_logs`（沿用 v1 表），action 如
+`settlement.generate/approve/dispute/resolve/pay`、
+`reconciliation.run/resolve`、`invoice.create/approve/reject/issue`、
+`banner.create/update/archive`、`announcement.create/update/archive`、
+`category.create/update/deactivate/activate`、
+`user.role.change`、`shop.member.add/remove`、`review.dispute.resolve`。
+
+## 申訴解決（v2，線 F）
+
+v1 只做到申訴後評價退出聚合，無解決接口。v2 補上：
+
+| 方法 | 路徑 | 權限 | 說明 |
+|---|---|---|---|
+| GET | `/admin/reviews/disputes?page=` | reviews.disputes.read（admin/auditor/support） | 申訴中評價隊列（附 `dispute_reason`） |
+| POST | `/reviews/{id}/resolve` | reviews.dispute.resolve（admin/auditor/support） | Body `{decision: uphold\|dismiss, note}`；`uphold`（申訴成立）→ `hidden`，永久退出聚合；`dismiss`（申訴不成立）→ `visible`，重新計入聚合並重算 `shop_ratings`。非 `disputed` 狀態 400 |
+
+## 晒圖上傳（v2，線 F）
+
+v1 的 `images[]` 只是預留欄位。v2 接上傳，寫評價時把返回的路徑填入
+`images[]` 即可（`POST /reviews` 本身不改）。
+
+| 方法 | 路徑 | 說明 |
+|---|---|---|
+| POST | `/uploads/review-images` | 上傳晒圖（multipart，欄位 `files`，最多 9 張，每張 ≤5MB，只接受 jpg/jpeg/png/webp/gif）。需登錄。201 返回 `{message, images: ["/uploads/review-images/<uuid>.png", ...]}`；非圖片 400、超過 9 張 400、空檔案 400。上傳的檔案由 `/uploads` 靜態掛載直接提供訪問 |
+
+**儲存約定（本地 / 佔位實現，未接真實對象儲存）**：檔案存在 API
+服務器本地磁盤 `<UPLOAD_DIR>/review-images/`（默認
+`apps/api/uploads/`，`UPLOAD_DIR` 環境變量可改），檔名是服務器生成的
+UUID，不用客戶端檔名，無路徑穿越風險。未做病毒掃描、EXIF 清理、縮圖。
+上線前須換成對象儲存（S3 / GCS 等）：只需替換
+`app/routers/uploads.py` 的存檔函數與返回的 URL 前綴，其餘接口不變。

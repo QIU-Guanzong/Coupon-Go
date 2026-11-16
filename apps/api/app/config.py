@@ -30,6 +30,13 @@ GOOGLE_OAUTH_CLIENT_ID_2 = os.environ.get("GOOGLE_OAUTH_CLIENT_ID_2", "")
 
 QR_TTL_SECONDS = int(os.environ.get("QR_TTL_SECONDS", "900"))  # 15:00
 SCAN_DAILY_LIMIT = int(os.environ.get("SCAN_DAILY_LIMIT", "200"))
+
+# Review-image uploads (line F, local placeholder storage — NOT object
+# storage; see app/routers/uploads.py). Served at /uploads by the
+# StaticFiles mount in app.main.
+UPLOAD_DIR = os.environ.get("UPLOAD_DIR", os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "uploads"))
+UPLOAD_MAX_BYTES = int(os.environ.get("UPLOAD_MAX_BYTES", str(5 * 1024 * 1024)))
 OTP_TTL_SECONDS = int(os.environ.get("OTP_TTL_SECONDS", "600"))
 OTP_LENGTH = 6
 

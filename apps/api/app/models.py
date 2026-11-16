@@ -59,6 +59,7 @@ class Category(Base):
     name = Column(String(60), nullable=False)       # 飲食
     name_en = Column(String(60), default="")
     icon = Column(String(120), default="")          # asset path, e.g. ic_category.png
+    is_active = Column(Boolean, default=True)       # line F: CMS 可停用分類
 
 
 class Area(Base):
@@ -256,3 +257,9 @@ from . import models_cashback  # noqa: F401,E402
 # --- line C (套餐 2A) models live in their own module; importing here
 # registers them on Base.metadata so create_all / alembic see them. ---
 from .models_packages import Order, Package, Payment, Refund  # noqa: E402,F401
+# Line F models (settlements / reconciliation / invoices / CMS / shop
+# members) live in app/models_line_f.py; same pattern as line B.
+from .models_line_f import (  # noqa: E402,F401
+    CmsAnnouncement, CmsBanner, Invoice, ReconciliationDiscrepancy,
+    ReconciliationReport, Settlement, SettlementItem, ShopMember,
+)

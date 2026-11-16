@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:math';
+import 'dart:typed_data';
 
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
@@ -55,6 +56,39 @@ class ApiClient {
     final res = await http.post(uri, headers: _headers,
         body: body == null ? null : jsonEncode(body));
     return _decode(res);
+  }
+
+  Future<dynamic> put(String path,
+      {Map<String, dynamic>? body, Map<String, String>? query}) async {
+    final uri = Uri.parse('$baseUrl/api/v3$path').replace(queryParameters: query);
+    final res = await http.put(uri, headers: _headers,
+        body: body == null ? null : jsonEncode(body));
+    return _decode(res);
+  }
+
+  Future<dynamic> delete(String path,
+      {Map<String, String>? query}) async {
+    final uri = Uri.parse('$baseUrl/api/v3$path').replace(queryParameters: query);
+    final res = await http.delete(uri, headers: _headers);
+    return _decode(res);
+  }
+
+  /// Multipart upload for review images (line F). Returns the list of
+  /// `/uploads/review-images/...` paths to pass as `images[]` to
+  /// POST /reviews. Local placeholder storage on the dev server, not
+  /// object storage.
+  Future<List<dynamic>> uploadReviewImages(List<Uint8List> images) async {
+    final uri = Uri.parse('$baseUrl/api/v3/uploads/review-images');
+    final req = http.MultipartRequest('POST', uri);
+    if (_token != null) req.headers['Authorization'] = 'Bearer $_token';
+    for (var i = 0; i < images.length; i++) {
+      req.files.add(http.MultipartFile.fromBytes('files', images[i],
+          filename: 'review_$i.png'));
+    }
+    final streamed = await req.send();
+    final res = await http.Response.fromStream(streamed);
+    final data = _decode(res);
+    return (data['images'] as List<dynamic>);
   }
 
   dynamic _decode(http.Response res) {
@@ -330,6 +364,105 @@ class ApiClient {
       });
   Future<List<dynamic>> subscriptionPlans() async =>
       (await get('/get-subscription-plan-list'))['plans'] as List<dynamic>;
+
+  // ---- admin v2 (line F) ----
+  Future<Map<String, dynamic>> adminOverview() async => get('/admin/overview');
+  Future<Map<String, dynamic>> settlements({int? shopId, String? status}) async =>
+      get('/admin/settlements', query: {
+        if (shopId != null) 'shop_id': '$shopId',
+        if (status != null) 'status': status,
+      });
+  Future<Map<String, dynamic>> generateSettlement(
+          int shopId, String period, double commissionRate) async =>
+      post('/admin/settlements/generate', body: {
+        'shop_id': shopId, 'period': period, 'commission_rate': commissionRate,
+      });
+  Future<Map<String, dynamic>> approveSettlement(int id) async =>
+      post('/admin/settlements/$id/approve');
+  Future<Map<String, dynamic>> disputeSettlement(int id, String reason) async =>
+      post('/admin/settlements/$id/dispute', body: {'reason': reason});
+  Future<Map<String, dynamic>> resolveSettlement(
+          int id, String decision, String note) async =>
+      post('/admin/settlements/$id/resolve',
+          body: {'decision': decision, 'note': note});
+  Future<Map<String, dynamic>> paySettlement(int id) async =>
+      post('/admin/settlements/$id/pay');
+  Future<Map<String, dynamic>> reconciliationRun(int shopId, String period) async =>
+      post('/admin/reconciliation/run',
+          body: {'shop_id': shopId, 'period': period});
+  Future<Map<String, dynamic>> reconciliationReports(
+      {int? shopId, String? period}) async =>
+      get('/admin/reconciliation/reports', query: {
+        if (shopId != null) 'shop_id': '$shopId',
+        if (period != null) 'period': period,
+      });
+  Future<Map<String, dynamic>> resolveDiscrepancy(
+          int id, String resolution) async =>
+      post('/admin/reconciliation/discrepancies/$id/resolve',
+          body: {'resolution': resolution});
+  Future<Map<String, dynamic>> invoices({int? shopId, String? status}) async =>
+      get('/admin/invoices', query: {
+        if (shopId != null) 'shop_id': '$shopId',
+        if (status != null) 'status': status,
+      });
+  Future<Map<String, dynamic>> createInvoice(Map<String, dynamic> body) async =>
+      post('/admin/invoices', body: body);
+  Future<Map<String, dynamic>> approveInvoice(int id) async =>
+      post('/admin/invoices/$id/approve');
+  Future<Map<String, dynamic>> rejectInvoice(int id, String reason) async =>
+      post('/admin/invoices/$id/reject', body: {'reason': reason});
+  Future<Map<String, dynamic>> issueInvoice(int id) async =>
+      post('/admin/invoices/$id/issue');
+  Future<List<dynamic>> adminBanners() async =>
+      (await get('/admin/banners'))['banners'] as List<dynamic>;
+  Future<Map<String, dynamic>> createBanner(Map<String, dynamic> body) async =>
+      post('/admin/banners', body: body);
+  Future<Map<String, dynamic>> updateBanner(
+          int id, Map<String, dynamic> body) async =>
+      put('/admin/banners/$id', body: body);
+  Future<Map<String, dynamic>> deleteBanner(int id) async =>
+      delete('/admin/banners/$id');
+  Future<List<dynamic>> adminAnnouncements() async =>
+      (await get('/admin/announcements'))['announcements'] as List<dynamic>;
+  Future<Map<String, dynamic>> createAnnouncement(
+          Map<String, dynamic> body) async =>
+      post('/admin/announcements', body: body);
+  Future<Map<String, dynamic>> updateAnnouncement(
+          int id, Map<String, dynamic> body) async =>
+      put('/admin/announcements/$id', body: body);
+  Future<Map<String, dynamic>> deleteAnnouncement(int id) async =>
+      delete('/admin/announcements/$id');
+  Future<List<dynamic>> adminCategories() async =>
+      (await get('/admin/categories'))['categories'] as List<dynamic>;
+  Future<Map<String, dynamic>> createCategory(Map<String, dynamic> body) async =>
+      post('/admin/categories', body: body);
+  Future<Map<String, dynamic>> deactivateCategory(int id) async =>
+      post('/admin/categories/$id/deactivate');
+  Future<Map<String, dynamic>> activateCategory(int id) async =>
+      post('/admin/categories/$id/activate');
+  Future<Map<String, dynamic>> adminRoles() async => get('/admin/roles');
+  Future<Map<String, dynamic>> changeUserRole(int userId, String role) async =>
+      post('/admin/users/$userId/role', body: {'role': role});
+  Future<List<dynamic>> shopMembers(int shopId) async =>
+      (await get('/admin/shops/$shopId/members'))['members'] as List<dynamic>;
+  Future<Map<String, dynamic>> addShopMember(int shopId, int userId) async =>
+      post('/admin/shops/$shopId/members', body: {'user_id': userId});
+  Future<Map<String, dynamic>> removeShopMember(int shopId, int userId) async =>
+      delete('/admin/shops/$shopId/members/$userId');
+  Future<Map<String, dynamic>> reviewDisputes() async =>
+      get('/admin/reviews/disputes');
+  Future<Map<String, dynamic>> resolveReviewDispute(
+          int reviewId, String decision, String note) async =>
+      post('/reviews/$reviewId/resolve',
+          body: {'decision': decision, 'note': note});
+  Future<Map<String, dynamic>> merchantSettlements(int shopId) async =>
+      get('/merchant/shops/$shopId/settlements');
+  Future<Map<String, dynamic>> merchantInvoices(int shopId) async =>
+      get('/merchant/shops/$shopId/invoices');
+  Future<List<dynamic>> publicBanners() async =>
+      (await get('/banners'))['banners'] as List<dynamic>;
+  Future<List<dynamic>> publicAnnouncements() async =>
+      (await get('/announcements'))['announcements'] as List<dynamic>;
 }
 
 class ApiException implements Exception {

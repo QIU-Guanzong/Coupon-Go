@@ -70,6 +70,12 @@ class _VendorHomeScreenState extends State<VendorHomeScreen> {
               child: const Text('發券',
                   style: TextStyle(color: CgColors.textPrimary)),
             ),
+            const SizedBox(height: 8),
+            OutlinedButton(
+              onPressed: () =>
+                  Navigator.of(context).pushNamed('/admin'),
+              child: const Text('管理後台（結算 / 對賬 / 發票 / 內容 / 角色）'),
+            ),
             const SizedBox(height: 16),
             const Text('我的優惠券', style: TextStyle(fontWeight: FontWeight.bold)),
             ..._coupons.map((c) => Card(
