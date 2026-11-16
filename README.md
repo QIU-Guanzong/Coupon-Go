@@ -284,3 +284,70 @@ FIX-2 已刪除 `POST /cashback/record`：返現只能由核銷成功後服務�
 - Google Key / Client ID 更換（見頂部）
 - 生產部署（香港區服務器、域名、TLS、備份、監控）
 - 原 APK 逆向報告：`coupon-go-apk/reverse/REVERSE.md`（不在本倉庫）
+
+## 本地 PostgreSQL：跑 FIX-3 / F3 併發測試（真驗證）
+
+> ⚠️ **SQLite 通過不算驗證**：`tests/test_fix3_row_locks.py` 和
+> `tests/test_f3_settlement_locks.py` 在連不上 Postgres 時會靜默回落到
+> SQLite（`BEGIN IMMEDIATE` 全事務串行化），`SELECT ... FOR UPDATE`
+> 在 SQLite 上被忽略——回落模式只能證明加鎖後重查的邏輯，不能證明
+> 行鎖本身存在。**併發用例必須在真 Postgres 上跑過才算驗證**。
+> 跑完後檢查 `BACKEND`：在 `apps/api` 裡
+> `python -c "import tests.test_fix3_row_locks as m; print(m.BACKEND)"`
+> 必須輸出 `postgres`（不是 `sqlite-immediate`）；也可以直接查庫裡
+> 有表（`psql <FIX3_POSTGRES_URL> -c "\dt"`）——SQLite 回落時庫裡是空的。
+
+### 安裝與啟動（Ubuntu/Debian，本機無 docker 時）
+
+```bash
+sudo apt-get install -y postgresql        # 已驗證：PostgreSQL 16.15
+sudo pg_ctlcluster 16 main start          # 集群裝完可能是 down 的，需手動啟動
+pg_isready -h localhost -p 5432           # 應回 accepting connections
+```
+
+### 建用戶與測試庫（與 `infra/docker-compose.yml` 的 db 憑據一致）
+
+```bash
+sudo -u postgres psql -c "CREATE USER coupon_go WITH PASSWORD 'coupon_go' CREATEDB;"
+sudo -u postgres psql -c "CREATE DATABASE coupon_go_test_fix3 OWNER coupon_go;"
+sudo -u postgres psql -c "CREATE DATABASE coupon_go_test_f3 OWNER coupon_go;"
+```
+
+測試只會 `drop_all` / `create_all` 建表，**不會自己建庫**——庫必須先存在，
+否則連接探測失敗、測試靜默回落 SQLite。兩個庫的用途不同，不要只建一個：
+`coupon_go_test_fix3` 給 FIX-3，`coupon_go_test_f3` 給 F3。
+
+### Python 驅動
+
+測試用的是 `postgresql+psycopg2://`（顯式 psycopg2 驅動；裸
+`postgresql://` 會讓 SQLAlchemy 2.x 去找 psycopg v3 而報錯）。共用 venv
+（`~/workspace/coupon-go-fullstack/.venv`）裡已有 `psycopg2-binary 2.9.13`，
+無需再裝；如在別的環境跑：
+
+```bash
+~/workspace/coupon-go-fullstack/.venv/bin/pip install psycopg2-binary
+```
+
+### 連接方式（環境變量，不寫進 `.env`）
+
+| 測試文件 | 環境變量 | 默認值 |
+|---|---|---|
+| `tests/test_fix3_row_locks.py` | `FIX3_POSTGRES_URL` | `postgresql+psycopg2://coupon_go:coupon_go@localhost:5432/coupon_go_test_fix3` |
+| `tests/test_f3_settlement_locks.py` | `F3_POSTGRES_URL` | `postgresql+psycopg2://coupon_go:coupon_go@localhost:5432/coupon_go_test_f3` |
+
+默認值即本地 Postgres 的地址，一般不用改；改地址/端口/密碼時設對應變量。
+`FIX3_FORCE_SQLITE=1` 會強制回落 SQLite——只用於對照，正式驗證時不要設。
+
+### 跑測試
+
+```bash
+cd apps/api
+~/workspace/coupon-go-fullstack/.venv/bin/python -m pytest tests/test_fix3_row_locks.py -v
+~/workspace/coupon-go-fullstack/.venv/bin/python -m pytest tests/test_f3_settlement_locks.py -v
+```
+
+已驗證（2026-11-16，真 Postgres 16.15）：FIX-3 全 14 個通過、F3 全 8 個
+通過，6 個併發場景逐一通過——同額提現僅 1 路成功、同一訂單退款僅 1 筆
+網關退款、搶最後 1 個庫存僅 1 單成功、同一結算單付款僅 1 次、併發開票
+總額不超過淨額、同一核銷撤销僅 1 次（另有砍價搶最後 1 件 1 單成功）。
+完整輸出見工作區 `fix3-postgres-run.log` / `f3-postgres-run.log`。
