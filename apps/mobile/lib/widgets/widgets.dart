@@ -28,7 +28,7 @@ class CouponCard extends StatelessWidget {
                   child: Image.asset(
                     'assets/images/dummy_image_1.png',
                     fit: BoxFit.cover,
-                    errorBuilder: (_, _, _) => Container(color: CgColors.pageBg),
+                    errorBuilder: (_, __, ___) => Container(color: CgColors.pageBg),
                   ),
                 ),
                 Positioned(
@@ -48,7 +48,7 @@ class CouponCard extends StatelessWidget {
                             : 'assets/images/ic_empty_heart.png',
                         width: 18,
                         height: 18,
-                        errorBuilder: (_, _, _) => Icon(
+                        errorBuilder: (_, __, ___) => Icon(
                           coupon.isFavorite ? Icons.favorite : Icons.favorite_border,
                           size: 18,
                           color: CgColors.primary,
@@ -183,7 +183,7 @@ class _SkeletonBoxState extends State<SkeletonBox>
   Widget build(BuildContext context) {
     return AnimatedBuilder(
       animation: _c,
-      builder: (_, _) {
+      builder: (_, __) {
         return Container(
           width: widget.width,
           height: widget.height,

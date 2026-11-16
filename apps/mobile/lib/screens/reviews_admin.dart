@@ -74,6 +74,15 @@ class _ReviewFormScreenState extends State<ReviewFormScreen> {
 
   Future<void> _submit() async {
     if (_submitting) return;
+    final images = _splitList(_images.text);
+    if (images.length > 6) {
+      showCgToast(context, '圖片最多 6 張');
+      return;
+    }
+    if (_content.text.trim().length > 500) {
+      showCgToast(context, '文字最多 500 字');
+      return;
+    }
     setState(() => _submitting = true);
     try {
       final data = await widget.api.submitReview(
@@ -83,12 +92,30 @@ class _ReviewFormScreenState extends State<ReviewFormScreen> {
         ambience: _ambience,
         service: _service,
         content: _content.text.trim(),
-        images: _splitList(_images.text),
+        images: images,
         tags: _splitList(_tags.text),
         claimPoints: _claimPoints,
       );
       if (!mounted) return;
-      showCgToast(context, data['message'] as String? ?? '評價成功');
+      // UI_SPEC §7: points are separate from stars. The server message
+      // already states the points; show the earned-points line plainly.
+      final pointsLine = _claimPoints
+          ? '已获得 15 积分'
+          : '評價已提交，已計入商户星級';
+      await showDialog<void>(
+        context: context,
+        builder: (c) => AlertDialog(
+          title: const Text('評價成功'),
+          content: Text(
+              '${data['message'] as String? ?? ''}\n$pointsLine'),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(c),
+                child: const Text('確定')),
+          ],
+        ),
+      );
+      if (!mounted) return;
       Navigator.of(context).pop(true);
     } on ApiException catch (e) {
       if (mounted) showCgToast(context, e.message);
@@ -117,9 +144,10 @@ class _ReviewFormScreenState extends State<ReviewFormScreen> {
           TextField(
             controller: _content,
             maxLines: 4,
-            maxLength: 1000,
+            maxLength: 500,
             decoration: const InputDecoration(
-                hintText: '分享你的體驗…', border: OutlineInputBorder()),
+                hintText: '分享你的體驗…（最多 500 字）',
+                border: OutlineInputBorder()),
           ),
           const SizedBox(height: 12),
           TextField(
@@ -132,7 +160,7 @@ class _ReviewFormScreenState extends State<ReviewFormScreen> {
           TextField(
             controller: _images,
             decoration: const InputDecoration(
-                hintText: '晒圖連結（用逗號分隔，v1 預留欄位）',
+                hintText: '圖片連結（用逗號分隔，最多 6 張）',
                 border: OutlineInputBorder()),
           ),
           const SizedBox(height: 8),
@@ -173,7 +201,11 @@ class ShopReviewsScreen extends StatefulWidget {
 class _ShopReviewsScreenState extends State<ShopReviewsScreen> {
   ShopRating? _rating;
   List<Review> _reviews = [];
+  int _total = 0;
   bool _hasImagesOnly = false;
+  bool _loading = false;
+  String? _error;
+  String _sort = 'latest'; // latest | helpful
 
   @override
   void initState() {
@@ -182,6 +214,10 @@ class _ShopReviewsScreenState extends State<ShopReviewsScreen> {
   }
 
   Future<void> _load() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
     try {
       final rating = await widget.api.shopRating(widget.shop.id);
       final list = await widget.api.shopReviews(widget.shop.id,
@@ -192,15 +228,86 @@ class _ShopReviewsScreenState extends State<ShopReviewsScreen> {
         _reviews = (list['reviews'] as List)
             .map((e) => Review.fromJson(e))
             .toList();
+        _total = list['total'] as int? ?? _reviews.length;
+        _loading = false;
       });
-    } on ApiException catch (e) {
-      if (mounted) showCgToast(context, e.message);
+    } on ApiException catch (_) {
+      if (mounted) {
+        setState(() {
+          _error = '网络不稳定，请重试';
+          _loading = false;
+        });
+      }
     }
+  }
+
+  List<Review> get _sortedReviews {
+    final list = List<Review>.of(_reviews);
+    if (_sort == 'helpful') {
+      // No helpful-vote field on the server yet: most useful is
+      // approximated by server helpful count, then带图, then longer text.
+      list.sort((a, b) {
+        final h = b.helpfulCount.compareTo(a.helpfulCount);
+        if (h != 0) return h;
+        final img = (b.images.isNotEmpty ? 1 : 0)
+            .compareTo(a.images.isNotEmpty ? 1 : 0);
+        if (img != 0) return img;
+        return b.content.length.compareTo(a.content.length);
+      });
+    }
+    return list; // server order is newest first
+  }
+
+  /// Star distribution over the reviews currently loaded (page 1).
+  Map<int, int> get _distribution {
+    final m = {5: 0, 4: 0, 3: 0, 2: 0, 1: 0};
+    for (final r in _reviews) {
+      final star = r.overall.round().clamp(1, 5);
+      m[star] = (m[star] ?? 0) + 1;
+    }
+    return m;
+  }
+
+  Widget _distributionBar(int star, int count, int total) {
+    final frac = total == 0 ? 0.0 : count / total;
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 2),
+      child: Row(
+        children: [
+          SizedBox(width: 28, child: Text('$star 星')),
+          Expanded(
+            child: LinearProgressIndicator(
+              value: frac,
+              backgroundColor: const Color(0xFFE8E8E8),
+              color: CgColors.amber,
+              minHeight: 8,
+            ),
+          ),
+          const SizedBox(width: 8),
+          SizedBox(width: 28, child: Text('$count')),
+        ],
+      ),
+    );
+  }
+
+  Widget _replyBox(String reply) {
+    return Container(
+      margin: const EdgeInsets.only(left: 16, top: 8),
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF5F5F6),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Text('商户回覆：$reply',
+          style: const TextStyle(color: CgColors.textSecondary)),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
     final r = _rating;
+    final dist = _distribution;
+    final distTotal = _reviews.length;
     return Scaffold(
       appBar: AppBar(title: Text('${widget.shop.name} · 評價')),
       body: Column(
@@ -209,10 +316,10 @@ class _ShopReviewsScreenState extends State<ShopReviewsScreen> {
             margin: const EdgeInsets.all(12),
             child: Padding(
               padding: const EdgeInsets.all(16),
-              child: r == null
+              child: _loading && r == null
                   ? const SkeletonBox(height: 64)
-                  : r.reviewCount == 0
-                      ? const Text('暫無計入星級的評價。\n領取積分的評價不計入星級。')
+                  : r == null || r.reviewCount == 0
+                      ? const Text('暫無計入星級的評價。')
                       : Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
@@ -224,6 +331,21 @@ class _ShopReviewsScreenState extends State<ShopReviewsScreen> {
                             const SizedBox(height: 4),
                             Text(
                                 '口味 ${r.taste?.toStringAsFixed(1) ?? '-'}　環境 ${r.ambience?.toStringAsFixed(1) ?? '-'}　服務 ${r.service?.toStringAsFixed(1) ?? '-'}'),
+                            const SizedBox(height: 8),
+                            ...[5, 4, 3, 2, 1].map((s) =>
+                                _distributionBar(
+                                    s, dist[s] ?? 0, distTotal)),
+                            if (_total > distTotal)
+                              Text(
+                                  '星級分布按已載入的 $distTotal 條統計，共 $_total 條。',
+                                  style: const TextStyle(
+                                      color: CgColors.textSecondary,
+                                      fontSize: 12)),
+                            const SizedBox(height: 4),
+                            const Text('只有已核销的用户可以写评价。',
+                                style: TextStyle(
+                                    color: CgColors.textSecondary,
+                                    fontSize: 12)),
                           ],
                         ),
             ),
@@ -234,6 +356,18 @@ class _ShopReviewsScreenState extends State<ShopReviewsScreen> {
               children: [
                 const Text('評價列表'),
                 const Spacer(),
+                ChoiceChip(
+                  label: const Text('最新'),
+                  selected: _sort == 'latest',
+                  onSelected: (_) => setState(() => _sort = 'latest'),
+                ),
+                const SizedBox(width: 6),
+                ChoiceChip(
+                  label: const Text('最有用'),
+                  selected: _sort == 'helpful',
+                  onSelected: (_) => setState(() => _sort = 'helpful'),
+                ),
+                const SizedBox(width: 6),
                 FilterChip(
                   label: const Text('只看有圖'),
                   selected: _hasImagesOnly,
@@ -246,49 +380,265 @@ class _ShopReviewsScreenState extends State<ShopReviewsScreen> {
             ),
           ),
           Expanded(
-            child: _reviews.isEmpty
-                ? const Center(child: Text('暫時沒有評價。'))
-                : RefreshIndicator(
-                    onRefresh: _load,
-                    child: ListView.builder(
-                      itemCount: _reviews.length,
-                      itemBuilder: (_, i) {
-                        final rev = _reviews[i];
-                        return Card(
-                          margin: const EdgeInsets.fromLTRB(12, 8, 12, 0),
-                          child: ListTile(
-                            title: Text(
-                                '${rev.userName.isEmpty ? '用戶' : rev.userName} · ${rev.overall.toStringAsFixed(1)} 分'),
-                            subtitle: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
+            child: _loading
+                ? ListView(
+                    padding: const EdgeInsets.all(12),
+                    children: const [
+                      SkeletonBox(height: 96),
+                      SizedBox(height: 8),
+                      SkeletonBox(height: 96),
+                    ],
+                  )
+                : _error != null
+                    ? Center(
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            const Text('网络不稳定，请重试'),
+                            const SizedBox(height: 12),
+                            ElevatedButton(
+                                onPressed: _load, child: const Text('重試')),
+                          ],
+                        ),
+                      )
+                    : _reviews.isEmpty
+                        ? Center(
+                            child: Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
                               children: [
-                                Text(
-                                    '口味 ${_stars(rev.taste)}　環境 ${_stars(rev.ambience)}　服務 ${_stars(rev.service)}'),
-                                if (rev.content.isNotEmpty)
-                                  Text(rev.content),
-                                if (rev.images.isNotEmpty)
-                                  Text('有圖 ×${rev.images.length}'),
-                                if (rev.tags.isNotEmpty)
-                                  Text('標籤：${rev.tags.join('、')}'),
-                                if (!rev.countsTowardRating)
-                                  const Text('積分評價 · 不計入星級',
-                                      style: TextStyle(
-                                          color: CgColors.textSecondary,
-                                          fontSize: 12)),
-                                if (rev.replyText.isNotEmpty)
-                                  Text('商户回覆：${rev.replyText}',
-                                      style: const TextStyle(
-                                          color: CgColors.textSecondary)),
+                                const Text('暫時沒有評價。'),
+                                const SizedBox(height: 12),
+                                ElevatedButton(
+                                    onPressed: _load,
+                                    child: const Text('重新載入')),
                               ],
                             ),
+                          )
+                        : RefreshIndicator(
+                            onRefresh: _load,
+                            child: ListView.builder(
+                              itemCount: _sortedReviews.length,
+                              itemBuilder: (_, i) {
+                                final rev = _sortedReviews[i];
+                                return Card(
+                                  margin:
+                                      const EdgeInsets.fromLTRB(12, 8, 12, 0),
+                                  child: Padding(
+                                    padding: const EdgeInsets.all(12),
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                            '${rev.userName.isEmpty ? '用戶' : rev.userName} · ${rev.overall.toStringAsFixed(1)} 分',
+                                            style: const TextStyle(
+                                                fontWeight: FontWeight.bold)),
+                                        const SizedBox(height: 4),
+                                        Text(
+                                            '口味 ${_stars(rev.taste)}　環境 ${_stars(rev.ambience)}　服務 ${_stars(rev.service)}'),
+                                        if (rev.content.isNotEmpty)
+                                          Padding(
+                                            padding:
+                                                const EdgeInsets.only(top: 4),
+                                            child: Text(rev.content),
+                                          ),
+                                        if (rev.images.isNotEmpty)
+                                          Padding(
+                                            padding:
+                                                const EdgeInsets.only(top: 4),
+                                            child: Text(
+                                                '有圖 ×${rev.images.length}'),
+                                          ),
+                                        if (rev.tags.isNotEmpty)
+                                          Text(
+                                              '標籤：${rev.tags.join('、')}'),
+                                        if (!rev.countsTowardRating)
+                                          const Text('積分評價 · 不計入星級',
+                                              style: TextStyle(
+                                                  color:
+                                                      CgColors.textSecondary,
+                                                  fontSize: 12)),
+                                        if (rev.replyText.isNotEmpty)
+                                          _replyBox(rev.replyText),
+                                      ],
+                                    ),
+                                  ),
+                                );
+                              },
+                            ),
                           ),
-                        );
-                      },
-                    ),
-                  ),
           ),
         ],
       ),
+    );
+  }
+}
+
+/// Merchant reply to bad reviews (UI_SPEC §7): reviews of 2 stars or
+/// less without a reply, for the shop's own merchant / admin.
+/// Reached from the vendor home ("評價回覆"). The reply endpoint
+/// enforces ownership server-side; this screen only lists the shop's
+/// own reviews.
+class MerchantReviewReplyScreen extends StatefulWidget {
+  const MerchantReviewReplyScreen(
+      {super.key, required this.api, required this.shopId, this.shopName});
+
+  final ApiClient api;
+  final int shopId;
+  final String? shopName;
+
+  @override
+  State<MerchantReviewReplyScreen> createState() =>
+      _MerchantReviewReplyScreenState();
+}
+
+class _MerchantReviewReplyScreenState
+    extends State<MerchantReviewReplyScreen> {
+  List<Review> _reviews = [];
+  bool _loading = false;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      final list = await widget.api.shopReviews(widget.shopId);
+      if (!mounted) return;
+      final all = (list['reviews'] as List)
+          .map((e) => Review.fromJson(e))
+          .toList();
+      setState(() {
+        _reviews = all
+            .where((r) => r.overall <= 2 && r.replyText.isEmpty)
+            .toList();
+        _loading = false;
+      });
+    } on ApiException catch (_) {
+      if (mounted) {
+        setState(() {
+          _error = '网络不稳定，请重试';
+          _loading = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _reply(Review rev) async {
+    final ctrl = TextEditingController();
+    final text = await showDialog<String>(
+      context: context,
+      builder: (c) => AlertDialog(
+        title: const Text('回覆差評'),
+        content: TextField(
+          controller: ctrl,
+          maxLines: 4,
+          maxLength: 500,
+          decoration: const InputDecoration(hintText: '寫下商户回覆…'),
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(c),
+              child: const Text('取消')),
+          TextButton(
+              onPressed: () => Navigator.pop(c, ctrl.text.trim()),
+              child: const Text('發送回覆')),
+        ],
+      ),
+    );
+    if (text == null || text.isEmpty) return;
+    try {
+      await widget.api.replyReview(rev.id, text);
+      if (mounted) showCgToast(context, '回覆已發送');
+      _load();
+    } on ApiException catch (e) {
+      if (mounted) showCgToast(context, e.message);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+          title: Text('${widget.shopName ?? '商户'} · 差評回覆')),
+      body: _loading
+          ? ListView(
+              padding: const EdgeInsets.all(12),
+              children: const [
+                SkeletonBox(height: 96),
+                SizedBox(height: 8),
+                SkeletonBox(height: 96),
+              ],
+            )
+          : _error != null
+              ? Center(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      const Text('网络不稳定，请重试'),
+                      const SizedBox(height: 12),
+                      ElevatedButton(
+                          onPressed: _load, child: const Text('重試')),
+                    ],
+                  ),
+                )
+              : _reviews.isEmpty
+                  ? Center(
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          const Text('暫無待回覆的差評。'),
+                          const SizedBox(height: 12),
+                          ElevatedButton(
+                              onPressed: _load,
+                              child: const Text('重新載入')),
+                        ],
+                      ),
+                    )
+                  : RefreshIndicator(
+                      onRefresh: _load,
+                      child: ListView.builder(
+                        itemCount: _reviews.length,
+                        itemBuilder: (_, i) {
+                          final rev = _reviews[i];
+                          return Card(
+                            margin: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+                            child: Padding(
+                              padding: const EdgeInsets.all(12),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                      '${rev.userName.isEmpty ? '用戶' : rev.userName} · ${rev.overall.toStringAsFixed(1)} 分',
+                                      style: const TextStyle(
+                                          fontWeight: FontWeight.bold)),
+                                  if (rev.content.isNotEmpty)
+                                    Padding(
+                                      padding: const EdgeInsets.only(top: 4),
+                                      child: Text(rev.content),
+                                    ),
+                                  const SizedBox(height: 8),
+                                  Align(
+                                    alignment: Alignment.centerRight,
+                                    child: ElevatedButton(
+                                      onPressed: () => _reply(rev),
+                                      child: const Text('回覆'),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          );
+                        },
+                      ),
+                    ),
     );
   }
 }

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -5,17 +7,36 @@ import '../api_client.dart';
 import '../models.dart';
 import '../theme.dart';
 import '../widgets/widgets.dart';
+import 'account.dart';
 
-/// Bargain 2C screens (line E): list / start, share + help progress,
-/// group-formed result. Amounts are HKD.
+/// Bargain 2C screens (line E): list (§4.1) / campaign start (§4.2),
+/// my bargain (§4.3) + friend help (§4.4), group-formed result.
+/// Amounts are HKD; all prices/statuses come from the server.
 ///
-/// Flow: pick a limited package -> start (stock locked, simulated
-/// prepay of the original price) -> share the link -> friends help cut
-/// the price -> floor price or helper limit reached -> buy at the cut
-/// price -> package coupon lands in Q Wallet (existing redeem loop).
-/// Timeout / unformed = full refund + stock released (see the refund
-/// card on the detail page). No Dutch-auction time decay, no share
-/// commission, no 30% fee, no "一經售出不退不換".
+/// Flow: pick a campaign -> start (stock locked, prepay of the original
+/// price) -> share the link -> friends help cut the price -> floor price
+/// or helper limit reached -> buy at the cut price -> package coupon
+/// lands in Q Wallet (existing redeem loop). Timeout / unformed = full
+/// refund + stock released. Terminal copy never suggests a refund is
+/// withheld or a fee deducted.
+///
+/// 未登录可浏览砍价列表与详情（只读）；点「发起砍价 / 砍一刀」时先登录，
+/// 登录后回原界面。
+Future<bool> _requireLogin(BuildContext context, ApiClient api) async {
+  if (api.isLoggedIn) return true;
+  final result = await Navigator.of(context).push<bool>(
+    MaterialPageRoute(
+      builder: (_) => AuthScreen(
+        api: api,
+        onAuthed: () => Navigator.of(context).pop(true),
+      ),
+    ),
+  );
+  return result == true && api.isLoggedIn;
+}
+
+/// List (§4.1): 2-col cards, same as the home cards, plus
+/// 「已有 N 人在砍」. My sessions stay on top.
 class BargainListScreen extends StatefulWidget {
   const BargainListScreen({super.key, required this.api});
 
@@ -29,6 +50,7 @@ class _BargainListScreenState extends State<BargainListScreen> {
   List<BargainCampaign> _campaigns = [];
   List<BargainSession> _mine = [];
   bool _loading = true;
+  bool _error = false;
 
   @override
   void initState() {
@@ -37,6 +59,7 @@ class _BargainListScreenState extends State<BargainListScreen> {
   }
 
   Future<void> _load() async {
+    if (mounted) setState(() => _loading = true);
     try {
       final list = await widget.api.bargainCampaigns();
       var mine = <BargainSession>[];
@@ -56,33 +79,31 @@ class _BargainListScreenState extends State<BargainListScreen> {
             .toList();
         _mine = mine;
         _loading = false;
+        _error = false;
       });
-    } on ApiException catch (e) {
+    } on ApiException catch (_) {
       if (mounted) {
-        setState(() => _loading = false);
-        showCgToast(context, e.message);
+        setState(() {
+          _loading = false;
+          _error = true;
+        });
       }
     }
   }
 
-  Future<void> _start(BargainCampaign c) async {
-    if (!widget.api.isLoggedIn) {
-      showCgToast(context, '請先登錄再發起砍價');
-      return;
-    }
-    try {
-      final data = await widget.api.startBargain(c.id);
-      if (!mounted) return;
-      final session =
-          BargainSession.fromJson(data['session'] as Map<String, dynamic>);
-      showCgToast(context, '砍價已發起，分享給好友一起砍到底價');
-      await Navigator.of(context).push(MaterialPageRoute(
-          builder: (_) =>
-              BargainDetailScreen(api: widget.api, sessionId: session.id)));
-      _load();
-    } on ApiException catch (e) {
-      if (mounted) showCgToast(context, e.message);
-    }
+  void _openCampaign(BargainCampaign c) {
+    Navigator.of(context)
+        .push(MaterialPageRoute(
+            builder: (_) => BargainCampaignScreen(api: widget.api, campaign: c)))
+        .then((_) => _load());
+  }
+
+  void _openSession(BargainSession s) {
+    Navigator.of(context)
+        .push(MaterialPageRoute(
+            builder: (_) =>
+                BargainDetailScreen(api: widget.api, sessionId: s.id)))
+        .then((_) => _load());
   }
 
   @override
@@ -90,113 +111,381 @@ class _BargainListScreenState extends State<BargainListScreen> {
     return Scaffold(
       appBar: AppBar(title: const Text('砍價')),
       body: _loading
-          ? const Center(child: CircularProgressIndicator())
-          : RefreshIndicator(
-              onRefresh: _load,
-              child: ListView(
-                padding: const EdgeInsets.all(12),
-                children: [
-                  const Text('分享助力砍價，越砍越便宜，數量有限，先到先得。',
-                      style: TextStyle(color: Colors.grey)),
-                  const SizedBox(height: 4),
-                  const Text(
-                      '發起即鎖定 1 份庫存；未成團 / 超時全額原路退款（1–3 個工作日）；成團後退回砍價差價。',
-                      style: TextStyle(color: Colors.grey, fontSize: 12)),
-                  const SizedBox(height: 12),
-                  if (_mine.isNotEmpty) ...[
-                    const Text('我的砍價',
-                        style: TextStyle(fontWeight: FontWeight.bold)),
-                    ..._mine.map((s) => Card(
-                          margin: const EdgeInsets.only(top: 8),
-                          child: ListTile(
-                            leading: const Icon(Icons.content_cut,
-                                color: CgColors.primary),
-                            title: Text(
-                                s.campaign?.name ?? '砍價 #${s.id}'),
-                            subtitle: Text(
-                                '${s.statusText} · 現價 \$${s.currentPrice.toStringAsFixed(0)} · ${s.helperCount}/${s.helperLimit} 人助力'),
-                            trailing: const Icon(Icons.chevron_right),
-                            onTap: () => Navigator.of(context)
-                                .push(MaterialPageRoute(
-                                    builder: (_) => BargainDetailScreen(
-                                        api: widget.api, sessionId: s.id)))
-                                .then((_) => _load()),
-                          ),
-                        )),
-                    const SizedBox(height: 16),
-                  ],
-                  const Text('砍價套餐',
-                      style: TextStyle(fontWeight: FontWeight.bold)),
-                  if (_campaigns.isEmpty)
-                    const Padding(
-                      padding: EdgeInsets.only(top: 8),
-                      child: Text('暫時沒有砍價活動。'),
-                    ),
-                  ..._campaigns.map((c) => Card(
-                        margin: const EdgeInsets.only(top: 8),
-                        child: Padding(
-                          padding: const EdgeInsets.all(12),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(c.name,
-                                  style: const TextStyle(
-                                      fontWeight: FontWeight.bold,
-                                      fontSize: 16)),
-                              const SizedBox(height: 4),
-                              Text(
-                                  '${c.shopName} · ${c.personCount} 人餐${c.items.isNotEmpty ? ' · ${c.items}' : ''}'),
-                              const SizedBox(height: 8),
-                              Row(
-                                children: [
-                                  Text(
-                                    '底價 \$${c.floorPrice.toStringAsFixed(0)}',
-                                    style: const TextStyle(
-                                        color: CgColors.primary,
-                                        fontWeight: FontWeight.bold,
-                                        fontSize: 18),
-                                  ),
-                                  const SizedBox(width: 8),
-                                  Text(
-                                    '\$${c.originalPrice.toStringAsFixed(0)}',
-                                    style: const TextStyle(
-                                        decoration:
-                                            TextDecoration.lineThrough,
-                                        color: Colors.grey),
-                                  ),
-                                  const Spacer(),
-                                  Text(c.isSoldOut
-                                      ? '已售罄'
-                                      : '剩 ${c.stockLeft}/${c.stockTotal} 份'),
-                                ],
-                              ),
-                              const SizedBox(height: 8),
-                              SizedBox(
-                                width: double.infinity,
-                                height: 44,
-                                child: ElevatedButton(
-                                  onPressed: c.isSoldOut
-                                      ? null
-                                      : () => _start(c),
-                                  child: Text(c.isSoldOut
-                                      ? '已售罄'
-                                      : '發起砍價（${c.helperLimit} 人成團）'),
+          ? const _LoadingList()
+          : _error
+              ? _ErrorView(onRetry: _load)
+              : _campaigns.isEmpty && _mine.isEmpty
+                  ? _EmptyView(
+                      message: '暫時沒有砍價活動。',
+                      actionLabel: '重新整理',
+                      onAction: _load,
+                    )
+                  : RefreshIndicator(
+                      onRefresh: _load,
+                      child: CustomScrollView(
+                        slivers: [
+                          if (_mine.isNotEmpty)
+                            SliverToBoxAdapter(
+                              child: Padding(
+                                padding:
+                                    const EdgeInsets.fromLTRB(16, 12, 16, 0),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    const Text('我的砍價',
+                                        style: TextStyle(
+                                            fontWeight: FontWeight.bold,
+                                            fontSize: 16)),
+                                    ..._mine.map((s) => Card(
+                                          margin:
+                                              const EdgeInsets.only(top: 8),
+                                          child: ListTile(
+                                            leading: const Icon(
+                                                Icons.content_cut,
+                                                color: CgColors.primary),
+                                            title: Text(s.campaign?.name ??
+                                                '砍價 #${s.id}'),
+                                            subtitle: Text(
+                                                '${s.statusText} · 現價 ${formatHkd(s.currentPrice)} · ${s.helperCount}/${s.helperLimit} 人助力'),
+                                            trailing: const Icon(
+                                                Icons.chevron_right),
+                                            onTap: () => _openSession(s),
+                                          ),
+                                        )),
+                                  ],
                                 ),
                               ),
-                            ],
+                            ),
+                          const SliverToBoxAdapter(
+                            child: Padding(
+                              padding: EdgeInsets.fromLTRB(16, 16, 16, 8),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text('砍價套餐',
+                                      style: TextStyle(
+                                          fontWeight: FontWeight.bold,
+                                          fontSize: 16)),
+                                  SizedBox(height: 4),
+                                  Text('分享助力砍價，越砍越便宜，數量有限，先到先得。',
+                                      style: TextStyle(color: Colors.grey)),
+                                  SizedBox(height: 4),
+                                  Text(
+                                      '發起即鎖定 1 份庫存；未成團 / 超時全額原路退款（1–3 個工作日）；成團後退回砍價差價。',
+                                      style: TextStyle(
+                                          color: Colors.grey, fontSize: 12)),
+                                ],
+                              ),
+                            ),
                           ),
-                        ),
-                      )),
-                ],
-              ),
-            ),
+                          if (_campaigns.isEmpty)
+                            const SliverToBoxAdapter(
+                              child: Padding(
+                                padding: EdgeInsets.all(16),
+                                child: Text('暫時沒有砍價活動。',
+                                    style: TextStyle(
+                                        color: CgColors.textSecondary)),
+                              ),
+                            )
+                          else
+                            SliverPadding(
+                              padding:
+                                  const EdgeInsets.symmetric(horizontal: 12),
+                              sliver: SliverGrid(
+                                gridDelegate:
+                                    const SliverGridDelegateWithFixedCrossAxisCount(
+                                  crossAxisCount: 2,
+                                  childAspectRatio: 0.62,
+                                  crossAxisSpacing: 8,
+                                  mainAxisSpacing: 8,
+                                ),
+                                delegate: SliverChildBuilderDelegate(
+                                  (_, i) => _BargainCard(
+                                    campaign: _campaigns[i],
+                                    onTap: () =>
+                                        _openCampaign(_campaigns[i]),
+                                  ),
+                                  childCount: _campaigns.length,
+                                ),
+                              ),
+                            ),
+                          const SliverToBoxAdapter(
+                              child: SizedBox(height: 24)),
+                        ],
+                      ),
+                    ),
     );
   }
 }
 
-/// Detail = start page + share page + help progress in one.
-/// [sessionId] comes from a fresh start or from the shared link
-/// (coupon-go://bargain?session=<id>).
+/// 砍价卡片（列表 2 列 / 首页横滑共用样式）：商户图、套餐名、当前价大、
+/// 底价小灰、已有 N 人在砍、剩余时间、「去砍价」强调色实心。
+class _BargainCard extends StatelessWidget {
+  const _BargainCard({required this.campaign, required this.onTap});
+
+  final BargainCampaign campaign;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final timeLeft = campaign.timeLeft;
+    return Card(
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: onTap,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            AspectRatio(
+              aspectRatio: 16 / 9,
+              child: _BargainImage(url: campaign.image),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(10, 8, 10, 0),
+              child: Text(
+                campaign.name,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                    fontWeight: FontWeight.w600, fontSize: 14),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(10, 4, 10, 0),
+              child: Text(
+                campaign.shopName,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                    color: CgColors.textSecondary, fontSize: 12),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(10, 4, 10, 0),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  Text(
+                    formatHkd(campaign.originalPrice),
+                    style: const TextStyle(
+                        color: CgColors.primary,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 16,
+                        fontFeatures: [FontFeature.tabularFigures()]),
+                  ),
+                  const SizedBox(width: 4),
+                  Flexible(
+                    child: Text(
+                      '底价 ${formatHkd(campaign.floorPrice)}',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                          color: CgColors.textSecondary, fontSize: 11),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(10, 2, 10, 0),
+              child: Text(
+                '已有 ${campaign.helperCount} 人在砍'
+                '${timeLeft == null ? '' : ' · 剩 ${formatCountdown(timeLeft)}'}',
+                style: const TextStyle(
+                    color: CgColors.textSecondary, fontSize: 12),
+              ),
+            ),
+            const Spacer(),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(10, 0, 10, 10),
+              child: SizedBox(
+                width: double.infinity,
+                height: 44,
+                child: ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: CgColors.orange,
+                    foregroundColor: Colors.white,
+                    padding: EdgeInsets.zero,
+                  ),
+                  onPressed: campaign.isSoldOut ? null : onTap,
+                  child: Text(campaign.isSoldOut ? '已售罄' : '去砍价'),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Campaign detail before starting (§4.2): big image, original price,
+/// floor price (prominent), 3-step rules, stock note, prepay note,
+/// 「立即发起砍价」.
+class BargainCampaignScreen extends StatefulWidget {
+  const BargainCampaignScreen(
+      {super.key, required this.api, required this.campaign});
+
+  final ApiClient api;
+  final BargainCampaign campaign;
+
+  @override
+  State<BargainCampaignScreen> createState() => _BargainCampaignScreenState();
+}
+
+class _BargainCampaignScreenState extends State<BargainCampaignScreen> {
+  bool _busy = false;
+
+  Future<void> _start() async {
+    final c = widget.campaign;
+    if (_busy || c.isSoldOut) return;
+    final ok = await _requireLogin(context, widget.api);
+    if (!ok || !mounted) return;
+    setState(() => _busy = true);
+    try {
+      final data = await widget.api.startBargain(c.id);
+      if (!mounted) return;
+      final session =
+          BargainSession.fromJson(data['session'] as Map<String, dynamic>);
+      showCgToast(context, '砍價已發起，分享給好友一起砍到底價');
+      await Navigator.of(context).pushReplacement(MaterialPageRoute(
+          builder: (_) =>
+              BargainDetailScreen(api: widget.api, sessionId: session.id)));
+    } on ApiException catch (e) {
+      if (mounted) {
+        setState(() => _busy = false);
+        showCgToast(context, e.message);
+      }
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final c = widget.campaign;
+    final timeLeft = c.timeLeft;
+    return Scaffold(
+      appBar: AppBar(title: const Text('砍價')),
+      body: ListView(
+        padding: const EdgeInsets.all(16),
+        children: [
+          ClipRRect(
+            borderRadius: BorderRadius.circular(12),
+            child: SizedBox(
+              height: 220,
+              width: double.infinity,
+              child: _BargainImage(url: c.image),
+            ),
+          ),
+          const SizedBox(height: 16),
+          Text(c.name,
+              style:
+                  const TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
+          const SizedBox(height: 4),
+          Text('${c.shopName} · ${c.personCount} 人餐',
+              style: const TextStyle(color: CgColors.textSecondary)),
+          const SizedBox(height: 16),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              const Text('底价 ',
+                  style: TextStyle(
+                      color: CgColors.textSecondary, fontSize: 16)),
+              Text(formatHkd(c.floorPrice),
+                  style: const TextStyle(
+                      color: CgColors.primary,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 32,
+                      fontFeatures: [FontFeature.tabularFigures()])),
+              const SizedBox(width: 10),
+              Padding(
+                padding: const EdgeInsets.only(bottom: 6),
+                child: Text('原价 ${formatHkd(c.originalPrice)}',
+                    style: const TextStyle(
+                        decoration: TextDecoration.lineThrough,
+                        color: CgColors.textSecondary)),
+              ),
+            ],
+          ),
+          if (timeLeft != null)
+            Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: Text('剩余时间 ${formatCountdown(timeLeft)}',
+                  style: const TextStyle(color: CgColors.textSecondary)),
+            ),
+          const SizedBox(height: 16),
+          const Text('砍价规则', style: TextStyle(fontWeight: FontWeight.bold)),
+          const SizedBox(height: 8),
+          const _RuleStep(
+              icon: Icons.payments,
+              text: '付款后发起砍价，先付原价锁定库存'),
+          const _RuleStep(
+              icon: Icons.share, text: '分享给好友助力，每人帮你砍一刀'),
+          const _RuleStep(
+              icon: Icons.replay,
+              text: '价格降到底价或时间到，差额自动退回'),
+          const SizedBox(height: 16),
+          Text(
+              '数量有限，先到先得，剩余库存 ${c.stockLeft} 份',
+              style: const TextStyle(fontWeight: FontWeight.bold)),
+          const SizedBox(height: 4),
+          Text('已有 ${c.helperCount} 人在砍 · ${c.helperLimit} 人成团',
+              style: const TextStyle(color: CgColors.textSecondary)),
+          const SizedBox(height: 24),
+          Text('先付 ${formatHkd(c.originalPrice)}，砍价差额自动退回',
+              textAlign: TextAlign.center,
+              style: const TextStyle(fontWeight: FontWeight.bold)),
+          const SizedBox(height: 8),
+          SizedBox(
+            width: double.infinity,
+            height: 48,
+            child: ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: CgColors.orange,
+                foregroundColor: Colors.white,
+              ),
+              onPressed: (_busy || c.isSoldOut) ? null : _start,
+              child: Text(_busy
+                  ? '处理中…'
+                  : c.isSoldOut
+                      ? '已售罄'
+                      : '立即发起砍价'),
+            ),
+          ),
+          const SizedBox(height: 8),
+          const Text('未成团 / 超时全额原路退款（1–3 个工作日）。',
+              textAlign: TextAlign.center,
+              style: TextStyle(color: CgColors.textSecondary, fontSize: 12)),
+        ],
+      ),
+    );
+  }
+}
+
+class _RuleStep extends StatelessWidget {
+  const _RuleStep({required this.icon, required this.text});
+
+  final IconData icon;
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 6),
+      child: Row(
+        children: [
+          Icon(icon, color: CgColors.primary, size: 20),
+          const SizedBox(width: 10),
+          Expanded(child: Text(text)),
+        ],
+      ),
+    );
+  }
+}
+
+/// Detail = my bargain (§4.3) + friend help page (§4.4) in one.
+/// [sessionId] comes from a fresh start or from the shared link.
 class BargainDetailScreen extends StatefulWidget {
   const BargainDetailScreen(
       {super.key, required this.api, required this.sessionId});
@@ -211,7 +500,10 @@ class BargainDetailScreen extends StatefulWidget {
 class _BargainDetailScreenState extends State<BargainDetailScreen> {
   BargainSession? _session;
   bool _loading = true;
+  bool _error = false;
   bool _busy = false;
+  Timer? _tick;
+  int _secondsLeft = 0;
 
   @override
   void initState() {
@@ -219,18 +511,51 @@ class _BargainDetailScreenState extends State<BargainDetailScreen> {
     _load();
   }
 
+  @override
+  void dispose() {
+    _tick?.cancel();
+    super.dispose();
+  }
+
+  void _startTick() {
+    _tick?.cancel();
+    if (_secondsLeft <= 0) return;
+    _tick = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (!mounted) return;
+      if (_secondsLeft <= 0) {
+        _tick?.cancel();
+        return;
+      }
+      setState(() => _secondsLeft--);
+    });
+  }
+
   Future<void> _load() async {
+    if (mounted) setState(() => _loading = true);
     try {
       final data = await widget.api.bargainSession(widget.sessionId);
       if (!mounted) return;
+      final session = BargainSession.fromJson(data);
       setState(() {
-        _session = BargainSession.fromJson(data);
+        _session = session;
         _loading = false;
+        _error = false;
+        _secondsLeft = session.secondsLeft > 0
+            ? session.secondsLeft
+            : (session.expiresAt == null
+                ? 0
+                : session.expiresAt!
+                    .difference(DateTime.now())
+                    .inSeconds
+                    .clamp(0, 1 << 31));
       });
-    } on ApiException catch (e) {
+      _startTick();
+    } on ApiException catch (_) {
       if (mounted) {
-        setState(() => _loading = false);
-        showCgToast(context, e.message);
+        setState(() {
+          _loading = false;
+          _error = true;
+        });
       }
     }
   }
@@ -238,8 +563,10 @@ class _BargainDetailScreenState extends State<BargainDetailScreen> {
   Future<void> _help() async {
     final s = _session;
     if (s == null || _busy) return;
-    if (!widget.api.isLoggedIn) {
-      showCgToast(context, '請先登錄再助力');
+    final ok = await _requireLogin(context, widget.api);
+    if (!ok || !mounted) return;
+    if (s.alreadyHelped) {
+      showCgToast(context, '你已经帮 TA 砍过啦');
       return;
     }
     setState(() => _busy = true);
@@ -249,9 +576,10 @@ class _BargainDetailScreenState extends State<BargainDetailScreen> {
       if (!mounted) return;
       final updated =
           BargainSession.fromJson(data['session'] as Map<String, dynamic>);
+      final cut = (data['cut_amount'] as num?)?.toDouble() ?? 0.0;
       setState(() => _session = updated);
-      showCgToast(context,
-          '已砍 \$${(data['cut_amount'] as num).toStringAsFixed(2)}${updated.status == 'success' ? '，砍價成功！' : ''}');
+      await _showHelpSuccess(cut, updated);
+      _load();
     } on ApiException catch (e) {
       if (mounted) showCgToast(context, e.message);
     } finally {
@@ -259,9 +587,74 @@ class _BargainDetailScreenState extends State<BargainDetailScreen> {
     }
   }
 
+  /// 助力成功反馈：缩放动效 300ms（≤ 800ms），显示砍了多少，
+  /// 下方「我也要发起砍价」。
+  Future<void> _showHelpSuccess(double cut, BargainSession updated) {
+    return showDialog<void>(
+      context: context,
+      barrierDismissible: true,
+      builder: (d) => TweenAnimationBuilder<double>(
+        tween: Tween(begin: 0.8, end: 1.0),
+        duration: const Duration(milliseconds: 300),
+        curve: Curves.easeOutBack,
+        builder: (ctx, scale, child) =>
+            Transform.scale(scale: scale, child: child),
+        child: AlertDialog(
+          title: const Text('砍价成功'),
+          content: Text('你帮 TA 砍了 ${formatHkd(cut)}！'
+              '${updated.status == 'success' ? '已砍到底价。' : ''}'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(d).pop(),
+              child: const Text('知道了'),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                Navigator.of(d).pop();
+                final campaign = updated.campaign;
+                if (campaign != null) {
+                  Navigator.of(context).push(MaterialPageRoute(
+                      builder: (_) => BargainCampaignScreen(
+                          api: widget.api, campaign: campaign)));
+                } else {
+                  Navigator.of(context).push(MaterialPageRoute(
+                      builder: (_) => BargainListScreen(api: widget.api)));
+                }
+              },
+              child: const Text('我也要发起砍价'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Future<void> _purchase() async {
     final s = _session;
     if (s == null || _busy) return;
+    // 现在购买：以当前价结算，差额退回，退款金额在确认页明示。
+    final refund =
+        (s.paidAmount - s.currentPrice).clamp(0.0, 1 << 30).toDouble();
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('现在购买'),
+        content: Text(
+            '以当前价 ${formatHkd(s.currentPrice)} 结算。\n'
+            '差价 ${formatHkd(refund)} 将原路退回，预计 1–3 个工作日到账。'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('取消'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('确认购买'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
     setState(() => _busy = true);
     try {
       final data = await widget.api.purchaseBargain(s.id);
@@ -283,12 +676,12 @@ class _BargainDetailScreenState extends State<BargainDetailScreen> {
     final s = _session;
     if (s == null) return;
     Clipboard.setData(ClipboardData(text:
-        '幫我砍一刀！${s.campaign?.name ?? ''} 原價 \$${s.originalPrice.toStringAsFixed(0)}，'
-        '現價 \$${s.currentPrice.toStringAsFixed(0)}，砍到底價 \$${s.floorPrice.toStringAsFixed(0)} 就能拿套餐：${s.shareLink}'));
+        '帮我砍一刀！${s.campaign?.name ?? ''} 原价 ${formatHkd(s.originalPrice)}，'
+        '现价 ${formatHkd(s.currentPrice)}，砍到底价 ${formatHkd(s.floorPrice)} 就能拿套餐：${s.shareLink}'));
     showDialog<void>(
       context: context,
       builder: (d) => AlertDialog(
-        title: const Text('分享給好友助力'),
+        title: const Text('分享给好友助力'),
         content: SelectableText(
             '連結已複製，發給好友打開 App 即可助力：\n${s.shareLink}'),
         actions: [
@@ -301,153 +694,315 @@ class _BargainDetailScreenState extends State<BargainDetailScreen> {
     );
   }
 
+  void _openOtherBargains() {
+    Navigator.of(context).pushReplacement(MaterialPageRoute(
+        builder: (_) => BargainListScreen(api: widget.api)));
+  }
+
   @override
   Widget build(BuildContext context) {
     final s = _session;
+    if (_loading) {
+      return Scaffold(
+        appBar: AppBar(title: const Text('砍價')),
+        body: const _LoadingList(),
+      );
+    }
+    if (_error || s == null) {
+      return Scaffold(
+        appBar: AppBar(title: const Text('砍價')),
+        body: _ErrorView(onRetry: _load),
+      );
+    }
+    final isOwner = s.isOwner;
+    final ended = s.status == 'failed' || s.status == 'expired';
+    final success = s.status == 'success';
+    final active = s.status == 'active';
     return Scaffold(
       appBar: AppBar(title: const Text('砍價')),
-      body: _loading
-          ? const Center(child: CircularProgressIndicator())
-          : s == null
-              ? const Center(child: Text('找不到此砍價。'))
-              : RefreshIndicator(
-                  onRefresh: _load,
-                  child: ListView(
-                    padding: const EdgeInsets.all(16),
-                    children: [
-                      Text(s.campaign?.name ?? '砍價',
-                          style: const TextStyle(
-                              fontWeight: FontWeight.bold, fontSize: 20)),
-                      const SizedBox(height: 4),
-                      Text(
-                          '${s.campaign?.shopName ?? ''} · ${s.campaign?.personCount ?? 2} 人餐'),
-                      const SizedBox(height: 16),
-                      Row(
-                        crossAxisAlignment: CrossAxisAlignment.end,
-                        children: [
-                          Text('\$${s.currentPrice.toStringAsFixed(2)}',
-                              style: const TextStyle(
-                                  color: CgColors.primary,
-                                  fontWeight: FontWeight.bold,
-                                  fontSize: 32)),
-                          const SizedBox(width: 8),
-                          Text(
-                            '原價 \$${s.originalPrice.toStringAsFixed(0)} · 底價 \$${s.floorPrice.toStringAsFixed(0)}',
-                            style: const TextStyle(color: Colors.grey),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 8),
-                      LinearProgressIndicator(
-                          value: s.cutProgress,
-                          minHeight: 8,
-                          backgroundColor: Colors.grey.shade300,
-                          color: CgColors.primary),
-                      const SizedBox(height: 8),
-                      Row(
-                        children: [
-                          Chip(label: Text(s.statusText)),
-                          const SizedBox(width: 8),
-                          Text('${s.helperCount}/${s.helperLimit} 人助力'),
-                          const Spacer(),
-                          if (s.status == 'active')
-                            Text(s.countdownText,
-                                style: const TextStyle(color: Colors.grey)),
-                        ],
-                      ),
-                      if (s.stockLocked && s.status == 'active')
-                        const Padding(
-                          padding: EdgeInsets.only(top: 4),
-                          child: Text('已為你鎖定 1 份庫存',
-                              style: TextStyle(color: Colors.grey)),
-                        ),
-                      const SizedBox(height: 16),
-                      Row(
-                        children: [
-                          Expanded(
-                            child: SizedBox(
-                              height: 48,
-                              child: ElevatedButton.icon(
-                                onPressed:
-                                    s.status == 'active' ? _share : null,
-                                icon: const Icon(Icons.share),
-                                label: const Text('分享給好友助力'),
-                              ),
-                            ),
-                          ),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: SizedBox(
-                              height: 48,
-                              child: OutlinedButton(
-                                onPressed: s.status == 'active' && !_busy
-                                    ? _help
-                                    : null,
-                                child: const Text('幫好友砍一刀'),
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                      if (s.canPurchase) ...[
-                        const SizedBox(height: 12),
-                        SizedBox(
-                          width: double.infinity,
-                          height: 56,
-                          child: ElevatedButton(
-                            onPressed: _busy ? null : _purchase,
-                            child: Text(
-                                '成團！以 \$${s.currentPrice.toStringAsFixed(2)} 下單拿套餐'),
-                          ),
-                        ),
-                      ],
-                      if (s.refunds.isNotEmpty) ...[
-                        const SizedBox(height: 16),
-                        const Text('退款',
-                            style:
-                                TextStyle(fontWeight: FontWeight.bold)),
-                        ...s.refunds.map((r) => Card(
-                              margin: const EdgeInsets.only(top: 8),
-                              child: ListTile(
-                                leading: const Icon(Icons.replay,
-                                    color: CgColors.primary),
-                                title: Text(
-                                    '${r.reasonText} · \$${r.amount.toStringAsFixed(2)}'),
-                                subtitle: Text(r.note.isNotEmpty
-                                    ? r.note
-                                    : '原路返回，1–3 個工作日'),
-                              ),
-                            )),
-                      ],
-                      const SizedBox(height: 16),
-                      const Text('助力記錄',
-                          style: TextStyle(fontWeight: FontWeight.bold)),
-                      if (s.helps.isEmpty)
-                        const Padding(
-                          padding: EdgeInsets.only(top: 8),
-                          child: Text('還沒有好友助力，快分享出去吧。'),
-                        ),
-                      ...s.helps.map((hp) => ListTile(
-                            leading: const Icon(Icons.person,
-                                color: CgColors.primary),
-                            title: Text(hp.helperName),
-                            subtitle: hp.isNewUser
-                                ? const Text('新用戶助力（加成）')
-                                : null,
-                            trailing: Text(
-                                '−\$${hp.cutAmount.toStringAsFixed(2)}',
-                                style: const TextStyle(
-                                    color: CgColors.primary,
-                                    fontWeight: FontWeight.bold)),
-                          )),
-                      const SizedBox(height: 8),
-                      const Text(
-                          '每人每單限助一次；新用戶（註冊 7 天內）助力砍得更多。未成團 / 超時全額原路退款，不扣手續費。',
-                          style:
-                              TextStyle(color: Colors.grey, fontSize: 12)),
-                    ],
+      body: RefreshIndicator(
+        onRefresh: _load,
+        child: ListView(
+          padding: const EdgeInsets.all(16),
+          children: [
+            // 发起人（好友助力页可见）
+            if (s.initiatorName.isNotEmpty)
+              Row(
+                children: [
+                  _Avatar(
+                      name: s.initiatorName, avatar: s.initiatorAvatar),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text('${s.initiatorName} 邀请你帮 TA 砍一刀',
+                        style: const TextStyle(fontWeight: FontWeight.w600)),
+                  ),
+                ],
+              ),
+            if (s.initiatorName.isNotEmpty) const SizedBox(height: 12),
+            Text(s.campaign?.name ?? '砍價',
+                style: const TextStyle(
+                    fontWeight: FontWeight.bold, fontSize: 20)),
+            const SizedBox(height: 4),
+            Text(
+                '${s.campaign?.shopName ?? ''} · ${s.campaign?.personCount ?? 2} 人餐'),
+            const SizedBox(height: 16),
+            // 价格 + 进度（原价 → 底价；已砍多少、还差多少取接口字段）
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                Text(formatHkd(s.currentPrice),
+                    style: const TextStyle(
+                        color: CgColors.primary,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 32,
+                        fontFeatures: [FontFeature.tabularFigures()])),
+                const SizedBox(width: 8),
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 6),
+                  child: Text(
+                    '原价 ${formatHkd(s.originalPrice)} · 底价 ${formatHkd(s.floorPrice)}',
+                    style: const TextStyle(color: Colors.grey),
                   ),
                 ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(4),
+              child: LinearProgressIndicator(
+                  value: s.cutProgress,
+                  minHeight: 8,
+                  backgroundColor: Colors.grey.shade300,
+                  color: CgColors.primary),
+            ),
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                Text('已砍 ${formatHkd(s.cutTotal)}',
+                    style: const TextStyle(fontWeight: FontWeight.bold)),
+                const SizedBox(width: 12),
+                Text('还差 ${formatHkd(s.remainingToFloor)} 到底价',
+                    style: const TextStyle(color: CgColors.textSecondary)),
+                const Spacer(),
+                Text('${s.helperCount}/${s.helperLimit} 人助力'),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                Chip(label: Text(s.statusText)),
+                const SizedBox(width: 8),
+                if (active && _secondsLeft > 0)
+                  Text('倒计时 ${formatCountdown(Duration(seconds: _secondsLeft))}',
+                      style: const TextStyle(color: Colors.grey)),
+                if (s.stockLocked && active)
+                  const Padding(
+                    padding: EdgeInsets.only(left: 8),
+                    child: Text('已为你锁定 1 份库存',
+                        style: TextStyle(color: Colors.grey)),
+                  ),
+              ],
+            ),
+            // 终态
+            if (success) ...[
+              const SizedBox(height: 16),
+              _TerminalCard(
+                icon: Icons.check_circle,
+                title: '已购买，套餐券在钱包',
+                lines: [
+                  if (s.refunds.isNotEmpty)
+                    ...s.refunds.map((r) => '${r.reasonText} ${formatHkd(r.amount)}'),
+                  '预计到账：1–3 个工作日原路退回',
+                ],
+              ),
+            ],
+            if (ended) ...[
+              const SizedBox(height: 16),
+              _TerminalCard(
+                icon: Icons.info_outline,
+                title: '砍价已结束，已全额退款 ${formatHkd(s.refundTotal)}',
+                lines: const ['预计到账：1–3 个工作日原路退回'],
+              ),
+              const SizedBox(height: 16),
+              SizedBox(
+                width: double.infinity,
+                height: 48,
+                child: OutlinedButton(
+                  onPressed: _openOtherBargains,
+                  child: const Text('去看看其他砍价'),
+                ),
+              ),
+            ],
+            if (active) ...[
+              const SizedBox(height: 16),
+              // 发起人：分享为主；好友：帮忙砍一刀为主；归属未知时两者都显示。
+              if (isOwner != false)
+                SizedBox(
+                  width: double.infinity,
+                  height: 48,
+                  child: ElevatedButton.icon(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: CgColors.orange,
+                      foregroundColor: Colors.white,
+                    ),
+                    onPressed: _share,
+                    icon: const Icon(Icons.share),
+                    label: const Text('分享给好友'),
+                  ),
+                ),
+              if (isOwner != true) ...[
+                if (isOwner != false) const SizedBox(height: 12),
+                SizedBox(
+                  width: double.infinity,
+                  height: 48,
+                  child: ElevatedButton.icon(
+                    onPressed: (s.alreadyHelped || _busy) ? null : _help,
+                    icon: const Icon(Icons.content_cut),
+                    label: Text(
+                        s.alreadyHelped ? '你已经帮 TA 砍过啦' : '帮 TA 砍一刀'),
+                  ),
+                ),
+                if (s.alreadyHelped)
+                  const Padding(
+                    padding: EdgeInsets.only(top: 8),
+                    child: Text('你已经帮 TA 砍过啦',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(color: CgColors.textSecondary)),
+                  ),
+              ],
+              if (s.canPurchase) ...[
+                const SizedBox(height: 12),
+                SizedBox(
+                  width: double.infinity,
+                  height: 48,
+                  child: OutlinedButton(
+                    onPressed: _busy ? null : _purchase,
+                    child: Text(
+                        '现在购买（以 ${formatHkd(s.currentPrice)} 结算）'),
+                  ),
+                ),
+              ],
+            ],
+            const SizedBox(height: 16),
+            const Text('助力记录',
+                style: TextStyle(fontWeight: FontWeight.bold)),
+            if (s.helps.isEmpty)
+              const Padding(
+                padding: EdgeInsets.only(top: 8),
+                child: Text('分享给好友，每人帮你砍一刀。'),
+              ),
+            ...s.helps.map((hp) => ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: _Avatar(name: hp.helperName, avatar: hp.avatar),
+                  title: Text(hp.helperName),
+                  subtitle: Text(
+                      '${hp.createdAt == null ? '' : formatDateTime(hp.createdAt)}${hp.isNewUser ? ' · 新用户助力' : ''}'),
+                  trailing: Text(
+                      '−${formatHkd(hp.cutAmount)}',
+                      style: const TextStyle(
+                          color: CgColors.primary,
+                          fontWeight: FontWeight.bold,
+                          fontFeatures: [FontFeature.tabularFigures()])),
+                )),
+            const SizedBox(height: 8),
+            const Text(
+                '每人每单限助一次；新用户（注册 7 天内）助力砍得更多。未成团 / 超时全额原路退款。',
+                style: TextStyle(color: Colors.grey, fontSize: 12)),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// 终态卡片：成功 / 已结束 + 退款明细。
+class _TerminalCard extends StatelessWidget {
+  const _TerminalCard(
+      {required this.icon, required this.title, required this.lines});
+
+  final IconData icon;
+  final String title;
+  final List<String> lines;
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(icon, color: CgColors.primary, size: 28),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(title,
+                      style: const TextStyle(
+                          fontWeight: FontWeight.bold, fontSize: 16)),
+                ),
+              ],
+            ),
+            ...lines.map((l) => Padding(
+                  padding: const EdgeInsets.only(top: 6),
+                  child: Text(l,
+                      style: const TextStyle(color: CgColors.textSecondary)),
+                )),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// 头像：有图用图，匿名用首字圆圈。
+class _Avatar extends StatelessWidget {
+  const _Avatar({required this.name, required this.avatar});
+
+  final String name;
+  final String avatar;
+
+  @override
+  Widget build(BuildContext context) {
+    final initial = name.trim().isEmpty ? '匿' : name.characters.first;
+    if (avatar.startsWith('http://') || avatar.startsWith('https://')) {
+      return CircleAvatar(
+        backgroundImage: NetworkImage(avatar),
+        onBackgroundImageError: (_, __) {},
+        child: Text(initial),
+      );
+    }
+    return CircleAvatar(
+      backgroundColor: CgColors.primary,
+      foregroundColor: Colors.white,
+      child: Text(initial),
+    );
+  }
+}
+
+/// 图片：服务端 http(s) 地址用网络图，其余用本地占位图。
+class _BargainImage extends StatelessWidget {
+  const _BargainImage({required this.url});
+
+  final String url;
+
+  @override
+  Widget build(BuildContext context) {
+    if (url.startsWith('http://') || url.startsWith('https://')) {
+      return Image.network(
+        url,
+        fit: BoxFit.cover,
+        width: double.infinity,
+        height: double.infinity,
+        errorBuilder: (_, __, ___) => Container(color: CgColors.pageBg),
+      );
+    }
+    return Image.asset(
+      'assets/images/dummy_image_1.png',
+      fit: BoxFit.cover,
+      width: double.infinity,
+      height: double.infinity,
+      errorBuilder: (_, __, ___) => Container(color: CgColors.pageBg),
     );
   }
 }
@@ -477,18 +1032,18 @@ class BargainResultScreen extends StatelessWidget {
             const Icon(Icons.check_circle,
                 color: CgColors.primary, size: 64),
             const SizedBox(height: 12),
-            Text('成團！以 \$${session.currentPrice.toStringAsFixed(2)} 拿下套餐',
+            Text('成團！以 ${formatHkd(session.currentPrice)} 拿下套餐',
                 style: const TextStyle(
                     fontWeight: FontWeight.bold, fontSize: 20)),
             const SizedBox(height: 8),
             Text(session.campaign?.name ?? ''),
             const SizedBox(height: 16),
-            Card(
+            const Card(
               child: ListTile(
                 leading:
-                    const Icon(Icons.card_giftcard, color: CgColors.primary),
-                title: const Text('套餐券已存入 Q Wallet'),
-                subtitle: const Text('到店出示 QR 碼即可核銷（與一般優惠券相同流程）。'),
+                    Icon(Icons.card_giftcard, color: CgColors.primary),
+                title: Text('套餐券已存入 Q Wallet'),
+                subtitle: Text('到店出示 QR 碼即可核銷（與一般優惠券相同流程）。'),
               ),
             ),
             if (refundAmount > 0)
@@ -496,7 +1051,7 @@ class BargainResultScreen extends StatelessWidget {
                 child: ListTile(
                   leading:
                       const Icon(Icons.replay, color: CgColors.primary),
-                  title: Text('已退差價 \$${refundAmount.toStringAsFixed(2)}'),
+                  title: Text('已退差價 ${formatHkd(refundAmount)}'),
                   subtitle: const Text('原路返回，1–3 個工作日。'),
                 ),
               ),
@@ -507,8 +1062,90 @@ class BargainResultScreen extends StatelessWidget {
               child: ElevatedButton(
                 onPressed: () =>
                     Navigator.of(context).popUntil((r) => r.isFirst),
-                child: const Text('返回（到 Q Wallet 查看套餐券）'),
+                child: const Text('返回钱包查看套餐券'),
               ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// 加载态：骨架屏，不用转圈。
+class _LoadingList extends StatelessWidget {
+  const _LoadingList();
+
+  @override
+  Widget build(BuildContext context) {
+    return ListView(
+      padding: const EdgeInsets.all(12),
+      children: const [
+        SkeletonBox(height: 72),
+        SizedBox(height: 12),
+        SkeletonBox(height: 72),
+        SizedBox(height: 12),
+        SkeletonBox(height: 72),
+      ],
+    );
+  }
+}
+
+/// 空态：一句话 + 一个动作按钮。
+class _EmptyView extends StatelessWidget {
+  const _EmptyView(
+      {required this.message, required this.actionLabel, required this.onAction});
+
+  final String message;
+  final String actionLabel;
+  final VoidCallback onAction;
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(message, textAlign: TextAlign.center),
+            const SizedBox(height: 16),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                  minimumSize: const Size(160, 48)),
+              onPressed: onAction,
+              child: Text(actionLabel),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// 错误态：一句话 + 重试。
+class _ErrorView extends StatelessWidget {
+  const _ErrorView({required this.onRetry});
+
+  final VoidCallback onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.wifi_off, size: 48, color: CgColors.textSecondary),
+            const SizedBox(height: 12),
+            const Text('网络不稳定，请重试', textAlign: TextAlign.center),
+            const SizedBox(height: 16),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                  minimumSize: const Size(160, 48)),
+              onPressed: onRetry,
+              child: const Text('重試'),
             ),
           ],
         ),

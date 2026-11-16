@@ -4,10 +4,14 @@ import '../api_client.dart';
 import '../models.dart';
 import '../theme.dart';
 import '../widgets/widgets.dart';
+import 'bargain.dart';
+import 'packages.dart';
 import 'reviews_admin.dart';
 
-/// Home: red header + search bar, 4 categories, banner, 7 sections
-/// (熱門優惠券 → 最多人搶 → 限時搶購 → 本週精選 → 為你推薦 → 常用商戶 → 新加入商戶).
+/// Home (UI_SPEC §2): search bar + area chips, category strip,
+/// flash-bargain horizontal cards, hot-package 2-col grid, nearby
+/// coupon list with distance. Guest browsing needs no login; buying /
+/// helping asks for login on the target page, then returns.
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key, required this.api, required this.onOpenCoupon,
     required this.onOpenShop, required this.onOpenSearch, required this.onOpenLimited});
@@ -24,7 +28,12 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   Map<String, dynamic>? _home;
+  List<Package> _packages = [];
+  List<BargainCampaign> _campaigns = [];
+  List<Coupon> _areaCoupons = [];
   String _area = '全部地區';
+  bool _loading = true;
+  bool _error = false;
 
   @override
   void initState() {
@@ -33,39 +42,89 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _load() async {
+    if (mounted) setState(() => _loading = true);
     try {
       final data = await widget.api.home();
-      if (mounted) setState(() => _home = data);
-    } on ApiException catch (e) {
-      if (mounted) showCgToast(context, e.message);
+      // Packages + bargain campaigns are best-effort: a failure here
+      // must not blank the whole home page.
+      var packages = <Package>[];
+      var campaigns = <BargainCampaign>[];
+      try {
+        packages = (await widget.api.packages())
+            .map((e) => Package.fromJson(e as Map<String, dynamic>))
+            .toList();
+      } on ApiException {
+        packages = <Package>[];
+      }
+      try {
+        campaigns = (await widget.api.bargainCampaigns())
+            .map((e) => BargainCampaign.fromJson(e as Map<String, dynamic>))
+            .toList();
+      } on ApiException {
+        campaigns = <BargainCampaign>[];
+      }
+      if (!mounted) return;
+      setState(() {
+        _home = data;
+        _packages = packages;
+        _campaigns = campaigns;
+        _loading = false;
+        _error = false;
+      });
+      _loadAreaCoupons();
+    } on ApiException catch (_) {
+      if (mounted) {
+        setState(() {
+          _loading = false;
+          _error = true;
+        });
+      }
+    }
+  }
+
+  Future<void> _loadAreaCoupons() async {
+    try {
+      final list = _area == '全部地區'
+          ? _coupons('popular_coupons')
+          : (await widget.api.classification(area: _area))
+              .map((e) => Coupon.fromJson(e as Map<String, dynamic>))
+              .toList();
+      if (mounted) setState(() => _areaCoupons = list);
+    } on ApiException {
+      // Keep the previous list; area filtering must not blank the page.
     }
   }
 
   List<Coupon> _coupons(String key) =>
       ((_home?[key] as List?) ?? []).map((e) => Coupon.fromJson(e)).toList();
-  List<Shop> _shops(String key) =>
-      ((_home?[key] as List?) ?? []).map((e) => Shop.fromJson(e)).toList();
 
-  Future<void> _claim(Coupon c) async {
-    try {
-      await widget.api.claimCoupon(c.id);
-      if (!mounted) return;
-      showCgToast(context, '已存入 Q Wallet（+10 分）');
-      _load();
-    } on ApiException catch (e) {
-      if (mounted) showCgToast(context, e.message);
-    }
+  void _openBargainList() {
+    Navigator.of(context).push(MaterialPageRoute(
+        builder: (_) => BargainListScreen(api: widget.api)));
+  }
+
+  void _openPackageList() {
+    Navigator.of(context).push(MaterialPageRoute(
+        builder: (_) => PackageListScreen(api: widget.api)));
+  }
+
+  void _openPackage(Package p) {
+    Navigator.of(context).push(MaterialPageRoute(
+        builder: (_) => PackageDetailScreen(api: widget.api, packageId: p.id)));
+  }
+
+  void _openCampaign(BargainCampaign c) {
+    Navigator.of(context).push(MaterialPageRoute(
+        builder: (_) => BargainCampaignScreen(api: widget.api, campaign: c)));
   }
 
   @override
   Widget build(BuildContext context) {
-    final popular = _coupons('popular_coupons');
-    final mostGrab = _coupons('most_grab');
-    final limited = _coupons('limited_time_coupons');
-    final week = _coupons('week_coupons');
-    final recommended = _coupons('recommended');
-    final shops = _shops('popular_merchants');
     final categories = (_home?['categories'] as List?) ?? [];
+    // 进行中的砍价活动（未售罄），最多 6 张；无活动时整块不显示。
+    final activeCampaigns =
+        _campaigns.where((c) => c.status == 'active' && !c.isSoldOut).take(6).toList();
+    final nearby = _areaCoupons;
     return RefreshIndicator(
       onRefresh: _load,
       child: CustomScrollView(
@@ -77,7 +136,7 @@ class _HomeScreenState extends State<HomeScreen> {
               mainAxisSize: MainAxisSize.min,
               children: [
                 Image.asset('assets/images/img_logo.png', height: 32,
-                    errorBuilder: (_, _, _) => const SizedBox()),
+                    errorBuilder: (_, __, ___) => const SizedBox()),
                 const SizedBox(width: 8),
                 const Text('COUPON GO!',
                     style: TextStyle(fontWeight: FontWeight.bold)),
@@ -86,6 +145,7 @@ class _HomeScreenState extends State<HomeScreen> {
             actions: [
               IconButton(
                 icon: const Icon(Icons.notifications_outlined),
+                tooltip: '通知',
                 onPressed: () => Navigator.of(context).pushNamed('/notifications'),
               ),
             ],
@@ -93,29 +153,33 @@ class _HomeScreenState extends State<HomeScreen> {
               preferredSize: const Size.fromHeight(56),
               child: Padding(
                 padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
-                child: GestureDetector(
-                  onTap: widget.onOpenSearch,
-                  child: Container(
-                    height: 44,
-                    padding: const EdgeInsets.symmetric(horizontal: 14),
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(22),
-                    ),
-                    child: const Row(
-                      children: [
-                        Icon(Icons.search, color: CgColors.textSecondary),
-                        SizedBox(width: 8),
-                        Text('搜尋商店和優惠',
-                            style: TextStyle(color: CgColors.textSecondary)),
-                      ],
+                child: Semantics(
+                  button: true,
+                  label: '搜索商户或优惠',
+                  child: GestureDetector(
+                    onTap: widget.onOpenSearch,
+                    child: Container(
+                      height: 44,
+                      padding: const EdgeInsets.symmetric(horizontal: 14),
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(22),
+                      ),
+                      child: const Row(
+                        children: [
+                          Icon(Icons.search, color: CgColors.textSecondary),
+                          SizedBox(width: 8),
+                          Text('搜索商户或优惠',
+                              style: TextStyle(color: CgColors.textSecondary)),
+                        ],
+                      ),
                     ),
                   ),
                 ),
               ),
             ),
           ),
-          if (_home == null)
+          if (_loading)
             const SliverFillRemaining(
               child: Padding(
                 padding: EdgeInsets.all(16),
@@ -128,91 +192,36 @@ class _HomeScreenState extends State<HomeScreen> {
                 ]),
               ),
             )
+          else if (_error)
+            SliverFillRemaining(
+              child: Center(
+                child: Padding(
+                  padding: const EdgeInsets.all(24),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(Icons.wifi_off,
+                          size: 48, color: CgColors.textSecondary),
+                      const SizedBox(height: 12),
+                      const Text('网络不稳定，请重试', textAlign: TextAlign.center),
+                      const SizedBox(height: 16),
+                      ElevatedButton(
+                        style: ElevatedButton.styleFrom(
+                            minimumSize: const Size(160, 48)),
+                        onPressed: _load,
+                        child: const Text('重试'),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            )
           else ...[
             SliverToBoxAdapter(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  // categories
-                  SizedBox(
-                    height: 92,
-                    child: ListView.builder(
-                      scrollDirection: Axis.horizontal,
-                      padding: const EdgeInsets.symmetric(horizontal: 12),
-                      itemCount: categories.length,
-                      itemBuilder: (_, i) {
-                        final cat = categories[i] as Map;
-                        return Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 10),
-                          child: GestureDetector(
-                            onTap: () => Navigator.of(context).pushNamed(
-                                '/category',
-                                arguments: cat['id'] as int),
-                            child: Column(
-                              children: [
-                                CircleAvatar(
-                                  radius: 26,
-                                  backgroundColor: Colors.white,
-                                  child: Text(
-                                    (cat['name'] as String).characters.first,
-                                    style: const TextStyle(
-                                        color: CgColors.primary,
-                                        fontWeight: FontWeight.bold),
-                                  ),
-                                ),
-                                const SizedBox(height: 4),
-                                Text(cat['name'] as String,
-                                    style: const TextStyle(fontSize: 12)),
-                              ],
-                            ),
-                          ),
-                        );
-                      },
-                    ),
-                  ),
-                  // line A: nearby shops entry (list + marker view + navigation)
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(16, 4, 16, 0),
-                    child: SizedBox(
-                      width: double.infinity,
-                      child: OutlinedButton.icon(
-                        onPressed: () =>
-                            Navigator.of(context).pushNamed('/nearby'),
-                        icon: const Icon(Icons.near_me),
-                        label: const Text('附近商户 · 按距離排序'),
-                      ),
-                    ),
-                  ),
-                  // banner
-                  Container(
-                    margin: const EdgeInsets.symmetric(horizontal: 16),
-                    height: 120,
-                    decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(12),
-                      image: const DecorationImage(
-                        image: AssetImage('assets/images/bg_main.png'),
-                        fit: BoxFit.cover,
-                      ),
-                      color: CgColors.primary,
-                    ),
-                    child: const Padding(
-                      padding: EdgeInsets.all(16),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Text('全新優惠券平台',
-                              style: TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 20,
-                                  fontWeight: FontWeight.bold)),
-                          Text('一齊攞盡 Coupon 著數',
-                              style: TextStyle(color: Colors.white)),
-                        ],
-                      ),
-                    ),
-                  ),
-                  // area filter
+                  // 定位城市 / 区域芯片
                   Padding(
                     padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
                     child: Wrap(
@@ -225,26 +234,173 @@ class _HomeScreenState extends State<HomeScreen> {
                           selectedColor: CgColors.primary,
                           labelStyle: TextStyle(
                               color: selected ? Colors.white : CgColors.textPrimary),
-                          onSelected: (_) => setState(() => _area = a),
+                          onSelected: (_) {
+                            setState(() => _area = a);
+                            _loadAreaCoupons();
+                          },
                         );
                       }).toList(),
                     ),
                   ),
-                  SectionHeader(title: '熱門優惠券', onViewAll: () {}),
-                  _couponGrid(popular),
-                  SectionHeader(title: '最多人搶', onViewAll: () {}),
-                  _couponRow(mostGrab),
-                  SectionHeader(
-                      title: '限時搶購', onViewAll: widget.onOpenLimited),
-                  _couponRow(limited),
-                  SectionHeader(title: '本週精選', onViewAll: () {}),
-                  _couponGrid(week),
-                  SectionHeader(title: '為你推薦', onViewAll: () {}),
-                  _couponRow(recommended),
-                  const SectionHeader(title: '常用商戶'),
-                  _shopRow(shops),
-                  const SectionHeader(title: '新加入商戶'),
-                  _shopRow(shops),
+                  // 分类横滑（沿用现有数据）
+                  SizedBox(
+                    height: 92,
+                    child: ListView.builder(
+                      scrollDirection: Axis.horizontal,
+                      padding: const EdgeInsets.symmetric(horizontal: 12),
+                      itemCount: categories.length,
+                      itemBuilder: (_, i) {
+                        final cat = categories[i] as Map;
+                        return Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 10),
+                          child: Semantics(
+                            button: true,
+                            label: cat['name'] as String,
+                            child: GestureDetector(
+                              onTap: () => Navigator.of(context).pushNamed(
+                                  '/category',
+                                  arguments: cat['id'] as int),
+                              child: Column(
+                                children: [
+                                  CircleAvatar(
+                                    radius: 26,
+                                    backgroundColor: Colors.white,
+                                    child: Text(
+                                      (cat['name'] as String).characters.first,
+                                      style: const TextStyle(
+                                          color: CgColors.primary,
+                                          fontWeight: FontWeight.bold),
+                                    ),
+                                  ),
+                                  const SizedBox(height: 4),
+                                  Text(cat['name'] as String,
+                                      style: const TextStyle(fontSize: 12)),
+                                ],
+                              ),
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+                  // 附近商户入口（按距離排序）
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 4, 16, 0),
+                    child: SizedBox(
+                      width: double.infinity,
+                      child: OutlinedButton.icon(
+                        onPressed: () =>
+                            Navigator.of(context).pushNamed('/nearby'),
+                        icon: const Icon(Icons.near_me),
+                        label: const Text('附近商户 · 按距離排序'),
+                      ),
+                    ),
+                  ),
+                  // 限时砍价：无进行中活动时整块不显示
+                  if (activeCampaigns.isNotEmpty) ...[
+                    SectionHeader(title: '限时砍价', onViewAll: _openBargainList),
+                    SizedBox(
+                      height: 216,
+                      child: ListView.builder(
+                        scrollDirection: Axis.horizontal,
+                        padding: const EdgeInsets.symmetric(horizontal: 12),
+                        itemCount: activeCampaigns.length + 1,
+                        itemBuilder: (_, i) {
+                          if (i == activeCampaigns.length) {
+                            return Padding(
+                              padding: const EdgeInsets.only(right: 8),
+                              child: SizedBox(
+                                width: 96,
+                                height: 200,
+                                child: Card(
+                                  child: InkWell(
+                                    onTap: _openBargainList,
+                                    child: const Column(
+                                      mainAxisAlignment: MainAxisAlignment.center,
+                                      children: [
+                                        Icon(Icons.chevron_right,
+                                            color: CgColors.primary, size: 32),
+                                        SizedBox(height: 4),
+                                        Text('查看全部',
+                                            style: TextStyle(
+                                                color: CgColors.primary,
+                                                fontWeight: FontWeight.bold)),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            );
+                          }
+                          return Padding(
+                            padding: const EdgeInsets.only(right: 8),
+                            child: _BargainHomeCard(
+                              campaign: activeCampaigns[i],
+                              onTap: () => _openCampaign(activeCampaigns[i]),
+                            ),
+                          );
+                        },
+                      ),
+                    ),
+                  ],
+                  // 热门套餐：2 列网格
+                  SectionHeader(title: '热门套餐', onViewAll: _openPackageList),
+                  if (_packages.isEmpty)
+                    const Padding(
+                      padding: EdgeInsets.symmetric(horizontal: 16),
+                      child: Text('暂时没有热门套餐。',
+                          style: TextStyle(color: CgColors.textSecondary)),
+                    )
+                  else
+                    GridView.builder(
+                      shrinkWrap: true,
+                      physics: const NeverScrollableScrollPhysics(),
+                      padding: const EdgeInsets.symmetric(horizontal: 12),
+                      gridDelegate:
+                          const SliverGridDelegateWithFixedCrossAxisCount(
+                        crossAxisCount: 2,
+                        childAspectRatio: 0.62,
+                        crossAxisSpacing: 8,
+                        mainAxisSpacing: 8,
+                      ),
+                      itemCount: _packages.length,
+                      itemBuilder: (_, i) => _PackageHomeCard(
+                        package: _packages[i],
+                        onTap: () => _openPackage(_packages[i]),
+                      ),
+                    ),
+                  // 附近优惠：纵向列表（沿用领券卡片，右下加距离）
+                  const SectionHeader(title: '附近优惠'),
+                  if (nearby.isEmpty)
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 16),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text('附近暂时没有优惠。',
+                              style:
+                                  TextStyle(color: CgColors.textSecondary)),
+                          const SizedBox(height: 12),
+                          OutlinedButton(
+                            style: OutlinedButton.styleFrom(
+                                minimumSize: const Size(160, 48)),
+                            onPressed: _load,
+                            child: const Text('重新整理'),
+                          ),
+                        ],
+                      ),
+                    )
+                  else
+                    ListView.builder(
+                      shrinkWrap: true,
+                      physics: const NeverScrollableScrollPhysics(),
+                      padding: const EdgeInsets.symmetric(horizontal: 12),
+                      itemCount: nearby.length,
+                      itemBuilder: (_, i) => _NearbyCouponRow(
+                        coupon: nearby[i],
+                        onTap: () => widget.onOpenCoupon(nearby[i]),
+                      ),
+                    ),
                   const SizedBox(height: 24),
                 ],
               ),
@@ -254,113 +410,315 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
     );
   }
+}
 
-  Widget _couponGrid(List<Coupon> list) {
-    if (list.isEmpty) return const SizedBox();
-    return GridView.builder(
-      shrinkWrap: true,
-      physics: const NeverScrollableScrollPhysics(),
-      padding: const EdgeInsets.symmetric(horizontal: 12),
-      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: 2,
-        childAspectRatio: 0.78,
-        crossAxisSpacing: 8,
-        mainAxisSpacing: 8,
-      ),
-      itemCount: list.length,
-      itemBuilder: (_, i) => CouponCard(
-        coupon: list[i],
-        onTap: () => widget.onOpenCoupon(list[i]),
-        onFavorite: () => _toggleFavCoupon(list[i]),
-        // claim via long-press on the card CTA is handled in detail page;
-        // tapping the card opens details.
-      ),
-    );
-  }
+/// 首页砍价卡片 160×200：商户图、套餐名、当前价（大）、底价（小，灰）、
+/// 剩余时间、「去砍价」（强调色实心）。
+class _BargainHomeCard extends StatelessWidget {
+  const _BargainHomeCard({required this.campaign, required this.onTap});
 
-  Widget _couponRow(List<Coupon> list) {
-    if (list.isEmpty) return const SizedBox();
+  final BargainCampaign campaign;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final timeLeft = campaign.timeLeft;
     return SizedBox(
-      height: 250,
-      child: ListView.builder(
-        scrollDirection: Axis.horizontal,
-        padding: const EdgeInsets.symmetric(horizontal: 12),
-        itemCount: list.length,
-        itemBuilder: (_, i) => SizedBox(
-          width: 180,
-          child: Padding(
-            padding: const EdgeInsets.only(right: 8),
-            child: CouponCard(
-              coupon: list[i],
-              onTap: () => widget.onOpenCoupon(list[i]),
-              onFavorite: () => _toggleFavCoupon(list[i]),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _shopRow(List<Shop> list) {
-    if (list.isEmpty) return const SizedBox();
-    return SizedBox(
-      height: 150,
-      child: ListView.builder(
-        scrollDirection: Axis.horizontal,
-        padding: const EdgeInsets.symmetric(horizontal: 12),
-        itemCount: list.length,
-        itemBuilder: (_, i) {
-          final s = list[i];
-          return SizedBox(
-            width: 160,
-            child: Card(
-              clipBehavior: Clip.antiAlias,
-              child: InkWell(
-                onTap: () => widget.onOpenShop(s),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+      width: 160,
+      height: 200,
+      child: Card(
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          onTap: onTap,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              SizedBox(
+                height: 88,
+                width: double.infinity,
+                child: _HomeImage(url: campaign.image),
+              ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(8, 6, 8, 0),
+                child: Text(
+                  campaign.name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                      fontWeight: FontWeight.w600, fontSize: 13),
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(8, 2, 8, 0),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.end,
                   children: [
-                    Expanded(
-                      child: Image.asset(
-                        'assets/images/dummy_image_1.png',
-                        fit: BoxFit.cover,
-                        width: double.infinity,
-                        errorBuilder: (_, _, _) =>
-                            Container(color: CgColors.pageBg),
-                      ),
+                    Text(
+                      formatHkd(campaign.originalPrice),
+                      style: const TextStyle(
+                          color: CgColors.primary,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 16,
+                          fontFeatures: [FontFeature.tabularFigures()]),
                     ),
-                    Padding(
-                      padding: const EdgeInsets.all(8),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(s.name,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(fontWeight: FontWeight.w600)),
-                          Text(s.areaName,
-                              style: const TextStyle(
-                                  color: CgColors.textSecondary, fontSize: 12)),
-                        ],
+                    const SizedBox(width: 4),
+                    Flexible(
+                      child: Text(
+                        '底价 ${formatHkd(campaign.floorPrice)}',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                            color: CgColors.textSecondary, fontSize: 11),
                       ),
                     ),
                   ],
                 ),
               ),
-            ),
-          );
-        },
+              Padding(
+                padding: const EdgeInsets.fromLTRB(8, 2, 8, 0),
+                child: Text(
+                  timeLeft == null
+                      ? '已有 ${campaign.helperCount} 人在砍'
+                      : '剩 ${formatCountdown(timeLeft)}',
+                  style: const TextStyle(
+                      color: CgColors.textSecondary, fontSize: 11),
+                ),
+              ),
+              const Spacer(),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
+                child: SizedBox(
+                  width: double.infinity,
+                  height: 44,
+                  child: ElevatedButton(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: CgColors.orange,
+                      foregroundColor: Colors.white,
+                      padding: EdgeInsets.zero,
+                      textStyle: const TextStyle(fontSize: 14),
+                    ),
+                    onPressed: onTap,
+                    child: const Text('去砍价'),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
+}
 
-  Future<void> _toggleFavCoupon(Coupon c) async {
-    try {
-      await widget.api.toggleFavoriteCoupon(c.id);
-      _load();
-    } on ApiException catch (e) {
-      if (mounted) showCgToast(context, e.message);
+/// 首页热门套餐卡片：图、名称、套餐价、原价划线、已售数、「立即抢购」。
+class _PackageHomeCard extends StatelessWidget {
+  const _PackageHomeCard({required this.package, required this.onTap});
+
+  final Package package;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: onTap,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            AspectRatio(
+              aspectRatio: 16 / 9,
+              child: _HomeImage(url: package.image),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(10, 8, 10, 0),
+              child: Text(
+                package.name,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(10, 4, 10, 0),
+              child: Row(
+                children: [
+                  Text(
+                    formatHkd(package.packagePrice),
+                    style: const TextStyle(
+                        color: CgColors.primary,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 16,
+                        fontFeatures: [FontFeature.tabularFigures()]),
+                  ),
+                  const SizedBox(width: 6),
+                  Flexible(
+                    child: Text(
+                      formatHkd(package.originalPrice),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                          color: CgColors.textSecondary,
+                          fontSize: 12,
+                          decoration: TextDecoration.lineThrough),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(10, 2, 10, 0),
+              child: Text(
+                '已售 ${package.soldCount}',
+                style: const TextStyle(
+                    color: CgColors.textSecondary, fontSize: 12),
+              ),
+            ),
+            const Spacer(),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(10, 0, 10, 10),
+              child: SizedBox(
+                width: double.infinity,
+                height: 44,
+                child: ElevatedButton(
+                  style: ElevatedButton.styleFrom(padding: EdgeInsets.zero),
+                  onPressed: onTap,
+                  child: const Text('立即抢购'),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// 附近优惠行：沿用领券卡片信息（图、名称、商户、优惠），右下加距离，
+/// 「领取」为描边按钮。
+class _NearbyCouponRow extends StatelessWidget {
+  const _NearbyCouponRow({required this.coupon, required this.onTap});
+
+  final Coupon coupon;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      margin: const EdgeInsets.only(bottom: 8),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              ClipRRect(
+                borderRadius: BorderRadius.circular(8),
+                child: SizedBox(
+                  width: 88,
+                  height: 88,
+                  child: _HomeImage(url: coupon.image),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      coupon.name,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(fontWeight: FontWeight.w600),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      coupon.shopName,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                          color: CgColors.textSecondary, fontSize: 12),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      coupon.amountText,
+                      style: const TextStyle(
+                          color: CgColors.primary,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 16),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 8),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  SizedBox(
+                    height: 44,
+                    child: OutlinedButton(
+                      style: OutlinedButton.styleFrom(
+                        side: const BorderSide(color: CgColors.primary),
+                        foregroundColor: CgColors.primary,
+                        padding:
+                            const EdgeInsets.symmetric(horizontal: 16),
+                      ),
+                      onPressed: onTap,
+                      child: const Text('领取'),
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  if (coupon.distanceText.isNotEmpty)
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Icon(Icons.near_me,
+                            size: 12, color: CgColors.textSecondary),
+                        const SizedBox(width: 2),
+                        Text(
+                          coupon.distanceText,
+                          style: const TextStyle(
+                              color: CgColors.textSecondary, fontSize: 12),
+                        ),
+                      ],
+                    ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// 图片：服务端 http(s) 地址用网络图，其余用本地占位图。
+class _HomeImage extends StatelessWidget {
+  const _HomeImage({required this.url});
+
+  final String url;
+
+  @override
+  Widget build(BuildContext context) {
+    if (url.startsWith('http://') || url.startsWith('https://')) {
+      return Image.network(
+        url,
+        fit: BoxFit.cover,
+        width: double.infinity,
+        height: double.infinity,
+        errorBuilder: (_, __, ___) =>
+            Container(color: CgColors.pageBg),
+      );
     }
+    return Image.asset(
+      'assets/images/dummy_image_1.png',
+      fit: BoxFit.cover,
+      width: double.infinity,
+      height: double.infinity,
+      errorBuilder: (_, __, ___) => Container(color: CgColors.pageBg),
+    );
   }
 }
 
@@ -402,7 +760,7 @@ class _SearchScreenState extends State<SearchScreen> {
           controller: _ctrl,
           autofocus: true,
           decoration: const InputDecoration(
-            hintText: '搜尋商店和優惠',
+            hintText: '搜索商户或优惠',
             border: InputBorder.none,
             prefixIcon: Icon(Icons.search),
           ),
@@ -494,7 +852,7 @@ class _CouponDetailScreenState extends State<CouponDetailScreen> {
             borderRadius: BorderRadius.circular(12),
             child: Image.asset('assets/images/dummy_image_1.png',
                 height: 200, fit: BoxFit.cover,
-                errorBuilder: (_, _, _) => Container(
+                errorBuilder: (_, __, ___) => Container(
                     height: 200, color: CgColors.pageBg)),
           ),
           const SizedBox(height: 16),
@@ -587,7 +945,7 @@ class ShopDetailScreen extends StatelessWidget {
                 borderRadius: BorderRadius.circular(12),
                 child: Image.asset('assets/images/dummy_image_1.png',
                     height: 200, fit: BoxFit.cover,
-                    errorBuilder: (_, _, _) => Container(
+                    errorBuilder: (_, __, ___) => Container(
                         height: 200, color: CgColors.pageBg)),
               ),
               const SizedBox(height: 12),

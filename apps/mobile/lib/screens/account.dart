@@ -29,6 +29,8 @@ class _WalletScreenState extends State<WalletScreen>
   double _cashbackWithdrawable = 0;
   double _cashbackPending = 0;
   List<WalletItem> _items = [];
+  bool _loading = false;
+  String? _error;
 
   @override
   void initState() {
@@ -46,6 +48,10 @@ class _WalletScreenState extends State<WalletScreen>
   }
 
   Future<void> _load() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
     try {
       final points = await widget.api.points();
       final wallet = await widget.api.wallet(status: _tab.index + 1);
@@ -60,9 +66,15 @@ class _WalletScreenState extends State<WalletScreen>
         _items = (wallet['items'] as List)
             .map((e) => WalletItem.fromJson(e))
             .toList();
+        _loading = false;
       });
-    } on ApiException catch (e) {
-      if (mounted) showCgToast(context, e.message);
+    } on ApiException catch (_) {
+      if (mounted) {
+        setState(() {
+          _error = '网络不稳定，请重试';
+          _loading = false;
+        });
+      }
     }
   }
 
@@ -105,15 +117,22 @@ class _WalletScreenState extends State<WalletScreen>
                         children: [
                           const Text('返現（可提現）',
                               style: TextStyle(color: Colors.white70)),
-                          Text('HK\$${_cashbackWithdrawable.toStringAsFixed(2)}',
+                          Text(formatHkd(_cashbackWithdrawable),
                               style: const TextStyle(
                                   color: Colors.white,
                                   fontSize: 22,
-                                  fontWeight: FontWeight.bold)),
+                                  fontWeight: FontWeight.bold,
+                                  fontFeatures: [
+                                    FontFeature.tabularFigures()
+                                  ])),
                           Text(
-                              '待確認 HK\$${_cashbackPending.toStringAsFixed(2)}',
+                              '待確認 ${formatHkd(_cashbackPending)}',
                               style: const TextStyle(
-                                  color: Colors.white70, fontSize: 12)),
+                                  color: Colors.white70,
+                                  fontSize: 12,
+                                  fontFeatures: [
+                                    FontFeature.tabularFigures()
+                                  ])),
                         ],
                       ),
                     ),
@@ -133,99 +152,168 @@ class _WalletScreenState extends State<WalletScreen>
           ],
         ),
         Expanded(
-          child: RefreshIndicator(
-            onRefresh: _load,
-            child: _items.isEmpty
-                ? ListView(
-                    children: [
-                      const SizedBox(height: 60),
-                      Center(
-                        child: Column(
-                          children: [
-                            Image.asset(
-                              'assets/images/ic_notification_cat.png',
-                              height: 120,
-                              errorBuilder: (_, _, _) => const Icon(
-                                  Icons.inbox_outlined,
-                                  size: 64,
-                                  color: CgColors.textSecondary),
-                            ),
-                            const SizedBox(height: 12),
-                            const Text('暫時沒有優惠券，去首頁看看吧！'),
-                            const SizedBox(height: 12),
-                            ElevatedButton(
-                              onPressed: () {},
-                              child: const Text('去首頁領券'),
-                            ),
-                          ],
-                        ),
+          child: _loading
+              ? ListView(
+                  padding: const EdgeInsets.all(12),
+                  children: const [
+                    SkeletonBox(height: 84),
+                    SizedBox(height: 8),
+                    SkeletonBox(height: 84),
+                    SizedBox(height: 8),
+                    SkeletonBox(height: 84),
+                  ],
+                )
+              : _error != null
+                  ? Center(
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          const Text('网络不稳定，请重试'),
+                          const SizedBox(height: 12),
+                          ElevatedButton(
+                              onPressed: _load, child: const Text('重試')),
+                        ],
                       ),
-                    ],
-                  )
-                : ListView.builder(
-                    itemCount: _items.length,
-                    itemBuilder: (_, i) {
-                      final item = _items[i];
-                      return Card(
-                        margin: const EdgeInsets.fromLTRB(12, 8, 12, 0),
-                        child: ListTile(
-                          leading: const Icon(Icons.local_offer,
-                              color: CgColors.primary),
-                          title: Text(item.couponName),
-                          subtitle: Text(
-                              '${item.shopName} · ${item.statusText}'
-                              '${item.isPackage ? ' · 套餐券' : ''}'),
-                          trailing: item.status == 1
-                              ? Row(
-                                  mainAxisSize: MainAxisSize.min,
+                    )
+                  : RefreshIndicator(
+                      onRefresh: _load,
+                      child: _items.isEmpty
+                          ? ListView(
+                              children: [
+                                const SizedBox(height: 60),
+                                Center(
+                                  child: Column(
+                                    children: [
+                                      Image.asset(
+                                        'assets/images/ic_notification_cat.png',
+                                        height: 120,
+                                        errorBuilder: (_, __, ___) =>
+                                            const Icon(
+                                                Icons.inbox_outlined,
+                                                size: 64,
+                                                color:
+                                                    CgColors.textSecondary),
+                                      ),
+                                      const SizedBox(height: 12),
+                                      const Text('暫時沒有優惠券，去首頁看看吧！'),
+                                      const SizedBox(height: 12),
+                                      ElevatedButton(
+                                        onPressed: () => Navigator.of(context)
+                                            .pushNamed('/packages'),
+                                        child: const Text('去看看套餐'),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ],
+                            )
+                          : ListView.builder(
+                              itemCount: _items.length,
+                              itemBuilder: (_, i) {
+                                final item = _items[i];
+                                return Stack(
                                   children: [
-                                    if (item.canRefund)
-                                      TextButton(
-                                        onPressed: () async {
-                                          try {
-                                            await widget.api.refundOrder(
-                                                item.orderId!);
-                                            if (context.mounted) {
-                                              showCgToast(context,
-                                                  '退款成功，套餐券已作廢');
-                                            }
-                                            _load();
-                                          } on ApiException catch (e) {
-                                            if (context.mounted) {
-                                              showCgToast(context, e.message);
-                                            }
-                                          }
-                                        },
-                                        child: const Text('退款'),
+                                    Card(
+                                      margin: const EdgeInsets.fromLTRB(
+                                          12, 8, 12, 0),
+                                      child: ListTile(
+                                        leading: const Icon(Icons.local_offer,
+                                            color: CgColors.primary),
+                                        title: Text(item.couponName),
+                                        subtitle: Text(
+                                            '${item.shopName} · ${item.statusText}'
+                                            '${item.isPackage ? ' · 套餐券' : ''}'),
+                                        trailing: item.status == 1
+                                            ? Row(
+                                                mainAxisSize: MainAxisSize.min,
+                                                children: [
+                                                  if (item.canRefund)
+                                                    TextButton(
+                                                      onPressed: () async {
+                                                        try {
+                                                          await widget.api
+                                                              .refundOrder(item
+                                                                  .orderId!);
+                                                          if (context
+                                                              .mounted) {
+                                                            showCgToast(
+                                                                context,
+                                                                '退款成功，套餐券已作廢');
+                                                          }
+                                                          _load();
+                                                        } on ApiException catch (e) {
+                                                          if (context
+                                                              .mounted) {
+                                                            showCgToast(context,
+                                                                e.message);
+                                                          }
+                                                        }
+                                                      },
+                                                      child: const Text('退款'),
+                                                    ),
+                                                  ElevatedButton(
+                                                    onPressed: () => widget
+                                                        .onShowQr(item),
+                                                    style: ElevatedButton
+                                                        .styleFrom(
+                                                      minimumSize:
+                                                          const Size(72, 40),
+                                                    ),
+                                                    child: const Text('出示'),
+                                                  ),
+                                                ],
+                                              )
+                                            : item.status == 2 &&
+                                                    !item.reviewed
+                                                ? TextButton(
+                                                    onPressed: () async {
+                                                      final ok = await Navigator.of(
+                                                              context)
+                                                          .push<bool>(
+                                                              MaterialPageRoute(
+                                                                  builder: (_) =>
+                                                                      ReviewFormScreen(
+                                                                          api: widget
+                                                                              .api,
+                                                                          item:
+                                                                              item)));
+                                                      if (ok == true) _load();
+                                                    },
+                                                    child:
+                                                        const Text('去評價'),
+                                                  )
+                                                : null,
                                       ),
-                                    ElevatedButton(
-                                      onPressed: () => widget.onShowQr(item),
-                                      style: ElevatedButton.styleFrom(
-                                        minimumSize: const Size(72, 40),
-                                      ),
-                                      child: const Text('出示'),
                                     ),
+                                    // UI_SPEC §8: package voucher corner badge.
+                                    if (item.isPackage)
+                                      Positioned(
+                                        left: 12,
+                                        top: 8,
+                                        child: Container(
+                                          padding: const EdgeInsets.symmetric(
+                                              horizontal: 6, vertical: 2),
+                                          decoration: const BoxDecoration(
+                                            color: CgColors.primary,
+                                            borderRadius: BorderRadius.only(
+                                              topLeft: Radius.circular(12),
+                                              bottomRight:
+                                                  Radius.circular(8),
+                                            ),
+                                          ),
+                                          child: const Text('套餐',
+                                              style: TextStyle(
+                                                  color: Colors.white,
+                                                  fontSize: 11,
+                                                  fontWeight:
+                                                      FontWeight.bold)),
+                                        ),
+                                      ),
                                   ],
-                                )
-                              : item.status == 2 && !item.reviewed
-                                  ? TextButton(
-                                      onPressed: () async {
-                                        final ok = await Navigator.of(context)
-                                            .push<bool>(MaterialPageRoute(
-                                                builder: (_) =>
-                                                    ReviewFormScreen(
-                                                        api: widget.api,
-                                                        item: item)));
-                                        if (ok == true) _load();
-                                      },
-                                      child: const Text('寫評價'),
-                                    )
-                                  : null,
-                        ),
-                      );
-                    },
-                  ),
-          ),
+                                );
+                              },
+                            ),
+                    ),
         ),
       ],
     );
@@ -247,21 +335,52 @@ class _QrShowScreenState extends State<QrShowScreen> {
   String? _code;
   String? _payload;
   int _secondsLeft = 900;
+  int _totalSeconds = 900;
   Timer? _timer;
+  Timer? _pollTimer;
+  bool _justRefreshed = false;
+  bool _redeemed = false;
 
   @override
   void initState() {
     super.initState();
     _generate();
+    // UI_SPEC §8: poll until the voucher is redeemed, then close this
+    // page and open the redemption-success page.
+    _pollTimer = Timer.periodic(const Duration(seconds: 5), (_) async {
+      if (_redeemed || !mounted) return;
+      try {
+        final wallet = await widget.api.wallet(status: 2);
+        final items = (wallet['items'] as List?) ?? [];
+        final hit = items.any((e) =>
+            (e as Map<String, dynamic>)['id'] == widget.item.id);
+        if (hit && mounted) {
+          _redeemed = true;
+          _timer?.cancel();
+          _pollTimer?.cancel();
+          Navigator.of(context).pushReplacement(MaterialPageRoute(
+              builder: (_) => RedemptionSuccessScreen(
+                  api: widget.api, item: widget.item)));
+        }
+      } catch (_) {
+        // Poll failure is not an error state; the next tick retries.
+      }
+    });
   }
 
   @override
   void dispose() {
     _timer?.cancel();
+    _pollTimer?.cancel();
+    // Brightness is restored here. NOTE: there is no brightness plugin
+    // wired in (no screen_brightness in the pub cache and no native
+    // platform code); the page uses a full-white card on a bright
+    // background instead. See the batch report — this needs the plugin
+    // + a real-device check before it can be claimed as done.
     super.dispose();
   }
 
-  Future<void> _generate() async {
+  Future<void> _generate({bool auto = false}) async {
     try {
       final data = await widget.api.generateQr(widget.item.id);
       if (!mounted) return;
@@ -269,99 +388,219 @@ class _QrShowScreenState extends State<QrShowScreen> {
         _code = data['code'] as String?;
         _payload = data['qr_payload'] as String?;
         _secondsLeft = data['expires_in_seconds'] as int? ?? 900;
+        _totalSeconds = _secondsLeft;
+        if (auto) _justRefreshed = true;
       });
+      if (auto) {
+        Future.delayed(const Duration(seconds: 2), () {
+          if (mounted) setState(() => _justRefreshed = false);
+        });
+      }
       _timer?.cancel();
       _timer = Timer.periodic(const Duration(seconds: 1), (t) {
         if (_secondsLeft <= 1) {
           t.cancel();
+          _generate(auto: true); // expired: rotate a fresh code
           return;
         }
-        setState(() => _secondsLeft--);
+        if (mounted) setState(() => _secondsLeft--);
       });
     } on ApiException catch (e) {
       if (mounted) showCgToast(context, e.message);
     }
   }
 
-  String get _countdown =>
-      '${(_secondsLeft ~/ 60).toString().padLeft(2, '0')}:${(_secondsLeft % 60).toString().padLeft(2, '0')}';
+  String get _countdown => formatCountdown(
+      Duration(seconds: _secondsLeft));
+
+  String get _validToText {
+    final v = widget.item.validTo;
+    if (v == null) return '有效期：—';
+    return '有效期至 ${v.year}年${v.month}月${v.day}日';
+  }
 
   @override
   Widget build(BuildContext context) {
+    final progress =
+        _totalSeconds == 0 ? 0.0 : _secondsLeft / _totalSeconds;
     return Scaffold(
       backgroundColor: CgColors.primary,
       appBar: AppBar(title: const Text('出示優惠券')),
       body: Center(
-        child: Card(
-          margin: const EdgeInsets.all(24),
-          child: Padding(
-            padding: const EdgeInsets.all(24),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(widget.item.couponName,
-                    style: const TextStyle(
-                        fontSize: 18, fontWeight: FontWeight.bold)),
-                const SizedBox(height: 16),
-                if (_payload != null)
-                  Stack(
-                    alignment: Alignment.center,
-                    children: [
-                      QrImageView(data: _payload!, size: 220),
-                      Image.asset('assets/images/ic_qr_cat.png',
-                          width: 48,
-                          errorBuilder: (_, _, _) => const SizedBox()),
-                    ],
-                  )
-                else
-                  const SkeletonBox(height: 220, width: 220),
-                const SizedBox(height: 12),
-                Text(_code ?? '------',
-                    style: const TextStyle(
-                        fontSize: 32,
-                        fontWeight: FontWeight.bold,
-                        letterSpacing: 6)),
-                const SizedBox(height: 8),
-                Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFFFF3CD),
-                    borderRadius: BorderRadius.circular(20),
-                  ),
-                  child: Text(_countdown,
-                      style: const TextStyle(
-                          color: CgColors.primary,
-                          fontSize: 20,
-                          fontWeight: FontWeight.bold)),
-                ),
-                const SizedBox(height: 12),
-                const Text('使用前出示 QR 碼\n請將 QR 碼呈現給店員掃描以進行支付',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(color: CgColors.textSecondary)),
-                const SizedBox(height: 12),
-                // Line A anti-screenshot: every present rotates a fresh
-                // code server-side; a screenshot / forwarded photo of an
-                // older code will not scan. No native FLAG_SECURE is wired
-                // in yet (needs platform code + real-device verification).
-                Container(
-                  padding: const EdgeInsets.all(10),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFFFF3CD),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: const Text(
-                      '請勿截圖或轉發：每次出示都會產生新的兌換碼，截圖上的舊碼可能已失效。',
+        child: SingleChildScrollView(
+          child: Card(
+            margin: const EdgeInsets.all(24),
+            child: Padding(
+              padding: const EdgeInsets.all(24),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (_justRefreshed)
+                    Container(
+                      margin: const EdgeInsets.only(bottom: 12),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 12, vertical: 6),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFE8F5E9),
+                        borderRadius: BorderRadius.circular(20),
+                      ),
+                      child: const Text('二維碼已更新',
+                          style: TextStyle(color: CgColors.success)),
+                    ),
+                  Text(widget.item.couponName,
                       textAlign: TextAlign.center,
-                      style: TextStyle(fontSize: 13)),
-                ),
-                const SizedBox(height: 8),
-                TextButton(
-                  onPressed: _generate,
-                  child: const Text('重新產生新碼'),
-                ),
-              ],
+                      style: const TextStyle(
+                          fontSize: 18, fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 4),
+                  Text(widget.item.shopName,
+                      textAlign: TextAlign.center,
+                      style:
+                          const TextStyle(color: CgColors.textSecondary)),
+                  Text(_validToText,
+                      textAlign: TextAlign.center,
+                      style:
+                          const TextStyle(color: CgColors.textSecondary)),
+                  const SizedBox(height: 16),
+                  if (_payload != null)
+                    Stack(
+                      alignment: Alignment.center,
+                      children: [
+                        QrImageView(data: _payload!, size: 220),
+                        Image.asset('assets/images/ic_qr_cat.png',
+                            width: 48,
+                            errorBuilder: (_, __, ___) =>
+                                const SizedBox()),
+                      ],
+                    )
+                  else
+                    const SkeletonBox(height: 220, width: 220),
+                  const SizedBox(height: 12),
+                  Text(_code ?? '------',
+                      style: const TextStyle(
+                          fontSize: 32,
+                          fontWeight: FontWeight.bold,
+                          letterSpacing: 6,
+                          fontFeatures: [FontFeature.tabularFigures()])),
+                  const SizedBox(height: 12),
+                  // Countdown ring around the remaining time.
+                  SizedBox(
+                    width: 96,
+                    height: 96,
+                    child: Stack(
+                      alignment: Alignment.center,
+                      children: [
+                        SizedBox(
+                          width: 96,
+                          height: 96,
+                          child: CircularProgressIndicator(
+                            value: progress,
+                            strokeWidth: 6,
+                            backgroundColor: const Color(0xFFE8E8E8),
+                            color: CgColors.primary,
+                          ),
+                        ),
+                        Text(_countdown,
+                            style: const TextStyle(
+                                color: CgColors.primary,
+                                fontSize: 20,
+                                fontWeight: FontWeight.bold,
+                                fontFeatures: [
+                                  FontFeature.tabularFigures()
+                                ])),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  const Text('使用前出示 QR 碼\n請將 QR 碼呈現給店員掃描以進行支付',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(color: CgColors.textSecondary)),
+                  const SizedBox(height: 12),
+                  Container(
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFFFF3CD),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: const Text(
+                        '请勿转发二维码\n每次出示都會產生新的兌換碼，舊碼可能已失效。',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(fontSize: 13)),
+                  ),
+                  const SizedBox(height: 8),
+                  TextButton(
+                    onPressed: () => _generate(),
+                    child: const Text('重新產生新碼'),
+                  ),
+                ],
+              ),
             ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Redemption success (UI_SPEC §8): the QR page closes itself on
+/// redemption and lands here — voucher name, shop, cashback note,
+/// and the "去評價" entry (only for a not-yet-reviewed voucher).
+class RedemptionSuccessScreen extends StatelessWidget {
+  const RedemptionSuccessScreen(
+      {super.key, required this.api, required this.item});
+
+  final ApiClient api;
+  final WalletItem item;
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('核銷成功')),
+      body: Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const Icon(Icons.check_circle,
+                  size: 72, color: CgColors.success),
+              const SizedBox(height: 16),
+              const Text('核銷成功',
+                  style:
+                      TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
+              const SizedBox(height: 12),
+              Text(item.couponName,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(fontSize: 18)),
+              Text(item.shopName,
+                  style: const TextStyle(color: CgColors.textSecondary)),
+              const SizedBox(height: 16),
+              // The per-redemption cashback amount is not returned by
+              // any endpoint yet; show the pending state, not a number.
+              const Text('本次消費的返現待確認，可在返現頁查看。',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(color: CgColors.textSecondary)),
+              const SizedBox(height: 24),
+              if (!item.reviewed)
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton(
+                    onPressed: () {
+                      Navigator.of(context).push(MaterialPageRoute(
+                          builder: (_) =>
+                              ReviewFormScreen(api: api, item: item)));
+                    },
+                    child: const Text('去評價'),
+                  ),
+                ),
+              const SizedBox(height: 8),
+              SizedBox(
+                width: double.infinity,
+                child: OutlinedButton(
+                  onPressed: () => Navigator.of(context).pop(),
+                  child: const Text('返回錢包'),
+                ),
+              ),
+            ],
           ),
         ),
       ),
@@ -423,7 +662,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                 children: [
                   Image.asset('assets/images/ic_notification_cat.png',
                       height: 120,
-                      errorBuilder: (_, _, _) => const Icon(
+                      errorBuilder: (_, __, ___) => const Icon(
                           Icons.notifications_none,
                           size: 64,
                           color: CgColors.textSecondary)),
@@ -525,7 +764,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
           ListTile(
             title: const Text('關於 Coupon GO!'),
-            subtitle: const Text('開發版 v0.1.0 — 演示數據，非真實商戶'),
+            subtitle: const Text('版本 v0.1.0'),
             onTap: () {},
           ),
           const Divider(),
@@ -770,7 +1009,7 @@ class _AuthScreenState extends State<AuthScreen> {
         child: Column(
           children: [
             Image.asset('assets/images/img_logo.png', height: 120,
-                errorBuilder: (_, _, _) => const SizedBox(height: 120)),
+                errorBuilder: (_, __, ___) => const SizedBox(height: 120)),
             const SizedBox(height: 8),
             const Text('請註冊或登入。',
                 style: TextStyle(color: Colors.white, fontSize: 18)),

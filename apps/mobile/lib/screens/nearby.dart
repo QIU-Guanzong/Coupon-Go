@@ -8,17 +8,24 @@ import '../theme.dart';
 import '../widgets/widgets.dart';
 import 'customer.dart';
 
-/// Nearby shops (line A, report §5.2 / §10 F5).
+/// Nearby shops (UI_SPEC §6).
 ///
-/// List + marker view, Haversine distance sorting (server-side), Google
-/// Maps navigation jump. Notes on scope:
-/// - The marker view is a schematic position map (dots placed by lat/lng),
-///   NOT Google Maps tiles: google_maps_flutter needs native API-key
-///   config + a real-device build, neither verified on this machine.
-/// - "使用我的位置" uses geolocator; denied / unavailable falls back to
-///   the preset centre (中環) and manual presets. No location is sent
-///   anywhere except the /nearby-shops request itself.
-/// - Distances are straight-line (Haversine), not walking/driving time.
+/// List / map toggle (list by default), distance ascending, switchable to
+/// highest-rated / newest. Map view is a schematic position map (dots
+/// placed by lat/lng, coloured by category) — NOT Google Maps tiles:
+/// google_maps_flutter needs native API-key config + a real-device
+/// build, neither verified on this machine. Tapping a marker opens a
+/// small card (photo, name, rating, distance, 导航); 导航 opens the
+/// system map — no in-app route planning. Distances are straight-line
+/// (Haversine), not walking/driving time.
+///
+/// Location: permission is asked at most once from the banner button.
+/// If refused, the screen falls back to area selection and never
+/// re-prompts. No location is sent anywhere except /nearby-shops.
+enum _NearbyView { list, map }
+
+enum _NearbySort { distance, rating, newest }
+
 class NearbyScreen extends StatefulWidget {
   const NearbyScreen({super.key, required this.api});
 
@@ -41,14 +48,32 @@ class _NearbyScreenState extends State<NearbyScreen> {
   double _radiusKm = 5;
   List<Shop> _shops = [];
   bool _loading = false;
+  bool _loadingRatings = false;
   String? _error;
   int? _selectedShopId;
   bool _locating = false;
+  _NearbyView _view = _NearbyView.list;
+  _NearbySort _sort = _NearbySort.distance;
+  bool _locationGranted = false;
+  bool _locationDeclined = false;
+  bool _askedPermission = false;
+  Map<int, double?> _ratings = {};
 
   @override
   void initState() {
     super.initState();
+    _checkLocationSilently();
     _load();
+  }
+
+  Future<void> _checkLocationSilently() async {
+    final permission = await Geolocator.checkPermission();
+    if (!mounted) return;
+    setState(() {
+      _locationGranted = permission == LocationPermission.always ||
+          permission == LocationPermission.whileInUse;
+      _locationDeclined = permission == LocationPermission.deniedForever;
+    });
   }
 
   Future<void> _load() async {
@@ -65,14 +90,68 @@ class _NearbyScreenState extends State<NearbyScreen> {
             .map((e) => Shop.fromJson(e as Map<String, dynamic>))
             .toList();
       });
-    } on ApiException catch (e) {
-      if (mounted) setState(() => _error = e.message);
+      if (_sort == _NearbySort.rating) await _loadRatings();
+    } on ApiException catch (_) {
+      if (mounted) setState(() => _error = '网络不稳定，请重试');
     } finally {
       if (mounted) setState(() => _loading = false);
     }
   }
 
-  Future<void> _useMyLocation() async {
+  /// Ratings come from /shops/{id}/rating — the list endpoint does not
+  /// return them. Failures leave that shop unrated (sorted last).
+  Future<void> _loadRatings() async {
+    setState(() => _loadingRatings = true);
+    final entries = await Future.wait(_shops.map((s) async {
+      try {
+        final r = await widget.api.shopRating(s.id);
+        final overall = (r['overall'] as num?)?.toDouble();
+        return MapEntry(s.id, overall);
+      } catch (_) {
+        return MapEntry<int, double?>(s.id, null);
+      }
+    }));
+    if (!mounted) return;
+    setState(() {
+      _ratings = Map.fromEntries(entries);
+      _loadingRatings = false;
+    });
+  }
+
+  List<Shop> get _sortedShops {
+    final list = List<Shop>.of(_shops);
+    switch (_sort) {
+      case _NearbySort.distance:
+        break; // server order is distance ascending
+      case _NearbySort.rating:
+        list.sort((a, b) {
+          final ra = _ratings[a.id] ?? a.rating;
+          final rb = _ratings[b.id] ?? b.rating;
+          if (ra == null && rb == null) return 0;
+          if (ra == null) return 1;
+          if (rb == null) return -1;
+          return rb.compareTo(ra);
+        });
+      case _NearbySort.newest:
+        // created_at is not in the list response yet; shops that carry
+        // one sort newest-first, the rest keep distance order.
+        list.sort((a, b) {
+          final ca = a.createdAt;
+          final cb = b.createdAt;
+          if (ca == null && cb == null) return 0;
+          if (ca == null) return 1;
+          if (cb == null) return -1;
+          return cb.compareTo(ca);
+        });
+    }
+    return list;
+  }
+
+  double? _ratingOf(Shop s) => _ratings[s.id] ?? s.rating;
+
+  Future<void> _requestLocation() async {
+    if (_askedPermission) return; // asked once; never re-prompt
+    _askedPermission = true;
     setState(() => _locating = true);
     try {
       var permission = await Geolocator.checkPermission();
@@ -82,7 +161,8 @@ class _NearbyScreenState extends State<NearbyScreen> {
       if (permission == LocationPermission.denied ||
           permission == LocationPermission.deniedForever) {
         if (mounted) {
-          showCgToast(context, '未授權定位，已保留中環為中心；可手動選擇地區');
+          setState(() => _locationDeclined = true);
+          showCgToast(context, '已改用地區選擇，可手動切換地區');
         }
         return;
       }
@@ -94,6 +174,8 @@ class _NearbyScreenState extends State<NearbyScreen> {
         _lat = pos.latitude;
         _lng = pos.longitude;
         _place = '我的位置';
+        _locationGranted = true;
+        _locationDeclined = false;
       });
       await _load();
     } catch (_) {
@@ -123,21 +205,227 @@ class _NearbyScreenState extends State<NearbyScreen> {
                 builder: (_) => CouponDetailScreen(api: widget.api, coupon: c))))));
   }
 
+  Widget _shopImage(Shop s, {double? height}) {
+    if (s.image.startsWith('http')) {
+      return Image.network(s.image,
+          height: height,
+          width: height == null ? null : height * 1.2,
+          fit: BoxFit.cover,
+          errorBuilder: (_, __, ___) => const Icon(Icons.store,
+              color: CgColors.primary, size: 40));
+    }
+    return const Icon(Icons.store, color: CgColors.primary, size: 40);
+  }
+
+  Widget _ratingText(Shop s) {
+    final r = _ratingOf(s);
+    if (r == null) {
+      return const Text('暫無評分',
+          style: TextStyle(color: CgColors.textSecondary, fontSize: 12));
+    }
+    return Text('★ ${r.toStringAsFixed(1)}',
+        style: const TextStyle(
+            color: CgColors.amber, fontWeight: FontWeight.bold, fontSize: 13));
+  }
+
+  Widget _badges(Shop s) {
+    final chips = <Widget>[];
+    if (s.hasCoupon) {
+      chips.add(_badge('有券'));
+    }
+    if (s.hasPackage) {
+      chips.add(_badge('有套餐'));
+    }
+    if (chips.isEmpty) return const SizedBox.shrink();
+    return Wrap(spacing: 4, children: chips);
+  }
+
+  Widget _badge(String label) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFFF3CD),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Text(label,
+          style: const TextStyle(fontSize: 11, color: CgColors.primary)),
+    );
+  }
+
+  Widget _shopCard(Shop s) {
+    final selected = s.id == _selectedShopId;
+    return Card(
+      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+      color: selected ? const Color(0xFFFFF3CD) : null,
+      child: InkWell(
+        onTap: () => _openShop(s),
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              ClipRRect(
+                borderRadius: BorderRadius.circular(8),
+                child: SizedBox(
+                  width: 72,
+                  height: 72,
+                  child: _shopImage(s),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(s.name,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                            fontWeight: FontWeight.bold, fontSize: 16)),
+                    const SizedBox(height: 2),
+                    Text(s.categoryName,
+                        style: const TextStyle(
+                            color: CgColors.textSecondary, fontSize: 12)),
+                    const SizedBox(height: 4),
+                    Row(
+                      children: [
+                        _ratingText(s),
+                        const SizedBox(width: 8),
+                        Text(formatDistance(s.distanceKm),
+                            style: const TextStyle(
+                                fontWeight: FontWeight.bold, fontSize: 13)),
+                      ],
+                    ),
+                    const SizedBox(height: 4),
+                    _badges(s),
+                  ],
+                ),
+              ),
+              SizedBox(
+                width: 48,
+                height: 44,
+                child: TextButton(
+                  onPressed: () => _navigate(s),
+                  child: const Text('導航'),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _emptyState() {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          const Text('此範圍內暫無商户'),
+          const SizedBox(height: 12),
+          ElevatedButton(
+            onPressed: () {
+              setState(() => _radiusKm = 10);
+              _load();
+            },
+            child: const Text('擴大範圍至 10 公里'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _errorState() {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          const Text('网络不稳定，请重试'),
+          const SizedBox(height: 12),
+          ElevatedButton(onPressed: _load, child: const Text('重試')),
+        ],
+      ),
+    );
+  }
+
+  Widget _loadingState() {
+    return ListView(
+      padding: const EdgeInsets.all(16),
+      children: const [
+        SkeletonBox(height: 96),
+        SizedBox(height: 8),
+        SkeletonBox(height: 96),
+        SizedBox(height: 8),
+        SkeletonBox(height: 96),
+      ],
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
+    final shops = _sortedShops;
+    Shop? selectedShop;
+    if (_selectedShopId == null) {
+      selectedShop = null;
+    } else {
+      final matches =
+          _shops.where((s) => s.id == _selectedShopId).toList();
+      selectedShop = matches.isEmpty ? null : matches.first;
+    }
     return Scaffold(
       appBar: AppBar(title: const Text('附近商户')),
       body: Column(
         children: [
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+            child: SegmentedButton<_NearbyView>(
+              segments: const [
+                ButtonSegment(
+                    value: _NearbyView.list,
+                    icon: Icon(Icons.list),
+                    label: Text('列表')),
+                ButtonSegment(
+                    value: _NearbyView.map,
+                    icon: Icon(Icons.map_outlined),
+                    label: Text('地圖')),
+              ],
+              selected: {_view},
+              onSelectionChanged: (v) => setState(() => _view = v.first),
+            ),
+          ),
+          if (!_locationGranted && !_locationDeclined)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+              child: Card(
+                child: Padding(
+                  padding: const EdgeInsets.all(12),
+                  child: Row(
+                    children: [
+                      const Expanded(
+                          child: Text('開啟定位查看附近商户')),
+                      const SizedBox(width: 8),
+                      ElevatedButton(
+                        onPressed: _locating ? null : _requestLocation,
+                        child: Text(_locating ? '定位中…' : '開啟定位'),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
             child: Row(
               children: [
                 Expanded(
                   child: OutlinedButton.icon(
-                    onPressed: _locating ? null : _useMyLocation,
+                    onPressed: _locating ? null : _requestLocation,
                     icon: const Icon(Icons.my_location, size: 18),
-                    label: Text(_locating ? '定位中…' : '使用我的位置'),
+                    label: Text(_locating
+                        ? '定位中…'
+                        : _locationGranted
+                            ? '使用我的位置'
+                            : '使用我的位置'),
                   ),
                 ),
                 const SizedBox(width: 8),
@@ -200,85 +488,107 @@ class _NearbyScreenState extends State<NearbyScreen> {
                 const Icon(Icons.place, size: 16, color: CgColors.primary),
                 const SizedBox(width: 4),
                 Expanded(
-                  child: Text('中心：$_place（${_lat.toStringAsFixed(4)}, '
-                      '${_lng.toStringAsFixed(4)}）· 直線距離排序'),
+                  child: Text('中心：$_place · 直線距離'),
+                ),
+                if (_loadingRatings)
+                  const SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
+              ],
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+            child: Wrap(
+              spacing: 8,
+              children: [
+                ChoiceChip(
+                  label: const Text('距離最近'),
+                  selected: _sort == _NearbySort.distance,
+                  onSelected: (_) {
+                    setState(() => _sort = _NearbySort.distance);
+                  },
+                ),
+                ChoiceChip(
+                  label: const Text('評分最高'),
+                  selected: _sort == _NearbySort.rating,
+                  onSelected: (_) async {
+                    setState(() => _sort = _NearbySort.rating);
+                    await _loadRatings();
+                  },
+                ),
+                ChoiceChip(
+                  label: const Text('最新'),
+                  selected: _sort == _NearbySort.newest,
+                  onSelected: (_) {
+                    setState(() => _sort = _NearbySort.newest);
+                  },
                 ),
               ],
             ),
           ),
-          if (_shops.isNotEmpty)
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
-              child: _MarkerMap(
-                shops: _shops,
-                centerLat: _lat,
-                centerLng: _lng,
-                selectedShopId: _selectedShopId,
-                onSelect: (s) => setState(() => _selectedShopId = s.id),
-              ),
-            ),
           const SizedBox(height: 8),
           Expanded(
             child: _loading
-                ? const Padding(
-                    padding: EdgeInsets.all(16),
-                    child: Column(children: [SkeletonBox(height: 96)]),
-                  )
+                ? _loadingState()
                 : _error != null
-                    ? Center(child: Text(_error!))
+                    ? _errorState()
                     : _shops.isEmpty
-                        ? const Center(
-                            child: Text('此範圍內暫無商户，可擴大範圍或切換地區'))
-                        : RefreshIndicator(
-                            onRefresh: _load,
-                            child: ListView.builder(
-                              itemCount: _shops.length,
-                              itemBuilder: (_, i) {
-                                final s = _shops[i];
-                                final selected = s.id == _selectedShopId;
-                                return Card(
-                                  margin: const EdgeInsets.symmetric(
-                                      horizontal: 16, vertical: 6),
-                                  color: selected
-                                      ? const Color(0xFFFFF3CD)
-                                      : null,
-                                  child: ListTile(
-                                    leading: const Icon(Icons.store,
-                                        color: CgColors.primary),
-                                    title: Text(s.name),
-                                    subtitle: Text(
-                                        '${s.areaName} · ${s.categoryName}\n${s.address}'),
-                                    isThreeLine: true,
-                                    trailing: Column(
-                                      mainAxisAlignment:
-                                          MainAxisAlignment.center,
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.end,
-                                      children: [
-                                        Text(
-                                          s.distanceKm == null
-                                              ? ''
-                                              : '${s.distanceKm!.toStringAsFixed(2)} 公里',
-                                          style: const TextStyle(
-                                              fontWeight: FontWeight.bold),
-                                        ),
-                                        TextButton(
-                                          onPressed: () => _navigate(s),
-                                          child: const Text('導航'),
-                                        ),
-                                      ],
+                        ? _emptyState()
+                        : _view == _NearbyView.map
+                            ? Column(
+                                children: [
+                                  Padding(
+                                    padding: const EdgeInsets.symmetric(
+                                        horizontal: 16),
+                                    child: _MarkerMap(
+                                      shops: shops,
+                                      centerLat: _lat,
+                                      centerLng: _lng,
+                                      selectedShopId: _selectedShopId,
+                                      onSelect: (s) => setState(
+                                          () => _selectedShopId = s.id),
                                     ),
-                                    onTap: () => _openShop(s),
                                   ),
-                                );
-                              },
-                            ),
-                          ),
+                                  if (selectedShop != null)
+                                    _shopCard(selectedShop),
+                                  Expanded(
+                                    child: RefreshIndicator(
+                                      onRefresh: _load,
+                                      child: ListView.builder(
+                                        itemCount: shops.length,
+                                        itemBuilder: (_, i) =>
+                                            _shopCard(shops[i]),
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              )
+                            : RefreshIndicator(
+                                onRefresh: _load,
+                                child: ListView.builder(
+                                  itemCount: shops.length,
+                                  itemBuilder: (_, i) => _shopCard(shops[i]),
+                                ),
+                              ),
           ),
         ],
       ),
     );
   }
+}
+
+/// Marker colour by category (UI_SPEC §6).
+Color _categoryColor(String category) {
+  if (category.contains('餐')) return Colors.red.shade400;
+  if (category.contains('咖啡')) return Colors.brown;
+  if (category.contains('美容')) return Colors.pink.shade300;
+  if (category.contains('娛樂') || category.contains('娱乐')) {
+    return Colors.purple.shade300;
+  }
+  return CgColors.primary;
 }
 
 /// Schematic marker view: shops as dots positioned by lat/lng within the
@@ -340,7 +650,6 @@ class _MarkerMap extends StatelessWidget {
                       style: TextStyle(fontSize: 12)),
                 ),
               ),
-              // centre marker
               Positioned(
                 left: px(centerLng),
                 top: py(centerLat),
@@ -352,13 +661,17 @@ class _MarkerMap extends StatelessWidget {
                   Positioned(
                     left: px(s.longitude!),
                     top: py(s.latitude!),
-                    child: GestureDetector(
-                      onTap: () => onSelect(s),
-                      child: Icon(Icons.place,
-                          color: s.id == selectedShopId
-                              ? CgColors.primary
-                              : Colors.red.shade300,
-                          size: s.id == selectedShopId ? 30 : 24),
+                    child: Semantics(
+                      label: '商户 ${s.name}',
+                      button: true,
+                      child: GestureDetector(
+                        onTap: () => onSelect(s),
+                        child: Icon(Icons.place,
+                            color: s.id == selectedShopId
+                                ? CgColors.primary
+                                : _categoryColor(s.categoryName),
+                            size: s.id == selectedShopId ? 30 : 24),
+                      ),
                     ),
                   ),
             ],

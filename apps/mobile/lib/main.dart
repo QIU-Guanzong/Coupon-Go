@@ -176,10 +176,10 @@ class _SplashScreenState extends State<SplashScreen> {
         child: Image.asset(
           'assets/images/splash.gif',
           fit: BoxFit.cover,
-          errorBuilder: (_, _, _) => Image.asset(
+          errorBuilder: (_, __, ___) => Image.asset(
             'assets/images/img_logo.png',
             height: 200,
-            errorBuilder: (_, _, _) =>
+            errorBuilder: (_, __, ___) =>
                 const Text('COUPON GO!',
                     style: TextStyle(color: Colors.white, fontSize: 32)),
           ),
@@ -263,7 +263,7 @@ class _HomeShellState extends State<HomeShell> {
         onPressed: () => Navigator.of(context).pushNamed('/qbot'),
         child: Image.asset('assets/images/img_logo_cropped.png',
             width: 36,
-            errorBuilder: (_, _, _) =>
+            errorBuilder: (_, __, ___) =>
                 const Text('Q仔', style: TextStyle(color: Colors.white))),
       ),
       body: IndexedStack(index: _index, children: pages),
@@ -344,7 +344,7 @@ class _HomeShellState extends State<HomeShell> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Image.asset('assets/images/img_logo.png', height: 64,
-                    errorBuilder: (_, _, _) => const SizedBox()),
+                    errorBuilder: (_, __, ___) => const SizedBox()),
                 const SizedBox(height: 8),
                 const Text('更多',
                     style: TextStyle(

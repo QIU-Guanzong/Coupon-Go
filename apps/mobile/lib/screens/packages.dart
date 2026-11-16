@@ -1,16 +1,39 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../api_client.dart';
 import '../models.dart';
 import '../theme.dart';
 import '../widgets/widgets.dart';
+import 'account.dart';
+import 'reviews_admin.dart';
 
-/// Line C (套餐 2A): package list, package purchase, my orders + refund.
+/// Line C (套餐 2A): package list, package detail (§3.1), checkout (§3.2),
+/// payment polling (§3.3, PaymentResultScreen — already done, untouched),
+/// my orders + refund (§3.4).
 ///
-/// NOTE: this build has no Flutter SDK on the dev machine, so this file
-/// has NOT been through `flutter analyze` or a real-device build — the
-/// wiring mirrors the existing screens (api_client / showCgToast) and
-/// needs a real `flutter analyze` + device run before release.
+/// 支付结果（UI_SPEC §3.3）：客户端不再向服务端传支付结果。支付页完成
+/// 后，[PaymentResultScreen] 每 2 秒轮询 GET /orders/{id}，最多 60 秒，
+/// 直到 payment_status 为 paid / failed / timeout。金额一律以服务端
+/// 返回为准，客户端不自己算钱。
+///
+/// 未登录可浏览套餐详情（只读）；点「立即抢购」时先登录，登录后回原界面。
+Future<bool> requirePackageLogin(BuildContext context, ApiClient api) async {
+  if (api.isLoggedIn) return true;
+  final result = await Navigator.of(context).push<bool>(
+    MaterialPageRoute(
+      builder: (_) => AuthScreen(
+        api: api,
+        onAuthed: () => Navigator.of(context).pop(true),
+      ),
+    ),
+  );
+  return result == true && api.isLoggedIn;
+}
+
 class PackageListScreen extends StatefulWidget {
   const PackageListScreen({super.key, required this.api});
 
@@ -23,6 +46,7 @@ class PackageListScreen extends StatefulWidget {
 class _PackageListScreenState extends State<PackageListScreen> {
   List<Package> _items = [];
   bool _loading = true;
+  bool _error = false;
 
   @override
   void initState() {
@@ -31,17 +55,21 @@ class _PackageListScreenState extends State<PackageListScreen> {
   }
 
   Future<void> _load() async {
+    if (mounted) setState(() => _loading = true);
     try {
       final list = await widget.api.packages();
       if (!mounted) return;
       setState(() {
         _items = list.map((e) => Package.fromJson(e)).toList();
         _loading = false;
+        _error = false;
       });
-    } on ApiException catch (e) {
+    } on ApiException catch (_) {
       if (mounted) {
-        setState(() => _loading = false);
-        showCgToast(context, e.message);
+        setState(() {
+          _loading = false;
+          _error = true;
+        });
       }
     }
   }
@@ -51,56 +79,66 @@ class _PackageListScreenState extends State<PackageListScreen> {
     return Scaffold(
       appBar: AppBar(title: const Text('套餐')),
       body: _loading
-          ? const Center(child: CircularProgressIndicator())
-          : _items.isEmpty
-              ? const Center(child: Text('暫時沒有套餐。'))
-              : RefreshIndicator(
-                  onRefresh: _load,
-                  child: ListView.builder(
-                    padding: const EdgeInsets.all(12),
-                    itemCount: _items.length,
-                    itemBuilder: (_, i) {
-                      final p = _items[i];
-                      return Card(
-                        margin: const EdgeInsets.only(bottom: 12),
-                        child: ListTile(
-                          leading: const Icon(Icons.restaurant_menu,
-                              color: CgColors.primary),
-                          title: Text(p.name),
-                          subtitle: Text(
-                              '${p.shopName} · ${p.personCount} 人用 · 已售 ${p.soldCount}'),
-                          trailing: Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            crossAxisAlignment: CrossAxisAlignment.end,
-                            children: [
-                              Text('\$${p.packagePrice.toStringAsFixed(0)}',
-                                  style: const TextStyle(
-                                      color: CgColors.primary,
-                                      fontSize: 18,
-                                      fontWeight: FontWeight.bold)),
-                              Text(
-                                  '\$${p.originalPrice.toStringAsFixed(0)} · 省 ${p.savePercent.toStringAsFixed(0)}%',
-                                  style: const TextStyle(
-                                      decoration: TextDecoration.lineThrough,
-                                      color: CgColors.textSecondary,
-                                      fontSize: 12)),
-                            ],
-                          ),
-                          onTap: () => Navigator.of(context).push(
-                              MaterialPageRoute(
-                                  builder: (_) => PackageDetailScreen(
-                                      api: widget.api, packageId: p.id))),
-                        ),
-                      );
-                    },
-                  ),
-                ),
+          ? const _LoadingList()
+          : _error
+              ? _ErrorView(onRetry: _load)
+              : _items.isEmpty
+                  ? _EmptyView(
+                      message: '暫時沒有套餐。',
+                      actionLabel: '重新整理',
+                      onAction: _load,
+                    )
+                  : RefreshIndicator(
+                      onRefresh: _load,
+                      child: ListView.builder(
+                        padding: const EdgeInsets.all(12),
+                        itemCount: _items.length,
+                        itemBuilder: (_, i) {
+                          final p = _items[i];
+                          return Card(
+                            margin: const EdgeInsets.only(bottom: 12),
+                            child: ListTile(
+                              leading: const Icon(Icons.restaurant_menu,
+                                  color: CgColors.primary),
+                              title: Text(p.name),
+                              subtitle: Text(
+                                  '${p.shopName} · ${p.personCount} 人用 · 已售 ${p.soldCount}'),
+                              trailing: Column(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                crossAxisAlignment: CrossAxisAlignment.end,
+                                children: [
+                                  Text(formatHkd(p.packagePrice),
+                                      style: const TextStyle(
+                                          color: CgColors.primary,
+                                          fontSize: 18,
+                                          fontWeight: FontWeight.bold,
+                                          fontFeatures: [
+                                            FontFeature.tabularFigures()
+                                          ])),
+                                  Text(
+                                      '${formatHkd(p.originalPrice)} · 省 ${p.savePercent.toStringAsFixed(0)}%',
+                                      style: const TextStyle(
+                                          decoration:
+                                              TextDecoration.lineThrough,
+                                          color: CgColors.textSecondary,
+                                          fontSize: 12)),
+                                ],
+                              ),
+                              onTap: () => Navigator.of(context).push(
+                                  MaterialPageRoute(
+                                      builder: (_) => PackageDetailScreen(
+                                          api: widget.api, packageId: p.id))),
+                            ),
+                          );
+                        },
+                      ),
+                    ),
     );
   }
 }
 
-/// Package purchase page: items, price anchor, usage rules, refund policy
-/// (shown prominently before payment), FPS / card choice, then pay.
+/// Package detail (UI_SPEC §3.1): image carousel, price area + refund
+/// rule line, contents, usage rules, stores, reviews, fixed bottom bar.
 class PackageDetailScreen extends StatefulWidget {
   const PackageDetailScreen(
       {super.key, required this.api, required this.packageId});
@@ -114,8 +152,9 @@ class PackageDetailScreen extends StatefulWidget {
 
 class _PackageDetailScreenState extends State<PackageDetailScreen> {
   Package? _pkg;
-  String _method = 'fps';
-  bool _busy = false;
+  bool _loading = true;
+  bool _error = false;
+  int _page = 0;
 
   @override
   void initState() {
@@ -124,62 +163,507 @@ class _PackageDetailScreenState extends State<PackageDetailScreen> {
   }
 
   Future<void> _load() async {
+    if (mounted) setState(() => _loading = true);
     try {
       final data = await widget.api.packageDetails(widget.packageId);
       if (!mounted) return;
-      setState(() => _pkg = Package.fromJson(data));
-    } on ApiException catch (e) {
-      if (mounted) showCgToast(context, e.message);
+      setState(() {
+        _pkg = Package.fromJson(data);
+        _loading = false;
+        _error = false;
+      });
+    } on ApiException catch (_) {
+      if (mounted) {
+        setState(() {
+          _loading = false;
+          _error = true;
+        });
+      }
     }
   }
 
   Future<void> _buy() async {
     final pkg = _pkg;
-    if (pkg == null) return;
+    if (pkg == null || pkg.stockLeft <= 0 || pkg.isOffShelf) return;
+    final ok = await requirePackageLogin(context, widget.api);
+    if (!ok || !mounted) return;
+    await Navigator.of(context).push(MaterialPageRoute(
+        builder: (_) =>
+            PackageCheckoutScreen(api: widget.api, package: pkg)));
+    if (mounted) _load();
+  }
+
+  Future<void> _openMap(Map<String, dynamic> branch) async {
+    final lat = branch['latitude'] ?? branch['lat'];
+    final lng = branch['longitude'] ?? branch['lng'];
+    final name = (branch['branch_name'] ?? branch['name'] ?? '') as String;
+    final address = (branch['address'] ?? '') as String;
+    final query = (lat != null && lng != null)
+        ? '$lat,$lng'
+        : Uri.encodeComponent('$name $address'.trim());
+    final uri =
+        Uri.parse('https://www.google.com/maps/search/?api=1&query=$query');
+    if (await canLaunchUrl(uri)) {
+      await launchUrl(uri, mode: LaunchMode.externalApplication);
+    } else if (mounted) {
+      showCgToast(context, '无法打开地图');
+    }
+  }
+
+  void _openReviews() {
+    final p = _pkg;
+    if (p == null) return;
+    Navigator.of(context).push(MaterialPageRoute(
+        builder: (_) => ShopReviewsScreen(
+              api: widget.api,
+              shop: Shop.fromJson(
+                  {'shop_id': p.shopId, 'shop_name': p.shopName}),
+            )));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final p = _pkg;
+    if (_loading) {
+      return Scaffold(
+        appBar: AppBar(title: const Text('套餐詳情')),
+        body: const _LoadingList(),
+      );
+    }
+    if (_error || p == null) {
+      return Scaffold(
+        appBar: AppBar(title: const Text('套餐詳情')),
+        body: _ErrorView(onRetry: _load),
+      );
+    }
+    // 已下架：整页只显示下架提示 + 返回按钮。
+    if (p.isOffShelf) {
+      return Scaffold(
+        appBar: AppBar(title: const Text('套餐詳情')),
+        body: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Icon(Icons.remove_circle_outline,
+                    size: 64, color: CgColors.textSecondary),
+                const SizedBox(height: 16),
+                const Text('该套餐已下架',
+                    style:
+                        TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+                const SizedBox(height: 8),
+                Text(p.name, textAlign: TextAlign.center,
+                    style: const TextStyle(color: CgColors.textSecondary)),
+                const SizedBox(height: 24),
+                ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                      minimumSize: const Size(160, 48)),
+                  onPressed: () => Navigator.of(context).pop(),
+                  child: const Text('返回'),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+    final images = p.carouselImages;
+    final soldOut = p.stockLeft <= 0;
+    return Scaffold(
+      appBar: AppBar(title: const Text('套餐詳情')),
+      body: ListView(
+        padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
+        children: [
+          // 顶部轮播图（≤ 6 张）
+          ClipRRect(
+            borderRadius: BorderRadius.circular(12),
+            child: SizedBox(
+              height: 220,
+              child: images.isEmpty
+                  ? Image.asset('assets/images/dummy_image_1.png',
+                      fit: BoxFit.cover,
+                      errorBuilder: (_, __, ___) =>
+                          Container(color: CgColors.pageBg))
+                  : Stack(
+                      children: [
+                        PageView.builder(
+                          itemCount: images.length,
+                          onPageChanged: (i) => setState(() => _page = i),
+                          itemBuilder: (_, i) => _PkgImage(url: images[i]),
+                        ),
+                        if (images.length > 1)
+                          Positioned(
+                            bottom: 8,
+                            left: 0,
+                            right: 0,
+                            child: Row(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: List.generate(
+                                images.length,
+                                (i) => Container(
+                                  width: 8,
+                                  height: 8,
+                                  margin: const EdgeInsets.symmetric(
+                                      horizontal: 3),
+                                  decoration: BoxDecoration(
+                                    shape: BoxShape.circle,
+                                    color: i == _page
+                                        ? Colors.white
+                                        : Colors.white.withValues(alpha: 0.5),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                      ],
+                    ),
+            ),
+          ),
+          const SizedBox(height: 16),
+          Text(p.name,
+              style:
+                  const TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
+          const SizedBox(height: 6),
+          Text('${p.shopName} · ${p.personCount} 人用',
+              style: const TextStyle(color: CgColors.textSecondary)),
+          const SizedBox(height: 12),
+          // 价格区
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Text(formatHkd(p.packagePrice),
+                  style: const TextStyle(
+                      color: CgColors.primary,
+                      fontSize: 28,
+                      fontWeight: FontWeight.bold,
+                      fontFeatures: [FontFeature.tabularFigures()])),
+              const SizedBox(width: 10),
+              Padding(
+                padding: const EdgeInsets.only(bottom: 4),
+                child: Text(formatHkd(p.originalPrice),
+                    style: const TextStyle(
+                        decoration: TextDecoration.lineThrough,
+                        color: CgColors.textSecondary)),
+              ),
+              const SizedBox(width: 8),
+              if (p.saveAmount > 0)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 4),
+                  child: Chip(
+                      label: Text('省 ${formatHkd(p.saveAmount)}'),
+                      visualDensity: VisualDensity.compact),
+                ),
+              const Spacer(),
+              Padding(
+                padding: const EdgeInsets.only(bottom: 4),
+                child: Text('已售 ${p.soldCount}',
+                    style: const TextStyle(color: CgColors.textSecondary)),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          // 退款规则：固定放价格区下方一行字，来自接口字段，不可退不允许隐藏。
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: p.isNonRefundable
+                  ? const Color(0xFFFDECEA)
+                  : const Color(0xFFFFF3CD),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Text('退款规则：${p.refundRuleText}',
+                style: const TextStyle(fontWeight: FontWeight.bold)),
+          ),
+          const SizedBox(height: 16),
+          // 套餐内容
+          const Text('套餐内容', style: TextStyle(fontWeight: FontWeight.bold)),
+          const SizedBox(height: 4),
+          if (p.itemLines.isNotEmpty)
+            ...p.itemLines.map((line) {
+              final name = (line['name'] ?? '') as String;
+              final qty = line['qty'] ?? line['quantity'] ?? 1;
+              final unit = (line['unit_price'] as num?)?.toDouble() ??
+                  (line['price'] as num?)?.toDouble();
+              return Padding(
+                padding: const EdgeInsets.only(top: 6),
+                child: Row(
+                  children: [
+                    Expanded(child: Text(name)),
+                    Text('x$qty',
+                        style: const TextStyle(color: CgColors.textSecondary)),
+                    if (unit != null) ...[
+                      const SizedBox(width: 12),
+                      SizedBox(
+                        width: 96,
+                        child: Text(formatHkd(unit),
+                            textAlign: TextAlign.right,
+                            style: const TextStyle(
+                                fontFeatures: [FontFeature.tabularFigures()])),
+                      ),
+                    ],
+                  ],
+                ),
+              );
+            })
+          else
+            ...p.items.map((i) => Padding(
+                  padding: const EdgeInsets.only(top: 4),
+                  child: Text('· $i'),
+                )),
+          const Divider(height: 24),
+          Row(
+            children: [
+              const Text('合计', style: TextStyle(fontWeight: FontWeight.bold)),
+              const Spacer(),
+              Text(formatHkd(p.packagePrice),
+                  style: const TextStyle(
+                      fontWeight: FontWeight.bold,
+                      fontFeatures: [FontFeature.tabularFigures()])),
+            ],
+          ),
+          const SizedBox(height: 16),
+          // 使用规则
+          const Text('使用规则', style: TextStyle(fontWeight: FontWeight.bold)),
+          const SizedBox(height: 4),
+          _RuleRow(
+              label: '有效期',
+              value: p.validTo == null
+                  ? ''
+                  : p.validFrom == null
+                      ? '至 ${formatDateYmd(p.validTo)}'
+                      : '${formatDateYmd(p.validFrom)} 至 ${formatDateYmd(p.validTo)}'),
+          if (p.timeSlots.isNotEmpty)
+            _RuleRow(label: '可用时段', value: p.timeSlots.join('、')),
+          _RuleRow(label: '是否需预约', value: p.needBooking ? '需提前预约' : '无需预约'),
+          if (p.perUserLimit != null)
+            _RuleRow(label: '每人限购', value: '每人限购 ${p.perUserLimit} 份'),
+          if (p.stackable != null)
+            _RuleRow(
+                label: '是否可叠加',
+                value: p.stackable! ? '可与其他优惠叠加' : '不可与其他优惠叠加'),
+          const Text('· 到店出示 QR 码核销，整张一次核销，不可拆分',
+              style: TextStyle(color: CgColors.textSecondary)),
+          const SizedBox(height: 16),
+          // 适用门店
+          if (p.branches.isNotEmpty) ...[
+            ExpansionTile(
+              tilePadding: EdgeInsets.zero,
+              title: Text('适用门店（${p.branches.length} 家）',
+                  style: const TextStyle(fontWeight: FontWeight.bold)),
+              children: p.branches.map((b) {
+                final name =
+                    (b['branch_name'] ?? b['name'] ?? p.shopName) as String;
+                final address = (b['address'] ?? '') as String;
+                return ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading:
+                      const Icon(Icons.store, color: CgColors.primary),
+                  title: Text(name),
+                  subtitle: address.isEmpty ? null : Text(address),
+                  trailing: SizedBox(
+                    height: 44,
+                    child: TextButton.icon(
+                      onPressed: () => _openMap(b),
+                      icon: const Icon(Icons.map, size: 18),
+                      label: const Text('地图'),
+                    ),
+                  ),
+                );
+              }).toList(),
+            ),
+            const SizedBox(height: 8),
+          ],
+          // 评价
+          ListTile(
+            contentPadding: EdgeInsets.zero,
+            leading: const Icon(Icons.star, color: CgColors.amber),
+            title: const Text('评价',
+                style: TextStyle(fontWeight: FontWeight.bold)),
+            subtitle: p.rating == null
+                ? const Text('暂无评分')
+                : Text(
+                    '总分 ${p.rating!.overall?.toStringAsFixed(1) ?? '-'} · '
+                    '口味 ${p.rating!.taste?.toStringAsFixed(1) ?? '-'} · '
+                    '环境 ${p.rating!.ambience?.toStringAsFixed(1) ?? '-'} · '
+                    '服务 ${p.rating!.service?.toStringAsFixed(1) ?? '-'} '
+                    '（${p.rating!.reviewCount} 条）'),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: _openReviews,
+          ),
+          if (p.reviews.isNotEmpty)
+            ...p.reviews.take(3).map((r) => Padding(
+                  padding: const EdgeInsets.only(top: 8),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Text(r.userName.isEmpty ? '用户' : r.userName,
+                              style: const TextStyle(
+                                  fontWeight: FontWeight.w600)),
+                          const SizedBox(width: 8),
+                          _Stars(value: r.overall),
+                        ],
+                      ),
+                      if (r.content.isNotEmpty)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 2),
+                          child: Text(r.content, maxLines: 3,
+                              overflow: TextOverflow.ellipsis),
+                        ),
+                    ],
+                  ),
+                )),
+        ],
+      ),
+      bottomNavigationBar: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+          child: Row(
+            children: [
+              Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(formatHkd(p.packagePrice),
+                      style: const TextStyle(
+                          color: CgColors.primary,
+                          fontSize: 22,
+                          fontWeight: FontWeight.bold,
+                          fontFeatures: [FontFeature.tabularFigures()])),
+                  Text(formatHkd(p.originalPrice),
+                      style: const TextStyle(
+                          decoration: TextDecoration.lineThrough,
+                          color: CgColors.textSecondary,
+                          fontSize: 12)),
+                ],
+              ),
+              const SizedBox(width: 16),
+              Expanded(
+                child: SizedBox(
+                  height: 48,
+                  child: ElevatedButton(
+                    onPressed: soldOut ? null : _buy,
+                    child: Text(soldOut ? '已售罄' : '立即抢购'),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _RuleRow extends StatelessWidget {
+  const _RuleRow({required this.label, required this.value});
+
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    if (value.isEmpty) return const SizedBox();
+    return Padding(
+      padding: const EdgeInsets.only(top: 4),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+              width: 88,
+              child: Text(label,
+                  style: const TextStyle(color: CgColors.textSecondary))),
+          Expanded(child: Text(value)),
+        ],
+      ),
+    );
+  }
+}
+
+class _Stars extends StatelessWidget {
+  const _Stars({required this.value});
+
+  final double value;
+
+  @override
+  Widget build(BuildContext context) {
+    final filled = value.round().clamp(0, 5);
+    return Semantics(
+      label: '评分 ${value.toStringAsFixed(1)} 分',
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: List.generate(
+          5,
+          (i) => Icon(
+            i < filled ? Icons.star : Icons.star_border,
+            size: 16,
+            color: CgColors.amber,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// 下单页（UI_SPEC §3.2）：套餐摘要 + 数量步进器、支付方式二选一、
+/// 金额明细、购买须知勾选、确认支付（防重复点击）。
+class PackageCheckoutScreen extends StatefulWidget {
+  const PackageCheckoutScreen(
+      {super.key, required this.api, required this.package});
+
+  final ApiClient api;
+  final Package package;
+
+  @override
+  State<PackageCheckoutScreen> createState() => _PackageCheckoutScreenState();
+}
+
+class _PackageCheckoutScreenState extends State<PackageCheckoutScreen> {
+  int _qty = 1;
+  String _method = 'fps';
+  bool _agreed = false;
+  bool _busy = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadLastMethod();
+  }
+
+  Future<void> _loadLastMethod() async {
+    final prefs = await SharedPreferences.getInstance();
+    final last = prefs.getString('last_payment_method');
+    if (mounted && (last == 'fps' || last == 'card')) {
+      setState(() => _method = last!);
+    }
+  }
+
+  int get _maxQty => widget.package.maxQuantity;
+
+  /// 展示用合计（套餐价 × 数量）；实际支付金额以服务端订单为准。
+  double get _displayTotal => widget.package.packagePrice * _qty;
+
+  Future<void> _confirmPay() async {
+    if (_busy || !_agreed) return;
+    final pkg = widget.package;
     setState(() => _busy = true);
     try {
       final res = await widget.api.purchasePackage(pkg.id, _method,
+          quantity: _qty,
           clientRef: 'app-${DateTime.now().millisecondsSinceEpoch}');
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('last_payment_method', _method);
       final order = PackageOrder.fromJson(res['order'] as Map<String, dynamic>);
       if (!mounted) return;
       setState(() => _busy = false);
-      final ok = await showDialog<bool>(
-        context: context,
-        builder: (ctx) => AlertDialog(
-          title: const Text('完成支付（測試模式）'),
-          content: Text(
-              '訂單 #${order.id} · \$${order.amount.toStringAsFixed(0)}\n'
-              '支付方式：${order.paymentMethodText}\n'
-              'Stripe 測試模式：未接真實商戶號，不會扣款。'),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(ctx).pop(false),
-              child: const Text('模擬支付失敗'),
-            ),
-            ElevatedButton(
-              onPressed: () => Navigator.of(ctx).pop(true),
-              child: const Text('模擬支付成功'),
-            ),
-          ],
-        ),
-      );
-      if (ok == null) return;
-      if (!mounted) return;
-      try {
-        final paid = await widget.api.confirmPayment(
-            order.id, ok ? 'succeeded' : 'failed');
-        if (!mounted) return;
-        showCgToast(context,
-            (paid['message'] as String?) ?? (ok ? '支付成功' : '支付失敗'));
-        if (ok) {
-          Navigator.of(context).pushReplacement(MaterialPageRoute(
-              builder: (_) => OrdersScreen(api: widget.api)));
-        } else {
-          setState(() {});
-        }
-      } on ApiException catch (e) {
-        if (mounted) showCgToast(context, e.message);
-      }
+      // 支付页完成后进入结果轮询，不再向服务端传支付结果。
+      final done = await showPaymentSheet(context, order);
+      if (done != true || !mounted) return;
+      Navigator.of(context).push(MaterialPageRoute(
+          builder: (_) => PaymentResultScreen(
+              api: widget.api, initialOrder: order)));
     } on ApiException catch (e) {
       if (mounted) {
         setState(() => _busy = false);
@@ -190,104 +674,274 @@ class _PackageDetailScreenState extends State<PackageDetailScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final p = _pkg;
-    if (p == null) {
-      return Scaffold(
-        appBar: AppBar(title: const Text('套餐詳情')),
-        body: const Center(child: CircularProgressIndicator()),
-      );
-    }
+    final p = widget.package;
+    final soldOut = _maxQty <= 0;
     return Scaffold(
-      appBar: AppBar(title: const Text('套餐詳情')),
+      appBar: AppBar(title: const Text('确认订单')),
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
-          Text(p.name,
-              style:
-                  const TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
-          const SizedBox(height: 6),
-          Text('${p.shopName} · ${p.personCount} 人用',
-              style: const TextStyle(color: CgColors.textSecondary)),
-          const SizedBox(height: 12),
-          Row(
-            children: [
-              Text('\$${p.packagePrice.toStringAsFixed(0)}',
-                  style: const TextStyle(
-                      color: CgColors.primary,
-                      fontSize: 26,
-                      fontWeight: FontWeight.bold)),
-              const SizedBox(width: 10),
-              Text('\$${p.originalPrice.toStringAsFixed(0)}',
-                  style: const TextStyle(
-                      decoration: TextDecoration.lineThrough,
-                      color: CgColors.textSecondary)),
-              const SizedBox(width: 8),
-              Chip(label: Text('省 ${p.savePercent.toStringAsFixed(0)}%')),
-              const Spacer(),
-              Chip(
-                  label: Text(p.daysLeft > 0
-                      ? '剩 ${p.daysLeft} 日'
-                      : '即將到期')),
-            ],
-          ),
-          const SizedBox(height: 12),
-          Text('剩餘 ${p.stockLeft} 份 · 已售 ${p.soldCount}'),
-          if (p.validTo != null)
-            Text('有效期至 ${p.validTo!.toLocal().toString().split(' ').first}'),
-          const SizedBox(height: 16),
-          const Text('套餐內容', style: TextStyle(fontWeight: FontWeight.bold)),
-          ...p.items.map((i) => Padding(
-                padding: const EdgeInsets.only(top: 4),
-                child: Text('· $i'),
-              )),
-          const SizedBox(height: 16),
-          const Text('使用須知', style: TextStyle(fontWeight: FontWeight.bold)),
-          if (p.needBooking) const Text('· 需提前預約'),
-          if (p.includes.isNotEmpty) Text('· 包含：${p.includes.join('、')}'),
-          if (p.excludes.isNotEmpty) Text('· 不包含：${p.excludes.join('、')}'),
-          const Text('· 到店出示 QR 碼核銷，整張一次核銷，不可拆分'),
-          const SizedBox(height: 16),
-          Container(
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: const Color(0xFFFFF3CD),
-              borderRadius: BorderRadius.circular(8),
+          // 套餐摘要
+          Card(
+            child: Padding(
+              padding: const EdgeInsets.all(12),
+              child: Row(
+                children: [
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(8),
+                    child: SizedBox(
+                      width: 72,
+                      height: 72,
+                      child: _PkgImage(url: p.image),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(p.name,
+                            style: const TextStyle(
+                                fontWeight: FontWeight.bold, fontSize: 16)),
+                        const SizedBox(height: 4),
+                        Text('${p.shopName} · ${p.personCount} 人用',
+                            style: const TextStyle(
+                                color: CgColors.textSecondary)),
+                        const SizedBox(height: 4),
+                        Text(formatHkd(p.packagePrice),
+                            style: const TextStyle(
+                                color: CgColors.primary,
+                                fontWeight: FontWeight.bold,
+                                fontFeatures: [FontFeature.tabularFigures()])),
+                      ],
+                    ),
+                  ),
+                  // 数量步进器
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Semantics(
+                        button: true,
+                        label: '减少数量',
+                        child: IconButton(
+                          icon: const Icon(Icons.remove_circle_outline),
+                          tooltip: '减少数量',
+                          onPressed: _qty > 1
+                              ? () => setState(() => _qty--)
+                              : null,
+                        ),
+                      ),
+                      Text('$_qty',
+                          style: const TextStyle(
+                              fontSize: 18,
+                              fontWeight: FontWeight.bold,
+                              fontFeatures: [FontFeature.tabularFigures()])),
+                      Semantics(
+                        button: true,
+                        label: '增加数量',
+                        child: IconButton(
+                          icon: const Icon(Icons.add_circle_outline),
+                          tooltip: '增加数量',
+                          onPressed: _qty < _maxQty
+                              ? () => setState(() => _qty++)
+                              : null,
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
             ),
-            child: Text('退款規則：${p.refundPolicyText}',
-                style: const TextStyle(fontWeight: FontWeight.bold)),
           ),
+          if (p.limitRemaining != null || p.perUserLimit != null)
+            Padding(
+              padding: const EdgeInsets.only(top: 8),
+              child: Text(
+                  '每单最多购买 $_maxQty 份（限购余量与库存取较小值）',
+                  style: const TextStyle(color: CgColors.textSecondary)),
+            ),
+          if (soldOut)
+            const Padding(
+              padding: EdgeInsets.only(top: 8),
+              child: Text('该套餐已售罄。',
+                  style: TextStyle(color: CgColors.primary)),
+            ),
           const SizedBox(height: 16),
+          // 支付方式
           const Text('支付方式', style: TextStyle(fontWeight: FontWeight.bold)),
-          RadioListTile<String>(
-            title: const Text('FPS 轉數快'),
-            value: 'fps',
+          RadioGroup<String>(
             groupValue: _method,
             onChanged: (v) => setState(() => _method = v ?? 'fps'),
+            child: const Column(
+              children: [
+                RadioListTile<String>(
+                  title: Text('FPS 轉數快'),
+                  value: 'fps',
+                ),
+                RadioListTile<String>(
+                  title: Text('信用卡'),
+                  value: 'card',
+                ),
+              ],
+            ),
           ),
-          RadioListTile<String>(
-            title: const Text('信用卡'),
-            value: 'card',
-            groupValue: _method,
-            onChanged: (v) => setState(() => _method = v ?? 'card'),
+          const SizedBox(height: 8),
+          // 金额明细
+          const Text('金额明细', style: TextStyle(fontWeight: FontWeight.bold)),
+          const SizedBox(height: 4),
+          Row(
+            children: [
+              Text('套餐价 ${formatHkd(p.packagePrice)} × $_qty'),
+              const Spacer(),
+              Text(formatHkd(_displayTotal),
+                  style: const TextStyle(
+                      fontFeatures: [FontFeature.tabularFigures()])),
+            ],
           ),
-          const Text('Stripe 測試模式：未接真實商戶號，不會扣款。',
-              style: TextStyle(color: CgColors.textSecondary, fontSize: 12)),
+          const Divider(height: 24),
+          Row(
+            children: [
+              const Text('合计', style: TextStyle(fontWeight: FontWeight.bold)),
+              const Spacer(),
+              Text(formatHkd(_displayTotal),
+                  style: const TextStyle(
+                      color: CgColors.primary,
+                      fontSize: 20,
+                      fontWeight: FontWeight.bold,
+                      fontFeatures: [FontFeature.tabularFigures()])),
+            ],
+          ),
+          const Padding(
+            padding: EdgeInsets.only(top: 4),
+            child: Text('实际支付金额以服务端订单为准。',
+                style:
+                    TextStyle(color: CgColors.textSecondary, fontSize: 12)),
+          ),
+          const SizedBox(height: 16),
+          // 不可退：购买页再次醒目提示
+          if (p.isNonRefundable)
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: const Color(0xFFFDECEA),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: const Text('注意：该套餐售出后不可退，请确认后再购买。',
+                  style: TextStyle(fontWeight: FontWeight.bold)),
+            ),
+          if (p.isNonRefundable) const SizedBox(height: 16),
+          // 购买须知勾选
+          Row(
+            children: [
+              Checkbox(
+                value: _agreed,
+                onChanged: (v) => setState(() => _agreed = v ?? false),
+              ),
+              const Expanded(child: Text('我已阅读并同意购买须知')),
+              TextButton(
+                onPressed: () => Navigator.of(context).push(MaterialPageRoute(
+                    builder: (_) => PackageTermsScreen(package: p))),
+                child: const Text('查看购买须知'),
+              ),
+            ],
+          ),
         ],
       ),
-      bottomNavigationBar: Padding(
-        padding: const EdgeInsets.all(16),
-        child: ElevatedButton(
-          onPressed: _busy ? null : _buy,
-          child: Text(_busy
-              ? '處理中…'
-              : '立即購買　\$${p.packagePrice.toStringAsFixed(0)}'),
+      bottomNavigationBar: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: ElevatedButton(
+            style: ElevatedButton.styleFrom(
+                minimumSize: const Size(double.infinity, 48)),
+            onPressed: (_agreed && !_busy && !soldOut) ? _confirmPay : null,
+            child: Text(_busy ? '处理中…' : '确认支付 ${formatHkd(_displayTotal)}'),
+          ),
         ),
       ),
     );
   }
 }
 
-/// My orders: status, pay / retry / cancel / refund entries.
+/// 购买须知页：内含退款规则（不可退套餐醒目提示）与使用规则。
+class PackageTermsScreen extends StatelessWidget {
+  const PackageTermsScreen({super.key, required this.package});
+
+  final Package package;
+
+  @override
+  Widget build(BuildContext context) {
+    final p = package;
+    return Scaffold(
+      appBar: AppBar(title: const Text('购买须知')),
+      body: ListView(
+        padding: const EdgeInsets.all(16),
+        children: [
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: p.isNonRefundable
+                  ? const Color(0xFFFDECEA)
+                  : const Color(0xFFFFF3CD),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Text('退款规则：${p.refundRuleText}',
+                style: const TextStyle(fontWeight: FontWeight.bold)),
+          ),
+          if (!p.isNonRefundable)
+            const Padding(
+              padding: EdgeInsets.only(top: 8),
+              child: Text('退款将在 1–3 个工作日原路退回。'),
+            ),
+          const SizedBox(height: 16),
+          const Text('使用规则', style: TextStyle(fontWeight: FontWeight.bold)),
+          const SizedBox(height: 4),
+          if (p.validTo != null)
+            Text('有效期：${p.validFrom == null ? '' : '${formatDateYmd(p.validFrom)} 至 '}${formatDateYmd(p.validTo)}'),
+          if (p.timeSlots.isNotEmpty) Text('可用时段：${p.timeSlots.join('、')}'),
+          Text(p.needBooking ? '需提前预约。' : '无需预约。'),
+          if (p.perUserLimit != null) Text('每人限购 ${p.perUserLimit} 份。'),
+          if (p.stackable != null)
+            Text(p.stackable! ? '可与其他优惠叠加。' : '不可与其他优惠叠加。'),
+          const Text('到店出示 QR 码核销，整张一次核销，不可拆分。'),
+          const SizedBox(height: 16),
+          const Text('套餐内容', style: TextStyle(fontWeight: FontWeight.bold)),
+          const SizedBox(height: 4),
+          ...p.items.map((i) => Text('· $i')),
+        ],
+      ),
+    );
+  }
+}
+
+/// 图片：服务端 http(s) 地址用网络图，其余用本地占位图。
+class _PkgImage extends StatelessWidget {
+  const _PkgImage({required this.url});
+
+  final String url;
+
+  @override
+  Widget build(BuildContext context) {
+    if (url.startsWith('http://') || url.startsWith('https://')) {
+      return Image.network(
+        url,
+        fit: BoxFit.cover,
+        width: double.infinity,
+        height: double.infinity,
+        errorBuilder: (_, __, ___) => Container(color: CgColors.pageBg),
+      );
+    }
+    return Image.asset(
+      'assets/images/dummy_image_1.png',
+      fit: BoxFit.cover,
+      width: double.infinity,
+      height: double.infinity,
+      errorBuilder: (_, __, ___) => Container(color: CgColors.pageBg),
+    );
+  }
+}
+
+/// My orders (UI_SPEC §3.4): tabs 全部 / 待支付 / 已支付 / 已退款；
+/// tap a card for the order detail (number, method, times, refund).
 class OrdersScreen extends StatefulWidget {
   const OrdersScreen({super.key, required this.api});
 
@@ -300,6 +954,7 @@ class OrdersScreen extends StatefulWidget {
 class _OrdersScreenState extends State<OrdersScreen> {
   List<PackageOrder> _orders = [];
   bool _loading = true;
+  bool _error = false;
 
   @override
   void initState() {
@@ -308,17 +963,21 @@ class _OrdersScreenState extends State<OrdersScreen> {
   }
 
   Future<void> _load() async {
+    if (mounted) setState(() => _loading = true);
     try {
       final list = await widget.api.orders();
       if (!mounted) return;
       setState(() {
         _orders = list.map((e) => PackageOrder.fromJson(e)).toList();
         _loading = false;
+        _error = false;
       });
-    } on ApiException catch (e) {
+    } on ApiException catch (_) {
       if (mounted) {
-        setState(() => _loading = false);
-        showCgToast(context, e.message);
+        setState(() {
+          _loading = false;
+          _error = true;
+        });
       }
     }
   }
@@ -334,14 +993,43 @@ class _OrdersScreenState extends State<OrdersScreen> {
     }
   }
 
+  /// 待支付订单：打开支付页，完成後进入结果轮询。
+  Future<void> _pay(PackageOrder o) async {
+    final done = await showPaymentSheet(context, o);
+    if (done != true || !mounted) return;
+    Navigator.of(context).push(MaterialPageRoute(
+        builder: (_) =>
+            PaymentResultScreen(api: widget.api, initialOrder: o)));
+  }
+
+  /// 失败/逾時订单：重新发起支付，完成後进入结果轮询。
+  Future<void> _retry(PackageOrder o) async {
+    try {
+      final res = await widget.api.retryPayment(
+          o.id, o.paymentMethod.isEmpty ? 'fps' : o.paymentMethod);
+      final order = PackageOrder.fromJson(res['order'] as Map<String, dynamic>);
+      if (!mounted) return;
+      final done = await showPaymentSheet(context, order);
+      if (done != true) {
+        _load();
+        return;
+      }
+      if (!mounted) return;
+      Navigator.of(context).push(MaterialPageRoute(
+          builder: (_) =>
+              PaymentResultScreen(api: widget.api, initialOrder: order)));
+    } on ApiException catch (e) {
+      if (mounted) showCgToast(context, e.message);
+    }
+  }
+
   Future<void> _refund(PackageOrder o) async {
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('申請退款'),
         content: Text(
-            '訂單 #${o.id} · \$${o.amount.toStringAsFixed(0)}\n'
-            '退款後套餐券立即作廢，不可再核銷。款項原路返回，預計 1–3 個工作日到賬。'),
+            '訂單 ${o.orderNoText} · ${formatHkd(o.amount)}\n退款后套餐券作废，确定吗？'),
         actions: [
           TextButton(
               onPressed: () => Navigator.of(ctx).pop(false),
@@ -357,83 +1045,906 @@ class _OrdersScreenState extends State<OrdersScreen> {
     }
   }
 
+  List<PackageOrder> _filtered(int tab) {
+    switch (tab) {
+      case 1:
+        return _orders.where((o) => o.paymentStatus == 'pending').toList();
+      case 2:
+        return _orders.where((o) => o.paymentStatus == 'paid').toList();
+      case 3:
+        return _orders
+            .where((o) =>
+                o.refundStatus == 'refunded' || o.refundStatus == 'requested')
+            .toList();
+      default:
+        return _orders;
+    }
+  }
+
+  String _emptyMessage(int tab) {
+    switch (tab) {
+      case 1:
+        return '暫時沒有待支付訂單。';
+      case 2:
+        return '暫時沒有已支付訂單。';
+      case 3:
+        return '暫時沒有退款訂單。';
+      default:
+        return '暫時沒有訂單。';
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: const Text('我的訂單')),
-      body: _loading
-          ? const Center(child: CircularProgressIndicator())
-          : _orders.isEmpty
-              ? const Center(child: Text('暫時沒有訂單。'))
-              : RefreshIndicator(
-                  onRefresh: _load,
-                  child: ListView.builder(
-                    padding: const EdgeInsets.all(12),
-                    itemCount: _orders.length,
-                    itemBuilder: (_, i) {
-                      final o = _orders[i];
-                      return Card(
-                        margin: const EdgeInsets.only(bottom: 12),
-                        child: Padding(
+    return DefaultTabController(
+      length: 4,
+      child: Scaffold(
+        appBar: AppBar(
+          title: const Text('我的訂單'),
+          bottom: const TabBar(
+            tabs: [
+              Tab(text: '全部'),
+              Tab(text: '待支付'),
+              Tab(text: '已支付'),
+              Tab(text: '已退款'),
+            ],
+          ),
+        ),
+        body: _loading
+            ? const _LoadingList()
+            : _error
+                ? _ErrorView(onRetry: _load)
+                : TabBarView(
+                    children: List.generate(4, (tab) {
+                      final orders = _filtered(tab);
+                      if (orders.isEmpty) {
+                        return _EmptyView(
+                          message: _emptyMessage(tab),
+                          actionLabel: '去看看套餐',
+                          onAction: () => Navigator.of(context).push(
+                              MaterialPageRoute(
+                                  builder: (_) => PackageListScreen(
+                                      api: widget.api))),
+                        );
+                      }
+                      return RefreshIndicator(
+                        onRefresh: _load,
+                        child: ListView.builder(
                           padding: const EdgeInsets.all(12),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Row(
-                                children: [
-                                  Expanded(
-                                    child: Text(o.packageName,
-                                        style: const TextStyle(
-                                            fontWeight: FontWeight.bold)),
+                          itemCount: orders.length,
+                          itemBuilder: (_, i) {
+                            final o = orders[i];
+                            return Card(
+                              margin: const EdgeInsets.only(bottom: 12),
+                              child: InkWell(
+                                onTap: () => Navigator.of(context)
+                                    .push(MaterialPageRoute(
+                                        builder: (_) => OrderDetailScreen(
+                                            api: widget.api, orderId: o.id)))
+                                    .then((_) => _load()),
+                                child: Padding(
+                                  padding: const EdgeInsets.all(12),
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Row(
+                                        children: [
+                                          Expanded(
+                                            child: Text(o.packageName,
+                                                style: const TextStyle(
+                                                    fontWeight:
+                                                        FontWeight.bold)),
+                                          ),
+                                          Chip(label: Text(_statusLabel(o))),
+                                        ],
+                                      ),
+                                      Text(
+                                          '${o.shopName} · ${o.paymentMethodText} · ${formatHkd(o.amount)}'),
+                                      if (o.refundStatus != 'none')
+                                        Text(
+                                            '退款狀態：${o.refundStatusText}'
+                                            '${o.refundAmount > 0 ? ' · ${formatHkd(o.refundAmount)}' : ''}',
+                                            style: const TextStyle(
+                                                color: CgColors.primary)),
+                                      const SizedBox(height: 8),
+                                      Wrap(
+                                        spacing: 8,
+                                        children: [
+                                          if (o.canPay)
+                                            ElevatedButton(
+                                              style: ElevatedButton.styleFrom(
+                                                  minimumSize:
+                                                      const Size(88, 44)),
+                                              onPressed: () => _pay(o),
+                                              child: const Text('去支付'),
+                                            ),
+                                          if (o.canPay)
+                                            OutlinedButton(
+                                              style: OutlinedButton.styleFrom(
+                                                  minimumSize:
+                                                      const Size(88, 44)),
+                                              onPressed: () => _act(() =>
+                                                  widget.api
+                                                      .cancelOrder(o.id)),
+                                              child: const Text('取消訂單'),
+                                            ),
+                                          if (o.canRetry)
+                                            ElevatedButton(
+                                              style: ElevatedButton.styleFrom(
+                                                  minimumSize:
+                                                      const Size(88, 44)),
+                                              onPressed: () => _retry(o),
+                                              child: const Text('重新支付'),
+                                            ),
+                                          if (o.canRefund)
+                                            OutlinedButton(
+                                              style: OutlinedButton.styleFrom(
+                                                  minimumSize:
+                                                      const Size(88, 44)),
+                                              onPressed: () => _refund(o),
+                                              child: const Text('申請退款'),
+                                            ),
+                                        ],
+                                      ),
+                                    ],
                                   ),
-                                  Chip(label: Text(o.paymentStatusText)),
-                                ],
+                                ),
                               ),
-                              Text(
-                                  '${o.shopName} · ${o.paymentMethodText} · \$${o.amount.toStringAsFixed(0)}'),
-                              if (o.refundStatus != 'none')
-                                Text(
-                                    '退款狀態：${o.refundStatus == 'refunded' ? '已退款' : o.refundStatus}',
-                                    style: const TextStyle(
-                                        color: CgColors.primary)),
-                              const SizedBox(height: 8),
-                              Wrap(
-                                spacing: 8,
-                                children: [
-                                  if (o.canPay)
-                                    ElevatedButton(
-                                      onPressed: () => _act(() =>
-                                          widget.api.confirmPayment(
-                                              o.id, 'succeeded')),
-                                      child: const Text('模擬支付成功'),
-                                    ),
-                                  if (o.canPay)
-                                    OutlinedButton(
-                                      onPressed: () =>
-                                          _act(() => widget.api.cancelOrder(o.id)),
-                                      child: const Text('取消訂單'),
-                                    ),
-                                  if (o.canRetry)
-                                    ElevatedButton(
-                                      onPressed: () => _act(() => widget
-                                          .api
-                                          .retryPayment(o.id, 'fps')),
-                                      child: const Text('重新支付（FPS）'),
-                                    ),
-                                  if (o.canRefund)
-                                    OutlinedButton(
-                                      onPressed: () => _refund(o),
-                                      child: const Text('申請退款'),
-                                    ),
-                                ],
-                              ),
-                            ],
-                          ),
+                            );
+                          },
                         ),
                       );
-                    },
+                    }),
                   ),
-                ),
+      ),
+    );
+  }
+}
+
+/// 逾時订单服务端已关闭，列表上直接显示「訂單已關閉」。
+String _statusLabel(PackageOrder o) =>
+    o.paymentStatus == 'timeout' ? '訂單已關閉' : o.paymentStatusText;
+
+/// Order detail (UI_SPEC §3.4): order number, payment method/time,
+/// refund status + amount, expected arrival; refund button only when
+/// the voucher is unused and refundable (hidden, not disabled, otherwise).
+class OrderDetailScreen extends StatefulWidget {
+  const OrderDetailScreen({super.key, required this.api, required this.orderId});
+
+  final ApiClient api;
+  final int orderId;
+
+  @override
+  State<OrderDetailScreen> createState() => _OrderDetailScreenState();
+}
+
+class _OrderDetailScreenState extends State<OrderDetailScreen> {
+  PackageOrder? _order;
+  bool _loading = true;
+  bool _error = false;
+  bool _busy = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    if (mounted) setState(() => _loading = true);
+    try {
+      final data = await widget.api.orderDetails(widget.orderId);
+      if (!mounted) return;
+      setState(() {
+        _order = PackageOrder.fromJson(data['order'] as Map<String, dynamic>);
+        _loading = false;
+        _error = false;
+      });
+    } on ApiException catch (_) {
+      if (mounted) {
+        setState(() {
+          _loading = false;
+          _error = true;
+        });
+      }
+    }
+  }
+
+  Future<void> _refund() async {
+    final o = _order;
+    if (o == null || _busy) return;
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('申請退款'),
+        content: Text(
+            '訂單 ${o.orderNoText} · ${formatHkd(o.amount)}\n退款后套餐券作废，确定吗？'),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.of(ctx).pop(false),
+              child: const Text('取消')),
+          ElevatedButton(
+              onPressed: () => Navigator.of(ctx).pop(true),
+              child: const Text('確認退款')),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
+    setState(() => _busy = true);
+    try {
+      await widget.api.refundOrder(o.id);
+      if (!mounted) return;
+      showCgToast(context, '退款申請已提交');
+      _load();
+    } on ApiException catch (e) {
+      if (mounted) {
+        setState(() => _busy = false);
+        showCgToast(context, e.message);
+      }
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final o = _order;
+    if (_loading) {
+      return Scaffold(
+        appBar: AppBar(title: const Text('訂單詳情')),
+        body: const _LoadingList(),
+      );
+    }
+    if (_error || o == null) {
+      return Scaffold(
+        appBar: AppBar(title: const Text('訂單詳情')),
+        body: _ErrorView(onRetry: _load),
+      );
+    }
+    final showRefundEta =
+        o.refundStatus == 'requested' || o.refundStatus == 'refunded';
+    return Scaffold(
+      appBar: AppBar(title: const Text('訂單詳情')),
+      body: ListView(
+        padding: const EdgeInsets.all(16),
+        children: [
+          Text(o.packageName,
+              style:
+                  const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+          const SizedBox(height: 4),
+          Text(o.shopName,
+              style: const TextStyle(color: CgColors.textSecondary)),
+          const SizedBox(height: 16),
+          _DetailRow(label: '訂單號', value: o.orderNoText),
+          _DetailRow(label: '支付方式', value: o.paymentMethodText),
+          _DetailRow(
+              label: '支付時間',
+              value: o.paidAt != null
+                  ? formatDateTime(o.paidAt)
+                  : (o.paymentStatus == 'paid'
+                      ? formatDateTime(o.createdAt)
+                      : '—')),
+          _DetailRow(label: '下單時間', value: formatDateTime(o.createdAt)),
+          if (o.quantity > 1) _DetailRow(label: '數量', value: '${o.quantity} 份'),
+          _DetailRow(
+              label: '金額',
+              value: formatHkd(o.amount),
+              valueBold: true),
+          _DetailRow(label: '支付狀態', value: o.paymentStatusText),
+          _DetailRow(label: '退款狀態', value: o.refundStatusText),
+          if (o.refundAmount > 0)
+            _DetailRow(label: '退款金額', value: formatHkd(o.refundAmount)),
+          if (showRefundEta)
+            const Padding(
+              padding: EdgeInsets.only(top: 12),
+              child: Text('預計到賬：1–3 個工作日原路退回',
+                  style: TextStyle(color: CgColors.textSecondary)),
+            ),
+          if (o.canRefund) ...[
+            const SizedBox(height: 24),
+            SizedBox(
+              width: double.infinity,
+              height: 48,
+              child: OutlinedButton(
+                onPressed: _busy ? null : _refund,
+                child: Text(_busy ? '处理中…' : '申請退款'),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _DetailRow extends StatelessWidget {
+  const _DetailRow(
+      {required this.label, required this.value, this.valueBold = false});
+
+  final String label;
+  final String value;
+  final bool valueBold;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 8),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+              width: 88,
+              child: Text(label,
+                  style: const TextStyle(color: CgColors.textSecondary))),
+          Expanded(
+            child: Text(value,
+                style: TextStyle(
+                    fontWeight:
+                        valueBold ? FontWeight.bold : FontWeight.normal,
+                    fontFeatures: const [FontFeature.tabularFigures()])),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// 支付页（跳转/对话框）完成后的确认入口：用户在支付页完成支付后
+/// 点「我已完成支付」，调用方随即进入 [PaymentResultScreen] 轮询结果。
+/// 返回 true 表示进入轮询，false/null 表示用户取消，订单留在待支付状态。
+Future<bool?> showPaymentSheet(BuildContext context, PackageOrder order) {
+  return showDialog<bool>(
+    context: context,
+    barrierDismissible: false,
+    builder: (ctx) => AlertDialog(
+      title: const Text('完成支付'),
+      content: Text(
+          '訂單 #${order.id} · ${formatHkd(order.amount)}\n'
+          '支付方式：${order.paymentMethodText}\n'
+          '請在支付頁面完成支付，完成後返回此頁確認結果。'),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(ctx).pop(false),
+          child: const Text('取消'),
+        ),
+        ElevatedButton(
+          onPressed: () => Navigator.of(ctx).pop(true),
+          child: const Text('我已完成支付'),
+        ),
+      ],
+    ),
+  );
+}
+
+/// 支付结果轮询页（UI_SPEC §3.3）。
+///
+/// 支付页完成后每 2 秒轮询 GET /orders/{id}，最多 60 秒，直到
+/// payment_status 为 paid / failed / timeout。60 秒后仍为 pending，
+/// 停在「仍在確認」页，由用户选择继续确认或去订单列表查看。
+/// pending 且已超 15 分钟（以服务端返回的 created_at 为准）视为已关闭。
+class PaymentResultScreen extends StatefulWidget {
+  const PaymentResultScreen(
+      {super.key, required this.api, required this.initialOrder});
+
+  final ApiClient api;
+
+  /// 下单/重试接口返回的订单快照；金额等字段以轮询到的服务端值为准。
+  final PackageOrder initialOrder;
+
+  @override
+  State<PaymentResultScreen> createState() => _PaymentResultScreenState();
+}
+
+enum _PollPhase { polling, paid, failed, timeout, closed, stillPending, error }
+
+class _PaymentResultScreenState extends State<PaymentResultScreen> {
+  static const _pollInterval = Duration(seconds: 2);
+
+  /// 单轮轮询上限 60 秒（30 次 × 2 秒）。
+  static const _maxAttempts = 30;
+
+  /// 服务端订单关闭时限：pending 超 15 分钟视为已关闭。
+  static const _closeAfter = Duration(minutes: 15);
+
+  Timer? _timer;
+  _PollPhase _phase = _PollPhase.polling;
+  late PackageOrder _order;
+  String? _failureMessage;
+  int _attempts = 0;
+  bool _busy = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _order = widget.initialOrder;
+    _startPolling();
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  void _startPolling() {
+    _timer?.cancel();
+    _attempts = 0;
+    setState(() => _phase = _PollPhase.polling);
+    _pollOnce();
+    _timer = Timer.periodic(_pollInterval, (_) {
+      if (_attempts >= _maxAttempts) {
+        _timer?.cancel();
+        if (mounted && _phase == _PollPhase.polling) {
+          setState(() => _phase = _PollPhase.stillPending);
+        }
+        return;
+      }
+      _pollOnce();
+    });
+  }
+
+  Future<void> _pollOnce() async {
+    if (!mounted || _phase != _PollPhase.polling) return;
+    _attempts++;
+    try {
+      final data = await widget.api.orderDetails(_order.id);
+      if (!mounted || _phase != _PollPhase.polling) return;
+      final raw = data['order'] as Map<String, dynamic>;
+      final order = PackageOrder.fromJson(raw);
+      final created = order.createdAt;
+      final expiredPending = order.paymentStatus == 'pending' &&
+          created != null &&
+          DateTime.now().difference(created) >= _closeAfter;
+      setState(() => _order = order);
+      if (expiredPending) {
+        _finish(_PollPhase.timeout);
+        return;
+      }
+      switch (order.paymentStatus) {
+        case 'paid':
+          _finish(_PollPhase.paid);
+        case 'failed':
+          _failureMessage = _lastFailureMessage(raw);
+          _finish(_PollPhase.failed);
+        case 'timeout':
+          _finish(_PollPhase.timeout);
+        case 'cancelled':
+          _finish(_PollPhase.closed);
+      }
+    } on ApiException catch (_) {
+      if (!mounted) return;
+      _timer?.cancel();
+      setState(() => _phase = _PollPhase.error);
+    }
+  }
+
+  void _finish(_PollPhase phase) {
+    _timer?.cancel();
+    if (mounted) setState(() => _phase = phase);
+  }
+
+  static String? _lastFailureMessage(Map<String, dynamic> raw) {
+    final payments = raw['payments'] as List? ?? [];
+    if (payments.isEmpty) return null;
+    final last = payments.last as Map<String, dynamic>;
+    final msg = (last['failure_message'] as String?)?.trim();
+    return (msg == null || msg.isEmpty) ? null : msg;
+  }
+
+  Future<void> _onBackPressed() async {
+    if (_phase != _PollPhase.polling) {
+      if (mounted) Navigator.of(context).pop();
+      return;
+    }
+    final leave = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('確定離開？'),
+        content: const Text('支付可能仍在處理，確定離開？'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('繼續等待'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('確定離開'),
+          ),
+        ],
+      ),
+    );
+    if (leave == true && mounted) {
+      // 离开后订单在「我的订单」里继续显示状态。
+      Navigator.of(context).pushReplacement(MaterialPageRoute(
+          builder: (_) => OrdersScreen(api: widget.api)));
+    }
+  }
+
+  Future<void> _retry() async {
+    if (_busy) return;
+    setState(() => _busy = true);
+    try {
+      final res = await widget.api.retryPayment(
+          _order.id, _order.paymentMethod.isEmpty ? 'fps' : _order.paymentMethod);
+      final order = PackageOrder.fromJson(res['order'] as Map<String, dynamic>);
+      if (!mounted) return;
+      setState(() => _busy = false);
+      final done = await showPaymentSheet(context, order);
+      if (done != true || !mounted) return;
+      Navigator.of(context).pushReplacement(MaterialPageRoute(
+          builder: (_) => PaymentResultScreen(
+              api: widget.api, initialOrder: order)));
+    } on ApiException catch (e) {
+      if (mounted) {
+        setState(() => _busy = false);
+        showCgToast(context, e.message);
+      }
+    }
+  }
+
+  Future<void> _cancel() async {
+    if (_busy) return;
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('取消訂單'),
+        content: Text('確定取消訂單 #${_order.id} 嗎？'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('返回'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('確定取消'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
+    setState(() => _busy = true);
+    try {
+      await widget.api.cancelOrder(_order.id);
+      if (!mounted) return;
+      showCgToast(context, '訂單已取消');
+      Navigator.of(context).pushReplacement(MaterialPageRoute(
+          builder: (_) => OrdersScreen(api: widget.api)));
+    } on ApiException catch (e) {
+      if (mounted) {
+        setState(() => _busy = false);
+        showCgToast(context, e.message);
+      }
+    }
+  }
+
+  void _openOrders() {
+    Navigator.of(context).pushReplacement(MaterialPageRoute(
+        builder: (_) => OrdersScreen(api: widget.api)));
+  }
+
+  void _openWallet() {
+    Navigator.of(context).push(MaterialPageRoute(
+        builder: (_) => WalletScreen(
+            api: widget.api,
+            onShowQr: (item) => Navigator.of(context).push(MaterialPageRoute(
+                builder: (_) => QrShowScreen(api: widget.api, item: item))))));
+  }
+
+  void _goHome() {
+    Navigator.of(context).popUntil((route) => route.isFirst);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final polling = _phase == _PollPhase.polling;
+    return PopScope(
+      canPop: !polling,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop && polling) _onBackPressed();
+      },
+      child: Scaffold(
+        appBar: AppBar(
+          title: const Text('支付結果'),
+          leading: IconButton(
+            icon: const Icon(Icons.arrow_back),
+            tooltip: '返回',
+            onPressed: _onBackPressed,
+          ),
+        ),
+        body: switch (_phase) {
+          _PollPhase.polling => _buildPolling(),
+          _PollPhase.paid => _buildPaid(),
+          _PollPhase.failed => _buildFailed(),
+          _PollPhase.timeout => _buildFailed(),
+          _PollPhase.closed => _buildClosed(),
+          _PollPhase.stillPending => _buildStillPending(),
+          _PollPhase.error => _ErrorView(
+              message: '網絡不穩定，請重試',
+              onRetry: _startPolling,
+            ),
+        },
+      ),
+    );
+  }
+
+  Widget _orderSummary() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(_order.packageName,
+            style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+        const SizedBox(height: 4),
+        Text('${_order.shopName} · 訂單 #${_order.id}'),
+        const SizedBox(height: 4),
+        Text(formatHkd(_order.amount),
+            style: const TextStyle(
+                fontSize: 22,
+                fontWeight: FontWeight.bold,
+                color: CgColors.primary,
+                fontFeatures: [FontFeature.tabularFigures()])),
+      ],
+    );
+  }
+
+  Widget _buildPolling() {
+    return ListView(
+      padding: const EdgeInsets.all(16),
+      children: [
+        const SkeletonBox(height: 20, width: 180),
+        const SizedBox(height: 12),
+        const SkeletonBox(height: 16, width: 240),
+        const SizedBox(height: 12),
+        const SkeletonBox(height: 28, width: 140),
+        const SizedBox(height: 24),
+        const Row(
+          children: [
+            SizedBox(
+              width: 24,
+              height: 24,
+              child: CircularProgressIndicator(strokeWidth: 2.5),
+            ),
+            SizedBox(width: 12),
+            Expanded(
+              child: Text('正在確認支付結果',
+                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
+        const Text('請勿關閉頁面，結果確認後會自動顯示。',
+            style: TextStyle(color: CgColors.textSecondary)),
+        const SizedBox(height: 24),
+        _orderSummary(),
+      ],
+    );
+  }
+
+  Widget _buildPaid() {
+    return ListView(
+      padding: const EdgeInsets.all(16),
+      children: [
+        const SizedBox(height: 32),
+        const Icon(Icons.confirmation_number,
+            size: 72, color: CgColors.primary),
+        const SizedBox(height: 16),
+        const Text('套餐券已存入錢包',
+            textAlign: TextAlign.center,
+            style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
+        const SizedBox(height: 24),
+        _orderSummary(),
+        const SizedBox(height: 32),
+        ElevatedButton(
+          style: ElevatedButton.styleFrom(
+              minimumSize: const Size(double.infinity, 48)),
+          onPressed: _openWallet,
+          child: const Text('查看券'),
+        ),
+        const SizedBox(height: 12),
+        OutlinedButton(
+          style: OutlinedButton.styleFrom(
+              minimumSize: const Size(double.infinity, 48)),
+          onPressed: _goHome,
+          child: const Text('繼續逛'),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildFailed() {
+    final isTimeout = _phase == _PollPhase.timeout;
+    return ListView(
+      padding: const EdgeInsets.all(16),
+      children: [
+        const SizedBox(height: 32),
+        Icon(isTimeout ? Icons.timer_off : Icons.error_outline,
+            size: 72, color: CgColors.primary),
+        const SizedBox(height: 16),
+        Text(isTimeout ? '訂單已關閉' : '支付失敗',
+            textAlign: TextAlign.center,
+            style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
+        const SizedBox(height: 8),
+        Text(
+            isTimeout
+                ? '支付逾時，訂單已關閉。你可以重新支付或取消訂單。'
+                : (_failureMessage ?? '支付失敗，請重試或選擇其他支付方式。'),
+            textAlign: TextAlign.center,
+            style: const TextStyle(color: CgColors.textSecondary)),
+        const SizedBox(height: 24),
+        _orderSummary(),
+        const SizedBox(height: 32),
+        ElevatedButton(
+          style: ElevatedButton.styleFrom(
+              minimumSize: const Size(double.infinity, 48)),
+          onPressed: _busy ? null : _retry,
+          child: Text(_busy ? '處理中…' : '重新支付'),
+        ),
+        const SizedBox(height: 12),
+        OutlinedButton(
+          style: OutlinedButton.styleFrom(
+              minimumSize: const Size(double.infinity, 48)),
+          onPressed: _busy ? null : _cancel,
+          child: const Text('取消訂單'),
+        ),
+        const SizedBox(height: 12),
+        TextButton(
+          style: TextButton.styleFrom(
+              minimumSize: const Size(double.infinity, 48)),
+          onPressed: _openOrders,
+          child: const Text('查看我的訂單'),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildClosed() {
+    return ListView(
+      padding: const EdgeInsets.all(16),
+      children: [
+        const SizedBox(height: 32),
+        const Icon(Icons.receipt_long, size: 72, color: CgColors.primary),
+        const SizedBox(height: 16),
+        const Text('訂單已關閉',
+            textAlign: TextAlign.center,
+            style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
+        const SizedBox(height: 8),
+        const Text('此訂單已取消。',
+            textAlign: TextAlign.center,
+            style: TextStyle(color: CgColors.textSecondary)),
+        const SizedBox(height: 24),
+        _orderSummary(),
+        const SizedBox(height: 32),
+        ElevatedButton(
+          style: ElevatedButton.styleFrom(
+              minimumSize: const Size(double.infinity, 48)),
+          onPressed: _openOrders,
+          child: const Text('查看我的訂單'),
+        ),
+        const SizedBox(height: 12),
+        OutlinedButton(
+          style: OutlinedButton.styleFrom(
+              minimumSize: const Size(double.infinity, 48)),
+          onPressed: _goHome,
+          child: const Text('繼續逛'),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildStillPending() {
+    return ListView(
+      padding: const EdgeInsets.all(16),
+      children: [
+        const SizedBox(height: 32),
+        const Icon(Icons.hourglass_top, size: 72, color: CgColors.primary),
+        const SizedBox(height: 16),
+        const Text('仍在確認支付結果',
+            textAlign: TextAlign.center,
+            style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
+        const SizedBox(height: 8),
+        const Text('支付結果仍在確認中，你可以繼續等待，或稍後在「我的訂單」查看最新狀態。',
+            textAlign: TextAlign.center,
+            style: TextStyle(color: CgColors.textSecondary)),
+        const SizedBox(height: 24),
+        _orderSummary(),
+        const SizedBox(height: 32),
+        ElevatedButton(
+          style: ElevatedButton.styleFrom(
+              minimumSize: const Size(double.infinity, 48)),
+          onPressed: _startPolling,
+          child: const Text('繼續確認'),
+        ),
+        const SizedBox(height: 12),
+        OutlinedButton(
+          style: OutlinedButton.styleFrom(
+              minimumSize: const Size(double.infinity, 48)),
+          onPressed: _openOrders,
+          child: const Text('查看我的訂單'),
+        ),
+      ],
+    );
+  }
+}
+
+/// 加载态：骨架屏，不用转圈。
+class _LoadingList extends StatelessWidget {
+  const _LoadingList();
+
+  @override
+  Widget build(BuildContext context) {
+    return ListView(
+      padding: const EdgeInsets.all(12),
+      children: const [
+        SkeletonBox(height: 72),
+        SizedBox(height: 12),
+        SkeletonBox(height: 72),
+        SizedBox(height: 12),
+        SkeletonBox(height: 72),
+      ],
+    );
+  }
+}
+
+/// 空态：一句话 + 一个动作按钮。
+class _EmptyView extends StatelessWidget {
+  const _EmptyView(
+      {required this.message, required this.actionLabel, required this.onAction});
+
+  final String message;
+  final String actionLabel;
+  final VoidCallback onAction;
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(message, textAlign: TextAlign.center),
+            const SizedBox(height: 16),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                  minimumSize: const Size(160, 48)),
+              onPressed: onAction,
+              child: Text(actionLabel),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// 错误态：一句话 + 重试。
+class _ErrorView extends StatelessWidget {
+  const _ErrorView({this.message = '網絡不穩定，請重試', required this.onRetry});
+
+  final String message;
+  final VoidCallback onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.wifi_off, size: 48, color: CgColors.textSecondary),
+            const SizedBox(height: 12),
+            Text(message, textAlign: TextAlign.center),
+            const SizedBox(height: 16),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                  minimumSize: const Size(160, 48)),
+              onPressed: onRetry,
+              child: const Text('重試'),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }

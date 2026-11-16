@@ -44,13 +44,13 @@ class ApiClient {
         if (_token != null) 'Authorization': 'Bearer $_token',
       };
 
-  Future<dynamic> get(String path, {Map<String, String>? query}) async {
+  Future<Map<String, dynamic>> get(String path, {Map<String, String>? query}) async {
     final uri = Uri.parse('$baseUrl/api/v3$path').replace(queryParameters: query);
     final res = await http.get(uri, headers: _headers);
     return _decode(res);
   }
 
-  Future<dynamic> post(String path,
+  Future<Map<String, dynamic>> post(String path,
       {Map<String, dynamic>? body, Map<String, String>? query}) async {
     final uri = Uri.parse('$baseUrl/api/v3$path').replace(queryParameters: query);
     final res = await http.post(uri, headers: _headers,
@@ -58,7 +58,7 @@ class ApiClient {
     return _decode(res);
   }
 
-  Future<dynamic> put(String path,
+  Future<Map<String, dynamic>> put(String path,
       {Map<String, dynamic>? body, Map<String, String>? query}) async {
     final uri = Uri.parse('$baseUrl/api/v3$path').replace(queryParameters: query);
     final res = await http.put(uri, headers: _headers,
@@ -66,7 +66,7 @@ class ApiClient {
     return _decode(res);
   }
 
-  Future<dynamic> delete(String path,
+  Future<Map<String, dynamic>> delete(String path,
       {Map<String, String>? query}) async {
     final uri = Uri.parse('$baseUrl/api/v3$path').replace(queryParameters: query);
     final res = await http.delete(uri, headers: _headers);
@@ -91,13 +91,13 @@ class ApiClient {
     return (data['images'] as List<dynamic>);
   }
 
-  dynamic _decode(http.Response res) {
+  Map<String, dynamic> _decode(http.Response res) {
     final data = res.body.isEmpty ? {} : jsonDecode(res.body);
     if (res.statusCode >= 400) {
       throw ApiException(res.statusCode,
           (data is Map && data['detail'] != null) ? '${data['detail']}' : '請求失敗');
     }
-    return data;
+    return data as Map<String, dynamic>;
   }
 
   // ---- auth ----
@@ -212,6 +212,20 @@ class ApiClient {
       });
   Future<Map<String, dynamic>> adminRedemptions() async =>
       get('/admin/redemptions');
+  // UI_SPEC §9 — admin package orders. NOTE: GET /admin/orders does
+  // not exist on the backend yet (only the user-scoped GET /orders);
+  // the screen shows the standard error state until it lands.
+  Future<List<dynamic>> adminOrders({String? status}) async =>
+      (await get('/admin/orders', query: {
+        if (status != null) 'status': status,
+      }))['orders'] as List<dynamic>;
+  Future<Map<String, dynamic>> adminOrderDetail(int id) async =>
+      (await get('/admin/orders/$id'))['order'] as Map<String, dynamic>;
+  // UI_SPEC §9 — single onboarding application incl. qualification
+  // photos, for the detail drawer.
+  Future<Map<String, dynamic>> adminApplication(int id) async =>
+      (await get('/admin/merchant-applications/$id'))['application']
+          as Map<String, dynamic>;
   Future<Map<String, dynamic>> adminUsers() async => get('/admin/users');
   Future<Map<String, dynamic>> adminAuditLogs() async =>
       get('/admin/audit-logs');
@@ -277,6 +291,35 @@ class ApiClient {
       post('/redemptions/$redemptionId/revoke');
   Future<Map<String, dynamic>> vendorRedemptionsExport() async =>
       get('/vendor/redemptions/export');
+  // UI_SPEC §8 — vendor redemption records with a client-side date
+  // filter (the export endpoint takes no date params yet; scanned_at
+  // is filtered here) and a raw CSV download.
+  Future<List<Map<String, dynamic>>> vendorRedemptions(
+      {DateTime? from, DateTime? to}) async {
+    final data = await vendorRedemptionsExport();
+    final records = ((data['records'] as List?) ?? [])
+        .map((e) => Map<String, dynamic>.from(e as Map))
+        .toList();
+    return records.where((r) {
+      final at = DateTime.tryParse('${r['scanned_at'] ?? ''}');
+      if (at == null) return true;
+      if (from != null && at.isBefore(from)) return false;
+      if (to != null && at.isAfter(to.add(const Duration(days: 1)))) {
+        return false;
+      }
+      return true;
+    }).toList();
+  }
+
+  Future<String> vendorRedemptionsCsv() async {
+    final uri = Uri.parse('$baseUrl/api/v3/vendor/redemptions/export')
+        .replace(queryParameters: {'format': 'csv'});
+    final res = await http.get(uri, headers: _headers);
+    if (res.statusCode >= 400) {
+      throw ApiException(res.statusCode, '請求失敗');
+    }
+    return res.body;
+  }
   // ---- bargain 2C (line E) ----
   /// Stable per-device id for the bargain anti-fraud device check.
   /// Stored locally; never a credential, just a dedupe key.
@@ -317,15 +360,16 @@ class ApiClient {
       (await get('/package-details', query: {'package_id': '$id'}))['package']
           as Map<String, dynamic>;
   Future<Map<String, dynamic>> purchasePackage(int id, String method,
-          {String clientRef = ''}) async =>
-      post('/packages/$id/purchase',
-          body: {'payment_method': method, 'client_ref': clientRef});
-  Future<Map<String, dynamic>> confirmPayment(int orderId, String outcome,
-          {int? paymentId}) async =>
-      post('/orders/$orderId/confirm-payment', body: {
-        'outcome': outcome,
-        if (paymentId != null) 'payment_id': paymentId,
+          {String clientRef = '', int quantity = 1}) async =>
+      post('/packages/$id/purchase', body: {
+        'payment_method': method,
+        'client_ref': clientRef,
+        if (quantity > 1) 'quantity': quantity,
       });
+  // NOTE (UI_SPEC §3.3): the client never posts a self-reported payment
+  // outcome. Results come from the gateway; the Flutter client only
+  // polls GET /orders/{id} (see PaymentResultScreen). The old wrapper
+  // was removed so no call site can regress.
   Future<Map<String, dynamic>> retryPayment(int orderId, String method) =>
       post('/orders/$orderId/retry-payment',
           body: {'payment_method': method});
@@ -337,8 +381,10 @@ class ApiClient {
   Future<Map<String, dynamic>> refundPackage(int id,
           {String reason = ''}) =>
       post('/packages/$id/refund', body: {'reason': reason});
-  Future<List<dynamic>> orders() async =>
-      (await get('/orders'))['orders'] as List<dynamic>;
+  Future<List<dynamic>> orders({String? status}) async =>
+      (await get('/orders', query: {
+        if (status != null) 'status': status,
+      }))['orders'] as List<dynamic>;
   Future<Map<String, dynamic>> orderDetails(int id) async =>
       (await get('/orders/$id'))['order'] as Map<String, dynamic>;
 
