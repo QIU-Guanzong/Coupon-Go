@@ -1,0 +1,41 @@
+services:
+  api:
+    build: ../apps/api
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql://coupon_go:coupon_go@db:5432/coupon_go
+      REDIS_URL: redis://redis:6379/0
+      SEED_ON_STARTUP: "1"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    restart: unless-stopped
+
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: coupon_go
+      POSTGRES_PASSWORD: coupon_go
+      POSTGRES_DB: coupon_go
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U coupon_go"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7
+    ports:
+      - "6379:6379"
+
+volumes:
+  pgdata:

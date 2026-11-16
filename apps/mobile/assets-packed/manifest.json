@@ -1,0 +1,678 @@
+{
+  "assets": [
+    {
+      "target": "fonts/Roboto-Bold.ttf",
+      "source": "Roboto-Bold.ttf",
+      "bytes": 146768,
+      "sha256": "deb990e241954e1af87c6033d40a76cf0f48e0d112541794526051ac4a3ee2c8"
+    },
+    {
+      "target": "fonts/Roboto-Medium.ttf",
+      "source": "Roboto-Medium.ttf",
+      "bytes": 146132,
+      "sha256": "616eee3f9b60ec0196e09700ebca48a375da3323c4d5872e2b982170969ac90e"
+    },
+    {
+      "target": "fonts/Roboto-Regular.ttf",
+      "source": "Roboto-Regular.ttf",
+      "bytes": 146004,
+      "sha256": "dbd285b518e398832f6f4a736109c355ce25a49546bfce41bab256c9ef7e56eb"
+    },
+    {
+      "target": "fonts/Roboto-SemiBold.ttf",
+      "source": "Roboto-SemiBold.ttf",
+      "bytes": 146760,
+      "sha256": "57b40c38d6cc65f07c23ec0319b82904fe65e05dc40b5a13ac60a18fb5943bf1"
+    },
+    {
+      "target": "images/bg_issue_coupon.png",
+      "source": "bg_issue_coupon.png",
+      "bytes": 30769,
+      "sha256": "eedefc3e72ed1f0b3a1a52f36a5e31ebc408743ff87830a470a91cf5e3b67896"
+    },
+    {
+      "target": "images/bg_main.png",
+      "source": "bg_main.png",
+      "bytes": 87887,
+      "sha256": "7be737f6807c357c120624da389d7f08ca71e8fde434e806c173e58f37ed3449"
+    },
+    {
+      "target": "images/bg_main_2.png",
+      "source": "bg_main_2.png",
+      "bytes": 9549,
+      "sha256": "06c27a51f2b90ed5812000b2dd3fb08049c7f24b1e94533910c1292daf2b5880"
+    },
+    {
+      "target": "images/bg_usage_data.png",
+      "source": "bg_usage_data.png",
+      "bytes": 34568,
+      "sha256": "8ae9f4606c82666076b9489ba01b73c84589564026060e406631332cca64a270"
+    },
+    {
+      "target": "images/dummy_image_1.png",
+      "source": "dummy_image_1.png",
+      "bytes": 104592,
+      "sha256": "b5722a76c07454eb9932bda2b8aee523a46549689d709d2f102218de0bce36ce"
+    },
+    {
+      "target": "images/ic_add.png",
+      "source": "ic_add.png",
+      "bytes": 305,
+      "sha256": "7d2e4681ba88c5a03ec91b22bde6413c6134eb342ac428c2affc7ebdb4042697"
+    },
+    {
+      "target": "images/ic_add_button.png",
+      "source": "ic_add_button.png",
+      "bytes": 574,
+      "sha256": "5bdf001540bdb6ab103dae00545f5363f4bbe2dda8acb7c2f27047f5593e3d4c"
+    },
+    {
+      "target": "images/ic_add_button2.png",
+      "source": "ic_add_button2.png",
+      "bytes": 7169,
+      "sha256": "a75a8dc2b7a5a836ffde4f3371a5c236fc805ae3a8e5ca5e2566f827fac2f98b"
+    },
+    {
+      "target": "images/ic_address_home.png",
+      "source": "ic_address_home.png",
+      "bytes": 1100,
+      "sha256": "576dd4ff0460f9a5a18bff9aaee1b69832ec38c0e11acd47d21330f142459032"
+    },
+    {
+      "target": "images/ic_affiliate_program.png",
+      "source": "ic_affiliate_program.png",
+      "bytes": 263,
+      "sha256": "d269d036ad9e4a58661174f48f30e7f67fd98aff4350f996b90f0a2d475ea508"
+    },
+    {
+      "target": "images/ic_announcement.png",
+      "source": "ic_announcement.png",
+      "bytes": 422,
+      "sha256": "43751cbbe68273f992251a3d24bc52af9f390da42abc35c5e6b62007c9cb47db"
+    },
+    {
+      "target": "images/ic_apple.png",
+      "source": "ic_apple.png",
+      "bytes": 425,
+      "sha256": "a7f3074ee9100d1d9139907d75496f156fa61d02a48240e7f30c3109ef6f387f"
+    },
+    {
+      "target": "images/ic_arrow.png",
+      "source": "ic_arrow.png",
+      "bytes": 226,
+      "sha256": "45c7a6d6593972c4e5a0f638c9cb2a7b0afdb4d3b538c61303b78c219af7f973"
+    },
+    {
+      "target": "images/ic_arrow_left.png",
+      "source": "ic_arrow_left.png",
+      "bytes": 235,
+      "sha256": "469c6283c88bbe55d0bb124b2a0a6254f009a655245d250acd8cf99b32572ad6"
+    },
+    {
+      "target": "images/ic_arrow_right.png",
+      "source": "ic_arrow_right.png",
+      "bytes": 163,
+      "sha256": "4dd2bb7af5832ede02cd791f5a4b31fd26baf0b3a1af90c95e5130ea67fc7bae"
+    },
+    {
+      "target": "images/ic_ball.png",
+      "source": "ic_ball.png",
+      "bytes": 1039,
+      "sha256": "f853f656b4746e4efe024c0dc4888e9d7b398ba4dc1f8d5579edfd4971ecde4e"
+    },
+    {
+      "target": "images/ic_bell.png",
+      "source": "ic_bell.png",
+      "bytes": 415,
+      "sha256": "c8fdb56eaffb64c50712ed16f74158682fec072144bcf27844946e06f8f11049"
+    },
+    {
+      "target": "images/ic_bell_limitedtime.png",
+      "source": "ic_bell_limitedtime.png",
+      "bytes": 615,
+      "sha256": "dd37f1581a6bdef325942e40c5e9efb2a9a7f2f4839dace3d33000dcea9d5f88"
+    },
+    {
+      "target": "images/ic_bg_main_white.png",
+      "source": "ic_bg_main_white.png",
+      "bytes": 84770,
+      "sha256": "522695ef9d6fcc62f530e6f9874c1f1582badd8e910e2a241beb3bc40b1c8962"
+    },
+    {
+      "target": "images/ic_bin.png",
+      "source": "ic_bin.png",
+      "bytes": 3845,
+      "sha256": "bde5cb517afcee83af942dd7613f79a31fda55ee2cf7cf9923cbd298b1f89569"
+    },
+    {
+      "target": "images/ic_box_1.png",
+      "source": "ic_box_1.png",
+      "bytes": 1026,
+      "sha256": "9ab569ca8d6f3b23bb6a566ce14c2aeff00706fc5c79eaa240f69da45a52f6cf"
+    },
+    {
+      "target": "images/ic_box_2.png",
+      "source": "ic_box_2.png",
+      "bytes": 2230,
+      "sha256": "8f00d1bd841dadf109d217f3994104a575c9f24d2e2ccdecaa4c1c977397caf4"
+    },
+    {
+      "target": "images/ic_box_3.png",
+      "source": "ic_box_3.png",
+      "bytes": 1741,
+      "sha256": "fc4d1bef148c6b9bde5d344ec0b10862c321d5bfcf97c6166e82e060f347a362"
+    },
+    {
+      "target": "images/ic_box_4.png",
+      "source": "ic_box_4.png",
+      "bytes": 1263,
+      "sha256": "d9a77014296d5dc26a9afca37db8464ba46ea6debb8073980d13c4f981fcc9a9"
+    },
+    {
+      "target": "images/ic_box_5.png",
+      "source": "ic_box_5.png",
+      "bytes": 5414,
+      "sha256": "964a1df834f813c2ce7f769ba590f7cfdb537b76693da46d9a3070ed1ceee32a"
+    },
+    {
+      "target": "images/ic_burger_menu.png",
+      "source": "ic_burger_menu.png",
+      "bytes": 217,
+      "sha256": "e623cef1c69428be425ac8d4ae2aefa92b0dd589a487ff16d076d12bfbb8e37d"
+    },
+    {
+      "target": "images/ic_camera.png",
+      "source": "ic_camera.png",
+      "bytes": 839,
+      "sha256": "e0d9416bcb7563daa312335d3650d04c893081605b35a4f2cd723661909fc16d"
+    },
+    {
+      "target": "images/ic_card.png",
+      "source": "ic_card.png",
+      "bytes": 268,
+      "sha256": "bfa00f9552d89370950badf725ff421d92370d004c5919b307740b6b47f64390"
+    },
+    {
+      "target": "images/ic_category.png",
+      "source": "ic_category.png",
+      "bytes": 400,
+      "sha256": "46e243de6a5638f3821cd94302833d47dcc3805e851dd760b2e8777c9b23c775"
+    },
+    {
+      "target": "images/ic_checked.png",
+      "source": "ic_checked.png",
+      "bytes": 1213,
+      "sha256": "5167d80f2a3542da4e6611b68785037d0f9919634b2dafc68f3ef53cf92b40fb"
+    },
+    {
+      "target": "images/ic_classification.png",
+      "source": "ic_classification.png",
+      "bytes": 787,
+      "sha256": "b9242994b764f1bc42568bf24f6d29d5d1e9c9555374ab904b4e71ded6efc5f3"
+    },
+    {
+      "target": "images/ic_collect.png",
+      "source": "ic_collect.png",
+      "bytes": 1168,
+      "sha256": "ab43a51a27c9735378bb426c4fd3a35d21fe32b4c47b8f5498128350a30b9b88"
+    },
+    {
+      "target": "images/ic_completed.png",
+      "source": "ic_completed.png",
+      "bytes": 949,
+      "sha256": "0135b92c9872c9fd076cf1746b63d4af820d43e76d7ad9aaaea8921a1772a56a"
+    },
+    {
+      "target": "images/ic_cross.png",
+      "source": "ic_cross.png",
+      "bytes": 2223,
+      "sha256": "ca282e75858a27b32abb2d7a75c4ba4aea1d29f427797471dc168f3c03e30722"
+    },
+    {
+      "target": "images/ic_customer_version.png",
+      "source": "ic_customer_version.png",
+      "bytes": 535,
+      "sha256": "cab17b4d4cc6182990592ada32923e7a4b394034916e154523d9e2b9e1644c83"
+    },
+    {
+      "target": "images/ic_empty_heart.png",
+      "source": "ic_empty_heart.png",
+      "bytes": 636,
+      "sha256": "73adcd112861f99fb28871aff6d73684cc85bfe7cf3a75dc6eb730f41fc2ef86"
+    },
+    {
+      "target": "images/ic_envelop.png",
+      "source": "ic_envelop.png",
+      "bytes": 471,
+      "sha256": "67dc8fdd33fa28d3c7895ff844337a921989c7bdbfd685629cf9611d822d4049"
+    },
+    {
+      "target": "images/ic_facebook_login.png",
+      "source": "ic_facebook_login.png",
+      "bytes": 486,
+      "sha256": "8ac1fadcfb556029fd04b08c86f0d5993dab82f3dfb5f99c94e561b87943439d"
+    },
+    {
+      "target": "images/ic_fb.png",
+      "source": "ic_fb.png",
+      "bytes": 2850,
+      "sha256": "ef4e67ac4b309de7afca2a779a4d611e9c961cf6981b9398707e8c4989ff2692"
+    },
+    {
+      "target": "images/ic_filled_heart.png",
+      "source": "ic_filled_heart.png",
+      "bytes": 697,
+      "sha256": "2bce495a807a738d4a9bbee08f8a8459240ece88d34fe33d1741e8ab4afea6b5"
+    },
+    {
+      "target": "images/ic_filled_white_heart.png",
+      "source": "ic_filled_white_heart.png",
+      "bytes": 436,
+      "sha256": "a2fbc9a6efc33f796df1f449c5e538516ee7c3db06bc5f96751ee81bc1a520dc"
+    },
+    {
+      "target": "images/ic_gallery.png",
+      "source": "ic_gallery.png",
+      "bytes": 3000,
+      "sha256": "cd2398a0ac1e693a28ad64857a45cc2eb0410941f70d2a04b1ac48ee1738fa5f"
+    },
+    {
+      "target": "images/ic_giftbox.png",
+      "source": "ic_giftbox.png",
+      "bytes": 386,
+      "sha256": "81ac4a50635e9d3ff88b889c43e331b7197612664facd8318bb656c80c03e039"
+    },
+    {
+      "target": "images/ic_giftcard.png",
+      "source": "ic_giftcard.png",
+      "bytes": 611,
+      "sha256": "108c33419ca7311cbad514d3d7a2542aa92e07b3d253c83d3fba565ab4ff7e1b"
+    },
+    {
+      "target": "images/ic_google.png",
+      "source": "ic_google.png",
+      "bytes": 741,
+      "sha256": "e7afcf770c58b02220c73b3063e741f8402f107a1b699cf4f8329783b3f2f1d5"
+    },
+    {
+      "target": "images/ic_group.png",
+      "source": "ic_group.png",
+      "bytes": 1057,
+      "sha256": "58f29085dcd66e6af09e8c9e08ade71d445a8189bb0d65bf152d968558ff16d2"
+    },
+    {
+      "target": "images/ic_heart_empty.png",
+      "source": "ic_heart_empty.png",
+      "bytes": 1594,
+      "sha256": "93b0517e2f6faffd81890e64746e4bf584037b8496f39626a46a5ebcabf3feb1"
+    },
+    {
+      "target": "images/ic_heart_filled.png",
+      "source": "ic_heart_filled.png",
+      "bytes": 1307,
+      "sha256": "15b8bbbe80b19254cc8b7fb8e9b3c612d45c01f33621f984546aee247ea6bba8"
+    },
+    {
+      "target": "images/ic_hide.png",
+      "source": "ic_hide.png",
+      "bytes": 4276,
+      "sha256": "f35e250371058089d8c0248749cb5300a8155d6a4e95590d88a45e5feb4c3d8e"
+    },
+    {
+      "target": "images/ic_history.png",
+      "source": "ic_history.png",
+      "bytes": 478,
+      "sha256": "07a312f859119f09df36340a3f70ec67d87ee338bdaf6e224ea9295930338bf8"
+    },
+    {
+      "target": "images/ic_home.png",
+      "source": "ic_home.png",
+      "bytes": 568,
+      "sha256": "d38a16b3f05bbd4d522e5a315d9b5eeba514cce4a028fd802cf5e87beb35c0a4"
+    },
+    {
+      "target": "images/ic_insta.png",
+      "source": "ic_insta.png",
+      "bytes": 2673,
+      "sha256": "1f5f2650ee1a937098ef4c2b654aa9f819ae61f0ca8416af0152ae9d6b073b44"
+    },
+    {
+      "target": "images/ic_issue_coupon.png",
+      "source": "ic_issue_coupon.png",
+      "bytes": 1178,
+      "sha256": "eec90076c06cdd642677469237337b36c841748e7bb6be7952fb07db3e23643c"
+    },
+    {
+      "target": "images/ic_language.png",
+      "source": "ic_language.png",
+      "bytes": 673,
+      "sha256": "49f2278c4db87b25d06ee50f326ea9b217fa81770e33bb0b3a985dae7559b1cf"
+    },
+    {
+      "target": "images/ic_lets_go.png",
+      "source": "ic_lets_go.png",
+      "bytes": 5742,
+      "sha256": "975396749c5bcc02915f76781e82c3e2b7499b89a22be6da0f4f337a66f17bf4"
+    },
+    {
+      "target": "images/ic_limited_time.png",
+      "source": "ic_limited_time.png",
+      "bytes": 1016,
+      "sha256": "c64991d7215cf55412661e3fe7702efafdb75f1d67e979132056b598b55119dd"
+    },
+    {
+      "target": "images/ic_location.png",
+      "source": "ic_location.png",
+      "bytes": 3295,
+      "sha256": "01815df1247552f497919a9de1fd9bb2e8696dde47cd8afe5b0de7e3244b0f16"
+    },
+    {
+      "target": "images/ic_logout.png",
+      "source": "ic_logout.png",
+      "bytes": 338,
+      "sha256": "bd8fc9e2b7010a75bf4f847637f49421c3ff2e08009db82bacb2084148ec3bd6"
+    },
+    {
+      "target": "images/ic_magnifier.png",
+      "source": "ic_magnifier.png",
+      "bytes": 521,
+      "sha256": "af6b6314461a700a1c939a1bfc23822ffeebcb232024f4d885544f5f671c81e7"
+    },
+    {
+      "target": "images/ic_most_people.png",
+      "source": "ic_most_people.png",
+      "bytes": 1114,
+      "sha256": "f99a098a14f27e4d2ce07dfde28aa305baf8174b5212adb73e3276a4b47e245a"
+    },
+    {
+      "target": "images/ic_multiple.png",
+      "source": "ic_multiple.png",
+      "bytes": 1379,
+      "sha256": "de691674c76d94a6f373724dc9e15a875e7a693c60061b5018b7489684d3693b"
+    },
+    {
+      "target": "images/ic_notification_bell.png",
+      "source": "ic_notification_bell.png",
+      "bytes": 490,
+      "sha256": "1a9709367f5ce0a3e6bb2fcdcc953b10091f7fee56c9d049b2ff65cdd8f5c28e"
+    },
+    {
+      "target": "images/ic_notification_cat.png",
+      "source": "ic_notification_cat.png",
+      "bytes": 3373,
+      "sha256": "e9f01aef737113f3da0268cb71223747da25773f758b3a8154cc351dd4e0d829"
+    },
+    {
+      "target": "images/ic_notification_cat_vendor.png",
+      "source": "ic_notification_cat_vendor.png",
+      "bytes": 3061,
+      "sha256": "30f193e3b1aa6c2aee74c7661b04319cc03aad02c5f11a745721eefbf2433070"
+    },
+    {
+      "target": "images/ic_phone.png",
+      "source": "ic_phone.png",
+      "bytes": 458,
+      "sha256": "abcb8d8875b56c38caa4eaa0c5a029081cefcf8a55f726290cace9f13d295dda"
+    },
+    {
+      "target": "images/ic_pin.png",
+      "source": "ic_pin.png",
+      "bytes": 741,
+      "sha256": "2a61381d04b29a298784dcb82718dfbd7513aaa8ab2ace9aad9245f86efb5fe9"
+    },
+    {
+      "target": "images/ic_position.png",
+      "source": "ic_position.png",
+      "bytes": 1654,
+      "sha256": "de9d02e95ee19cea3ba25c044e07dd7759a53218f715fd5663f7b7d2d142ef00"
+    },
+    {
+      "target": "images/ic_program_card.png",
+      "source": "ic_program_card.png",
+      "bytes": 33805,
+      "sha256": "efb9264b03f45b00c3da866a6f23249a585abfe37708327aef083200a97bf397"
+    },
+    {
+      "target": "images/ic_qr_cat.png",
+      "source": "ic_qr_cat.png",
+      "bytes": 4024,
+      "sha256": "c49acd7d07660b90c1589a8dea1efa62dd88b51a9df4f0e036dbdf7a084fd5ec"
+    },
+    {
+      "target": "images/ic_record.png",
+      "source": "ic_record.png",
+      "bytes": 338,
+      "sha256": "aae806a790f4621a352df7b50bd41ab774d310ae6678faefb0910d5dd2c94bf0"
+    },
+    {
+      "target": "images/ic_remove_button.png",
+      "source": "ic_remove_button.png",
+      "bytes": 534,
+      "sha256": "acf36696f7ea77efed0edc3589defbb8ddaf52ae95da1d2f484178c7d9301fcf"
+    },
+    {
+      "target": "images/ic_remove_button2.png",
+      "source": "ic_remove_button2.png",
+      "bytes": 6615,
+      "sha256": "e1962b28accecc3a4b84c892957fe40a0865c9c67132a15308fe01db6d272f9d"
+    },
+    {
+      "target": "images/ic_right_arraow_vendor.png",
+      "source": "ic_right_arraow_vendor.png",
+      "bytes": 589,
+      "sha256": "a16b443457ffd8395aad32971f8fb826c85392db8cda1cb8100d50a19807aad6"
+    },
+    {
+      "target": "images/ic_scan_frame.png",
+      "source": "ic_scan_frame.png",
+      "bytes": 741,
+      "sha256": "e76c22b70891ea9871f783d466d9705f8d46def84bb7f8bff4d773c7e9511388"
+    },
+    {
+      "target": "images/ic_scanqr_code.png",
+      "source": "ic_scanqr_code.png",
+      "bytes": 4821,
+      "sha256": "32d5dafd7aa7a58e2abbbd0492db80fecb2586610a6fb2ce92ebf230821531a0"
+    },
+    {
+      "target": "images/ic_settings.png",
+      "source": "ic_settings.png",
+      "bytes": 1449,
+      "sha256": "fe4b5c6e479db4f74c0c542bdb3f9dc9503d2eeaddb4028eb24fdc7e859da465"
+    },
+    {
+      "target": "images/ic_share.png",
+      "source": "ic_share.png",
+      "bytes": 1150,
+      "sha256": "864001d68cf0be683eb7d06cdcc68587ae3f3f2dc46b5eee384dccd54f83b6bb"
+    },
+    {
+      "target": "images/ic_share_2.png",
+      "source": "ic_share_2.png",
+      "bytes": 297,
+      "sha256": "a194d0b514b975b19149cbadaab560c475616ba27a2e7e8d711688359519141d"
+    },
+    {
+      "target": "images/ic_share_3.png",
+      "source": "ic_share_3.png",
+      "bytes": 767,
+      "sha256": "cb5eed9172ff740019741ff3af2a5f0182bc7798eea97ebd5ff3a1385d6e8488"
+    },
+    {
+      "target": "images/ic_shop.png",
+      "source": "ic_shop.png",
+      "bytes": 320,
+      "sha256": "984fe1b843d6c0e13d7c13646e154fa66c2c65640e6ec752e2d7470c1477090e"
+    },
+    {
+      "target": "images/ic_show.png",
+      "source": "ic_show.png",
+      "bytes": 3714,
+      "sha256": "199b202ac8b5e6dab4196a7ea44eac4470cdc405bc8ebed5c3aea349298502e1"
+    },
+    {
+      "target": "images/ic_single.png",
+      "source": "ic_single.png",
+      "bytes": 581,
+      "sha256": "0f069751b868ad0cd248afe3a3f6edbd6744d97fb85f4273600f22139648eb95"
+    },
+    {
+      "target": "images/ic_speaker.png",
+      "source": "ic_speaker.png",
+      "bytes": 1261,
+      "sha256": "52651a4b08f3cc57f40aca14737e3632a6ab91876b3ad3c259c6cc23505edf60"
+    },
+    {
+      "target": "images/ic_submitted.png",
+      "source": "ic_submitted.png",
+      "bytes": 1278,
+      "sha256": "a701f9b654eaa07d858f771179160fe5b9008de50ab93b9e2597697d6019d8c3"
+    },
+    {
+      "target": "images/ic_success.png",
+      "source": "ic_success.png",
+      "bytes": 7027,
+      "sha256": "ca8f58ed5ffb57da8aeae69e22f30a6ed796812067ac70458d6984926a7143b9"
+    },
+    {
+      "target": "images/ic_target.png",
+      "source": "ic_target.png",
+      "bytes": 1372,
+      "sha256": "a9c57cd656a76fc4e8751f0584d94573a362ca94377e3da922b5f14bd3003f34"
+    },
+    {
+      "target": "images/ic_timer_clock.png",
+      "source": "ic_timer_clock.png",
+      "bytes": 499,
+      "sha256": "069a927cbc01bde4788b3e1fecc7a6b7f01bf3151dac4f7ab50775bda0180dcb"
+    },
+    {
+      "target": "images/ic_trash.png",
+      "source": "ic_trash.png",
+      "bytes": 802,
+      "sha256": "eaa33d5bdbe3f7bb634b9ed5ea4603f35e3a1052959bb68aeb59d6ccfbd198c7"
+    },
+    {
+      "target": "images/ic_usage_data.png",
+      "source": "ic_usage_data.png",
+      "bytes": 1418,
+      "sha256": "420a1a5be77c0a4c2444ba88588b7e32c7d0d74ba1ed3e78a29471b898a377e9"
+    },
+    {
+      "target": "images/ic_usages_box.png",
+      "source": "ic_usages_box.png",
+      "bytes": 75629,
+      "sha256": "71f491d592018003a99ae59502fd38df08f544197dd84dc515bbedd2dbe817a7"
+    },
+    {
+      "target": "images/ic_used_merchants.png",
+      "source": "ic_used_merchants.png",
+      "bytes": 933,
+      "sha256": "b6c4d00208dae868f2a76d754243281bde2cbcd24db7ca82f319c9e82d3a9628"
+    },
+    {
+      "target": "images/ic_user.png",
+      "source": "ic_user.png",
+      "bytes": 479,
+      "sha256": "973a09fe1fa3758c002094fe1d588132ea5dab452cff53cb1d243bcc32882a7f"
+    },
+    {
+      "target": "images/ic_users.png",
+      "source": "ic_users.png",
+      "bytes": 1046,
+      "sha256": "1a27746006b6fac5c72c5aa4c353633e450a16064dba5bb135dd5e9dc5cf59eb"
+    },
+    {
+      "target": "images/ic_vendor_version.png",
+      "source": "ic_vendor_version.png",
+      "bytes": 236,
+      "sha256": "4431f59dadffd4d9f95b9d44d0e456e2cf6aeb9d647b61f429e6cc5f161d287c"
+    },
+    {
+      "target": "images/ic_view_all.png",
+      "source": "ic_view_all.png",
+      "bytes": 926,
+      "sha256": "800957d456e4eca60b08b28527c71bc193a2560812bfaa3509e2dd8b83d59800"
+    },
+    {
+      "target": "images/ic_wallet.png",
+      "source": "ic_wallet.png",
+      "bytes": 444,
+      "sha256": "979a8a633a335667f5bde7b96674e94c245a40154960d28d46e089b347edc355"
+    },
+    {
+      "target": "images/ic_whatsapp.png",
+      "source": "ic_whatsapp.png",
+      "bytes": 29691,
+      "sha256": "62755694b386888ad8e54e86a2e81fd60c8e8e9bf807872dfff5631353b0e6e6"
+    },
+    {
+      "target": "images/ic_whatsapp_vendor.png",
+      "source": "ic_whatsapp_vendor.png",
+      "bytes": 3287,
+      "sha256": "103fe6daf5a9d07d26f52732e1c64f99ae67410d1268808a673056d25334f515"
+    },
+    {
+      "target": "images/img_cornor_cat.png",
+      "source": "img_cornor_cat.png",
+      "bytes": 5304,
+      "sha256": "d0137736f8f9c69268e267eb735539b98167b9bf6e13acefeb7733cb6b8d08ff"
+    },
+    {
+      "target": "images/img_logo.png",
+      "source": "img_logo.png",
+      "bytes": 45099,
+      "sha256": "1584fe3653a7e6feb837ec31c328bdf2517d6effa8c4c75391135e1462fe388f"
+    },
+    {
+      "target": "images/img_logo_cropped.png",
+      "source": "img_logo_cropped.png",
+      "bytes": 21160,
+      "sha256": "25e711bab2da2170b12360c316b7c613464a275333756bff8ea25c9318307ed6"
+    },
+    {
+      "target": "images/logo.png",
+      "source": "logo.png",
+      "bytes": 27294,
+      "sha256": "8ec969a3c3aa3b2e4d79c4b8d8b3043b37dfba7cce81f4a99ad7d589ba4e1cca"
+    },
+    {
+      "target": "images/tag_1.png",
+      "source": "tag_1.png",
+      "bytes": 8814,
+      "sha256": "df5f19310b2e6ea92aa86b589bb2b26c88196c685d39c2f3d4c36a4541d01bd3"
+    },
+    {
+      "target": "images/tag_2.png",
+      "source": "tag_2.png",
+      "bytes": 8667,
+      "sha256": "8767c152ead946c998eeba447f1a4794936fe443c49d0a83775dc4f16c0a2538"
+    },
+    {
+      "target": "images/tag_3.png",
+      "source": "tag_3.png",
+      "bytes": 7417,
+      "sha256": "a501125d1d401977fa758757a6166af7b5a49d5618015a5ddf774d2ec933b53c"
+    },
+    {
+      "target": "images/tag_4.png",
+      "source": "tag_4.png",
+      "bytes": 7892,
+      "sha256": "5abbaa5d113b5ea6a294cb57e441fb26350f03e0bfe4a6a49084f7d2eec119df"
+    },
+    {
+      "target": "images/tag_5.png",
+      "source": "tag_5.png",
+      "bytes": 8089,
+      "sha256": "30335c66411eaa1f5c1a92b4dfb03d2651f5580c5992c9791eb8832322e0cf82"
+    },
+    {
+      "target": "images/splash.gif",
+      "source": "src_assets_images_splash.gif",
+      "bytes": 275379,
+      "sha256": "6b9e006066b751c3134bbe283d23c5dcc16c14be4c7dde3f7af9af10dd0bc888"
+    }
+  ],
+  "total_files": 112,
+  "total_bytes": 1623356
+}
