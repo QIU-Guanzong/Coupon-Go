@@ -41,8 +41,9 @@ assets-packed/ APK 拆包素材的 base64 打包（見下）
 tools/ unpack_assets.py（解包）/ pack_assets.py（打包）
 apps/api/ FastAPI 後端
 app/ main / config / models / schemas / routers / seed
-app/routers/ auth / home / coupons / wallet / search / notifications / vendor
-alembic/ 數據庫遷移（0001 初始建表；0002_line_a 核銷加固；0002_line_b 評分 v1 + 後台 v1）
+app/routers/ auth / home / coupons / wallet / search / notifications / vendor / cashback（線 D 返現）
+app/models_cashback.py、app/cashback_service.py（線 D 返現，與 point_transactions 分開記賬）
+alembic/ 數據庫遷移（0001 初始建表；0002_line_a 核銷加固；0002_line_b 評分 v1 + 後台 v1；0002_cashback 線 D 返現三表）
 tests/ pytest（13 個測試）
 infra/ docker-compose（api + postgres + redis）、.env.example
 docs/ API.md（接口概覽）
@@ -102,6 +103,8 @@ flutter run --dart-define=API_BASE_URL=http://localhost:8000
 收藏、Q Wallet（未使用 / 已使用 / 已失效三狀態、按到期排序）、QR 出示
 （15:00 倒數）、Q Wallet 積分（領券 +10、核銷 +20、評價 +15、9 分兌換券）、
 通知中心、設置（語言、限時推送開關）、Q仔助手（本地規則問答）、新手指南 FAQ。
+返現（線 D）：Q Wallet 內返現餘額與積分並列展示、明細分開記賬；提現（FPS /
+銀行轉賬）；Missing Cashback 申訴。詳見下節「返現 2B（線 D）」。
 
 **商戶版**：金色企業版、發券兩步（預覽 → 提交審核）、掃碼核銷（相機 +
 手動輸碼，錯店/重複/過期/每日 200 次上限）、用量數據、訂閱計劃、商户錢包。
@@ -142,7 +145,7 @@ flutter run --dart-define=API_BASE_URL=http://localhost:8000
 ```bash
 cd apps/api
 ../../.venv/bin/python -m pytest tests/ -v
-# 33 個測試：鑑權（註冊/登錄/OTP/忘記密碼）、首頁分區、搜尋三分支、
+# 41 個測試：鑑權（註冊/登錄/OTP/忘記密碼）、首頁分區、搜尋三分支、
 # 領券→QR→掃碼核銷→積分鏈（+10/+20/+15）、重複領取/重複核銷攔截、
 # 9 積分兌換、商戶發券預覽→建立→審核、用量數據、權限攔截
 # 線 A 新增 11 個：預核銷→核銷→重放冪等→撤销窗口（期內恢復 / 超時拒絕 /
@@ -151,7 +154,50 @@ cd apps/api
 # 線 B 新增 9 個：未核銷不可評、積分加分但星級不變、不領積分才計入星級、
 # 重複評價攔截、評價校驗、商户回覆與差評申訴、入駐審核流（通過/拒絕/重提）、
 # 後台隻讀看板（含核銷 CSV 導出）
+# 線 D 返現 8 個：線下解鎖→可提現→提現鏈、僅同商戶解鎖、90 天過期作廢、
+# 線上確認窗口、取消/退貨作廢、返現與積分分開記賬、申訴、未登錄攔截
 ```
+
+## 返現 2B（線 D）
+
+兩條狀態機，分開實現（報告 §3.2 / §3.2b）：
+
+- **線上 / 通用**：`tracked → pending → confirmed → withdrawable`，按商户確認
+  周期確認（預設 30 天，`CASHBACK_ONLINE_CONFIRM_DAYS`）。v1 同步入賬直接寫
+  `pending`（消費已由核銷記錄驗證）；`tracked` 保留給日後異步 / 未驗證入賬。
+- **線下餐飲**：`pending → confirmed → withdrawable`，**90 天內在同一商戶再消費
+  一次才解鎖上一次返現**；90 天內沒再來則過期作廢（`void_reason=expired_90d`）。
+  追蹤以核銷記錄為準（`redemption_id`），不用 Cookie 點擊歸因。
+- v1 沒有打款保留環節：`confirmed` 在同一輪掃描（sweep）內即轉為
+  `withdrawable`，但 `confirmed_at` 會留痕；日後如需打款審核，可在
+  `confirmed` 設停留點。`withdrawn` 為 D 線擴展的終態（報告枚舉之外）。
+
+返現進 Q Wallet，與積分並列展示、明細分開記賬（絕不混用
+`point_transactions`；另建 `cashback_transactions`）。接口見
+`docs/API.md`「返現」一節：`GET /cashback`、`GET /cashback/transactions`、
+`POST /cashback/record`（消費入賬口，線下 POS / 商戶端日後接同一入口）、
+`POST /cashback/withdraw`、`GET /cashback/withdrawals`、
+`POST /cashback/transactions/{id}/void`（取消 / 退貨）、
+`POST /cashback/missing`（申訴）。
+
+**默認值假設（未與商戶談判前暫定，以環境變量覆蓋；上線前須與商戶確認）：**
+
+| 項 | 默認值 | 環境變量 |
+|---|---|---|
+| 線下餐飲返現比例（固定） | 5% | `CASHBACK_DEFAULT_RATE` / `CASHBACK_DINEIN_RATE` |
+| 線下解鎖 / 過期窗口 | 90 天 | `CASHBACK_DINEIN_UNLOCK_DAYS` |
+| 線上確認周期 | 30 天 | `CASHBACK_ONLINE_CONFIRM_DAYS` |
+| 提現門檻（香港） | HK$50 | `CASHBACK_MIN_WITHDRAW_HKD` |
+| 每日提現上限 | HK$1,500 | `CASHBACK_DAILY_WITHDRAW_LIMIT_HKD` |
+| 單筆返現上限 | 不設 | `CASHBACK_MAX_PER_TXN_HKD`（0 = 不設） |
+| 申訴期限 | 消費後 30 天內，調查期最長 120 天 | `CASHBACK_MISSING_WINDOW_DAYS` |
+| 返現資金來源 | 商戶佣金里出 | `funded_by=merchant_commission` |
+
+提現規則：FPS / 銀行轉賬；收款賬戶姓名須與註冊姓名一致（ShopBack 香港
+規則）；v1 提現申請後狀態為 `pending`，待人工打款——**沒有真實 FPS /
+銀行打款集成**，打款流程、提現審核後台、商戶佣金結算對接都還沒做。
+`POST /cashback/record` 在 v1 允許已登錄用戶自助記錄（開發演示用）；
+正式上線前須改為僅商戶 / POS 憑據可調用。
 
 ## 還沒做的事
 
@@ -162,6 +208,9 @@ cd apps/api
   `google_maps_flutter` 需原生 API Key 配置 + 真機驗證）
 - 出示頁原生防截屏（Android FLAG_SECURE / iOS 截屏遮罩；線 A 目前是動態
   一次性兌換碼 + 輪換 + 提示文案）
+- 返現（線 D）：真實 FPS / 銀行打款集成與提現審核後台；`record` 入口改為僅
+  商戶 / POS 憑據可調用；商戶佣金結算對接；返現比例、90 天規則、HK$50 門檻
+  與商戶談判定稿（現為默認值假設）
 - 商店上架（App Store / Google Play）、應用簽名、深鏈
 - 真實商户數據對接、FCM 推送、支付、社交登錄服務端驗證
 - Google Key / Client ID 更換（見頂部）

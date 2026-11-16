@@ -36,3 +36,13 @@ OTP_LENGTH = 6
 # Line A (report §5.4): revoke window after redemption; prepare-token TTL.
 REVOKE_WINDOW_MINUTES = int(os.environ.get("REVOKE_WINDOW_MINUTES", "10"))
 PREPARE_TOKEN_TTL_SECONDS = int(os.environ.get("PREPARE_TOKEN_TTL_SECONDS", "300"))
+# --- Line D: cashback defaults (返现 2B; see README 返现一节) ---
+# Defaults are assumptions, not negotiated merchant terms — see README.
+CASHBACK_DEFAULT_RATE = float(os.environ.get("CASHBACK_DEFAULT_RATE", "0.05"))
+CASHBACK_DINEIN_RATE = float(os.environ.get("CASHBACK_DINEIN_RATE", "0.05"))
+CASHBACK_DINEIN_UNLOCK_DAYS = int(os.environ.get("CASHBACK_DINEIN_UNLOCK_DAYS", "90"))
+CASHBACK_ONLINE_CONFIRM_DAYS = int(os.environ.get("CASHBACK_ONLINE_CONFIRM_DAYS", "30"))
+CASHBACK_MIN_WITHDRAW_HKD = float(os.environ.get("CASHBACK_MIN_WITHDRAW_HKD", "50"))
+CASHBACK_DAILY_WITHDRAW_LIMIT_HKD = float(os.environ.get("CASHBACK_DAILY_WITHDRAW_LIMIT_HKD", "1500"))
+CASHBACK_MAX_PER_TXN_HKD = float(os.environ.get("CASHBACK_MAX_PER_TXN_HKD", "0"))  # 0 = 不设上限
+CASHBACK_MISSING_WINDOW_DAYS = int(os.environ.get("CASHBACK_MISSING_WINDOW_DAYS", "30"))

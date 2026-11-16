@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'api_client.dart';
 import 'models.dart';
 import 'screens/account.dart';
+import 'screens/cashback.dart';
 import 'screens/customer.dart';
 import 'screens/nearby.dart';
 import 'screens/reviews_admin.dart';
@@ -70,6 +71,9 @@ class _CouponGoAppState extends State<CouponGoApp> {
                 builder: (_) => NearbyScreen(api: _api));
           case '/qbot':
             return MaterialPageRoute(builder: (_) => QBotScreen(api: _api));
+          case '/cashback':
+            return MaterialPageRoute(
+                builder: (_) => CashbackScreen(api: _api));
           case '/category':
             return MaterialPageRoute(
                 builder: (routeContext) => CategoryScreen(

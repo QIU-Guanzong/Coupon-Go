@@ -128,7 +128,22 @@ v1 **沒有**的接口（F 線再做）：訂單管理（等套餐線的 `orders
 phone, address, business_license, id_card, shop_photos[],
 industry_license, status（pending/approved/rejected）, reject_reason,
 reviewed_by, reviewed_at, created_at}`。
+## 返現（線 D）
 
+返現與積分分開記賬（`cashback_transactions`，絕不混用 `point_transactions`）。
+兩條狀態機：線上/通用 `tracked → pending → confirmed → withdrawable`（按
+確認周期，預設 30 天）；線下餐飲 `pending → confirmed → withdrawable`，90 天內
+在同一商戶再消費一次才解鎖，否則過期作廢。追蹤以核銷記錄為準，不用 Cookie。
+
+| 方法 | 路徑 | 說明 |
+|---|---|---|
+| GET | `/cashback` | 返現餘額（可提現/待確認/待追蹤）+ 明細（按狀態分組） |
+| GET | `/cashback/transactions?status=&limit=` | 返現流水（含預計確認時間、90 天解鎖期限） |
+| POST | `/cashback/record` | 消費記返現 `{merchant_id, amount, channel: dinein\|online, rate?, redemption_id?}`；線下餐飲固定 5%（預設） |
+| POST | `/cashback/withdraw` | 申請提現 `{amount, method: fps\|bank, account_name, account_ref?}`；門檻 HK$50，每日上限 HK$1,500，賬戶名須與註冊名一致 |
+| GET | `/cashback/withdrawals` | 提現記錄（v1 狀態 `pending`，待人工打款，無真實 FPS 打款集成） |
+| POST | `/cashback/transactions/{id}/void` | 取消/退貨作廢 `{reason: cancelled\|returned}`（僅待確認可作廢） |
+| POST | `/cashback/missing` | Missing Cashback 申訴 `{merchant_id, order_no, spent_at, amount, evidence?, note?}`；消費後 30 天內提交 |
 ## 搜尋 / 通知
 
 | 方法 | 路徑 | 說明 |

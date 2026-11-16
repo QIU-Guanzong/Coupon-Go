@@ -211,4 +211,61 @@ class MerchantApplication {
   final String address;
   final String status;
   final String rejectReason;
+/// Line D — one cashback earning (see /api/v3/cashback).
+class CashbackTransaction {
+  CashbackTransaction.fromJson(Map<String, dynamic> j)
+      : id = j['id'] as int? ?? 0,
+        merchantId = j['merchant_id'] as int? ?? 0,
+        shopName = j['shop_name'] as String? ?? '',
+        channel = j['channel'] as String? ?? 'dinein',
+        amount = (j['amount'] as num?)?.toDouble() ?? 0,
+        rate = (j['rate'] as num?)?.toDouble() ?? 0,
+        status = j['status'] as String? ?? 'pending',
+        statusText = j['status_text'] as String? ?? '',
+        expectedConfirmAt =
+            DateTime.tryParse(j['expected_confirm_at'] as String? ?? ''),
+        expiresAt = DateTime.tryParse(j['expires_at'] as String? ?? ''),
+        confirmedAt = DateTime.tryParse(j['confirmed_at'] as String? ?? ''),
+        remainingAmount = (j['remaining_amount'] as num?)?.toDouble() ?? 0,
+        voidReason = j['void_reason'] as String?,
+        createdAt = DateTime.tryParse(j['created_at'] as String? ?? '');
+
+  final int id;
+  final int merchantId;
+  final String shopName;
+  final String channel; // dinein | online
+  final double amount;
+  final double rate;
+  final String status; // tracked | pending | confirmed | withdrawable | void | withdrawn
+  final String statusText;
+  final DateTime? expectedConfirmAt;
+  final DateTime? expiresAt;
+  final DateTime? confirmedAt;
+  final double remainingAmount;
+  final String? voidReason;
+  final DateTime? createdAt;
+
+  String get channelText => channel == 'dinein' ? '線下餐飲' : '線上 / 通用';
 }
+
+/// Line D — one withdrawal request (see /api/v3/cashback/withdrawals).
+class CashbackWithdrawal {
+  CashbackWithdrawal.fromJson(Map<String, dynamic> j)
+      : id = j['id'] as int? ?? 0,
+        amount = (j['amount'] as num?)?.toDouble() ?? 0,
+        method = j['method'] as String? ?? 'fps',
+        methodText = j['method_text'] as String? ?? '',
+        accountName = j['account_name'] as String? ?? '',
+        status = j['status'] as String? ?? 'pending',
+        createdAt = DateTime.tryParse(j['created_at'] as String? ?? '');
+
+  final int id;
+  final double amount;
+  final String method; // fps | bank
+  final String methodText;
+  final String accountName;
+  final String status; // pending | paid | failed
+  final DateTime? createdAt;
+
+  String get statusText =>
+      status == 'paid' ? '已打款' : status == 'failed' ? '打款失敗' : '待打款';}

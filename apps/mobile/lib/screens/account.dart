@@ -7,6 +7,7 @@ import '../api_client.dart';
 import '../models.dart';
 import '../theme.dart';
 import '../widgets/widgets.dart';
+import 'cashback.dart';
 import 'reviews_admin.dart';
 
 /// Q Wallet: points balance, three status tabs (1 unused / 2 used / 3 expired),
@@ -25,6 +26,8 @@ class _WalletScreenState extends State<WalletScreen>
     with SingleTickerProviderStateMixin {
   late final TabController _tab = TabController(length: 3, vsync: this);
   int _balance = 0;
+  double _cashbackWithdrawable = 0;
+  double _cashbackPending = 0;
   List<WalletItem> _items = [];
 
   @override
@@ -46,9 +49,14 @@ class _WalletScreenState extends State<WalletScreen>
     try {
       final points = await widget.api.points();
       final wallet = await widget.api.wallet(status: _tab.index + 1);
+      final cashback = await widget.api.cashback();
       if (!mounted) return;
       setState(() {
         _balance = points['balance'] as int? ?? 0;
+        _cashbackWithdrawable =
+            (cashback['withdrawable_balance'] as num?)?.toDouble() ?? 0;
+        _cashbackPending =
+            (cashback['pending_balance'] as num?)?.toDouble() ?? 0;
         _items = (wallet['items'] as List)
             .map((e) => WalletItem.fromJson(e))
             .toList();
@@ -81,7 +89,38 @@ class _WalletScreenState extends State<WalletScreen>
                   style: TextStyle(color: Colors.white70, fontSize: 12)),
               const Text('領積分的評價不計入商户星級（防誘導評價）',
                   style: TextStyle(color: Colors.white70, fontSize: 12)),
-            ],
+              const SizedBox(height: 12),
+              // Line D: cashback balance sits next to points, separate ledger.
+              InkWell(
+                onTap: () async {
+                  await Navigator.of(context).push(MaterialPageRoute(
+                      builder: (_) => CashbackScreen(api: widget.api)));
+                  _load();
+                },
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text('返現（可提現）',
+                              style: TextStyle(color: Colors.white70)),
+                          Text('HK\$${_cashbackWithdrawable.toStringAsFixed(2)}',
+                              style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 22,
+                                  fontWeight: FontWeight.bold)),
+                          Text(
+                              '待確認 HK\$${_cashbackPending.toStringAsFixed(2)}',
+                              style: const TextStyle(
+                                  color: Colors.white70, fontSize: 12)),
+                        ],
+                      ),
+                    ),
+                    const Icon(Icons.chevron_right, color: Colors.white70),
+                  ],
+                ),
+              ),            ],
           ),
         ),
         TabBar(

@@ -12,8 +12,11 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from . import config
 from .database import init_db
-from .routers import (admin, auth, coupons, home, nearby, notifications,
-                      redemption, reviews, search, vendor, wallet)
+from .routers import (admin, auth, cashback, coupons, home, nearby,
+                      notifications, redemption, reviews, search, vendor,
+                      wallet)
+
+from . import models_cashback  # noqa: F401  (Line D: register cashback tables)
 
 app = FastAPI(title="Coupon GO! API", version="0.1.0-dev")
 
@@ -29,7 +32,7 @@ for router in (auth.router, home.router, coupons.router, wallet.router,
                search.router, notifications.router, vendor.router,
                search.router, notifications.router, vendor.router,
                redemption.router, nearby.router, reviews.router,
-               admin.router):
+               admin.router, cashback.router):
     app.include_router(router, prefix="/api/v3")
 
 

@@ -231,3 +231,7 @@ class SubscriptionPlan(Base):
 from .models_line_b import (  # noqa: E402,F401
     AdminAuditLog, MerchantApplication, Review, ShopRating,
 )
+
+# Line D: register cashback tables on Base.metadata (import only; the
+# models live in app/models_cashback.py so other lines' tables are untouched).
+from . import models_cashback  # noqa: F401,E402

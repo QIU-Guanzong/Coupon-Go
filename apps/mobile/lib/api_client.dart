@@ -183,6 +183,41 @@ class ApiClient {
   Future<Map<String, dynamic>> exchangePoints(int couponId) =>
       post('/points/exchange', query: {'coupon_id': '$couponId'});
 
+  // ---- cashback (Line D) ----
+  Future<Map<String, dynamic>> cashback() async => get('/cashback');
+  Future<List<dynamic>> cashbackTransactions({String? status}) async =>
+      (await get('/cashback/transactions', query: {
+        if (status != null) 'status': status,
+      }))['transactions'] as List<dynamic>;
+  Future<Map<String, dynamic>> recordSpend(
+          int merchantId, double amount, String channel) =>
+      post('/cashback/record', body: {
+        'merchant_id': merchantId,
+        'amount': amount,
+        'channel': channel,
+      });
+  Future<Map<String, dynamic>> withdrawCashback(double amount, String method,
+          String accountName, String accountRef) =>
+      post('/cashback/withdraw', body: {
+        'amount': amount,
+        'method': method,
+        'account_name': accountName,
+        'account_ref': accountRef,
+      });
+  Future<List<dynamic>> cashbackWithdrawals() async =>
+      (await get('/cashback/withdrawals'))['withdrawals'] as List<dynamic>;
+  Future<Map<String, dynamic>> submitMissingCashback(
+          int merchantId, String orderNo, String spentAt, double amount,
+          String evidence, String note) =>
+      post('/cashback/missing', body: {
+        'merchant_id': merchantId,
+        'order_no': orderNo,
+        'spent_at': spentAt,
+        'amount': amount,
+        'evidence': evidence,
+        'note': note,
+      });
+
   // ---- favourites / notifications / records ----
   Future<void> toggleFavoriteCoupon(int id) =>
       post('/favorite-coupon-all', query: {'coupon_id': '$id'});
