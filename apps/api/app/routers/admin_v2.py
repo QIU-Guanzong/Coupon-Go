@@ -277,7 +277,11 @@ def approve_settlement(settlement_id: int,
                        user: models.User = Depends(
                            require_perm("settlements.write")),
                        db: Session = Depends(get_db)):
-    s = db.query(Settlement).filter(Settlement.id == settlement_id).first()
+    # F3: lock the settlement row before the status check (same as pay
+    # since FIX-3) so a concurrent transition blocks here and sees the
+    # fresh status instead of overwriting it.
+    s = (db.query(Settlement).filter(Settlement.id == settlement_id)
+         .with_for_update().populate_existing().first())
     if s is None:
         raise HTTPException(status_code=404, detail="找不到此結算單")
     if s.status != "pending":
@@ -297,7 +301,11 @@ def dispute_settlement(settlement_id: int,
                        user: models.User = Depends(
                            require_perm("settlements.write")),
                        db: Session = Depends(get_db)):
-    s = db.query(Settlement).filter(Settlement.id == settlement_id).first()
+    # F3: lock the settlement row before the status check (same as pay
+    # since FIX-3) so a concurrent pay cannot commit under this read
+    # and later be reverted to disputed.
+    s = (db.query(Settlement).filter(Settlement.id == settlement_id)
+         .with_for_update().populate_existing().first())
     if s is None:
         raise HTTPException(status_code=404, detail="找不到此結算單")
     if s.status not in ("pending", "approved"):
@@ -318,7 +326,11 @@ def resolve_settlement(settlement_id: int,
                        user: models.User = Depends(
                            require_perm("settlements.write")),
                        db: Session = Depends(get_db)):
-    s = db.query(Settlement).filter(Settlement.id == settlement_id).first()
+    # F3: lock the settlement row before the status check (same as pay
+    # since FIX-3) so a concurrent transition blocks here and sees the
+    # fresh status instead of overwriting it.
+    s = (db.query(Settlement).filter(Settlement.id == settlement_id)
+         .with_for_update().populate_existing().first())
     if s is None:
         raise HTTPException(status_code=404, detail="找不到此結算單")
     if s.status != "disputed":
