@@ -224,13 +224,6 @@ class ApiClient {
       (await get('/cashback/transactions', query: {
         if (status != null) 'status': status,
       }))['transactions'] as List<dynamic>;
-  Future<Map<String, dynamic>> recordSpend(
-          int merchantId, double amount, String channel) =>
-      post('/cashback/record', body: {
-        'merchant_id': merchantId,
-        'amount': amount,
-        'channel': channel,
-      });
   Future<Map<String, dynamic>> withdrawCashback(double amount, String method,
           String accountName, String accountRef) =>
       post('/cashback/withdraw', body: {

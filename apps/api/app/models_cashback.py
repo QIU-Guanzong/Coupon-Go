@@ -46,7 +46,16 @@ class CashbackTransaction(Base):
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
     # merchant_id in the report = shop id (shops are the merchants).
     merchant_id = Column(Integer, ForeignKey("shops.id"), nullable=False, index=True)
-    redemption_id = Column(Integer, ForeignKey("redemptions.id"), nullable=True)
+    # FIX-2: redemption_id is REQUIRED and UNIQUE — a cashback earning
+    # only ever comes from one redemption record, and one redemption
+    # credits at most once. There is no user-supplied record path anymore
+    # (POST /cashback/record was deleted); the only writer is
+    # cashback_service.record_spend(), called from the
+    # successful vendor scan. Legacy rows created before FIX-2 may still
+    # hold NULL here; the 0004 migration enforces NOT NULL only when no
+    # NULL rows exist (see alembic/versions/0004_*).
+    redemption_id = Column(Integer, ForeignKey("redemptions.id"),
+                           nullable=False, unique=True)
     # dinein = 线下餐饮 (next-visit unlock) | online = 线上/通用 (time-based confirm)
     channel = Column(String(20), default="dinein", nullable=False)
     amount = Column(Numeric(10, 2), nullable=False)          # HK$ cashback earned

@@ -4,6 +4,12 @@ Run:  cd apps/api && ~/workspace/coupon-go-fullstack/.venv/bin/python -m pytest 
 Uses its own throwaway SQLite file; never touches production data.
 Default assumptions under test: dine-in rate 5%, 90-day unlock/expiry,
 online confirm 30 days, HK$50 minimum withdrawal.
+
+FIX-2: POST /cashback/record is gone. Every earning below comes from a
+real vendor redemption (claim -> QR -> /new-scan-coupon), with the spend
+basis taken from the coupon row itself (min_spend). The online-confirm
+tests build their legacy online rows straight in the DB — no API can
+create an online earning anymore.
 """
 import os
 import sys
@@ -67,12 +73,97 @@ def _register_and_login(client, email):
     return {"Authorization": f"Bearer {r.json()['access_token']}"}
 
 
-def _record(client, h, merchant_id=1, amount=1200, channel="dinein"):
-    r = client.post("/api/v3/cashback/record", json={
-        "merchant_id": merchant_id, "amount": amount, "channel": channel},
-        headers=h)
+def _vendor_headers(client):
+    r = client.post("/api/v3/login", json={
+        "email": "vendor@coupon-go.example", "password": "Demo123!"})
     assert r.status_code == 200, r.text
-    return r.json()["transaction"]
+    return {"Authorization": f"Bearer {r.json()['access_token']}"}
+
+
+def _make_coupon(shop_id=1, min_spend=0, name="測試券"):
+    """Insert a fresh active coupon (server-side data) and return its id."""
+    db = TestingSession()
+    try:
+        vendor = db.query(models.User).filter(
+            models.User.email == "vendor@coupon-go.example").first()
+        shop = db.query(models.Shop).filter(models.Shop.id == shop_id).first()
+        c = models.Coupon(
+            shop_id=shop.id, vendor_id=vendor.id, coupon_type="Cash",
+            coupon_name=name, category_id=shop.category_id,
+            min_spend=min_spend,
+            valid_from=_now() - timedelta(days=1),
+            valid_to=_now() + timedelta(days=30),
+            total=100, remaining=100, status="active")
+        db.add(c)
+        db.commit()
+        return c.id
+    finally:
+        db.close()
+
+
+def _redeem(client, h, vh, coupon_id):
+    """Claim + present + vendor-scan one coupon; return the scan payload."""
+    r = client.post("/api/v3/new-favorite-coupon",
+                    params={"coupon_id": coupon_id}, headers=h)
+    assert r.status_code == 200, r.text
+    wid = r.json()["wallet_item_id"]
+    qr = client.post("/api/v3/store-scaned-qr-values",
+                     params={"wallet_item_id": wid}, headers=h)
+    assert qr.status_code == 200, qr.text
+    r = client.post("/api/v3/new-scan-coupon",
+                    json={"code": qr.json()["code"]}, headers=vh)
+    assert r.status_code == 200, r.text
+    assert r.json()["duplicate"] is False
+    return r.json()
+
+
+def _record(client, h, merchant_id=1, amount=1200, channel="dinein"):
+    """FIX-2: a "spend" is a real redemption now. amount is the coupon's
+    min_spend (server-side spend basis); channel is accepted for call
+    compatibility but redemptions are always dine-in."""
+    assert channel == "dinein", "redemptions are dine-in only since FIX-2"
+    vh = _vendor_headers(client)
+    coupon_id = _make_coupon(shop_id=merchant_id, min_spend=amount)
+    scan = _redeem(client, h, vh, coupon_id)
+    txns = client.get("/api/v3/cashback/transactions",
+                      headers=h).json()["transactions"]
+    mine = [t for t in txns
+            if t["redemption_id"] == scan["redemption_id"]]
+    assert len(mine) == 1, txns
+    return mine[0]
+
+
+def _insert_legacy_online_txn(email, merchant_id=1, amount=50,
+                              expected_confirm_at=None):
+    """A legacy online-pending earning (pre-FIX-2 shape), built straight
+    in the DB because no API can create one anymore. redemption_id is
+    NOT NULL since FIX-2, so a bare redemption row is inserted first —
+    it never went through the scan, so no dine-in earning references it.
+    The user must already hold a claimed coupon (wallet item)."""
+    db = TestingSession()
+    try:
+        user = db.query(models.User).filter(
+            models.User.email == email).first()
+        vendor = db.query(models.User).filter(
+            models.User.email == "vendor@coupon-go.example").first()
+        item = db.query(models.WalletItem).filter(
+            models.WalletItem.user_id == user.id).first()
+        assert item is not None
+        red = models.Redemption(wallet_item_id=item.id, coupon_id=item.coupon_id,
+                                shop_id=merchant_id,
+                                scanned_by_vendor_id=vendor.id)
+        db.add(red)
+        db.flush()
+        t = models_cashback.CashbackTransaction(
+            user_id=user.id, merchant_id=merchant_id,
+            redemption_id=red.id, channel="online", amount=amount,
+            rate=0.05, status="pending", funded_by="merchant_commission",
+            expected_confirm_at=expected_confirm_at, expires_at=None)
+        db.add(t)
+        db.commit()
+        return t.id
+    finally:
+        db.close()
 
 
 def _backdate_txn(txn_id, **kwargs):
@@ -98,7 +189,7 @@ def test_dinein_unlock_withdraw_chain(client):
     bal = client.get("/api/v3/cashback", headers=h).json()
     assert bal["pending_balance"] == 60.0 and bal["withdrawable_balance"] == 0.0
 
-    # Second spend at the SAME merchant unlocks the first earning.
+    # Second redemption at the SAME merchant unlocks the first earning.
     t2 = _record(client, h, merchant_id=1, amount=1200, channel="dinein")
     assert t2["status"] == "pending"
     txns = client.get("/api/v3/cashback/transactions",
@@ -156,18 +247,25 @@ def test_dinein_90_day_expiry_voids(client):
 
 
 def test_online_confirm_window(client):
+    # Legacy online earning (built in the DB; no API creates one anymore):
+    # merchant confirm window passes -> withdrawable, confirmed_at stamped.
     h = _register_and_login(client, "cb-dave@example.com")
-    t = _record(client, h, merchant_id=1, amount=1000, channel="online")
-    assert t["status"] == "pending" and t["expected_confirm_at"] is not None
-    assert t["expires_at"] is None  # no 90-day unlock deadline online
-    # Merchant confirm window passes -> withdrawable, confirmed_at stamped.
-    _backdate_txn(t["id"], expected_confirm_at=_now() - timedelta(days=1))
+    vh = _vendor_headers(client)
+    _redeem(client, h, vh, 2)  # claim a coupon so a wallet item exists
+    t_id = _insert_legacy_online_txn(
+        "cb-dave@example.com", merchant_id=1, amount=50,
+        expected_confirm_at=_now() - timedelta(days=1))
     txns = client.get("/api/v3/cashback/transactions",
                       headers=h).json()["transactions"]
-    mine = [x for x in txns if x["id"] == t["id"]][0]
+    mine = [x for x in txns if x["id"] == t_id][0]
     assert mine["status"] == "withdrawable" and mine["confirmed_at"] is not None
+    assert mine["channel"] == "online" and mine["expires_at"] is None
     bal = client.get("/api/v3/cashback", headers=h).json()
+    # 50 withdrawable from the legacy online row; the seed-coupon
+    # redemption above (滿 $200 減 $30, min_spend 200 x 5%) is still
+    # pending as a dine-in earning of 10.
     assert bal["withdrawable_balance"] == 50.0
+    assert bal["pending_balance"] == 10.0
 
 
 def test_cancel_return_voids_pending_only(client):
@@ -183,10 +281,14 @@ def test_cancel_return_voids_pending_only(client):
                     json={"reason": "returned"}, headers=h)
     assert r.status_code == 400
     # A withdrawable earning cannot be voided (confirmed by merchant).
-    t2 = _record(client, h, merchant_id=1, amount=1000, channel="online")
-    _backdate_txn(t2["id"], expected_confirm_at=_now() - timedelta(days=1))
+    # Build a legacy online earning whose confirm window has passed.
+    vh = _vendor_headers(client)
+    _redeem(client, h, vh, 2)
+    t2_id = _insert_legacy_online_txn(
+        "cb-eve@example.com", merchant_id=1, amount=50,
+        expected_confirm_at=_now() - timedelta(days=1))
     client.get("/api/v3/cashback", headers=h)  # sweep -> withdrawable
-    r = client.post(f"/api/v3/cashback/transactions/{t2['id']}/void",
+    r = client.post(f"/api/v3/cashback/transactions/{t2_id}/void",
                     json={"reason": "returned"}, headers=h)
     assert r.status_code == 400
 
@@ -195,10 +297,12 @@ def test_cashback_separate_from_points(client):
     h = _register_and_login(client, "cb-frank@example.com")
     assert client.get("/api/v3/points", headers=h).json()["balance"] == 0
     _record(client, h, merchant_id=1, amount=1000, channel="dinein")
-    # Earning cashback does not move points, and vice versa.
-    assert client.get("/api/v3/points", headers=h).json()["balance"] == 0
+    # Earning cashback does not move points beyond the claim (+10) and
+    # redeem (+20) points the redemption itself pays; cashback never
+    # touches point_transactions.
+    assert client.get("/api/v3/points", headers=h).json()["balance"] == 30
     client.post("/api/v3/new-favorite-coupon", params={"coupon_id": 2}, headers=h)
-    assert client.get("/api/v3/points", headers=h).json()["balance"] == 10
+    assert client.get("/api/v3/points", headers=h).json()["balance"] == 40
     bal = client.get("/api/v3/cashback", headers=h).json()
     assert bal["pending_balance"] == 50.0  # unchanged by the +10 points
 
@@ -223,8 +327,9 @@ def test_missing_cashback_appeal(client):
 
 def test_cashback_requires_auth(client):
     assert client.get("/api/v3/cashback").status_code == 401
+    # FIX-2: the record endpoint no longer exists at all (404, not 401).
     assert client.post("/api/v3/cashback/record", json={
-        "merchant_id": 1, "amount": 100, "channel": "dinein"}).status_code == 401
+        "merchant_id": 1, "amount": 100, "channel": "dinein"}).status_code == 404
     assert client.post("/api/v3/cashback/missing", json={
         "merchant_id": 1, "order_no": "X",
         "spent_at": _now().isoformat(), "amount": 100}).status_code == 401

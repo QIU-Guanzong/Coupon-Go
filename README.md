@@ -207,7 +207,6 @@ cd apps/api
 返現進 Q Wallet，與積分並列展示、明細分開記賬（絕不混用
 `point_transactions`；另建 `cashback_transactions`）。接口見
 `docs/API.md`「返現」一節：`GET /cashback`、`GET /cashback/transactions`、
-`POST /cashback/record`（消費入賬口，線下 POS / 商戶端日後接同一入口）、
 `POST /cashback/withdraw`、`GET /cashback/withdrawals`、
 `POST /cashback/transactions/{id}/void`（取消 / 退貨）、
 `POST /cashback/missing`（申訴）。
@@ -228,8 +227,9 @@ cd apps/api
 提現規則：FPS / 銀行轉賬；收款賬戶姓名須與註冊姓名一致（ShopBack 香港
 規則）；v1 提現申請後狀態為 `pending`，待人工打款——**沒有真實 FPS /
 銀行打款集成**，打款流程、提現審核後台、商戶佣金結算對接都還沒做。
-`POST /cashback/record` 在 v1 允許已登錄用戶自助記錄（開發演示用）；
-正式上線前須改為僅商戶 / POS 憑據可調用。
+FIX-2 已刪除 `POST /cashback/record`：返現只能由核銷成功後服務端內部
+入賬（見 `app/cashback_service.py::record_spend`），
+用戶自填金額 / 商戶 / 比例再也無法入賬；App 內的開發演示記賬表單一併刪除。
 
 ## 還沒做的事
 

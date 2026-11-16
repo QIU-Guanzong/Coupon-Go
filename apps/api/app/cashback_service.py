@@ -12,8 +12,12 @@ Two machines, kept separate (report §3.2 vs §3.2b):
 Notes:
   * "tracked" is a valid status for async/unverified ingestion, but the v1
     synchronous record path writes "pending" directly: the spend is already
-    verified by a redemption record (redemption_id) or recorded as a
-    merchant/POS-verified spend. Tracked is reserved, not produced here.
+    verified by a redemption record (redemption_id).
+  * FIX-2: there is NO user-facing record endpoint anymore. The only
+    writer is record_spend(), called server-side from
+    the successful vendor scan. Amount basis and rate are derived from
+    server-side data only (the coupon row / configured merchant rate);
+    no client-supplied amount, rate or merchant is ever accepted.
   * "confirmed" promotes to "withdrawable" in the same sweep in v1: there
     is no payout hold. The confirmed step is still a real transition
     (confirmed_at is stamped) and the status is kept so a future hold /
@@ -111,8 +115,8 @@ def sweep_user(db: Session, user_id: int, now: datetime = None):
 
     Online pending past its confirm window -> confirmed -> withdrawable.
     Dine-in pending past its 90-day unlock deadline -> void (expired_90d).
-    Dine-in unlock needs a new spend event, so it is NOT done here — it
-    happens in record_spend().
+    Dine-in unlock needs a new valid redemption, so it is NOT done here —
+    it happens in record_spend().
     Returns (confirmed_count, expired_count).
     """
     now = now or _now()
@@ -138,65 +142,95 @@ def sweep_user(db: Session, user_id: int, now: datetime = None):
     return confirmed, expired
 
 
-def record_spend(db: Session, user: models.User, merchant_id: int, amount,
-                 channel: str, rate=None, redemption_id=None) -> CashbackTransaction:
-    """Record one verified spend and earn cashback (status: pending).
+def record_spend(db: Session,
+                                   redemption: models.Redemption
+                                   ) -> CashbackTransaction | None:
+    """Credit cashback for one successful redemption (server-side only).
 
-    Dine-in unlock: a new dine-in spend at the same merchant unlocks ALL
-    earlier pending dine-in transactions of that merchant still inside
-    their 90-day window. The new transaction itself stays pending — it
-    waits for ITS next visit.
+    FIX-2: this is the ONLY way a cashback earning is created. It is
+    called from the vendor scan after the redemption row exists, inside
+    the same transaction. Nothing here comes from the client:
+
+    * user / merchant: derived from the redemption (wallet item owner /
+      redemption.shop_id) — never from request input.
+    * spend basis ("实付价"): the coupon row's own server-side price —
+      discount_price for Price coupons, else min_spend (the minimum spend
+      the coupon requires). The redemption path records no order amount,
+      so a coupon with neither yields no verifiable spend and earns
+      nothing (returns None) instead of inventing an amount.
+    * rate ("商户比例"): the configured dine-in merchant rate
+      (config.CASHBACK_DINEIN_RATE); there is no per-shop rate column.
+      A redemption is always an in-store (dinein) spend, so the channel
+      is always "dinein" and the 90-day next-visit unlock applies.
+
+    Validation: the redemption must not be revoked, and one redemption
+    credits at most once (checked here; also enforced by the UNIQUE
+    constraint on cashback_transactions.redemption_id).
+
+    Dine-in unlock: a new valid redemption at a merchant unlocks ALL
+    earlier pending dine-in earnings of the same user at that merchant
+    still inside their 90-day window — whether or not this redemption
+    itself earns. The new earning itself stays pending; it waits for ITS
+    next visit. Returns the new transaction, or None when the coupon
+    carries no verifiable spend.
     """
-    if channel not in ("dinein", "online"):
-        raise CashbackError("channel 須為 dinein 或 online")
-    spend = money(amount)
-    if spend <= 0:
-        raise CashbackError("消費金額須大於 0")
-    shop = db.query(models.Shop).filter(models.Shop.id == merchant_id).first()
+    if redemption.revoked_at is not None:
+        raise CashbackError("此核銷已被撤销，不能記返現")
+    item = db.query(models.WalletItem).filter(
+        models.WalletItem.id == redemption.wallet_item_id).first()
+    if item is None:
+        raise CashbackError("核銷記錄不完整，找不到優惠券領取記錄")
+    coupon = db.query(models.Coupon).filter(
+        models.Coupon.id == redemption.coupon_id).first()
+    if coupon is None:
+        raise CashbackError("核銷記錄不完整，找不到優惠券")
+    shop = db.query(models.Shop).filter(
+        models.Shop.id == redemption.shop_id).first()
     if shop is None:
         raise CashbackError("找不到此商戶")
-    if redemption_id is not None:
-        red = db.query(models.Redemption).filter(
-            models.Redemption.id == redemption_id).first()
-        if red is None or red.shop_id != merchant_id:
-            raise CashbackError("核銷記錄不存在或不屬於此商戶")
-        if red.wallet_item_id is not None:
-            item = db.query(models.WalletItem).filter(
-                models.WalletItem.id == red.wallet_item_id).first()
-            if item is None or item.user_id != user.id:
-                raise CashbackError("核銷記錄不屬於此用戶")
-    r = Decimal(str(rate)) if rate is not None else Decimal(str(config.CASHBACK_DEFAULT_RATE))
-    if r <= 0 or r > 1:
+    existing = db.query(CashbackTransaction).filter(
+        CashbackTransaction.redemption_id == redemption.id).first()
+    if existing is not None:
+        raise CashbackError("此核銷已記返現，不可重複入賬")
+
+    now = _now()
+    sweep_user(db, item.user_id, now)
+    # Unlock earlier pending dine-in earnings at the same merchant. This
+    # runs for every new valid redemption, even one that earns nothing.
+    prior = (db.query(CashbackTransaction)
+             .filter(CashbackTransaction.user_id == item.user_id,
+                     CashbackTransaction.merchant_id == redemption.shop_id,
+                     CashbackTransaction.channel == "dinein",
+                     CashbackTransaction.status == "pending").all())
+    for t in prior:
+        _confirm(db, t, now)
+
+    paid = None
+    if coupon.discount_price is not None and money(coupon.discount_price) > 0:
+        paid = money(coupon.discount_price)
+    elif coupon.min_spend is not None and money(coupon.min_spend) > 0:
+        paid = money(coupon.min_spend)
+    if paid is None:
+        # No verifiable spend on the coupon (e.g. pure discount / gift
+        # with no price or minimum spend): earn nothing, invent nothing.
+        return None
+    rate = Decimal(str(config.CASHBACK_DINEIN_RATE))
+    if rate <= 0 or rate > 1:
         raise CashbackError("返現比例須在 0–1 之間")
-    earned = money(spend * r)
+    earned = money(paid * rate)
     cap = Decimal(str(config.CASHBACK_MAX_PER_TXN_HKD))
     if cap > 0 and earned > cap:
         earned = cap
     if earned <= 0:
-        raise CashbackError("返現金額為 0，請檢查消費金額與比例")
-
-    now = _now()
-    sweep_user(db, user.id, now)
-    if channel == "dinein":
-        # Unlock earlier pending dine-in earnings at the same merchant.
-        prior = (db.query(CashbackTransaction)
-                 .filter(CashbackTransaction.user_id == user.id,
-                         CashbackTransaction.merchant_id == merchant_id,
-                         CashbackTransaction.channel == "dinein",
-                         CashbackTransaction.status == "pending").all())
-        for t in prior:
-            _confirm(db, t, now)
+        return None
 
     txn = CashbackTransaction(
-        user_id=user.id, merchant_id=merchant_id, redemption_id=redemption_id,
-        channel=channel, amount=earned, rate=r, status="pending",
+        user_id=item.user_id, merchant_id=redemption.shop_id,
+        redemption_id=redemption.id,
+        channel="dinein", amount=earned, rate=rate, status="pending",
         funded_by="merchant_commission",
-        expected_confirm_at=(
-            now + timedelta(days=config.CASHBACK_ONLINE_CONFIRM_DAYS)
-            if channel == "online" else None),
-        expires_at=(
-            now + timedelta(days=config.CASHBACK_DINEIN_UNLOCK_DAYS)
-            if channel == "dinein" else None),
+        expected_confirm_at=None,
+        expires_at=now + timedelta(days=config.CASHBACK_DINEIN_UNLOCK_DAYS),
     )
     db.add(txn)
     db.flush()

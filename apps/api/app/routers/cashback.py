@@ -7,9 +7,13 @@ Paths follow FEATURE_RESEARCH_20261116.md §12 (返现 section):
   GET  /cashback/withdrawals      提现记录
   POST /cashback/missing          Missing Cashback 申诉
 
-Plus two D-line endpoints the report's chain needs but does not name:
-  POST /cashback/record           消费记返现（核销记录为准的入账口；
-                                  线下 POS / 商户端日后接同一入口）
+FIX-2: POST /cashback/record (user-supplied amount / merchant / rate)
+was DELETED. Cashback is now credited only server-side, inside the
+successful vendor scan (/new-scan-coupon), from the redemption record
+(cashback_service.record_spend). No client-supplied
+spend can ever create a cashback earning.
+
+Plus one D-line endpoint the report's chain needs but does not name:
   POST /cashback/transactions/{id}/void   取消 / 退货作废
 
 All amounts are HK$. Cashback is a separate ledger from points.
@@ -28,14 +32,6 @@ from ..cashback_service import CashbackError
 from ..models_cashback import CashbackTransaction, CashbackWithdrawal
 
 router = APIRouter()
-
-
-class RecordIn(BaseModel):
-    merchant_id: int
-    amount: float = Field(gt=0)          # 消费金额 HK$（实付价）
-    channel: str = "dinein"              # dinein | online
-    rate: float | None = None            # 不填用默认比例（线下餐饮 5%）
-    redemption_id: int | None = None     # 核销记录（追踪以核销记录为准）
 
 
 class WithdrawIn(BaseModel):
@@ -94,19 +90,6 @@ def list_transactions(status: str = Query(None),
         q = q.filter(CashbackTransaction.status == status)
     txns = q.order_by(CashbackTransaction.id.desc()).limit(limit).all()
     return {"transactions": [svc._tx_out(db, t) for t in txns]}
-
-
-@router.post("/cashback/record")
-def record_spend(body: RecordIn, user: models.User = Depends(get_current_user),
-                 db: Session = Depends(get_db)):
-    def _do():
-        txn = svc.record_spend(db, user, body.merchant_id, body.amount,
-                               body.channel, rate=body.rate,
-                               redemption_id=body.redemption_id)
-        db.commit()
-        return {"message": "返現已記錄，待確認", "transaction": svc._tx_out(db, txn),
-                **svc.balances(db, user.id)}
-    return _handle(_do)
 
 
 @router.post("/cashback/withdraw")

@@ -10,7 +10,7 @@ from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from .. import config, models, schemas
+from .. import cashback_service, config, models, schemas
 from ..database import get_db
 from ..deps import add_points, get_current_user, require_role
 from ..serializers import coupon_out
@@ -145,6 +145,18 @@ def scan_coupon(body: schemas.ScanIn,
         prepared_at=prepared_at)
     db.add(red)
     add_points(db, item.user_id, config.POINTS_REDEEM, "redeem", ref_id=item.id)
+    # FIX-2: cashback is credited here, server-side, from this redemption
+    # only — amount basis and rate come from the coupon row / server
+    # config, never from the client. Same transaction as the redemption,
+    # so a credit failure rolls the whole scan back (retryable). A fresh
+    # redemption can never be revoked or already-credited, so the only
+    # expected outcome is a new pending earning, or None when the coupon
+    # carries no verifiable spend.
+    db.flush()
+    try:
+        cashback_service.record_spend(db, red)
+    except cashback_service.CashbackError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     db.commit()
     db.refresh(red)
     return {"message": "您的優惠券已成功使用", "coupon_name": coupon.coupon_name,

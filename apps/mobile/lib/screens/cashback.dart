@@ -8,6 +8,11 @@ import '../widgets/widgets.dart';
 /// Line D — cashback in Q Wallet: balance (next to points, separate ledger),
 /// transaction list, withdrawal, Missing Cashback appeal.
 ///
+/// FIX-2: the dev-only self-record form (POST /cashback/record) was
+/// removed with the endpoint. Cashback is credited only server-side
+/// from a successful vendor redemption; the screen is read-only apart
+/// from withdrawal and appeals.
+///
 /// Defaults (see README 返现一节): dine-in rate 5%, next-visit unlock
 /// within 90 days (else void), online confirm 30 days, HK$50 minimum
 /// withdrawal, FPS / bank. NOT verified: no `flutter analyze` / real-device
@@ -190,113 +195,6 @@ class _CashbackScreenState extends State<CashbackScreen> {
                     subtitle: Text('${w.accountName} · ${w.statusText}'),
                   ),
                 )),
-            const SizedBox(height: 16),
-            const Text('演示：記錄一筆消費（開發版）',
-                style: TextStyle(fontWeight: FontWeight.bold)),
-            const Text(
-                '正式版由商戶 POS / 核銷記錄入賬。此處僅供開發演示：線下餐飲固定 5%，90 天內在同一商戶再消費一次才解鎖上一次返現。',
-                style:
-                    TextStyle(color: CgColors.textSecondary, fontSize: 12)),
-            const SizedBox(height: 8),
-            _DemoRecord(api: widget.api, onDone: _load),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _DemoRecord extends StatefulWidget {
-  const _DemoRecord({required this.api, required this.onDone});
-
-  final ApiClient api;
-  final VoidCallback onDone;
-
-  @override
-  State<_DemoRecord> createState() => _DemoRecordState();
-}
-
-class _DemoRecordState extends State<_DemoRecord> {
-  final _amount = TextEditingController(text: '200');
-  int? _shopId;
-  List<Shop> _shops = [];
-  String _channel = 'dinein';
-
-  @override
-  void initState() {
-    super.initState();
-    widget.api.home().then((data) {
-      if (!mounted) return;
-      final list = (data['popular_merchants'] as List? ?? [])
-          .map((e) => Shop.fromJson(e))
-          .toList();
-      setState(() {
-        _shops = list;
-        if (list.isNotEmpty) _shopId = list.first.id;
-      });
-    }).catchError((_) {});
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Column(
-          children: [
-            DropdownButton<int>(
-              value: _shopId,
-              isExpanded: true,
-              hint: const Text('選擇商戶'),
-              items: _shops
-                  .map((s) => DropdownMenuItem(value: s.id, child: Text(s.name)))
-                  .toList(),
-              onChanged: (v) => setState(() => _shopId = v),
-            ),
-            Row(
-              children: [
-                Expanded(
-                  child: TextField(
-                    controller: _amount,
-                    keyboardType: TextInputType.number,
-                    decoration: const InputDecoration(labelText: '消費金額 HK\$'),
-                  ),
-                ),
-                const SizedBox(width: 12),
-                DropdownButton<String>(
-                  value: _channel,
-                  items: const [
-                    DropdownMenuItem(value: 'dinein', child: Text('線下餐飲')),
-                    DropdownMenuItem(value: 'online', child: Text('線上')),
-                  ],
-                  onChanged: (v) => setState(() => _channel = v ?? 'dinein'),
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            SizedBox(
-              width: double.infinity,
-              child: ElevatedButton(
-                onPressed: _shopId == null
-                    ? null
-                    : () async {
-                        try {
-                          final amount =
-                              double.tryParse(_amount.text) ?? 0;
-                          final res = await widget.api.recordSpend(
-                              _shopId!, amount, _channel);
-                          if (context.mounted) {
-                            showCgToast(context,
-                                '已記錄返現 HK\$${(res['transaction']['amount'] as num).toStringAsFixed(2)}（待確認）');
-                          }
-                          widget.onDone();
-                        } on ApiException catch (e) {
-                          if (context.mounted) showCgToast(context, e.message);
-                        }
-                      },
-                child: const Text('記錄消費'),
-              ),
-            ),
           ],
         ),
       ),
