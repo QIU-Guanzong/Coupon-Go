@@ -10,6 +10,10 @@ This module adds:
   scan (report §5.4 item 11: 美团 10 分钟窗口). The coupon returns to
   unused and the code is cleared, so the next present generates a fresh
   code (anti-screenshot rotation); the +20 redeem points are reversed.
+  P1-1: the cashback this redemption earned is voided, and dine-in
+  unlocks it triggered roll back to pending; already-withdrawn money
+  is recorded as a negative adjustment (see
+  cashback_service.void_for_revocation).
 - GET /vendor/redemptions/export — vendor-scoped redemption records for
   reconciliation (F7-5; JSON default, ?format=csv). Admin sees all shops.
 """
@@ -20,6 +24,7 @@ from fastapi.responses import PlainTextResponse
 from sqlalchemy.orm import Session
 
 from .. import config, models, prepare_token
+from ..cashback_service import void_for_revocation
 from ..database import get_db
 from ..deps import add_points, require_role
 from .coupons import _refresh_expiry
@@ -119,12 +124,17 @@ def revoke_redemption(redemption_id: int,
     if item is not None:
         add_points(db, item.user_id, -config.POINTS_REDEEM, "revoke",
                    ref_id=red.id)
+    # P1-1: void this redemption's own cashback earning and roll back
+    # the dine-in unlocks it triggered; already-withdrawn money is
+    # recorded as a negative adjustment (never a negative transaction).
+    cashback = void_for_revocation(db, red)
     db.commit()
     return {"message": "核銷已撤销，優惠券已退回未使用",
             "redemption_id": red.id,
             "wallet_item_id": red.wallet_item_id,
             "revoked_at": red.revoked_at,
-            "revoke_window_minutes": config.REVOKE_WINDOW_MINUTES}
+            "revoke_window_minutes": config.REVOKE_WINDOW_MINUTES,
+            "cashback": cashback}
 
 
 @router.get("/vendor/redemptions/export")

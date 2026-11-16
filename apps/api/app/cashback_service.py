@@ -28,15 +28,19 @@ Notes:
 """
 from datetime import datetime, timedelta, timezone
 from decimal import ROUND_HALF_UP, Decimal
+import logging
 
 from sqlalchemy.orm import Session
 
 from . import config, models
 from .models_cashback import (
+    CashbackAdjustment,
     CashbackAppeal,
     CashbackTransaction,
     CashbackWithdrawal,
 )
+
+logger = logging.getLogger(__name__)
 
 CENT = Decimal("0.01")
 
@@ -204,6 +208,11 @@ def record_spend(db: Session,
                      CashbackTransaction.status == "pending").all())
     for t in prior:
         _confirm(db, t, now)
+        # P1-1: record WHICH redemption unlocked this earning, so a
+        # later revoke of this redemption can roll exactly this
+        # unlock back (void_for_revocation). Additive provenance only
+        # — the FIX-2 credit rules above are untouched.
+        t.unlocked_by_redemption_id = redemption.id
 
     paid = None
     if coupon.discount_price is not None and money(coupon.discount_price) > 0:
@@ -237,8 +246,123 @@ def record_spend(db: Session,
     return txn
 
 
+def _adjustment_out(a: CashbackAdjustment) -> dict:
+    return {
+        "id": a.id,
+        "user_id": a.user_id,
+        "redemption_id": a.redemption_id,
+        "amount": float(a.amount),
+        "reason": a.reason,
+        "created_at": a.created_at.isoformat() if a.created_at else None,
+    }
+
+
+def adjustments(db: Session, user_id: int) -> list:
+    """Negative adjustments for one user (newest first)."""
+    rows = (db.query(CashbackAdjustment)
+            .filter(CashbackAdjustment.user_id == user_id)
+            .order_by(CashbackAdjustment.id.desc()).all())
+    return [_adjustment_out(a) for a in rows]
+
+
+def void_for_revocation(db: Session,
+                        redemption: models.Redemption) -> dict:
+    """P1-1: reverse the cashback effects of a revoked redemption.
+    Called from the revoke endpoint, inside the same transaction
+    (flushes, never commits).
+
+    Chosen rule for already-withdrawn money (the conservative one):
+    withdrawn cash is never clawed back by pushing a transaction
+    negative. Instead:
+
+    * The revoked redemption's OWN earning dies entirely
+      (status -> void, void_reason="revoked"). Any part of it already
+      withdrawn is recorded as a negative CashbackAdjustment
+      (reason=revoked_withdrawn), so withdrawable_balance drops by
+      that amount — possibly below zero — and withdraw() blocks any
+      further withdrawal while the balance is below the amount asked.
+    * A predecessor earning unlocked BY this redemption rolls back
+      to pending (its confirmation — and only its confirmation — is
+      undone; the earning itself is still valid because its own
+      redemption stands). If part of it was already withdrawn, only
+      the un-withdrawn remainder goes back to pending (amount is
+      reduced to the remainder, withdrawn_amount reset to 0); the
+      paid part stays paid and no adjustment is recorded for it — the
+      money was paid for a real earning. A fully-withdrawn
+      predecessor is complete and is left untouched.
+    * Earnings unlocked by OTHER redemptions are untouched: the
+      unlock provenance (unlocked_by_redemption_id, set in
+      record_spend) is what selects the rollback set.
+
+    Returns a summary dict for the revoke response / log.
+    """
+    summary = {"voided_own": 0, "reverted_to_pending": 0, "adjustments": []}
+    own = db.query(CashbackTransaction).filter(
+        CashbackTransaction.redemption_id == redemption.id).first()
+    if own is not None and own.status != "void":
+        withdrawn = money(own.withdrawn_amount or 0)
+        if withdrawn > 0:
+            adj = CashbackAdjustment(
+                user_id=own.user_id, redemption_id=redemption.id,
+                amount=-withdrawn, reason="revoked_withdrawn")
+            db.add(adj)
+            db.flush()
+            summary["adjustments"].append(_adjustment_out(adj))
+            logger.info(
+                "revoke cashback: redemption_id=%s earning id=%s voided "
+                "after HK$%s already withdrawn; negative adjustment id=%s",
+                redemption.id, own.id, withdrawn, adj.id)
+        own.status = "void"
+        own.void_reason = "revoked"
+        summary["voided_own"] = 1
+    unlocked = (db.query(CashbackTransaction)
+                .filter(CashbackTransaction.unlocked_by_redemption_id
+                        == redemption.id).all())
+    for t in unlocked:
+        if t.status not in ("confirmed", "withdrawable"):
+            continue  # withdrawn (complete) / pending / void: untouched
+        withdrawn = money(t.withdrawn_amount or 0)
+        if withdrawn <= 0:
+            t.status = "pending"
+            t.confirmed_at = None
+            t.unlocked_by_redemption_id = None
+            summary["reverted_to_pending"] += 1
+        elif withdrawn >= money(t.amount):
+            # Fully paid out: nothing left to revert; the earning is
+            # complete. Leave it withdrawn.
+            continue
+        else:
+            # Partially withdrawn: only the remainder goes back to
+            # pending; the paid part stays paid (no adjustment — the
+            # earning is real, only its confirmation is rolled back).
+            remainder = money(money(t.amount) - withdrawn)
+            logger.info(
+                "revoke cashback: redemption_id=%s reverts unlock of "
+                "txn id=%s (HK$%s of HK$%s withdrawn); HK$%s returns "
+                "to pending", redemption.id, t.id, withdrawn, t.amount,
+                remainder)
+            t.amount = remainder
+            t.withdrawn_amount = Decimal("0")
+            t.status = "pending"
+            t.confirmed_at = None
+            t.unlocked_by_redemption_id = None
+            summary["reverted_to_pending"] += 1
+    if summary["voided_own"] or summary["reverted_to_pending"] \
+            or summary["adjustments"]:
+        db.flush()
+    return summary
+
+
 def balances(db: Session, user_id: int) -> dict:
-    """Separate ledgers: cashback balances never include points."""
+    """Separate ledgers: cashback balances never include points.
+
+    P1-1: negative adjustments (revoked earnings already withdrawn)
+    are folded into withdrawable_balance, which may therefore go
+    negative; withdraw() refuses any amount above it, so a negative
+    balance blocks further withdrawals until new earnings cover it.
+    total_earned stays gross earned (adjustments are reported
+    separately as adjustment_total, never silently netted into it).
+    """
     txns = (db.query(CashbackTransaction)
             .filter(CashbackTransaction.user_id == user_id).all())
     withdrawable = pending = tracked = Decimal("0")
@@ -253,11 +377,17 @@ def balances(db: Session, user_id: int) -> dict:
             pending += money(t.amount)
         elif t.status == "tracked":
             tracked += money(t.amount)
+    adjustment_total = sum(
+        (money(a.amount) for a in db.query(CashbackAdjustment)
+         .filter(CashbackAdjustment.user_id == user_id).all()),
+        Decimal("0"))
+    withdrawable += adjustment_total
     return {
         "withdrawable_balance": float(withdrawable),
         "pending_balance": float(pending),
         "tracked_balance": float(tracked),
         "total_earned": float(total_earned),
+        "adjustment_total": float(adjustment_total),
     }
 
 
@@ -275,7 +405,11 @@ def withdraw(db: Session, user: models.User, amount, method: str,
     if not account_name or not account_name.strip():
         raise CashbackError("請填寫收款賬戶姓名")
     # ShopBack HK rule: payout account name must match the registered name.
-    if user.name and user.name.strip() and account_name.strip() != user.name.strip():
+    # P1-4: a blank registered name no longer skips this check — the
+    # user must fill in their registered name (User.name) first.
+    if not user.name or not user.name.strip():
+        raise CashbackError("請先完善註冊姓名後再提現")
+    if account_name.strip() != user.name.strip():
         raise CashbackError("收款賬戶姓名須與註冊姓名一致")
     now = _now()
     # FIX-3: lock the user row FIRST (SELECT ... FOR UPDATE on Postgres;

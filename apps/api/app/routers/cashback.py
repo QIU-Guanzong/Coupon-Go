@@ -74,6 +74,7 @@ def get_cashback(user: models.User = Depends(get_current_user),
         groups.setdefault(t.status, []).append(svc._tx_out(db, t))
     return {**svc.balances(db, user.id),
             "transactions": [svc._tx_out(db, t) for t in txns],
+            "adjustments": svc.adjustments(db, user.id),
             "by_status": {k: len(v) for k, v in groups.items()}}
 
 

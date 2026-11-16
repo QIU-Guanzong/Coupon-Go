@@ -26,6 +26,7 @@ is line F; this line only records the ledger fields. A refund voids
 the settlement (settlement_status='void', net 0).
 """
 import json
+import logging
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -46,6 +47,13 @@ from ..serializers_packages import (
 from .. import schemas_packages as sp
 
 router = APIRouter()
+
+logger = logging.getLogger(__name__)
+
+# P1-5: gateway failures are never passed through to the user. Every
+# gateway-error surface returns this one generic message; the gateway
+# detail goes to the server log only (logger.exception at each site).
+GATEWAY_FAILURE_MESSAGE = "支付失败，请稍后重试"
 
 PAYMENT_METHODS = ("fps", "card")
 REFUND_POLICIES = ("anytime", "expiry_only", "non_refundable")
@@ -244,7 +252,12 @@ def _process_refund(db: Session, order: Order, reason: str) -> Refund:
             gateway_ref = result.get("gateway_ref", "")
             attempt.status = "refunded"
         except GatewayError as exc:
-            raise HTTPException(status_code=502, detail=f"退款網關失敗：{exc}")
+            # P1-5: log the gateway detail, return only the generic
+            # message — the raw gateway error never reaches the user.
+            logger.exception("package refund gateway failed order_id=%s: %s",
+                             order.id, exc)
+            raise HTTPException(status_code=502,
+                                detail=GATEWAY_FAILURE_MESSAGE)
     refund.gateway_ref = gateway_ref
     order.settlement_status = "void"
     order.net_amount = 0
@@ -302,7 +315,6 @@ def _purchase_response(db: Session, order: Order, attempt: Payment,
         "payment": payment_out(attempt),
         "client_secret": client_secret,
         "gateway": "stripe",
-        "test_mode": not bool(config.STRIPE_SECRET_KEY),
         "message": message,
     }
 
@@ -431,8 +443,10 @@ def purchase_package(package_id: int, body: sp.PurchaseIn,
             pkg.stock_left += 1
             _sync_coupon_stock(db, pkg)
             db.commit()
+            logger.exception("package purchase gateway failed package_id=%s: %s",
+                             package_id, exc)
             raise HTTPException(status_code=502,
-                                detail=f"支付網關暫時不可用，請稍後重試：{exc}")
+                                detail=GATEWAY_FAILURE_MESSAGE)
         attempt = Payment(
             order_id=order.id, gateway="stripe",
             gateway_ref=intent.get("gateway_ref", ""),
@@ -503,9 +517,11 @@ def confirm_payment(order_id: int, body: sp.ConfirmPaymentIn,
         try:
             intent = retrieve_payment_intent(attempt.gateway_ref)
         except GatewayError as exc:
+            logger.exception("confirm-payment gateway failed order_id=%s: %s",
+                             order.id, exc)
             raise HTTPException(
                 status_code=502,
-                detail=f"支付網關暫時不可用，請稍後重試：{exc}")
+                detail=GATEWAY_FAILURE_MESSAGE)
         status = intent.get("status", "")
         if status == "succeeded":
             outcome = "succeeded"
@@ -562,8 +578,10 @@ def retry_payment(order_id: int, body: sp.RetryPaymentIn,
             pkg.stock_left += 1
             _sync_coupon_stock(db, pkg)
             db.commit()
+            logger.exception("retry-payment gateway failed order_id=%s: %s",
+                             order.id, exc)
             raise HTTPException(status_code=502,
-                                detail=f"支付網關暫時不可用，請稍後重試：{exc}")
+                                detail=GATEWAY_FAILURE_MESSAGE)
         attempt = Payment(
             order_id=order.id, gateway="stripe",
             gateway_ref=intent.get("gateway_ref", ""),

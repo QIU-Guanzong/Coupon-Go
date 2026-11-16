@@ -9,7 +9,11 @@ import os
 ENV = os.environ.get("APP_ENV") or os.environ.get("COUPON_GO_ENV", "dev")
 # APP_ENV is the canonical name (FIX-1); ENV is the legacy alias.
 APP_ENV = ENV
-SECRET_KEY = os.environ.get("SECRET_KEY", "dev-only-insecure-secret-change-me")
+# The shipped dev default. It must never run outside dev (see
+# validate_payment_config, P1-2): a non-dev process that still has
+# this value refuses to start.
+DEFAULT_SECRET_KEY = "dev-only-insecure-secret-change-me"
+SECRET_KEY = os.environ.get("SECRET_KEY", DEFAULT_SECRET_KEY)
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = int(os.environ.get("ACCESS_TOKEN_EXPIRE_MINUTES", "10080"))  # 7 days
 
@@ -67,14 +71,37 @@ STRIPE_WEBHOOK_TOLERANCE_SECONDS = int(
     os.environ.get("STRIPE_WEBHOOK_TOLERANCE_SECONDS", "300"))
 
 
+def cors_origins() -> list:
+    """P1-2: CORS allow-list from the CORS_ORIGINS env var
+    (comma-separated). Dev defaults to ["*"] for local development;
+    any other env defaults to [] (fail closed — no browser origin is
+    trusted until the deploy lists it explicitly). Reads env + the
+    APP_ENV module global at call time so tests can monkeypatch them."""
+    raw = os.environ.get("CORS_ORIGINS", "")
+    if raw:
+        return [o.strip() for o in raw.split(",") if o.strip()]
+    return ["*"] if APP_ENV == "dev" else []
+
+
+# Resolved once at import (the CORSMiddleware is built at import in
+# app.main); cors_origins() above is the testable source of truth.
+CORS_ORIGINS = cors_origins()
+
+
 def validate_payment_config():
     """FIX-1 startup gate: outside dev the webhook endpoint secret must
     be configured, otherwise a forged webhook could settle orders.
+    P1-2: outside dev the app secret must also be a real value — a
+    process still running the shipped dev default refuses to start.
     Reads module globals at call time so tests can monkeypatch them."""
     if APP_ENV != "dev" and not STRIPE_WEBHOOK_SECRET:
         raise RuntimeError(
             "非開發環境必須配置 STRIPE_WEBHOOK_SECRET，否則拒絕啟動 "
             "(FIX-1: webhook 簽名校驗無密鑰可驗）")
+    if APP_ENV != "dev" and SECRET_KEY == DEFAULT_SECRET_KEY:
+        raise RuntimeError(
+            "非開發環境必須配置 SECRET_KEY（目前仍是開發預設值），否則拒絕啟動 "
+            "(P1-2: 預設密鑰不可用於非開發環境）")
 # Pending-payment timeout (minutes): an unpaid order older than this is
 # lazily marked timeout and releases its stock reservation.
 PAYMENT_TIMEOUT_MINUTES = int(os.environ.get("PAYMENT_TIMEOUT_MINUTES", "15"))

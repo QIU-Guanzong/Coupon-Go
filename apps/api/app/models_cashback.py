@@ -36,7 +36,10 @@ CASHBACK_STATUSES = (
     "tracked", "pending", "confirmed", "withdrawable", "void", "withdrawn",
 )
 CASHBACK_CHANNELS = ("dinein", "online")
-CASHBACK_VOID_REASONS = ("cancelled", "returned", "expired_90d")
+CASHBACK_VOID_REASONS = ("cancelled", "returned", "expired_90d", "revoked")
+# P1-1: "revoked" — the earning's redemption was revoked by the vendor
+# within the 10-minute window, so the earning dies (see
+# cashback_service.void_for_revocation).
 
 
 class CashbackTransaction(Base):
@@ -68,7 +71,37 @@ class CashbackTransaction(Base):
     confirmed_at = Column(DateTime, nullable=True)
     withdrawn_amount = Column(Numeric(10, 2), default=Decimal("0"), nullable=False)
     withdrawal_id = Column(Integer, ForeignKey("cashback_withdrawals.id"), nullable=True)
-    void_reason = Column(String(30), nullable=True)          # cancelled | returned | expired_90d
+    void_reason = Column(String(30), nullable=True)          # cancelled | returned | expired_90d | revoked
+    # P1-1: which redemption unlocked this earning (dine-in next-visit
+    # unlock, set in record_spend). Lets a later revoke of THAT
+    # redemption roll the unlock back precisely, without touching
+    # unlocks triggered by other redemptions. NULL while pending /
+    # never unlocked via a redemption.
+    unlocked_by_redemption_id = Column(
+        Integer, ForeignKey("redemptions.id"), nullable=True)
+    created_at = Column(DateTime, default=_now)
+
+
+class CashbackAdjustment(Base):
+    """P1-1: a negative adjustment against a user's cashback balance.
+
+    Written when a revoked redemption's earning had already been
+    (partly) withdrawn: the money is gone but the earning is dead, so
+    the withdrawn part is recorded here as a negative amount instead
+    of pushing any transaction negative. balances() folds the sum
+    into withdrawable_balance (which may go negative); withdraw()
+    then blocks any withdrawal while the balance is below the
+    requested amount. The adjustment is never consumed by FIFO —
+    it is a standing offset until new earnings cover it.
+
+    reason: revoked_withdrawn (only value in v1).
+    """
+    __tablename__ = "cashback_adjustments"
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    redemption_id = Column(Integer, ForeignKey("redemptions.id"), nullable=True)
+    amount = Column(Numeric(10, 2), nullable=False)          # negative, HK$
+    reason = Column(String(30), default="revoked_withdrawn", nullable=False)
     created_at = Column(DateTime, default=_now)
 
 

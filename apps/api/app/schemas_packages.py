@@ -118,7 +118,6 @@ class PurchaseOut(BaseModel):
     payment: PaymentOut
     client_secret: str = ""
     gateway: str = "stripe"
-    test_mode: bool = True
     message: str = ""
 
 

@@ -46,7 +46,7 @@ app/models_cashback.py、app/cashback_service.py（線 D 返現，與 point_tran
 app/models_bargain.py、app/seed_bargain.py（線 E 砍價）
 app/models_packages.py、app/payments_gateway.py（線 C 套餐，Stripe 測試模式）
 app/models_line_f.py、app/permissions_line_f.py（線 F 後台 v2：結算 / 對賬 / 發票 / 內容 / 角色）
-alembic/ 數據庫遷移（0001 初始建表；0002_line_a 核銷加固；0002_line_b 評分 v1 + 後台 v1；0002_cashback 線 D 返現三表；0002_bargain_e 線 E 砍價；0002_line_c 線 C 套餐；0003_line_f 線 F 後台 v2）
+alembic/ 數據庫遷移（0001 初始建表；0002_line_a 核銷加固；0002_line_b 評分 v1 + 後台 v1；0002_cashback 線 D 返現三表；0002_bargain_e 線 E 砍價；0002_line_c 線 C 套餐；0003_line_f 線 F 後台 v2；0004 返現 redemption 唯一；0005 FIX-3 行鎖兜底約束；0006 P1 返現撤销回滾 + 砍價退款網關 ref）
 tests/ pytest（79 個測試）
 infra/ docker-compose（api + postgres + redis）、.env.example
 docs/ API.md（接口概覽）
@@ -87,6 +87,17 @@ API 文檔：http://localhost:8000/docs ；健康檢查：`/health`。
 cd apps/api
 alembic upgrade head
 ```
+
+### 上線前配置（P1）
+
+- **CORS**：`CORS_ORIGINS` 環境變量（逗號分隔的白名單）；開發環境未配置時
+  默認為 `*`，非開發環境未配置時默認為空（不信任任何來源）。生產必須
+  顯式列出前端域名。
+- **SECRET_KEY**：非開發環境仍為開發預設值時，啟動即拒絕
+  （與 FIX-1 的 `validate_payment_config` 同一啟動檢查；見
+  `app/config.py`）。開發預設值絕不可用於非開發環境。
+- **支付網關報錯**：接口統一返回「支付失败，请稍后重试」，網關原始報錯
+  只寫服務端日誌，不透傳給用戶；套餐購買響應不再含 `test_mode` 字段。
 
 ### 前端
 
@@ -147,7 +158,7 @@ flutter run --dart-define=API_BASE_URL=http://localhost:8000
 社交登錄（開發 stub，上線前須做服務端 token 驗證）、customer/vendor
 分開帳戶與錢包、JWT 鑑權。
 
-**砍價 2C（分享助力）**：砍價活動列表、發起砍價（鎖 1 份庫存）、分享連結、好友助力降價（每刀遞減，新用戶加成）、到底價 / 成團後低價下單，套餐券進 Q Wallet 三狀態（走現有出示 → 核銷閉環）；未成團 / 超時全額退款並釋放庫存；防刷（每人每單限助一次、同一設備去重、每日助力上限）。預設值：成團 5 人、每場 24 小時、活動 7 天、套餐券 30 天；開發版未接支付網關，預付與退款均為模擬記賬。詳見 `docs/API.md`「砍價 2C」一節。
+**砍價 2C（分享助力）**：砍價活動列表、發起砍價（鎖 1 份庫存）、分享連結、好友助力降價（每刀遞減，新用戶加成）、到底價 / 成團後低價下單，套餐券進 Q Wallet 三狀態（走現有出示 → 核銷閉環）；未成團 / 超時全額退款並釋放庫存；防刷（每人每單限助一次、同一設備去重、每日助力上限）。預設值：成團 5 人、每場 24 小時、活動 7 天、套餐券 30 天；預付仍是模擬記賬（未收真錢），退款改走支付網關（`refund_payment`，與套餐退款同一口徑，狀態 `pending/succeeded/failed` + `gateway_ref`，失敗可在同一退款記錄上重試）；用戶可見的退款文案只有「退款将在 1–3 个工作日原路退回」，開發說明只寫在代碼註釋、日誌與本文檔。詳見 `docs/API.md`「砍價 2C」一節。
 
 ## 種子帳戶（演示用，上線前改密碼）
 
@@ -231,6 +242,24 @@ FIX-2 已刪除 `POST /cashback/record`：返現只能由核銷成功後服務�
 入賬（見 `app/cashback_service.py::record_spend`），
 用戶自填金額 / 商戶 / 比例再也無法入賬；App 內的開發演示記賬表單一併刪除。
 
+**核銷撤销與返現回滾（P1-1）**：商戶在 10 分鐘窗口內撤销核銷時，
+該次核銷的返現一併作廢（`void_reason=revoked`），並回滾由它觸發解鎖的
+前序 dine-in 待確認筆——那些筆重新變回待解鎖（`pending`），解鎖溯源
+記在 `unlocked_by_redemption_id`，其他核銷觸發的解鎖不受影響。
+已提現部分的處理規則（保守做法）：已提現的錢不直接扣負數，而是記一筆
+負向調整（`cashback_adjustments`，`reason=revoked_withdrawn`），可提現
+餘額隨之減少、可為負，餘額為負時提現被攔截（`withdrawable_balance`
+低於提現金額即拒絕），直至後續返現補回。部分提現過的前序筆只把未提現
+餘額退回待解鎖，已提現部分保留（該筆返現本身有效，只是確認被回滾）；
+已全部提現的前序筆視為已完成，不動。
+
+**冷靜期（P1-7，未改，待產品決定）**：`confirmed → withdrawable`
+目前沒有冷靜期，確認後立即可以提現；保留現狀，待產品決定是否加
+冷靜期後再改。
+
+**提現戶名（P1-4）**：收款賬戶姓名須與註冊姓名（`User.name`）一致；
+未填註冊姓名時拒絕提現，不再跳過校驗。
+
 ## 還沒做的事
 
 - Flutter 真機編譯與 `flutter analyze`（本機無 Flutter SDK，未驗證；線 A
@@ -245,8 +274,9 @@ FIX-2 已刪除 `POST /cashback/record`：返現只能由核銷成功後服務�
   與商戶談判定稿（現為默認值假設）
 - 後台 v2 待定：auditor 暫不能審核入駐申請（v1 端點保持 admin-only，
   未改 v1 契約）；首頁仍調寫死的 `GET /advertisement-banners`，未切到
-  CMS 的 `GET /banners`；晒圖上傳是本地磁盤佔位儲存，未接對象儲存，
-  無病毒掃描 / EXIF 清理 / 縮圖；結算佣金比例默認 0.10，需按商户談判
+  CMS 的 `GET /banners`；晒圖上傳是本地磁盤佔位儲存（**開發佔位，上線前
+  必須換對象儲存**，見 `app/routers/uploads.py`），上傳時已剝離 EXIF，
+  無病毒掃描 / 縮圖；結算佣金比例默認 0.10，需按商户談判
   後逐個設定
 - 商店上架（App Store / Google Play）、應用簽名、深鏈
 - 真實商户數據對接、FCM 推送、社交登錄服務端驗證

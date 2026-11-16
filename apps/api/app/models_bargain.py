@@ -12,8 +12,12 @@ Flow (share-to-help bargain, NOT Dutch auction):
 
 Money is simulated ledger only in this dev build: there is no payment
 gateway yet (README: 支付未做). `paid_amount` records the simulated
-prepayment; BargainRefund rows record what would be returned via the
-original payment route (1-3 working days). No real transfer happens.
+prepayment; BargainRefund rows record the refund and its gateway
+result (status pending/succeeded/failed + gateway_ref; see
+routers/bargain.py — refunds are attempted through the gateway's
+refund_payment, same calibre as package refunds, with a synthetic
+payment reference because the prepay itself took no real money).
+No real transfer happens.
 
 Deliberately NOT copied from the DT-life complaints (§4.5):
 no 30% "occupancy" fee on refund, no "一经售出不退不换" refusal.
@@ -121,11 +125,23 @@ class BargainHelp(Base):
 
 
 class BargainRefund(Base):
-    """Refund ledger for a session (simulated in dev; see module docstring).
+    """Refund ledger for a session.
 
     reason: bargain_failed (timeout before success) | expired (success but
     never purchased) | price_cut (difference refunded on purchase).
-    status: refunded (simulated original-route refund, 1-3 working days).
+    status: pending (gateway refund not yet attempted / in flight) |
+    succeeded (gateway refund returned a ref) | failed (gateway error —
+    retryable via POST /bargain/refunds/{id}/retry on the SAME row).
+    gateway_ref: the gateway refund id (re_test_… from the simulator in
+    dev; a real Stripe refund id once a real prepay exists).
+
+    The prepay itself is still simulated (no real charge is taken at
+    start), so the gateway refund is called with a synthetic
+    "bargain-session-{id}" payment reference: in dev the simulator
+    accepts it and returns a re_test_… ref; with a real Stripe key
+    there is no real payment_intent behind the simulated prepay, so
+    the gateway call fails and the refund stays failed/retryable until
+    a real prepay flow lands. No real transfer happens in this build.
     """
     __tablename__ = "bargain_refunds"
     id = Column(Integer, primary_key=True)
@@ -133,7 +149,8 @@ class BargainRefund(Base):
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     amount = Column(Numeric(10, 2), nullable=False)  # HKD
     reason = Column(String(30), nullable=False)
-    status = Column(String(20), default="refunded", nullable=False)
+    status = Column(String(20), default="pending", nullable=False)
+    gateway_ref = Column(String(120), default="")
     note = Column(String(255), default="")
     created_at = Column(DateTime, default=_now)
 

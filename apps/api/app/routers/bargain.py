@@ -14,10 +14,19 @@ Endpoints (all under /api/v3):
 Rules (defaults are assumptions — report §14 leaves them open; see
 README/docs for the list):
   * Prepay-at-start, simulated: starting a session records paid_amount =
-    original_price (no payment gateway in this dev build). Failure /
-    timeout refunds it in full; a successful purchase refunds the
-    price-cut difference. All refunds are ledger rows (BargainRefund);
-    no real transfer happens until a payment gateway lands (line A).
+    original_price (no payment gateway in this dev build — no real
+    charge is taken). Failure / timeout refunds it in full; a
+    successful purchase refunds the price-cut difference. Refunds are
+    attempted through the gateway (payments_gateway.refund_payment,
+    same calibre as package refunds) and recorded as BargainRefund
+    rows with status pending/succeeded/failed + gateway_ref; a failed
+    refund is retryable on the same row (POST /bargain/refunds/{id}/retry).
+    Because the prepay is simulated, the gateway call uses a synthetic
+    "bargain-session-{id}" payment reference (see _attempt_gateway_refund):
+    the dev simulator returns a re_test_… ref, while a real Stripe key
+    has no real payment_intent to refund against, so that call fails
+    and stays retryable until a real prepay flow lands. The dev-only
+    explanation lives here and in the server log, never in user copy.
   * Cut curve (public, no "永远差一刀"): remaining * rate, rate decays
     30% -> 25% -> 20% -> 15% -> 10% -> 5% by help index; a new user
     (registered within 7 days) adds +10pts. Min cut HK$1, never below floor.
@@ -38,6 +47,7 @@ README/docs for the list):
 """
 from datetime import datetime, timedelta, timezone
 from decimal import ROUND_HALF_UP, Decimal
+import logging
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
@@ -50,8 +60,11 @@ from ..deps import get_current_user, require_role
 from ..models_bargain import (
     BargainCampaign, BargainHelp, BargainRefund, BargainSession,
 )
+from ..payments_gateway import GatewayError, refund_payment
 
 router = APIRouter()
+
+logger = logging.getLogger(__name__)
 
 # ---- defaults (assumptions; see module docstring) ----
 DEFAULT_HELPER_LIMIT = 5
@@ -64,7 +77,7 @@ CUT_RATES = [Decimal("0.30"), Decimal("0.25"), Decimal("0.20"),
              Decimal("0.15"), Decimal("0.10")]  # then 0.05
 NEW_USER_BONUS = Decimal("0.10")
 MIN_CUT = Decimal("1.00")
-REFUND_NOTE = "模拟退款：原路返回，1–3 个工作日（开发版未接支付网关，仅记账）"
+REFUND_NOTE = "退款将在 1–3 个工作日原路退回"
 PACKAGE_TERMS = ("砍价成团套餐券；未核销可退款，过期自动退款；已核销不可退。"
                  "退款原路返回，1–3 个工作日。")
 
@@ -140,7 +153,8 @@ def _help_out(db: Session, h: BargainHelp) -> dict:
 def _refund_out(r: BargainRefund) -> dict:
     return {
         "id": r.id, "amount": float(r.amount), "reason": r.reason,
-        "status": r.status, "note": r.note or "",
+        "status": r.status, "gateway_ref": r.gateway_ref or "",
+        "note": r.note or "",
         "created_at": r.created_at.isoformat() if r.created_at else None,
     }
 
@@ -198,6 +212,39 @@ def _release_stock(db: Session, s: BargainSession):
     s.stock_locked = False
 
 
+def _attempt_gateway_refund(db: Session, refund: BargainRefund) -> BargainRefund:
+    """Attempt the gateway refund for one refund row (P1-3, same
+    calibre as package refunds).
+
+    The bargain prepay is simulated — no real charge was ever taken —
+    so there is no real payment_intent to refund against. The gateway
+    is called with the synthetic reference "bargain-session-{id}":
+    the dev simulator accepts any reference and returns a re_test_…
+    refund id; a real Stripe key rejects it, and the refund then
+    stays failed (retryable) until a real prepay flow lands. That
+    dev-only explanation is logged here, never shown to the user:
+    on failure the user sees only the generic "processing" note.
+    """
+    try:
+        result = refund_payment(f"bargain-session-{refund.session_id}",
+                                float(refund.amount))
+    except GatewayError as exc:
+        logger.exception(
+            "bargain refund gateway failed session_id=%s refund_id=%s "
+            "amount=%s (simulated prepay — no real payment_intent; "
+            "see routers/bargain.py): %s",
+            refund.session_id, refund.id, refund.amount, exc)
+        refund.status = "failed"
+        refund.note = "退款處理中，請稍後查看或聯繫客服"
+        db.flush()
+        return refund
+    refund.status = "succeeded"
+    refund.gateway_ref = result.get("gateway_ref", "")
+    refund.note = REFUND_NOTE
+    db.flush()
+    return refund
+
+
 def _add_refund(db: Session, s: BargainSession, amount: Decimal,
                 reason: str) -> BargainRefund | None:
     if amount <= 0:
@@ -206,12 +253,16 @@ def _add_refund(db: Session, s: BargainSession, amount: Decimal,
         BargainRefund.session_id == s.id,
         BargainRefund.reason == reason).first()
     if existing:
+        # One refund row per (session, reason). A failed row is NOT
+        # re-attempted implicitly on every read — retry is explicit
+        # via POST /bargain/refunds/{id}/retry.
         return existing
     refund = BargainRefund(session_id=s.id, user_id=s.user_id,
                            amount=_money(amount), reason=reason,
-                           status="refunded", note=REFUND_NOTE)
+                           status="pending", note=REFUND_NOTE)
     db.add(refund)
-    return refund
+    db.flush()
+    return _attempt_gateway_refund(db, refund)
 
 
 def settle_session(db: Session, s: BargainSession) -> BargainSession:
@@ -486,6 +537,36 @@ def purchase_bargain(session_id: int,
             "final_price": float(current),
             "refund": _refund_out(refund) if refund else None,
             "session": session_out(db, s)}
+
+
+@router.post("/bargain/refunds/{refund_id}/retry")
+def retry_refund(refund_id: int,
+                 user: models.User = Depends(get_current_user),
+                 db: Session = Depends(get_db)):
+    """Retry a failed bargain refund on the SAME row (P1-3).
+
+    Only the session owner or an admin may retry, and only a failed
+    refund can be retried. A retry re-calls the gateway and updates
+    the row in place (status + gateway_ref); it never creates a
+    second refund row for the same (session, reason)."""
+    refund = db.query(BargainRefund).filter(
+        BargainRefund.id == refund_id).first()
+    if refund is None:
+        raise HTTPException(status_code=404, detail="找不到此退款記錄")
+    session = db.query(BargainSession).filter(
+        BargainSession.id == refund.session_id).first()
+    if user.role != "admin" and (session is None or session.user_id != user.id):
+        raise HTTPException(status_code=403, detail="沒有權限")
+    if refund.status == "succeeded":
+        raise HTTPException(status_code=409, detail="退款已成功，無需重試")
+    if refund.status == "pending":
+        raise HTTPException(status_code=409, detail="退款處理中，請稍後再試")
+    refund = _attempt_gateway_refund(db, refund)
+    db.commit()
+    db.refresh(refund)
+    return {"message": "退款成功，款項原路返回，預計 1–3 個工作日到賬"
+            if refund.status == "succeeded" else "退款仍未成功，請稍後再試",
+            "refund": _refund_out(refund)}
 
 
 @router.post("/bargain/expire-sweep")

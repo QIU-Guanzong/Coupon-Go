@@ -365,6 +365,10 @@ def test_fix1_startup_check_rejects_non_dev_without_webhook_secret(monkeypatch):
     with pytest.raises(RuntimeError):
         config.validate_payment_config()
     _set_env(monkeypatch, env="prod", key=FAKE_KEY, secret=FAKE_WEBHOOK_SECRET)
+    # P1-2: prod also needs a non-default SECRET_KEY, not just the
+    # webhook secret, for the startup gate to pass.
+    monkeypatch.setattr(config, "SECRET_KEY", "test-only-non-default-secret",
+                        raising=False)
     config.validate_payment_config()  # secret present: starts fine
     _set_env(monkeypatch, env="dev", key="", secret="")
     config.validate_payment_config()  # dev without secret: starts fine

@@ -180,7 +180,8 @@ def test_purchase_pay_voucher_wallet_chain(client):
     # FIX-1: simulator pi_test_ ids are server-side only, never returned.
     assert bought["payment"]["gateway_ref"] == ""
     assert "pi_test_" not in bought.get("client_secret", "")
-    assert bought["gateway"] == "stripe" and bought["test_mode"] is True
+    assert bought["gateway"] == "stripe"
+    assert "test_mode" not in bought  # P1-5: test_mode is not user-facing
     assert _stock_left(client, pkg["id"]) == before - 1  # stock reserved
 
     paid = _pay(client, h, order["id"], "succeeded")

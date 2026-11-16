@@ -137,12 +137,17 @@ reviewed_by, reviewed_at, created_at}`。
 
 | 方法 | 路徑 | 說明 |
 |---|---|---|
-| GET | `/cashback` | 返現餘額（可提現/待確認/待追蹤）+ 明細（按狀態分組） |
+| GET | `/cashback` | 返現餘額（可提現/待確認/待追蹤）+ 明細（按狀態分組）+ 負向調整（`adjustments`，`adjustment_total` 計入可提現餘額，可為負） |
 | GET | `/cashback/transactions?status=&limit=` | 返現流水（含預計確認時間、90 天解鎖期限） |
-| POST | `/cashback/withdraw` | 申請提現 `{amount, method: fps\|bank, account_name, account_ref?}`；門檻 HK$50，每日上限 HK$1,500，賬戶名須與註冊名一致 |
+| POST | `/cashback/withdraw` | 申請提現 `{amount, method: fps\|bank, account_name, account_ref?}`；門檻 HK$50，每日上限 HK$1,500，賬戶名須與註冊名一致；未填註冊姓名時拒絕提現 |
 | GET | `/cashback/withdrawals` | 提現記錄（v1 狀態 `pending`，待人工打款，無真實 FPS 打款集成） |
 | POST | `/cashback/transactions/{id}/void` | 取消/退貨作廢 `{reason: cancelled\|returned}`（僅待確認可作廢） |
 | POST | `/cashback/missing` | Missing Cashback 申訴 `{merchant_id, order_no, spent_at, amount, evidence?, note?}`；消費後 30 天內提交 |
+
+核銷撤销（10 分鐘窗口）會同步回滾返現：該次核銷的返現作廢
+（`void_reason=revoked`），由它觸發解鎖的前序 dine-in 筆退回待解鎖；
+已提現部分記負向調整（`cashback_adjustments`），可提現餘額可為負、
+為負時提現被攔截。`confirmed → withdrawable` 沒有冷靜期（待產品決定）。
 ## 搜尋 / 通知
 
 | 方法 | 路徑 | 說明 |
@@ -174,11 +179,11 @@ reviewed_by, reviewed_at, created_at}`。
 
 ## 砍價 2C（分享助力，線 E）
 
-分享助力砍價（不是荷蘭式降價）：發起 → 分享 → 好友助力降價 → 到底價 / 成團 → 低價拿套餐券進 Q Wallet。金額為港幣（HKD）。開發版未接支付網關：發起時記錄一筆模擬預付（原價），未成團 / 超時全額退款、成團後退回砍價差價，均為退款記賬（原路返回，1–3 個工作日），不發生真實轉賬。
+分享助力砍價（不是荷蘭式降價）：發起 → 分享 → 好友助力降價 → 到底價 / 成團 → 低價拿套餐券進 Q Wallet。金額為港幣（HKD）。發起時記錄一筆模擬預付（原價，未收真錢）；未成團 / 超時全額退款、成團後退回砍價差價，退款走支付網關（見下），不發生真實轉賬。
 
 預設值（報告 §14 未定事項的假設）：成團人數 5 人；每場砍價有效期 24 小時；活動有效期 7 天；套餐券有效期 30 天；每刀遞減 30% → 25% → 20% → 15% → 10% → 5%，新用戶（註冊 7 天內）+10 個百分點，每刀最少 HK$1、永不低於底價；每人每單限助一次，每人每日最多助力 10 次；發起即鎖 1 份庫存。
 
-退款規則（購買頁顯著說明）：未成團 / 超時全額退款；套餐券未核銷可退、過期自動退；已核銷不可退。不扣 30% 占單費，沒有「一經售出不退不換」。
+退款規則（購買頁顯著說明）：未成團 / 超時全額退款；套餐券未核銷可退、過期自動退；已核銷不可退。不扣 30% 占單費，沒有「一經售出不退不換」。退款走支付網關（`refund_payment`，與套餐退款同一口徑）：退款記錄狀態為 `pending/succeeded/failed` + `gateway_ref`，用戶可見文案只有「退款将在 1–3 个工作日原路退回」；網關失敗時退款停在 `failed`，可在同一記錄上重試（`POST /bargain/refunds/{id}/retry`，本人或管理員）。預付仍是模擬記賬（未收真錢），網關調用用合成支付引用，開發版模擬器返回 `re_test_…`。
 
 | 方法 | 路徑 | 說明 |
 |---|---|---|
@@ -190,6 +195,7 @@ reviewed_by, reviewed_at, created_at}`。
 | POST | `/bargain-sessions/{id}/help` | 助力砍價（customer；`{device_id}`，防刷：每人每單一次、同一設備去重、每日 10 次上限） |
 | POST | `/bargain-sessions/{id}/purchase` | 砍到目標價後下單：生成套餐券（`kind=package`）進 Q Wallet（`source=bargain`，三狀態 1 未使用），退回差價 |
 | POST | `/bargain/expire-sweep` | 結算過期砍價（admin；未成團全額退款 + 釋放庫存） |
+| POST | `/bargain/refunds/{id}/retry` | 重試一筆失敗的砍價退款（本人或管理員；僅 `failed` 可重試，同一退款記錄原地更新） |
 
 狀態機：`active → success`（砍到底價，或助力人數達上限）→ 下單生成套餐券；`active → failed`（超時未成團，全額退款 + 釋放庫存）；`success → expired`（成團後未在有效期內下單，全額退款 + 釋放庫存）。
 ## 套餐 2A：付費套餐券 / 訂單 / 支付 / 退款（線 C）
@@ -377,6 +383,8 @@ v1 的 `images[]` 只是預留欄位。v2 接上傳，寫評價時把返回的�
 **儲存約定（本地 / 佔位實現，未接真實對象儲存）**：檔案存在 API
 服務器本地磁盤 `<UPLOAD_DIR>/review-images/`（默認
 `apps/api/uploads/`，`UPLOAD_DIR` 環境變量可改），檔名是服務器生成的
-UUID，不用客戶端檔名，無路徑穿越風險。未做病毒掃描、EXIF 清理、縮圖。
-上線前須換成對象儲存（S3 / GCS 等）：只需替換
+UUID，不用客戶端檔名，無路徑穿越風險。上傳時已無損剝離 EXIF
+（JPEG APP1 / PNG eXIf / WebP EXIF 段丟棄，其餘字節原樣保留）。
+未做病毒掃描、縮圖。**本地磁盤是開發佔位，上線前須換成對象儲存
+（S3 / GCS 等）**：只需替換
 `app/routers/uploads.py` 的存檔函數與返回的 URL 前綴，其餘接口不變。
