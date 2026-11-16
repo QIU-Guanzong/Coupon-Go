@@ -74,7 +74,7 @@ def _vendor_headers(client):
     return {"Authorization": f"Bearer {r.json()['access_token']}"}
 
 
-def _make_coupon(shop_id=1, min_spend=1200):
+def _make_coupon(shop_id=1, discount_price=1200):
     db = TestingSession()
     try:
         vendor = db.query(models.User).filter(
@@ -83,7 +83,7 @@ def _make_coupon(shop_id=1, min_spend=1200):
         c = models.Coupon(
             shop_id=shop.id, vendor_id=vendor.id, coupon_type="Cash",
             coupon_name="測試券", category_id=shop.category_id,
-            min_spend=min_spend,
+            discount_price=discount_price,
             valid_from=_now() - timedelta(days=1),
             valid_to=_now() + timedelta(days=30),
             total=100, remaining=100, status="active")
@@ -110,8 +110,8 @@ def _redeem(client, h, vh, coupon_id):
 
 def _earn_withdrawable(client, h, vh):
     """Two dine-in redemptions at shop 1: HK$60 unlocked, withdrawable."""
-    _redeem(client, h, vh, _make_coupon(shop_id=1, min_spend=1200))
-    _redeem(client, h, vh, _make_coupon(shop_id=1, min_spend=1200))
+    _redeem(client, h, vh, _make_coupon(shop_id=1, discount_price=1200))
+    _redeem(client, h, vh, _make_coupon(shop_id=1, discount_price=1200))
     bal = client.get("/api/v3/cashback", headers=h).json()
     assert bal["withdrawable_balance"] == 60.0, bal
 

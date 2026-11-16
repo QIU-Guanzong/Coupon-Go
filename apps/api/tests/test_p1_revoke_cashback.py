@@ -86,7 +86,7 @@ def _vendor_headers(client):
     return {"Authorization": f"Bearer {r.json()['access_token']}"}
 
 
-def _make_coupon(shop_id=1, min_spend=1200, name="測試券"):
+def _make_coupon(shop_id=1, discount_price=1200, name="測試券"):
     db = TestingSession()
     try:
         vendor = db.query(models.User).filter(
@@ -95,7 +95,7 @@ def _make_coupon(shop_id=1, min_spend=1200, name="測試券"):
         c = models.Coupon(
             shop_id=shop.id, vendor_id=vendor.id, coupon_type="Cash",
             coupon_name=name, category_id=shop.category_id,
-            min_spend=min_spend,
+            discount_price=discount_price,
             valid_from=_now() - timedelta(days=1),
             valid_to=_now() + timedelta(days=30),
             total=100, remaining=100, status="active")
@@ -149,7 +149,7 @@ def _withdraw(client, h, amount, account_name="Test"):
 def test_revoke_voids_own_pending_cashback(client):
     h = _register_and_login(client, "p1-rev-alice@example.com")
     vh = _vendor_headers(client)
-    scan = _redeem(client, h, vh, _make_coupon(shop_id=1, min_spend=1200))
+    scan = _redeem(client, h, vh, _make_coupon(shop_id=1, discount_price=1200))
     t = _txn_for(client, h, scan["redemption_id"])
     assert t["status"] == "pending" and t["amount"] == 60.0
     _revoke(client, vh, scan["redemption_id"])
@@ -162,8 +162,8 @@ def test_revoke_voids_own_pending_cashback(client):
 def test_revoke_reverts_unlock_triggered_by_revoked_redemption(client):
     h = _register_and_login(client, "p1-rev-bob@example.com")
     vh = _vendor_headers(client)
-    first = _redeem(client, h, vh, _make_coupon(shop_id=1, min_spend=1200))
-    second = _redeem(client, h, vh, _make_coupon(shop_id=1, min_spend=1200))
+    first = _redeem(client, h, vh, _make_coupon(shop_id=1, discount_price=1200))
+    second = _redeem(client, h, vh, _make_coupon(shop_id=1, discount_price=1200))
     assert _txn_for(client, h, first["redemption_id"])["status"] == "withdrawable"
     assert _txn_for(client, h, second["redemption_id"])["status"] == "pending"
     _revoke(client, vh, second["redemption_id"])
@@ -180,9 +180,9 @@ def test_revoke_reverts_unlock_triggered_by_revoked_redemption(client):
 def test_revoke_does_not_revert_unlock_from_other_redemption(client):
     h = _register_and_login(client, "p1-rev-carol@example.com")
     vh = _vendor_headers(client)
-    first = _redeem(client, h, vh, _make_coupon(shop_id=1, min_spend=1200))
-    unlocker = _redeem(client, h, vh, _make_coupon(shop_id=1, min_spend=1200))
-    other_shop = _redeem(client, h, vh, _make_coupon(shop_id=2, min_spend=1200))
+    first = _redeem(client, h, vh, _make_coupon(shop_id=1, discount_price=1200))
+    unlocker = _redeem(client, h, vh, _make_coupon(shop_id=1, discount_price=1200))
+    other_shop = _redeem(client, h, vh, _make_coupon(shop_id=2, discount_price=1200))
     assert _txn_for(client, h, first["redemption_id"])["status"] == "withdrawable"
     _revoke(client, vh, other_shop["redemption_id"])
     # The first earning was unlocked by `unlocker`, not by the revoked
@@ -194,8 +194,8 @@ def test_revoke_does_not_revert_unlock_from_other_redemption(client):
 def test_revoke_own_withdrawn_cashback_creates_negative_adjustment(client):
     h = _register_and_login(client, "p1-rev-dave@example.com")
     vh = _vendor_headers(client)
-    first = _redeem(client, h, vh, _make_coupon(shop_id=1, min_spend=1200))
-    _redeem(client, h, vh, _make_coupon(shop_id=1, min_spend=1200))
+    first = _redeem(client, h, vh, _make_coupon(shop_id=1, discount_price=1200))
+    _redeem(client, h, vh, _make_coupon(shop_id=1, discount_price=1200))
     r = _withdraw(client, h, 50)
     assert r.status_code == 200, r.text
     bal = _balances(client, h)
@@ -219,8 +219,8 @@ def test_revoke_own_withdrawn_cashback_creates_negative_adjustment(client):
 def test_revoke_partially_withdrawn_predecessor_reverts_remainder(client):
     h = _register_and_login(client, "p1-rev-erin@example.com")
     vh = _vendor_headers(client)
-    first = _redeem(client, h, vh, _make_coupon(shop_id=1, min_spend=1200))
-    second = _redeem(client, h, vh, _make_coupon(shop_id=1, min_spend=1200))
+    first = _redeem(client, h, vh, _make_coupon(shop_id=1, discount_price=1200))
+    second = _redeem(client, h, vh, _make_coupon(shop_id=1, discount_price=1200))
     r = _withdraw(client, h, 50)
     assert r.status_code == 200, r.text
     # Revoke the unlocking redemption: the first earning (HK$60, HK$50
@@ -236,7 +236,7 @@ def test_revoke_partially_withdrawn_predecessor_reverts_remainder(client):
     assert bal["adjustment_total"] == 0.0
     assert bal["adjustments"] == []
     # A third visit unlocks the HK$10 remainder again.
-    _redeem(client, h, vh, _make_coupon(shop_id=1, min_spend=1200))
+    _redeem(client, h, vh, _make_coupon(shop_id=1, discount_price=1200))
     t1 = _txn_for(client, h, first["redemption_id"])
     assert t1["status"] == "withdrawable" and t1["amount"] == 10.0
 
@@ -244,7 +244,7 @@ def test_revoke_partially_withdrawn_predecessor_reverts_remainder(client):
 def test_revoke_redemption_without_cashback_ok(client):
     h = _register_and_login(client, "p1-rev-fay@example.com")
     vh = _vendor_headers(client)
-    scan = _redeem(client, h, vh, _make_coupon(shop_id=1, min_spend=0))
+    scan = _redeem(client, h, vh, _make_coupon(shop_id=1, discount_price=None))
     assert _txns(client, h) == []
     r = client.post(f"/api/v3/redemptions/{scan['redemption_id']}/revoke",
                     headers=vh)

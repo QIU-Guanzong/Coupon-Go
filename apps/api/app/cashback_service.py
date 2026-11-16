@@ -16,8 +16,13 @@ Notes:
   * FIX-2: there is NO user-facing record endpoint anymore. The only
     writer is record_spend(), called server-side from
     the successful vendor scan. Amount basis and rate are derived from
-    server-side data only (the coupon row / configured merchant rate);
-    no client-supplied amount, rate or merchant is ever accepted.
+    server-side data only (the package order's paid amount, or the
+    coupon row's own price); no client-supplied amount, rate or
+    merchant is ever accepted.
+  * N1: the spend basis is the ACTUAL PAID amount only — a package
+    voucher's Order.paid_amount, else a price coupon's discount_price.
+    min_spend is a threshold, never a spend: a free / threshold-only
+    coupon earns nothing.
   * "confirmed" promotes to "withdrawable" in the same sweep in v1: there
     is no payout hold. The confirmed step is still a real transition
     (confirmed_at is stamped) and the status is kept so a future hold /
@@ -157,10 +162,12 @@ def record_spend(db: Session,
 
     * user / merchant: derived from the redemption (wallet item owner /
       redemption.shop_id) — never from request input.
-    * spend basis ("实付价"): the coupon row's own server-side price —
-      discount_price for Price coupons, else min_spend (the minimum spend
-      the coupon requires). The redemption path records no order amount,
-      so a coupon with neither yields no verifiable spend and earns
+    * spend basis ("实付价"): the ACTUAL PAID amount, server-side
+      only — a package voucher's Order.paid_amount (WalletItem.order_id
+      -> orders.id; Order.amount is only the amount payable and is
+      never used), else a price coupon's discount_price. min_spend is
+      a threshold, never a spend. A coupon with no paid amount (free /
+      pure-threshold / priceless, or an unpaid package order) earns
       nothing (returns None) instead of inventing an amount.
     * rate ("商户比例"): the configured dine-in merchant rate
       (config.CASHBACK_DINEIN_RATE); there is no per-shop rate column.
@@ -215,13 +222,30 @@ def record_spend(db: Session,
         t.unlocked_by_redemption_id = redemption.id
 
     paid = None
-    if coupon.discount_price is not None and money(coupon.discount_price) > 0:
+    if item.order_id is not None:
+        # N1: package voucher — the order is the payment record. Only
+        # its real paid amount (Order.paid_amount, NOT Order.amount,
+        # which is just the amount payable) counts, and only when > 0.
+        # An unpaid / missing order has no verifiable spend: do NOT
+        # fall back to the coupon price — that would credit cashback
+        # for money never paid.
+        order = db.query(models.Order).filter(
+            models.Order.id == item.order_id).first()
+        if order is not None and order.paid_amount is not None \
+                and money(order.paid_amount) > 0:
+            paid = money(order.paid_amount)
+    elif coupon.discount_price is not None \
+            and money(coupon.discount_price) > 0:
+        # Price coupon: the coupon's own server-side price is the paid
+        # amount. min_spend is only a threshold and NEVER a spend
+        # basis — a free / threshold-only coupon used to credit on its
+        # threshold (claim -> scan -> withdraw = money from nothing).
         paid = money(coupon.discount_price)
-    elif coupon.min_spend is not None and money(coupon.min_spend) > 0:
-        paid = money(coupon.min_spend)
     if paid is None:
-        # No verifiable spend on the coupon (e.g. pure discount / gift
-        # with no price or minimum spend): earn nothing, invent nothing.
+        # No verifiable paid amount (free / pure-threshold / priceless
+        # coupon, or an unpaid package order): earn nothing, invent
+        # nothing. The dine-in unlock above has already run — this
+        # valid redemption still unlocks earlier pending earnings.
         return None
     rate = Decimal(str(config.CASHBACK_DINEIN_RATE))
     if rate <= 0 or rate > 1:

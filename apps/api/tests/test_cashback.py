@@ -7,7 +7,8 @@ online confirm 30 days, HK$50 minimum withdrawal.
 
 FIX-2: POST /cashback/record is gone. Every earning below comes from a
 real vendor redemption (claim -> QR -> /new-scan-coupon), with the spend
-basis taken from the coupon row itself (min_spend). The online-confirm
+basis taken from the coupon row itself (discount_price; N1: min_spend
+is a threshold, never a spend basis). The online-confirm
 tests build their legacy online rows straight in the DB — no API can
 create an online earning anymore.
 """
@@ -80,7 +81,7 @@ def _vendor_headers(client):
     return {"Authorization": f"Bearer {r.json()['access_token']}"}
 
 
-def _make_coupon(shop_id=1, min_spend=0, name="測試券"):
+def _make_coupon(shop_id=1, min_spend=0, discount_price=None, name="測試券"):
     """Insert a fresh active coupon (server-side data) and return its id."""
     db = TestingSession()
     try:
@@ -90,7 +91,7 @@ def _make_coupon(shop_id=1, min_spend=0, name="測試券"):
         c = models.Coupon(
             shop_id=shop.id, vendor_id=vendor.id, coupon_type="Cash",
             coupon_name=name, category_id=shop.category_id,
-            min_spend=min_spend,
+            min_spend=min_spend, discount_price=discount_price,
             valid_from=_now() - timedelta(days=1),
             valid_to=_now() + timedelta(days=30),
             total=100, remaining=100, status="active")
@@ -119,11 +120,12 @@ def _redeem(client, h, vh, coupon_id):
 
 def _record(client, h, merchant_id=1, amount=1200, channel="dinein"):
     """FIX-2: a "spend" is a real redemption now. amount is the coupon's
-    min_spend (server-side spend basis); channel is accepted for call
-    compatibility but redemptions are always dine-in."""
+    discount_price (server-side spend basis; N1: min_spend never counts);
+    channel is accepted for call compatibility but redemptions are
+    always dine-in."""
     assert channel == "dinein", "redemptions are dine-in only since FIX-2"
     vh = _vendor_headers(client)
-    coupon_id = _make_coupon(shop_id=merchant_id, min_spend=amount)
+    coupon_id = _make_coupon(shop_id=merchant_id, discount_price=amount)
     scan = _redeem(client, h, vh, coupon_id)
     txns = client.get("/api/v3/cashback/transactions",
                       headers=h).json()["transactions"]
@@ -262,10 +264,11 @@ def test_online_confirm_window(client):
     assert mine["channel"] == "online" and mine["expires_at"] is None
     bal = client.get("/api/v3/cashback", headers=h).json()
     # 50 withdrawable from the legacy online row; the seed-coupon
-    # redemption above (滿 $200 減 $30, min_spend 200 x 5%) is still
-    # pending as a dine-in earning of 10.
+    # redemption above (滿 $200 減 $30, a threshold-only Cash coupon)
+    # earns nothing since N1 (no discount_price, min_spend is not a
+    # spend), so no pending dine-in earning exists.
     assert bal["withdrawable_balance"] == 50.0
-    assert bal["pending_balance"] == 10.0
+    assert bal["pending_balance"] == 0.0
 
 
 def test_cancel_return_voids_pending_only(client):

@@ -3,8 +3,9 @@
 POST /cashback/record (user-supplied amount / merchant / rate) is gone.
 Credit happens server-side, inside the successful vendor scan
 (/new-scan-coupon), via cashback_service.record_spend():
-amount basis = the coupon's own server-side price (discount_price, else
-min_spend), rate = the configured dine-in merchant rate. One redemption
+amount basis = the coupon's own server-side price (discount_price; N1:
+min_spend is a threshold, never a spend basis), rate = the configured
+dine-in merchant rate. One redemption
 credits at most once (service guard + UNIQUE on
 cashback_transactions.redemption_id).
 
@@ -176,8 +177,8 @@ def test_no_redemption_no_cashback(client):
 def test_real_redemption_auto_credits_once(client):
     h = _register_and_login(client, "fix2-dave@example.com")
     vh = _vendor_headers(client)
-    # min_spend HK$1000 x configured dine-in rate 5% = HK$50.
-    c1 = _make_coupon(shop_id=1, min_spend=1000, name="FIX-2 券 A")
+    # discount_price HK$1000 x configured dine-in rate 5% = HK$50.
+    c1 = _make_coupon(shop_id=1, discount_price=1000, name="FIX-2 券 A")
     scan1 = _redeem(client, h, vh, c1)
     txns = _txns(client, h)
     assert len(txns) == 1, txns
@@ -191,7 +192,7 @@ def test_real_redemption_auto_credits_once(client):
 
     # A second redemption at the SAME merchant unlocks the first earning
     # (dine-in next-visit unlock, triggered only by a new valid redemption).
-    c2 = _make_coupon(shop_id=1, min_spend=1000, name="FIX-2 券 B")
+    c2 = _make_coupon(shop_id=1, discount_price=1000, name="FIX-2 券 B")
     scan2 = _redeem(client, h, vh, c2)
     txns = _txns(client, h)
     assert len(txns) == 2, txns
@@ -222,7 +223,7 @@ def test_redemption_cashback_belongs_to_redeemer_only(client):
     h = _register_and_login(client, "fix2-frank@example.com")
     other = _register_and_login(client, "fix2-grace@example.com")
     vh = _vendor_headers(client)
-    c = _make_coupon(shop_id=1, min_spend=1000, name="FIX-2 券 C")
+    c = _make_coupon(shop_id=1, discount_price=1000, name="FIX-2 券 C")
     scan = _redeem(client, h, vh, c)
     assert _txns(client, other) == []
     assert _balances(client, other)["total_earned"] == 0.0
@@ -247,7 +248,7 @@ def test_duplicate_redemption_credit_rejected(client):
 
     h = _register_and_login(client, "fix2-heidi@example.com")
     vh = _vendor_headers(client)
-    c = _make_coupon(shop_id=1, min_spend=1000, name="FIX-2 券 D")
+    c = _make_coupon(shop_id=1, discount_price=1000, name="FIX-2 券 D")
     scan = _redeem(client, h, vh, c)
     assert len(_txns(client, h)) == 1
 
@@ -292,7 +293,7 @@ def test_revoked_redemption_earns_nothing(client):
 
     h = _register_and_login(client, "fix2-ivan@example.com")
     vh = _vendor_headers(client)
-    c = _make_coupon(shop_id=1, min_spend=1000, name="FIX-2 券 E")
+    c = _make_coupon(shop_id=1, discount_price=1000, name="FIX-2 券 E")
     r = client.post("/api/v3/new-favorite-coupon",
                     params={"coupon_id": c}, headers=h)
     wid = r.json()["wallet_item_id"]
