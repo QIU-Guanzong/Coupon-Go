@@ -469,28 +469,43 @@ def run_reconciliation(body: schemas_line_f.ReconciliationRunIn,
         report = ReconciliationReport(shop_id=shop.id, period=body.period)
         db.add(report)
         db.flush()
+        resolved_rows = []
     else:
-        # Re-run: drop the previous run's discrepancies and regenerate.
+        # F2: a re-run deletes/rebuilds only OPEN rows. Resolved rows
+        # keep their resolution trail (resolution / resolved_by /
+        # resolved_at) and are never regenerated: a still-present
+        # underlying difference whose (discrepancy_type, redemption_id,
+        # settlement_item_id) already has a resolved row is skipped
+        # below, so it does not come back as a duplicate open row.
+        resolved_rows = (db.query(ReconciliationDiscrepancy).filter(
+            ReconciliationDiscrepancy.report_id == report.id,
+            ReconciliationDiscrepancy.status == "resolved").all())
         db.query(ReconciliationDiscrepancy).filter(
-            ReconciliationDiscrepancy.report_id == report.id).delete()
+            ReconciliationDiscrepancy.report_id == report.id,
+            ReconciliationDiscrepancy.status == "open").delete()
         db.flush()
+    resolved_keys = {(d.discrepancy_type, d.redemption_id,
+                      d.settlement_item_id) for d in resolved_rows}
+    new_found = [f for f in found
+                 if (f[0], f[1], f[2]) not in resolved_keys]
+    total_discrepancies = len(resolved_rows) + len(new_found)
     report.settlement_id = settlement.id if settlement else None
     report.redemption_count = len(redemptions)
     report.settlement_line_count = len(items)
-    report.discrepancy_count = len(found)
+    report.discrepancy_count = total_discrepancies
     report.status = ("no_settlement" if settlement is None else
-                     "resolved" if not found else "open")
-    for dtype, rid, iid, expected, actual in found:
+                     "resolved" if not new_found else "open")
+    for dtype, rid, iid, expected, actual in new_found:
         db.add(ReconciliationDiscrepancy(
             report_id=report.id, discrepancy_type=dtype,
             redemption_id=rid, settlement_item_id=iid,
             expected_amount=expected, actual_amount=actual, status="open"))
     _log(db, user.id, "reconciliation.run", "reconciliation_report",
          report.id, f"shop_id={shop.id}; period={body.period}; "
-         f"discrepancies={len(found)}")
+         f"discrepancies={total_discrepancies}")
     db.commit()
     db.refresh(report)
-    return {"message": "對賬完成，共 %d 項差異" % len(found),
+    return {"message": "對賬完成，共 %d 項差異" % total_discrepancies,
             "report": _report_out(db, report, with_items=True)}
 
 
