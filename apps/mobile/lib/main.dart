@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'api_client.dart';
 import 'models.dart';
 import 'screens/account.dart';
+import 'screens/bargain.dart';
 import 'screens/cashback.dart';
 import 'screens/customer.dart';
 import 'screens/nearby.dart';
@@ -69,6 +70,13 @@ class _CouponGoAppState extends State<CouponGoApp> {
           case '/nearby': // line A: nearby shops (list + marker view)
             return MaterialPageRoute(
                 builder: (_) => NearbyScreen(api: _api));
+          case '/bargain':
+            return MaterialPageRoute(
+                builder: (_) => BargainListScreen(api: _api));
+          case '/bargain/session':
+            return MaterialPageRoute(
+                builder: (_) => BargainDetailScreen(
+                    api: _api, sessionId: settings.arguments as int? ?? 0));
           case '/qbot':
             return MaterialPageRoute(builder: (_) => QBotScreen(api: _api));
           case '/cashback':
@@ -321,6 +329,14 @@ class _HomeShellState extends State<HomeShell> {
               } else {
                 Navigator.of(context).pushNamed('/settings');
               }
+            },
+          ),
+          ListTile(
+            leading: const Icon(Icons.content_cut, color: CgColors.primary),
+            title: const Text('砍價'),
+            onTap: () {
+              Navigator.of(context).pop();
+              Navigator.of(context).pushNamed('/bargain');
             },
           ),
           ListTile(

@@ -12,7 +12,7 @@ from app import config as app_config  # noqa: E402
 from app.database import Base  # noqa: E402
 from app import models  # noqa: E402,F401
 from app import models_cashback  # noqa: E402,F401  (Line D)
-
+from app import models_bargain  # noqa: E402,F401  (line E)
 config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)

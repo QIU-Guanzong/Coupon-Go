@@ -12,9 +12,9 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from . import config
 from .database import init_db
-from .routers import (admin, auth, cashback, coupons, home, nearby,
-                      notifications, redemption, reviews, search, vendor,
-                      wallet)
+from .routers import (admin, auth, bargain, cashback, coupons, home,
+                      nearby, notifications, redemption, reviews, search,
+                      vendor, wallet)
 
 from . import models_cashback  # noqa: F401  (Line D: register cashback tables)
 
@@ -30,9 +30,8 @@ app.add_middleware(
 
 for router in (auth.router, home.router, coupons.router, wallet.router,
                search.router, notifications.router, vendor.router,
-               search.router, notifications.router, vendor.router,
                redemption.router, nearby.router, reviews.router,
-               admin.router, cashback.router):
+               admin.router, cashback.router, bargain.router):
     app.include_router(router, prefix="/api/v3")
 
 
@@ -47,8 +46,10 @@ def startup():
     if os.environ.get("SEED_ON_STARTUP", "1") == "1":
         from .database import SessionLocal
         from .seed import seed
+        from .seed_bargain import seed_bargain_campaigns
         db = SessionLocal()
         try:
             seed(db)
+            seed_bargain_campaigns(db)
         finally:
             db.close()

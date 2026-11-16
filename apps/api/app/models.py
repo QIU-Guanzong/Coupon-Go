@@ -132,6 +132,10 @@ class Coupon(Base):
     # draft | pending_review | active | rejected | expired
     status = Column(String(20), default="draft", nullable=False)
     additional_terms = Column(Text, default="")
+    # Line E (bargain) / line A (packages) shared fields, §11.2:
+    # kind=coupon (free claim, unchanged) | package (bargain/package coupon).
+    kind = Column(String(20), default="coupon", nullable=False)
+    package_id = Column(Integer, nullable=True)  # line A packages.id, if any
     is_limited_time = Column(Boolean, default=False)
     is_points_exchange = Column(Boolean, default=False)  # 9 積分兌換券（積分換券）
     created_at = Column(DateTime, default=_now)
@@ -151,6 +155,11 @@ class WalletItem(Base):
     claimed_at = Column(DateTime, default=_now)
     used_at = Column(DateTime, nullable=True)
     reviewed = Column(Boolean, default=False)
+    # Line E (bargain) / §11.2: how this coupon entered the wallet.
+    # claim | purchase | bargain | exchange. order_id is line A's orders.id
+    # when present; NULL in line E (no orders table yet).
+    source = Column(String(20), default="claim", nullable=False)
+    order_id = Column(Integer, nullable=True)
 
     user = relationship("User", back_populates="wallet_items")
     coupon = relationship("Coupon")

@@ -172,3 +172,24 @@ reviewed_by, reviewed_at, created_at}`。
 | POST | `/update-branch-profile` | 更新分店資料 |
 | POST | `/delete-vandor-image` | 刪除商户圖片 |
 | POST | `/new-update-vendor-profile` | 更新商户資料（提交後待管理員批准） |
+
+## 砍價 2C（分享助力，線 E）
+
+分享助力砍價（不是荷蘭式降價）：發起 → 分享 → 好友助力降價 → 到底價 / 成團 → 低價拿套餐券進 Q Wallet。金額為港幣（HKD）。開發版未接支付網關：發起時記錄一筆模擬預付（原價），未成團 / 超時全額退款、成團後退回砍價差價，均為退款記賬（原路返回，1–3 個工作日），不發生真實轉賬。
+
+預設值（報告 §14 未定事項的假設）：成團人數 5 人；每場砍價有效期 24 小時；活動有效期 7 天；套餐券有效期 30 天；每刀遞減 30% → 25% → 20% → 15% → 10% → 5%，新用戶（註冊 7 天內）+10 個百分點，每刀最少 HK$1、永不低於底價；每人每單限助一次，每人每日最多助力 10 次；發起即鎖 1 份庫存。
+
+退款規則（購買頁顯著說明）：未成團 / 超時全額退款；套餐券未核銷可退、過期自動退；已核銷不可退。不扣 30% 占單費，沒有「一經售出不退不換」。
+
+| 方法 | 路徑 | 說明 |
+|---|---|---|
+| GET | `/bargain-campaigns` | 砍價活動列表（遊客可調；剩餘份數、底價、成團人數） |
+| POST | `/bargain-campaigns` | 建立砍價活動（vendor/admin；vendor 只能為自己的商店開） |
+| POST | `/bargain-campaigns/{id}/start` | 發起砍價（customer；鎖 1 份庫存，每活動限一場進行中） |
+| GET | `/bargain-sessions/{id}` | 砍價進度（遊客可調；當前價、助力列表、剩餘時間、退款記錄、分享連結） |
+| GET | `/bargain-my-sessions` | 我的砍價 |
+| POST | `/bargain-sessions/{id}/help` | 助力砍價（customer；`{device_id}`，防刷：每人每單一次、同一設備去重、每日 10 次上限） |
+| POST | `/bargain-sessions/{id}/purchase` | 砍到目標價後下單：生成套餐券（`kind=package`）進 Q Wallet（`source=bargain`，三狀態 1 未使用），退回差價 |
+| POST | `/bargain/expire-sweep` | 結算過期砍價（admin；未成團全額退款 + 釋放庫存） |
+
+狀態機：`active → success`（砍到底價，或助力人數達上限）→ 下單生成套餐券；`active → failed`（超時未成團，全額退款 + 釋放庫存）；`success → expired`（成團後未在有效期內下單，全額退款 + 釋放庫存）。

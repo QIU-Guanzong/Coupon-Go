@@ -269,3 +269,163 @@ class CashbackWithdrawal {
 
   String get statusText =>
       status == 'paid' ? '已打款' : status == 'failed' ? '打款失敗' : '待打款';}
+/// Bargain 2C (line E): campaign / session / help / refund.
+/// Amounts are HKD; see apps/api/app/routers/bargain.py for the rules.
+class BargainCampaign {
+  BargainCampaign.fromJson(Map<String, dynamic> j)
+      : id = j['id'] as int? ?? 0,
+        packageId = j['package_id'] as int?,
+        shopId = j['shop_id'] as int? ?? 0,
+        shopName = j['shop_name'] as String? ?? '',
+        name = j['name'] as String? ?? '',
+        items = j['items'] as String? ?? '',
+        personCount = j['person_count'] as int? ?? 2,
+        originalPrice = (j['original_price'] as num?)?.toDouble() ?? 0,
+        floorPrice = (j['floor_price'] as num?)?.toDouble() ?? 0,
+        stockTotal = j['stock_total'] as int? ?? 0,
+        stockLeft = j['stock_left'] as int? ?? 0,
+        helperLimit = j['helper_limit'] as int? ?? 5,
+        durationMinutes = j['duration_minutes'] as int? ?? 1440,
+        lockStock = j['lock_stock'] as bool? ?? true,
+        status = j['status'] as String? ?? 'active',
+        expiresAt = DateTime.tryParse(j['expires_at'] as String? ?? '');
+
+  final int id;
+  final int? packageId;
+  final int shopId;
+  final String shopName;
+  final String name;
+  final String items;
+  final int personCount;
+  final double originalPrice;
+  final double floorPrice;
+  final int stockTotal;
+  final int stockLeft;
+  final int helperLimit;
+  final int durationMinutes;
+  final bool lockStock;
+  final String status;
+  final DateTime? expiresAt;
+
+  bool get isSoldOut => stockLeft <= 0 || status == 'sold_out';
+}
+
+class BargainHelp {
+  BargainHelp.fromJson(Map<String, dynamic> j)
+      : helperUserId = j['helper_user_id'] as int? ?? 0,
+        helperName = j['helper_name'] as String? ?? '好友',
+        cutAmount = (j['cut_amount'] as num?)?.toDouble() ?? 0,
+        isNewUser = j['is_new_user'] as bool? ?? false,
+        createdAt = DateTime.tryParse(j['created_at'] as String? ?? '');
+
+  final int helperUserId;
+  final String helperName;
+  final double cutAmount;
+  final bool isNewUser;
+  final DateTime? createdAt;
+}
+
+class BargainRefund {
+  BargainRefund.fromJson(Map<String, dynamic> j)
+      : amount = (j['amount'] as num?)?.toDouble() ?? 0,
+        reason = j['reason'] as String? ?? '',
+        status = j['status'] as String? ?? '',
+        note = j['note'] as String? ?? '';
+
+  final double amount;
+  final String reason;
+  final String status;
+  final String note;
+
+  String get reasonText {
+    switch (reason) {
+      case 'bargain_failed':
+        return '未成團，全額退款';
+      case 'expired':
+        return '成團後未下單，全額退款';
+      case 'price_cut':
+        return '砍價差價退款';
+      default:
+        return '退款';
+    }
+  }
+}
+
+class BargainSession {
+  BargainSession.fromJson(Map<String, dynamic> j)
+      : id = j['session_id'] as int? ?? j['id'] as int? ?? 0,
+        campaignId = j['campaign_id'] as int? ?? 0,
+        campaign = j['campaign'] is Map<String, dynamic>
+            ? BargainCampaign.fromJson(j['campaign'] as Map<String, dynamic>)
+            : null,
+        userId = j['user_id'] as int? ?? 0,
+        currentPrice = (j['current_price'] as num?)?.toDouble() ?? 0,
+        targetPrice = (j['target_price'] as num?)?.toDouble() ?? 0,
+        floorPrice = (j['floor_price'] as num?)?.toDouble() ?? 0,
+        originalPrice = (j['original_price'] as num?)?.toDouble() ?? 0,
+        paidAmount = (j['paid_amount'] as num?)?.toDouble() ?? 0,
+        status = j['status'] as String? ?? 'active',
+        helperCount = j['helper_count'] as int? ?? 0,
+        helperLimit = j['helper_limit'] as int? ?? 5,
+        stockLocked = j['stock_locked'] as bool? ?? false,
+        walletItemId = j['wallet_item_id'] as int?,
+        expiresAt = DateTime.tryParse(j['expires_at'] as String? ?? ''),
+        secondsLeft = j['seconds_left'] as int? ?? 0,
+        canPurchase = j['can_purchase'] as bool? ?? false,
+        shareLink = j['share_link'] as String? ?? '',
+        helps = ((j['helps'] as List?) ?? [])
+            .map((e) => BargainHelp.fromJson(e as Map<String, dynamic>))
+            .toList(),
+        refunds = ((j['refunds'] as List?) ?? [])
+            .map((e) => BargainRefund.fromJson(e as Map<String, dynamic>))
+            .toList();
+
+  final int id;
+  final int campaignId;
+  final BargainCampaign? campaign;
+  final int userId;
+  final double currentPrice;
+  final double targetPrice;
+  final double floorPrice;
+  final double originalPrice;
+  final double paidAmount;
+  final String status; // active | success | failed | expired
+  final int helperCount;
+  final int helperLimit;
+  final bool stockLocked;
+  final int? walletItemId;
+  final DateTime? expiresAt;
+  final int secondsLeft;
+  final bool canPurchase;
+  final String shareLink;
+  final List<BargainHelp> helps;
+  final List<BargainRefund> refunds;
+
+  String get statusText {
+    switch (status) {
+      case 'success':
+        return '已成團';
+      case 'failed':
+        return '未成團，已退款';
+      case 'expired':
+        return '已過期，已退款';
+      default:
+        return '砍價進行中';
+    }
+  }
+
+  /// 0..1 progress from original price down to the floor price.
+  double get cutProgress {
+    final span = originalPrice - floorPrice;
+    if (span <= 0) return 1;
+    return ((originalPrice - currentPrice) / span).clamp(0.0, 1.0);
+  }
+
+  String get countdownText {
+    final h = secondsLeft ~/ 3600;
+    final m = (secondsLeft % 3600) ~/ 60;
+    final s = secondsLeft % 60;
+    return '剩餘 ${h.toString().padLeft(2, '0')}:'
+        '${m.toString().padLeft(2, '0')}:${s.toString().padLeft(2, '0')}';
+  }
+}

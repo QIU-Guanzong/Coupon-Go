@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:math';
 
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
@@ -249,7 +250,33 @@ class ApiClient {
       post('/redemptions/$redemptionId/revoke');
   Future<Map<String, dynamic>> vendorRedemptionsExport() async =>
       get('/vendor/redemptions/export');
+  // ---- bargain 2C (line E) ----
+  /// Stable per-device id for the bargain anti-fraud device check.
+  /// Stored locally; never a credential, just a dedupe key.
+  Future<String> deviceId() async {
+    final prefs = await SharedPreferences.getInstance();
+    var id = prefs.getString('device_id');
+    if (id == null) {
+      id = 'dev-${DateTime.now().millisecondsSinceEpoch}-'
+          '${Random().nextInt(1 << 32)}';
+      await prefs.setString('device_id', id);
+    }
+    return id;
+  }
 
+  Future<List<dynamic>> bargainCampaigns() async =>
+      (await get('/bargain-campaigns'))['campaigns'] as List<dynamic>;
+  Future<Map<String, dynamic>> bargainSession(int id) async =>
+      (await get('/bargain-sessions/$id'))['session'] as Map<String, dynamic>;
+  Future<Map<String, dynamic>> startBargain(int campaignId) async =>
+      post('/bargain-campaigns/$campaignId/start');
+  Future<Map<String, dynamic>> helpBargain(int sessionId, String deviceId) =>
+      post('/bargain-sessions/$sessionId/help',
+          body: {'device_id': deviceId});
+  Future<Map<String, dynamic>> purchaseBargain(int sessionId) =>
+      post('/bargain-sessions/$sessionId/purchase');
+  Future<List<dynamic>> myBargainSessions() async =>
+      (await get('/bargain-my-sessions'))['sessions'] as List<dynamic>;
   // ---- vendor ----
   Future<List<dynamic>> vendorCoupons() async =>
       (await get('/get-vendor-coupon-list'))['coupons'] as List<dynamic>;

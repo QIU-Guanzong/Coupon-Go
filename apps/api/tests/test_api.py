@@ -26,7 +26,6 @@ from app.seed import seed  # noqa: E402
 # (/tmp/coupon_go_test_line_b.db), so the three pytest modules never
 # delete each other's throwaway DB (the parallel-lines "disk I/O error").
 TEST_DB = "/tmp/coupon_go_test_main.db"
-
 engine = create_engine(f"sqlite:///{TEST_DB}", connect_args={"check_same_thread": False})
 TestingSession = sessionmaker(bind=engine)
 

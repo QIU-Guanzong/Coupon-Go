@@ -23,4 +23,5 @@ def get_db():
 
 def init_db():
     from . import models  # noqa: F401  (register models)
+    from . import models_bargain  # noqa: F401  (line E: bargain tables)
     Base.metadata.create_all(bind=engine)

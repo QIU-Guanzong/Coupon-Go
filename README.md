@@ -41,10 +41,11 @@ assets-packed/ APK 拆包素材的 base64 打包（見下）
 tools/ unpack_assets.py（解包）/ pack_assets.py（打包）
 apps/api/ FastAPI 後端
 app/ main / config / models / schemas / routers / seed
-app/routers/ auth / home / coupons / wallet / search / notifications / vendor / cashback（線 D 返現）
+app/routers/ auth / home / coupons / wallet / search / notifications / vendor / cashback（線 D 返現）/ bargain（線 E 砍價）
 app/models_cashback.py、app/cashback_service.py（線 D 返現，與 point_transactions 分開記賬）
-alembic/ 數據庫遷移（0001 初始建表；0002_line_a 核銷加固；0002_line_b 評分 v1 + 後台 v1；0002_cashback 線 D 返現三表）
-tests/ pytest（13 個測試）
+app/models_bargain.py、app/seed_bargain.py（線 E 砍價）
+alembic/ 數據庫遷移（0001 初始建表；0002_line_a 核銷加固；0002_line_b 評分 v1 + 後台 v1；0002_cashback 線 D 返現三表；0002_bargain_e 線 E 砍價）
+tests/ pytest（41 個測試）
 infra/ docker-compose（api + postgres + redis）、.env.example
 docs/ API.md（接口概覽）
 ```
@@ -129,6 +130,8 @@ flutter run --dart-define=API_BASE_URL=http://localhost:8000
 社交登錄（開發 stub，上線前須做服務端 token 驗證）、customer/vendor
 分開帳戶與錢包、JWT 鑑權。
 
+**砍價 2C（分享助力）**：砍價活動列表、發起砍價（鎖 1 份庫存）、分享連結、好友助力降價（每刀遞減，新用戶加成）、到底價 / 成團後低價下單，套餐券進 Q Wallet 三狀態（走現有出示 → 核銷閉環）；未成團 / 超時全額退款並釋放庫存；防刷（每人每單限助一次、同一設備去重、每日助力上限）。預設值：成團 5 人、每場 24 小時、活動 7 天、套餐券 30 天；開發版未接支付網關，預付與退款均為模擬記賬。詳見 `docs/API.md`「砍價 2C」一節。
+
 ## 種子帳戶（演示用，上線前改密碼）
 
 | 帳戶 | 密碼 | 角色 |
@@ -145,7 +148,7 @@ flutter run --dart-define=API_BASE_URL=http://localhost:8000
 ```bash
 cd apps/api
 ../../.venv/bin/python -m pytest tests/ -v
-# 41 個測試：鑑權（註冊/登錄/OTP/忘記密碼）、首頁分區、搜尋三分支、
+# 53 個測試：鑑權（註冊/登錄/OTP/忘記密碼）、首頁分區、搜尋三分支、
 # 領券→QR→掃碼核銷→積分鏈（+10/+20/+15）、重複領取/重複核銷攔截、
 # 9 積分兌換、商戶發券預覽→建立→審核、用量數據、權限攔截
 # 線 A 新增 11 個：預核銷→核銷→重放冪等→撤销窗口（期內恢復 / 超時拒絕 /
@@ -156,6 +159,8 @@ cd apps/api
 # 後台隻讀看板（含核銷 CSV 導出）
 # 線 D 返現 8 個：線下解鎖→可提現→提現鏈、僅同商戶解鎖、90 天過期作廢、
 # 線上確認窗口、取消/退貨作廢、返現與積分分開記賬、申訴、未登錄攔截
+# 線 E 砍價 12 個：發起→助力到底價→成團下單→套餐券進錢包→核銷、未成團超時全額退款、
+# 庫存鎖/釋放、重複助力/自助/同設備攔截、成團人數達標
 ```
 
 ## 返現 2B（線 D）
