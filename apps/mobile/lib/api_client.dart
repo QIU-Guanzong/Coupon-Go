@@ -280,6 +280,41 @@ class ApiClient {
   // ---- vendor ----
   Future<List<dynamic>> vendorCoupons() async =>
       (await get('/get-vendor-coupon-list'))['coupons'] as List<dynamic>;
+
+  // ---- packages / orders (line C: 套餐 2A) ----
+  Future<List<dynamic>> packages({int? shopId}) async =>
+      (await get('/packages', query: {
+        if (shopId != null) 'shop_id': '$shopId',
+      }))['packages'] as List<dynamic>;
+  Future<Map<String, dynamic>> packageDetails(int id) async =>
+      (await get('/package-details', query: {'package_id': '$id'}))['package']
+          as Map<String, dynamic>;
+  Future<Map<String, dynamic>> purchasePackage(int id, String method,
+          {String clientRef = ''}) async =>
+      post('/packages/$id/purchase',
+          body: {'payment_method': method, 'client_ref': clientRef});
+  Future<Map<String, dynamic>> confirmPayment(int orderId, String outcome,
+          {int? paymentId}) async =>
+      post('/orders/$orderId/confirm-payment', body: {
+        'outcome': outcome,
+        if (paymentId != null) 'payment_id': paymentId,
+      });
+  Future<Map<String, dynamic>> retryPayment(int orderId, String method) =>
+      post('/orders/$orderId/retry-payment',
+          body: {'payment_method': method});
+  Future<Map<String, dynamic>> cancelOrder(int orderId) =>
+      post('/orders/$orderId/cancel');
+  Future<Map<String, dynamic>> refundOrder(int orderId,
+          {String reason = ''}) =>
+      post('/orders/$orderId/refund', body: {'reason': reason});
+  Future<Map<String, dynamic>> refundPackage(int id,
+          {String reason = ''}) =>
+      post('/packages/$id/refund', body: {'reason': reason});
+  Future<List<dynamic>> orders() async =>
+      (await get('/orders'))['orders'] as List<dynamic>;
+  Future<Map<String, dynamic>> orderDetails(int id) async =>
+      (await get('/orders/$id'))['order'] as Map<String, dynamic>;
+
   Future<Map<String, dynamic>> couponPreview(Map<String, dynamic> body) =>
       post('/add-coupon-preview', body: body);
   Future<Map<String, dynamic>> couponCreate(Map<String, dynamic> body) =>

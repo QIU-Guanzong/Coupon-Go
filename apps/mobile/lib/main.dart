@@ -7,6 +7,7 @@ import 'screens/bargain.dart';
 import 'screens/cashback.dart';
 import 'screens/customer.dart';
 import 'screens/nearby.dart';
+import 'screens/packages.dart';
 import 'screens/reviews_admin.dart';
 import 'screens/vendor.dart';
 import 'theme.dart';
@@ -77,6 +78,17 @@ class _CouponGoAppState extends State<CouponGoApp> {
             return MaterialPageRoute(
                 builder: (_) => BargainDetailScreen(
                     api: _api, sessionId: settings.arguments as int? ?? 0));
+          case '/packages':
+            return MaterialPageRoute(
+                builder: (_) => PackageListScreen(api: _api));
+          case '/orders':
+            return MaterialPageRoute(
+                builder: (_) => OrdersScreen(api: _api));
+          case '/package-details':
+            return MaterialPageRoute(
+                builder: (_) => PackageDetailScreen(
+                    api: _api,
+                    packageId: settings.arguments as int? ?? 0));
           case '/qbot':
             return MaterialPageRoute(builder: (_) => QBotScreen(api: _api));
           case '/cashback':
@@ -338,8 +350,24 @@ class _HomeShellState extends State<HomeShell> {
               Navigator.of(context).pop();
               Navigator.of(context).pushNamed('/bargain');
             },
+          ),            leading: const Icon(Icons.restaurant_menu,
+                color: CgColors.primary),
+            title: const Text('套餐'),
+            onTap: () {
+              Navigator.of(context).pop();
+              Navigator.of(context).pushNamed('/packages');
+            },
           ),
-          ListTile(
+          if (widget.authed)
+            ListTile(
+              leading:
+                  const Icon(Icons.receipt_long, color: CgColors.primary),
+              title: const Text('我的訂單'),
+              onTap: () {
+                Navigator.of(context).pop();
+                Navigator.of(context).pushNamed('/orders');
+              },
+            ),          ListTile(
             leading: const Icon(Icons.card_giftcard, color: CgColors.primary),
             title: const Text('邀請好友'),
             onTap: () {

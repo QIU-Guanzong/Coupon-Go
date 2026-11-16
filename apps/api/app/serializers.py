@@ -96,6 +96,11 @@ def wallet_out(db: Session, w: models.WalletItem):
         "valid_to": c.valid_to if c else None,
         "discount_price": float(c.discount_price) if c and c.discount_price is not None else None,
         "regular_price": float(c.regular_price) if c and c.regular_price is not None else None,
+        # line C: package vouchers ride the same wallet states
+        "source": w.source or "claim",
+        "order_id": w.order_id,
+        "is_package": bool(c and c.kind == "package"),
+        "refund_policy": c.refund_policy if c else "anytime",
     }
 
 

@@ -46,3 +46,13 @@ CASHBACK_MIN_WITHDRAW_HKD = float(os.environ.get("CASHBACK_MIN_WITHDRAW_HKD", "5
 CASHBACK_DAILY_WITHDRAW_LIMIT_HKD = float(os.environ.get("CASHBACK_DAILY_WITHDRAW_LIMIT_HKD", "1500"))
 CASHBACK_MAX_PER_TXN_HKD = float(os.environ.get("CASHBACK_MAX_PER_TXN_HKD", "0"))  # 0 = 不设上限
 CASHBACK_MISSING_WINDOW_DAYS = int(os.environ.get("CASHBACK_MISSING_WINDOW_DAYS", "30"))
+# --- line C (套餐 2A): payments (Stripe test mode only) ---
+# No real merchant account is connected and no real key is stored anywhere
+# in the repo. With STRIPE_SECRET_KEY unset the gateway runs its local
+# test-mode simulator; with a key set only sk_test_… is accepted.
+STRIPE_SECRET_KEY = os.environ.get("STRIPE_SECRET_KEY", "")
+STRIPE_PUBLISHABLE_KEY = os.environ.get("STRIPE_PUBLISHABLE_KEY", "")
+STRIPE_WEBHOOK_SECRET = os.environ.get("STRIPE_WEBHOOK_SECRET", "")
+# Pending-payment timeout (minutes): an unpaid order older than this is
+# lazily marked timeout and releases its stock reservation.
+PAYMENT_TIMEOUT_MINUTES = int(os.environ.get("PAYMENT_TIMEOUT_MINUTES", "15"))

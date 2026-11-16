@@ -41,11 +41,12 @@ assets-packed/ APK 拆包素材的 base64 打包（見下）
 tools/ unpack_assets.py（解包）/ pack_assets.py（打包）
 apps/api/ FastAPI 後端
 app/ main / config / models / schemas / routers / seed
-app/routers/ auth / home / coupons / wallet / search / notifications / vendor / cashback（線 D 返現）/ bargain（線 E 砍價）
+app/routers/ auth / home / coupons / wallet / search / notifications / vendor / cashback（線 D 返現）/ bargain（線 E 砍價）/ packages（線 C 套餐）
 app/models_cashback.py、app/cashback_service.py（線 D 返現，與 point_transactions 分開記賬）
 app/models_bargain.py、app/seed_bargain.py（線 E 砍價）
-alembic/ 數據庫遷移（0001 初始建表；0002_line_a 核銷加固；0002_line_b 評分 v1 + 後台 v1；0002_cashback 線 D 返現三表；0002_bargain_e 線 E 砍價）
-tests/ pytest（41 個測試）
+app/models_packages.py、app/payments_gateway.py（線 C 套餐，Stripe 測試模式）
+alembic/ 數據庫遷移（0001 初始建表；0002_line_a 核銷加固；0002_line_b 評分 v1 + 後台 v1；0002_cashback 線 D 返現三表；0002_bargain_e 線 E 砍價；0002_line_c 線 C 套餐）
+tests/ pytest（69 個測試）
 infra/ docker-compose（api + postgres + redis）、.env.example
 docs/ API.md（接口概覽）
 ```
@@ -107,6 +108,13 @@ flutter run --dart-define=API_BASE_URL=http://localhost:8000
 返現（線 D）：Q Wallet 內返現餘額與積分並列展示、明細分開記賬；提現（FPS /
 銀行轉賬）；Missing Cashback 申訴。詳見下節「返現 2B（線 D）」。
 
+**套餐 2A（線 C）**：付費套餐券（FPS + 信用卡，Stripe 測試模式，未接真實
+商戶號）→ 訂單 → 支付成功後套餐券進 Q Wallet 三狀態 → 到店掃碼核銷；
+未核銷隨時退、過期自動退（原路返回，1–3 個工作日），特價券可標不退；
+退款後券作廢、不可再核銷。套餐列表/詳情、購買頁、我的訂單與退款入口
+在 App 內（抽屜：套餐、我的訂單；錢包內套餐券有退款按鈕）。
+代金券（免費領）與套餐券並行，領券閉環不動。
+
 **商戶版**：金色企業版、發券兩步（預覽 → 提交審核）、掃碼核銷（相機 +
 手動輸碼，錯店/重複/過期/每日 200 次上限）、用量數據、訂閱計劃、商户錢包。
 掃碼核銷現為兩步：預核銷（唯讀查券、顯示券面與門店）→ 確認核銷（冪等鍵，
@@ -148,7 +156,7 @@ flutter run --dart-define=API_BASE_URL=http://localhost:8000
 ```bash
 cd apps/api
 ../../.venv/bin/python -m pytest tests/ -v
-# 53 個測試：鑑權（註冊/登錄/OTP/忘記密碼）、首頁分區、搜尋三分支、
+# 69 個測試：鑑權（註冊/登錄/OTP/忘記密碼）、首頁分區、搜尋三分支、
 # 領券→QR→掃碼核銷→積分鏈（+10/+20/+15）、重複領取/重複核銷攔截、
 # 9 積分兌換、商戶發券預覽→建立→審核、用量數據、權限攔截
 # 線 A 新增 11 個：預核銷→核銷→重放冪等→撤销窗口（期內恢復 / 超時拒絕 /
@@ -161,6 +169,10 @@ cd apps/api
 # 線上確認窗口、取消/退貨作廢、返現與積分分開記賬、申訴、未登錄攔截
 # 線 E 砍價 12 個：發起→助力到底價→成團下單→套餐券進錢包→核銷、未成團超時全額退款、
 # 庫存鎖/釋放、重複助力/自助/同設備攔截、成團人數達標
+# 線 C 套餐 16 個：套餐列表/詳情/建立、下單→支付成功→券入錢包→核銷、
+# 退款後券作廢且不可再核銷、特價不退攔截、已用券退款攔截、
+# 支付失敗/逾時→重試/取消、過期自動退、webhook、下單冪等、
+# 代金券與套餐券並行。
 ```
 
 ## 返現 2B（線 D）
@@ -208,7 +220,7 @@ cd apps/api
 
 - Flutter 真機編譯與 `flutter analyze`（本機無 Flutter SDK，未驗證；線 A
   新增的 `url_launcher` / `geolocator` 依賴未跑過 `flutter pub get`，須在
-  有 SDK 的機器上驗證）
+  有 SDK 的機器上驗證；含線 C 新增的套餐購買頁/訂單頁）
 - Google Maps 實景瓦片地圖視圖（線 A 目前是位置示意 marker 圖；接
   `google_maps_flutter` 需原生 API Key 配置 + 真機驗證）
 - 出示頁原生防截屏（Android FLAG_SECURE / iOS 截屏遮罩；線 A 目前是動態
@@ -217,7 +229,8 @@ cd apps/api
   商戶 / POS 憑據可調用；商戶佣金結算對接；返現比例、90 天規則、HK$50 門檻
   與商戶談判定稿（現為默認值假設）
 - 商店上架（App Store / Google Play）、應用簽名、深鏈
-- 真實商户數據對接、FCM 推送、支付、社交登錄服務端驗證
+- 真實商户數據對接、FCM 推送、社交登錄服務端驗證
+- 支付：Stripe 正式商戶號接入與 webhook 簽名驗證（現為測試模式）
 - Google Key / Client ID 更換（見頂部）
 - 生產部署（香港區服務器、域名、TLS、備份、監控）
 - 原 APK 逆向報告：`coupon-go-apk/reverse/REVERSE.md`（不在本倉庫）

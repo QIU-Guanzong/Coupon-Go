@@ -132,13 +132,23 @@ class Coupon(Base):
     # draft | pending_review | active | rejected | expired
     status = Column(String(20), default="draft", nullable=False)
     additional_terms = Column(Text, default="")
-    # Line E (bargain) / line A (packages) shared fields, §11.2:
+    # Line E (bargain) / line C (packages) shared fields, §11.2:
     # kind=coupon (free claim, unchanged) | package (bargain/package coupon).
-    kind = Column(String(20), default="coupon", nullable=False)
-    package_id = Column(Integer, nullable=True)  # line A packages.id, if any
+    # package_id FK added by line C (packages.id); line E created the
+    # columns without the FK, line C's migration adds person_count /
+    # usage_rules / refund_policy and skips the 4 shared columns.
     is_limited_time = Column(Boolean, default=False)
     is_points_exchange = Column(Boolean, default=False)  # 9 積分兌換券（積分換券）
     created_at = Column(DateTime, default=_now)
+    # --- line C (套餐 2A): package vouchers reuse the wallet states ---
+    # kind: coupon (free) | package (paid set-meal voucher)
+    kind = Column(String(20), default="coupon", nullable=False)
+    package_id = Column(Integer, ForeignKey("packages.id"), nullable=True)
+    person_count = Column(Integer, nullable=True)
+    # usage rules JSON (times / booking / includes-excludes)
+    usage_rules = Column(Text, default="")
+    # refund policy: anytime | expiry_only | non_refundable
+    refund_policy = Column(String(20), default="anytime", nullable=False)
 
     shop = relationship("Shop", back_populates="coupons")
 
@@ -155,12 +165,11 @@ class WalletItem(Base):
     claimed_at = Column(DateTime, default=_now)
     used_at = Column(DateTime, nullable=True)
     reviewed = Column(Boolean, default=False)
-    # Line E (bargain) / §11.2: how this coupon entered the wallet.
-    # claim | purchase | bargain | exchange. order_id is line A's orders.id
-    # when present; NULL in line E (no orders table yet).
+    # --- line C (套餐 2A) / line E (bargain) shared: voucher provenance ---
+    # source: claim | purchase | bargain | exchange. order_id is line C's
+    # orders.id (FK); line E created the columns without the FK.
     source = Column(String(20), default="claim", nullable=False)
-    order_id = Column(Integer, nullable=True)
-
+    order_id = Column(Integer, ForeignKey("orders.id"), nullable=True)
     user = relationship("User", back_populates="wallet_items")
     coupon = relationship("Coupon")
 
@@ -244,3 +253,6 @@ from .models_line_b import (  # noqa: E402,F401
 # Line D: register cashback tables on Base.metadata (import only; the
 # models live in app/models_cashback.py so other lines' tables are untouched).
 from . import models_cashback  # noqa: F401,E402
+# --- line C (套餐 2A) models live in their own module; importing here
+# registers them on Base.metadata so create_all / alembic see them. ---
+from .models_packages import Order, Package, Payment, Refund  # noqa: E402,F401

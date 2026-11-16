@@ -38,6 +38,9 @@ def claim_coupon(coupon_id: int, user: models.User = Depends(get_current_user),
         raise HTTPException(status_code=404, detail="找不到此優惠券")
     if coupon.status != "active" or coupon.valid_to < _now():
         raise HTTPException(status_code=400, detail="此優惠券已失效")
+    if coupon.kind == "package":
+        # Line C: package vouchers are bought, not claimed for free.
+        raise HTTPException(status_code=400, detail="套餐券請購買，不可免費領取")
     if coupon.is_points_exchange:
         raise HTTPException(status_code=400, detail="積分券請用積分兌換")
     existing = db.query(models.WalletItem).filter(

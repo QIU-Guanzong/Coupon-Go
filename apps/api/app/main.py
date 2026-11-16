@@ -13,8 +13,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from . import config
 from .database import init_db
 from .routers import (admin, auth, bargain, cashback, coupons, home,
-                      nearby, notifications, redemption, reviews, search,
-                      vendor, wallet)
+                      nearby, notifications, packages, redemption, reviews,
+                      search, vendor, wallet)
 
 from . import models_cashback  # noqa: F401  (Line D: register cashback tables)
 
@@ -31,7 +31,8 @@ app.add_middleware(
 for router in (auth.router, home.router, coupons.router, wallet.router,
                search.router, notifications.router, vendor.router,
                redemption.router, nearby.router, reviews.router,
-               admin.router, cashback.router, bargain.router):
+               admin.router, cashback.router, bargain.router,
+               packages.router):
     app.include_router(router, prefix="/api/v3")
 
 

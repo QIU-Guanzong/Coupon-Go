@@ -174,6 +174,66 @@ def seed(db: Session) -> dict:
     ))
     db.flush()
 
+    # --- line C (套餐 2A) demo packages: one refundable, one special
+    # non-refundable. Demo data, not real merchants. ---
+    if db.query(models.Package).count() == 0:
+        import json as _json
+        _demo_packages = [
+            {
+                "shop": shops[0], "name": "櫻花壽司雙人套餐",
+                "items": [{"name": "特選壽司盛合（12 件）", "qty": 1},
+                          {"name": "三文魚刺身（6 片）", "qty": 1},
+                          {"name": "味噌湯 x2", "qty": 2}],
+                "person_count": 2, "original_price": 428, "package_price": 298,
+                "days": 30, "stock": 50, "refund_policy": "anytime",
+                "rules": {"weekday_only": False, "holiday": True,
+                          "need_booking": True, "includes": ["加一服務費"],
+                          "excludes": ["酒水"]},
+            },
+            {
+                "shop": shops[1], "name": "麻辣火鍋四人特價套餐",
+                "items": [{"name": "麻辣鍋底", "qty": 1},
+                          {"name": "牛小排拼盤", "qty": 1},
+                          {"name": "時蔬拼盤", "qty": 1},
+                          {"name": "手工丸子拼盤", "qty": 1}],
+                "person_count": 4, "original_price": 820, "package_price": 588,
+                "days": 7, "stock": 20, "refund_policy": "non_refundable",
+                "rules": {"weekday_only": True, "holiday": False,
+                          "need_booking": True, "includes": ["鍋底", "醬料"],
+                          "excludes": ["飲品", "加一服務費"]},
+            },
+        ]
+        for _p in _demo_packages:
+            _pkg = models.Package(
+                shop_id=_p["shop"].id, name=_p["name"],
+                items=_json.dumps(_p["items"], ensure_ascii=False),
+                person_count=_p["person_count"],
+                original_price=_p["original_price"],
+                package_price=_p["package_price"],
+                valid_from=NOW - timedelta(days=1),
+                valid_to=NOW + timedelta(days=_p["days"]),
+                usage_rules=_json.dumps(_p["rules"], ensure_ascii=False),
+                stock_total=_p["stock"], stock_left=_p["stock"],
+                refund_policy=_p["refund_policy"], status="active")
+            db.add(_pkg)
+            db.flush()
+            db.add(models.Coupon(
+                shop_id=_p["shop"].id, vendor_id=vendor.id,
+                coupon_type="Price", coupon_name=_p["name"],
+                discount_price=_p["package_price"],
+                regular_price=_p["original_price"],
+                image="assets/images/dummy_image_1.png",
+                valid_from=NOW - timedelta(days=1),
+                valid_to=NOW + timedelta(days=_p["days"]),
+                total=_p["stock"], remaining=_p["stock"],
+                status="active",
+                additional_terms="套餐券：到店出示 QR 碼核銷；整張一次核銷，不可拆分。",
+                kind="package", package_id=_pkg.id,
+                person_count=_p["person_count"],
+                usage_rules=_json.dumps(_p["rules"], ensure_ascii=False),
+                refund_policy=_p["refund_policy"]))
+        db.flush()
+
     for name, fee, limit in [
         ("基本月費計劃", 0, 5),
         ("進階月費計劃", 299, 20),

@@ -173,14 +173,39 @@ class _WalletScreenState extends State<WalletScreen>
                               color: CgColors.primary),
                           title: Text(item.couponName),
                           subtitle: Text(
-                              '${item.shopName} · ${item.statusText}'),
+                              '${item.shopName} · ${item.statusText}'
+                              '${item.isPackage ? ' · 套餐券' : ''}'),
                           trailing: item.status == 1
-                              ? ElevatedButton(
-                                  onPressed: () => widget.onShowQr(item),
-                                  style: ElevatedButton.styleFrom(
-                                    minimumSize: const Size(72, 40),
-                                  ),
-                                  child: const Text('出示'),
+                              ? Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    if (item.canRefund)
+                                      TextButton(
+                                        onPressed: () async {
+                                          try {
+                                            await widget.api.refundOrder(
+                                                item.orderId!);
+                                            if (context.mounted) {
+                                              showCgToast(context,
+                                                  '退款成功，套餐券已作廢');
+                                            }
+                                            _load();
+                                          } on ApiException catch (e) {
+                                            if (context.mounted) {
+                                              showCgToast(context, e.message);
+                                            }
+                                          }
+                                        },
+                                        child: const Text('退款'),
+                                      ),
+                                    ElevatedButton(
+                                      onPressed: () => widget.onShowQr(item),
+                                      style: ElevatedButton.styleFrom(
+                                        minimumSize: const Size(72, 40),
+                                      ),
+                                      child: const Text('出示'),
+                                    ),
+                                  ],
                                 )
                               : item.status == 2 && !item.reviewed
                                   ? TextButton(

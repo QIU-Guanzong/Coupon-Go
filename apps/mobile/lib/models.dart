@@ -101,7 +101,11 @@ class WalletItem {
         code = j['code'] as String? ?? '',
         qrExpiresAt = DateTime.tryParse(j['qr_expires_at'] as String? ?? ''),
         validTo = DateTime.tryParse(j['valid_to'] as String? ?? ''),
-        reviewed = j['reviewed'] as bool? ?? false;
+        reviewed = j['reviewed'] as bool? ?? false,
+        source = j['source'] as String? ?? 'claim',
+        orderId = j['order_id'] as int?,
+        isPackage = j['is_package'] as bool? ?? false,
+        refundPolicy = j['refund_policy'] as String? ?? 'anytime';
 
   final int id;
   final int couponId;
@@ -113,9 +117,17 @@ class WalletItem {
   final DateTime? qrExpiresAt;
   final DateTime? validTo;
   final bool reviewed;
+  final String source; // claim | purchase | bargain | exchange
+  final int? orderId;
+  final bool isPackage;
+  final String refundPolicy;
 
   String get statusText =>
       status == 1 ? '未使用' : status == 2 ? '已使用' : '已失效';
+
+  /// Refundable from the wallet: an unused, purchased, refundable voucher.
+  bool get canRefund =>
+      status == 1 && isPackage && orderId != null && refundPolicy == 'anytime';
 }
 
 class AppNotification {
@@ -428,4 +440,106 @@ class BargainSession {
     return '剩餘 ${h.toString().padLeft(2, '0')}:'
         '${m.toString().padLeft(2, '0')}:${s.toString().padLeft(2, '0')}';
   }
+}
+/// Paid set-meal product (line C: 套餐 2A). Buying one generates a
+/// package voucher (kind='package') into Q Wallet.
+class Package {
+  Package.fromJson(Map<String, dynamic> j)
+      : id = j['package_id'] as int? ?? j['id'] as int? ?? 0,
+        shopId = j['shop_id'] as int? ?? 0,
+        shopName = j['shop_name'] as String? ?? '',
+        name = j['name'] as String? ?? '',
+        items = (j['items'] as List? ?? [])
+            .map((e) => e is Map
+                ? '${e['name'] ?? ''} x${e['qty'] ?? 1}'
+                : '$e')
+            .toList(),
+        personCount = j['person_count'] as int? ?? 2,
+        originalPrice = (j['original_price'] as num?)?.toDouble() ?? 0,
+        packagePrice = (j['package_price'] as num?)?.toDouble() ?? 0,
+        saveAmount = (j['save_amount'] as num?)?.toDouble() ?? 0,
+        savePercent = (j['save_percent'] as num?)?.toDouble() ?? 0,
+        validTo = DateTime.tryParse(j['valid_to'] as String? ?? ''),
+        usageRules = j['usage_rules'] is Map
+            ? Map<String, dynamic>.from(j['usage_rules'] as Map)
+            : <String, dynamic>{},
+        stockLeft = j['stock_left'] as int? ?? 0,
+        soldCount = j['sold_count'] as int? ?? 0,
+        refundPolicy = j['refund_policy'] as String? ?? 'anytime',
+        refundPolicyText = j['refund_policy_text'] as String? ?? '',
+        status = j['status'] as String? ?? '';
+
+  final int id;
+  final int shopId;
+  final String shopName;
+  final String name;
+  final List<String> items;
+  final int personCount;
+  final double originalPrice;
+  final double packagePrice;
+  final double saveAmount;
+  final double savePercent;
+  final DateTime? validTo;
+  final Map<String, dynamic> usageRules;
+  final int stockLeft;
+  final int soldCount;
+  final String refundPolicy;
+  final String refundPolicyText;
+  final String status;
+
+  bool get needBooking => usageRules['need_booking'] == true;
+  List<String> get includes =>
+      (usageRules['includes'] as List? ?? []).map((e) => '$e').toList();
+  List<String> get excludes =>
+      (usageRules['excludes'] as List? ?? []).map((e) => '$e').toList();
+  int get daysLeft =>
+      validTo == null ? 0 : validTo!.difference(DateTime.now()).inDays;
+}
+
+/// A paid package order (line C).
+class PackageOrder {
+  PackageOrder.fromJson(Map<String, dynamic> j)
+      : id = j['order_id'] as int? ?? j['id'] as int? ?? 0,
+        packageId = j['package_id'] as int?,
+        packageName = j['package_name'] as String? ?? '',
+        shopName = j['shop_name'] as String? ?? '',
+        amount = (j['amount'] as num?)?.toDouble() ?? 0,
+        paidAmount = (j['paid_amount'] as num?)?.toDouble() ?? 0,
+        paymentMethod = j['payment_method'] as String? ?? '',
+        paymentStatus = j['payment_status'] as String? ?? '',
+        refundStatus = j['refund_status'] as String? ?? 'none',
+        settlementStatus = j['settlement_status'] as String? ?? '',
+        walletItemId = j['wallet_item_id'] as int?,
+        createdAt = DateTime.tryParse(j['created_at'] as String? ?? ''),
+        paymentCount = (j['payments'] as List? ?? []).length;
+
+  final int id;
+  final int? packageId;
+  final String packageName;
+  final String shopName;
+  final double amount;
+  final double paidAmount;
+  final String paymentMethod;
+  final String paymentStatus; // pending | paid | failed | timeout | cancelled
+  final String refundStatus; // none | requested | refunded | rejected
+  final String settlementStatus;
+  final int? walletItemId;
+  final DateTime? createdAt;
+  final int paymentCount;
+
+  String get paymentStatusText => switch (paymentStatus) {
+        'paid' => '已支付',
+        'failed' => '支付失敗',
+        'timeout' => '支付逾時',
+        'cancelled' => '已取消',
+        _ => '待支付',
+      };
+
+  String get paymentMethodText => paymentMethod == 'card' ? '信用卡' : 'FPS 轉數快';
+
+  bool get canPay => paymentStatus == 'pending';
+  bool get canRetry =>
+      paymentStatus == 'failed' || paymentStatus == 'timeout';
+  bool get canCancel => paymentStatus == 'pending';
+  bool get canRefund => paymentStatus == 'paid' && refundStatus == 'none';
 }

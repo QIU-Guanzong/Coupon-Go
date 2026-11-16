@@ -193,3 +193,31 @@ reviewed_by, reviewed_at, created_at}`。
 | POST | `/bargain/expire-sweep` | 結算過期砍價（admin；未成團全額退款 + 釋放庫存） |
 
 狀態機：`active → success`（砍到底價，或助力人數達上限）→ 下單生成套餐券；`active → failed`（超時未成團，全額退款 + 釋放庫存）；`success → expired`（成團後未在有效期內下單，全額退款 + 釋放庫存）。
+## 套餐 2A：付費套餐券 / 訂單 / 支付 / 退款（線 C）
+
+套餐券（`kind=package`）與免費代金券並行：購買後進 Q Wallet 三狀態
+（1 未使用 / 2 已使用 / 3 已失效），出示 QR 與核銷走現有閉環；
+套餐券不可免費領取（`/new-favorite-coupon` 會攔截）。
+支付為 Stripe **測試模式**（FPS + 信用卡），未接真實商戶號；
+未設 `STRIPE_SECRET_KEY` 時用本地測試模擬器（`pi_test_…`）。
+
+| 方法 | 路徑 | 說明 |
+|---|---|---|
+| GET | `/packages` | 套餐列表（`shop_id`、`status` 篩選；遊客可調） |
+| GET | `/package-details?package_id=` | 套餐詳情（菜品組合、原價/套餐價、退款規則） |
+| POST | `/packages` | 商戶/管理員建立套餐（同時生成 `kind=package` 券模板） |
+| POST | `/packages/{id}/purchase` | 下單（預留庫存，生成訂單 + 支付單；`client_ref` 冪等） |
+| POST | `/orders/{id}/confirm-payment` | 測試模式支付結果 `{outcome: succeeded/failed/timeout}` |
+| POST | `/orders/{id}/retry-payment` | 失敗/逾時訂單重新支付（新支付單） |
+| POST | `/orders/{id}/cancel` | 取消待支付訂單（釋放庫存） |
+| GET | `/orders` | 我的訂單 |
+| GET | `/orders/{id}` | 訂單詳情（含支付記錄、券 id） |
+| POST | `/orders/{id}/refund` | 未核銷退款（特價券 `non_refundable` 攔截；退款後券作廢） |
+| POST | `/packages/{id}/refund` | 按套餐退最近一筆可退訂單 |
+| POST | `/orders/process-expired-refunds` | 管理員觸發：過期自動退（特價券只作廢不退） |
+| POST | `/payments/webhook` | Stripe 測試模式 webhook（`payment_intent.succeeded/failed`） |
+
+退款默認：未核銷隨時退、過期自動退（原路返回，1–3 個工作日）；
+已核銷不可退。結算記賬字段（`settlement_status` /
+`commission_amount` / `net_amount`，佣金默認 0）隨支付成功記賬，
+對賬在 F 線。
