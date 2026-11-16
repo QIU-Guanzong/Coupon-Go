@@ -4,6 +4,7 @@ import '../api_client.dart';
 import '../models.dart';
 import '../theme.dart';
 import '../widgets/widgets.dart';
+import 'reviews_admin.dart';
 
 /// Home: red header + search bar, 4 categories, banner, 7 sections
 /// (熱門優惠券 → 最多人搶 → 限時搶購 → 本週精選 → 為你推薦 → 常用商戶 → 新加入商戶).
@@ -167,6 +168,19 @@ class _HomeScreenState extends State<HomeScreen> {
                           ),
                         );
                       },
+                    ),
+                  ),
+                  // line A: nearby shops entry (list + marker view + navigation)
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 4, 16, 0),
+                    child: SizedBox(
+                      width: double.infinity,
+                      child: OutlinedButton.icon(
+                        onPressed: () =>
+                            Navigator.of(context).pushNamed('/nearby'),
+                        icon: const Icon(Icons.near_me),
+                        label: const Text('附近商户 · 按距離排序'),
+                      ),
                     ),
                   ),
                   // banner
@@ -583,7 +597,17 @@ class ShopDetailScreen extends StatelessWidget {
               Text(shop.address),
               Text(shop.phone),
               if (shop.description.isNotEmpty) Text(shop.description),
-              const SizedBox(height: 16),
+              const SizedBox(height: 8),
+              ListTile(
+                leading: const Icon(Icons.star, color: CgColors.amber),
+                title: const Text('評分與評價'),
+                subtitle: const Text('口味 / 環境 / 服務三維評分'),
+                trailing: const Icon(Icons.chevron_right),
+                onTap: () => Navigator.of(context).push(MaterialPageRoute(
+                    builder: (_) =>
+                        ShopReviewsScreen(api: api, shop: shop))),
+              ),
+              const SizedBox(height: 8),
               if (branches.isNotEmpty) ...[
                 const Text('分店', style: TextStyle(fontWeight: FontWeight.bold)),
                 ...branches.map((b) => ListTile(

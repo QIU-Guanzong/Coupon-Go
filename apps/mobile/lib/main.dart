@@ -4,6 +4,8 @@ import 'api_client.dart';
 import 'models.dart';
 import 'screens/account.dart';
 import 'screens/customer.dart';
+import 'screens/nearby.dart';
+import 'screens/reviews_admin.dart';
 import 'screens/vendor.dart';
 import 'theme.dart';
 import 'widgets/widgets.dart';
@@ -63,6 +65,9 @@ class _CouponGoAppState extends State<CouponGoApp> {
                     api: _api, onLogout: () => setState(() => _authed = false)));
           case '/guide':
             return MaterialPageRoute(builder: (_) => const GuideScreen());
+          case '/nearby': // line A: nearby shops (list + marker view)
+            return MaterialPageRoute(
+                builder: (_) => NearbyScreen(api: _api));
           case '/qbot':
             return MaterialPageRoute(builder: (_) => QBotScreen(api: _api));
           case '/category':
@@ -85,6 +90,11 @@ class _CouponGoAppState extends State<CouponGoApp> {
           case '/vendor/plans':
             return MaterialPageRoute(
                 builder: (_) => SubscriptionScreen(api: _api));
+          case '/admin':
+            return MaterialPageRoute(builder: (_) => AdminScreen(api: _api));
+          case '/admin/apply':
+            return MaterialPageRoute(
+                builder: (_) => MerchantApplicationFormScreen(api: _api));
         }
         return null;
       },
@@ -331,6 +341,24 @@ class _HomeShellState extends State<HomeShell> {
             onTap: () {
               Navigator.of(context).pop();
               widget.onToggleMode();
+            },
+          ),
+          ListTile(
+            leading:
+                const Icon(Icons.storefront, color: CgColors.primary),
+            title: const Text('商戶入駐申請'),
+            onTap: () {
+              Navigator.of(context).pop();
+              Navigator.of(context).pushNamed('/admin/apply');
+            },
+          ),
+          ListTile(
+            leading: const Icon(Icons.admin_panel_settings,
+                color: CgColors.primary),
+            title: const Text('管理後台'),
+            onTap: () {
+              Navigator.of(context).pop();
+              Navigator.of(context).pushNamed('/admin');
             },
           ),
           ListTile(

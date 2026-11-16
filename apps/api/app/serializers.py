@@ -71,6 +71,8 @@ def shop_out(db: Session, s: models.Shop, user_id=None):
         "phone": s.phone or "",
         "description": s.description or "",
         "image": s.image or "",
+        "latitude": float(s.latitude) if s.latitude is not None else None,
+        "longitude": float(s.longitude) if s.longitude is not None else None,
         "branch_count": branches,
         "is_shop_favorite": fav,
     }

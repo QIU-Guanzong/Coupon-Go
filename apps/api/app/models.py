@@ -164,6 +164,11 @@ class Redemption(Base):
     shop_id = Column(Integer, ForeignKey("shops.id"), nullable=False)
     scanned_by_vendor_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     scanned_at = Column(DateTime, default=_now)
+    # Line A (report §11.2): idempotency + prepare + revoke window.
+    idempotency_key = Column(String(80), unique=True, nullable=True)
+    prepared_at = Column(DateTime, nullable=True)   # pre-redeem check time
+    revoked_at = Column(DateTime, nullable=True)    # revoke time (10-min window)
+    revoked_by = Column(Integer, ForeignKey("users.id"), nullable=True)
 
 
 class PointTransaction(Base):
@@ -217,3 +222,12 @@ class SubscriptionPlan(Base):
     coupon_limit = Column(Integer, default=0)
     description = Column(Text, default="")
     is_active = Column(Boolean, default=True)
+
+
+# Line B models (reviews / ratings, merchant applications, admin audit log)
+# live in app/models_line_b.py; imported here so Base.metadata (used by
+# create_all and Alembic) includes the new tables. v0.1 tables above
+# are untouched.
+from .models_line_b import (  # noqa: E402,F401
+    AdminAuditLog, MerchantApplication, Review, ShopRating,
+)

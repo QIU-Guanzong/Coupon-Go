@@ -116,6 +116,70 @@ class ApiClient {
           query: {'wallet_item_id': '$walletItemId'});
   Future<void> review(int walletItemId) =>
       post('/review', query: {'wallet_item_id': '$walletItemId'});
+
+  // ---- reviews v1 (line B): 3-dim rating, points/stars split ----
+  // claimPoints=true (default): +15 points, review does NOT count toward
+  // the shop rating. claimPoints=false: no points, review counts.
+  Future<Map<String, dynamic>> submitReview({
+    int? walletItemId,
+    int? redemptionId,
+    required int taste,
+    required int ambience,
+    required int service,
+    String content = '',
+    List<String> images = const [],
+    List<String> tags = const [],
+    bool claimPoints = true,
+  }) async =>
+      post('/reviews', body: {
+        if (walletItemId != null) 'wallet_item_id': walletItemId,
+        if (redemptionId != null) 'redemption_id': redemptionId,
+        'taste': taste,
+        'ambience': ambience,
+        'service': service,
+        'content': content,
+        'images': images,
+        'tags': tags,
+        'claim_points': claimPoints,
+      });
+  Future<Map<String, dynamic>> shopReviews(int shopId,
+          {int page = 1, bool hasImages = false}) async =>
+      get('/shops/$shopId/reviews', query: {
+        'page': '$page',
+        if (hasImages) 'has_images': 'true',
+      });
+  Future<Map<String, dynamic>> shopRating(int shopId) async =>
+      get('/shops/$shopId/rating');
+  Future<Map<String, dynamic>> replyReview(int reviewId, String reply) =>
+      post('/reviews/$reviewId/reply', body: {'reply': reply});
+  Future<Map<String, dynamic>> disputeReview(int reviewId, String reason) =>
+      post('/reviews/$reviewId/dispute', body: {'reason': reason});
+
+  // ---- admin v1 (line B): onboarding review + read-only dashboard ----
+  Future<Map<String, dynamic>> submitMerchantApplication(
+          Map<String, dynamic> body) =>
+      post('/admin/merchant-applications', body: body);
+  Future<Map<String, dynamic>> adminDashboard() async =>
+      get('/admin/dashboard');
+  Future<Map<String, dynamic>> adminApplications({String? status}) async =>
+      get('/admin/merchant-applications', query: {
+        if (status != null) 'status': status,
+      });
+  Future<Map<String, dynamic>> reviewMerchantApplication(int id, bool approve,
+          {String rejectReason = ''}) =>
+      post('/admin/merchant-applications/$id/review',
+          body: {'approve': approve, 'reject_reason': rejectReason});
+  Future<Map<String, dynamic>> adminShops() async =>
+      get('/admin/shops');
+  Future<Map<String, dynamic>> adminCoupons({String? status}) async =>
+      get('/admin/coupons', query: {
+        if (status != null) 'status': status,
+      });
+  Future<Map<String, dynamic>> adminRedemptions() async =>
+      get('/admin/redemptions');
+  Future<Map<String, dynamic>> adminUsers() async => get('/admin/users');
+  Future<Map<String, dynamic>> adminAuditLogs() async =>
+      get('/admin/audit-logs');
   Future<Map<String, dynamic>> exchangePoints(int couponId) =>
       post('/points/exchange', query: {'coupon_id': '$couponId'});
 
@@ -132,6 +196,25 @@ class ApiClient {
   Future<List<dynamic>> records() async =>
       (await get('/get-user-record-list'))['records'] as List<dynamic>;
 
+  // ---- line A: nearby map ----
+  Future<Map<String, dynamic>> nearbyShops(
+      {required double lat, required double lng, double radiusKm = 10}) async =>
+      get('/nearby-shops', query: {
+        'lat': '$lat',
+        'lng': '$lng',
+        'radius_km': '$radiusKm',
+      });
+  Future<Map<String, dynamic>> shopMap(int shopId) async =>
+      get('/shops/$shopId/map');
+
+  // ---- line A: redemption hardening ----
+  Future<Map<String, dynamic>> prepareScan(String code) async =>
+      post('/new-scan-coupon/prepare', body: {'code': code});
+  Future<Map<String, dynamic>> revokeRedemption(int redemptionId) async =>
+      post('/redemptions/$redemptionId/revoke');
+  Future<Map<String, dynamic>> vendorRedemptionsExport() async =>
+      get('/vendor/redemptions/export');
+
   // ---- vendor ----
   Future<List<dynamic>> vendorCoupons() async =>
       (await get('/get-vendor-coupon-list'))['coupons'] as List<dynamic>;
@@ -141,8 +224,13 @@ class ApiClient {
       post('/coupon-previewed', body: body);
   Future<Map<String, dynamic>> usageData() async =>
       get('/get-vendor-usage-data-new');
-  Future<Map<String, dynamic>> scanCoupon(String code) =>
-      post('/new-scan-coupon', body: {'code': code});
+  Future<Map<String, dynamic>> scanCoupon(String code,
+      {String? idempotencyKey, String? prepareToken}) async =>
+      post('/new-scan-coupon', body: {
+        'code': code,
+        if (idempotencyKey != null) 'idempotency_key': idempotencyKey,
+        if (prepareToken != null) 'prepare_token': prepareToken,
+      });
   Future<List<dynamic>> subscriptionPlans() async =>
       (await get('/get-subscription-plan-list'))['plans'] as List<dynamic>;
 }

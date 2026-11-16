@@ -7,6 +7,7 @@ import '../api_client.dart';
 import '../models.dart';
 import '../theme.dart';
 import '../widgets/widgets.dart';
+import 'reviews_admin.dart';
 
 /// Q Wallet: points balance, three status tabs (1 unused / 2 used / 3 expired),
 /// points-exchange zone (9-point coupon), records.
@@ -78,6 +79,8 @@ class _WalletScreenState extends State<WalletScreen>
               const SizedBox(height: 8),
               const Text('領券 +10　核銷 +20　評價 +15',
                   style: TextStyle(color: Colors.white70, fontSize: 12)),
+              const Text('領積分的評價不計入商户星級（防誘導評價）',
+                  style: TextStyle(color: Colors.white70, fontSize: 12)),
             ],
           ),
         ),
@@ -143,20 +146,15 @@ class _WalletScreenState extends State<WalletScreen>
                               : item.status == 2 && !item.reviewed
                                   ? TextButton(
                                       onPressed: () async {
-                                        try {
-                                          await widget.api.review(item.id);
-                                          if (context.mounted) {
-                                            showCgToast(
-                                                context, '評價成功，+15 分');
-                                          }
-                                          _load();
-                                        } on ApiException catch (e) {
-                                          if (context.mounted) {
-                                            showCgToast(context, e.message);
-                                          }
-                                        }
+                                        final ok = await Navigator.of(context)
+                                            .push<bool>(MaterialPageRoute(
+                                                builder: (_) =>
+                                                    ReviewFormScreen(
+                                                        api: widget.api,
+                                                        item: item)));
+                                        if (ok == true) _load();
                                       },
-                                      child: const Text('評價 +15'),
+                                      child: const Text('寫評價'),
                                     )
                                   : null,
                         ),
@@ -277,6 +275,27 @@ class _QrShowScreenState extends State<QrShowScreen> {
                 const Text('使用前出示 QR 碼\n請將 QR 碼呈現給店員掃描以進行支付',
                     textAlign: TextAlign.center,
                     style: TextStyle(color: CgColors.textSecondary)),
+                const SizedBox(height: 12),
+                // Line A anti-screenshot: every present rotates a fresh
+                // code server-side; a screenshot / forwarded photo of an
+                // older code will not scan. No native FLAG_SECURE is wired
+                // in yet (needs platform code + real-device verification).
+                Container(
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFFFF3CD),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: const Text(
+                      '請勿截圖或轉發：每次出示都會產生新的兌換碼，截圖上的舊碼可能已失效。',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(fontSize: 13)),
+                ),
+                const SizedBox(height: 8),
+                TextButton(
+                  onPressed: _generate,
+                  child: const Text('重新產生新碼'),
+                ),
               ],
             ),
           ),

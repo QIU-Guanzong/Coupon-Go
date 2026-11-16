@@ -199,6 +199,14 @@ class QrOut(BaseModel):
 
 class ScanIn(BaseModel):
     code: str
+    # Line A: idempotency key (repeat submit of the same scan = one
+    # redemption) and optional prepare token from /new-scan-coupon/prepare.
+    idempotency_key: Optional[str] = None
+    prepare_token: Optional[str] = None
+
+
+class PrepareIn(BaseModel):
+    code: str
 
 
 class PointsOut(BaseModel):

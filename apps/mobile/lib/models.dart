@@ -69,6 +69,9 @@ class Shop {
         phone = j['phone'] as String? ?? '',
         description = j['description'] as String? ?? '',
         image = j['image'] as String? ?? '',
+        latitude = (j['latitude'] as num?)?.toDouble(),
+        longitude = (j['longitude'] as num?)?.toDouble(),
+        distanceKm = (j['distance_km'] as num?)?.toDouble(),
         branchCount = j['branch_count'] as int? ?? 0,
         isFavorite = j['is_shop_favorite'] as bool? ?? false;
 
@@ -80,6 +83,9 @@ class Shop {
   final String phone;
   final String description;
   final String image;
+  final double? latitude; // line A: map position (null = no coordinates)
+  final double? longitude;
+  final double? distanceKm; // line A: Haversine distance from /nearby-shops
   final int branchCount;
   final bool isFavorite;
 }
@@ -129,4 +135,80 @@ class AppNotification {
   final int? targetCouponId;
   final int? targetShopId;
   final bool isRead;
+}
+
+/// Line B: a 3-dim review. pointsGiven reviews do NOT count toward the
+/// shop rating (countsTowardRating=false); see ApiClient.submitReview.
+class Review {
+  Review.fromJson(Map<String, dynamic> j)
+      : id = j['id'] as int? ?? 0,
+        userName = j['user_name'] as String? ?? '',
+        shopId = j['shop_id'] as int? ?? 0,
+        taste = j['taste'] as int? ?? 0,
+        ambience = j['ambience'] as int? ?? 0,
+        service = j['service'] as int? ?? 0,
+        overall = (j['overall'] as num?)?.toDouble() ?? 0,
+        content = j['content'] as String? ?? '',
+        images = (j['images'] as List?)?.map((e) => '$e').toList() ?? [],
+        tags = (j['tags'] as List?)?.map((e) => '$e').toList() ?? [],
+        pointsGiven = j['points_given'] as bool? ?? false,
+        countsTowardRating = j['counts_toward_rating'] as bool? ?? false,
+        status = j['status'] as String? ?? '',
+        replyText = j['reply_text'] as String? ?? '';
+
+  final int id;
+  final String userName;
+  final int shopId;
+  final int taste;
+  final int ambience;
+  final int service;
+  final double overall;
+  final String content;
+  final List<String> images;
+  final List<String> tags;
+  final bool pointsGiven;
+  final bool countsTowardRating;
+  final String status;
+  final String replyText;
+}
+
+/// Line B: aggregated shop rating; overall is null while no review
+/// counts toward the rating.
+class ShopRating {
+  ShopRating.fromJson(Map<String, dynamic> j)
+      : shopId = j['shop_id'] as int? ?? 0,
+        overall = (j['overall'] as num?)?.toDouble(),
+        taste = (j['taste'] as num?)?.toDouble(),
+        ambience = (j['ambience'] as num?)?.toDouble(),
+        service = (j['service'] as num?)?.toDouble(),
+        reviewCount = j['review_count'] as int? ?? 0;
+
+  final int shopId;
+  final double? overall;
+  final double? taste;
+  final double? ambience;
+  final double? service;
+  final int reviewCount;
+}
+
+/// Line B: a merchant onboarding application (admin v1).
+class MerchantApplication {
+  MerchantApplication.fromJson(Map<String, dynamic> j)
+      : id = j['id'] as int? ?? 0,
+        applicantEmail = j['applicant_email'] as String? ?? '',
+        shopName = j['shop_name'] as String? ?? '',
+        contactName = j['contact_name'] as String? ?? '',
+        phone = j['phone'] as String? ?? '',
+        address = j['address'] as String? ?? '',
+        status = j['status'] as String? ?? '',
+        rejectReason = j['reject_reason'] as String? ?? '';
+
+  final int id;
+  final String applicantEmail;
+  final String shopName;
+  final String contactName;
+  final String phone;
+  final String address;
+  final String status;
+  final String rejectReason;
 }

@@ -69,8 +69,10 @@ def generate_qr(wallet_item_id: int, user: models.User = Depends(get_current_use
     _refresh_expiry(db, item)
     if item.status != 1:
         raise HTTPException(status_code=400, detail="此優惠券不能使用")
-    if not item.code or (item.qr_expires_at and item.qr_expires_at < _now()):
-        item.code = "".join(random.choices("0123456789", k=6))
+    # Line A anti-screenshot: a fresh code is generated on EVERY present,
+    # so a screenshot / forwarded photo of an older code is dead as soon
+    # as the owner re-presents. Each code is single-use (cleared on scan).
+    item.code = "".join(random.choices("0123456789", k=6))
     item.qr_expires_at = _now() + timedelta(seconds=config.QR_TTL_SECONDS)
     db.commit()
     payload = f"coupon-go://redeem?code={item.code}&item={item.id}"
@@ -82,10 +84,32 @@ def generate_qr(wallet_item_id: int, user: models.User = Depends(get_current_use
 def scan_coupon(body: schemas.ScanIn,
                 vendor: models.User = Depends(require_role("vendor", "admin")),
                 db: Session = Depends(get_db)):
+    # Line A idempotency: replaying the same idempotency_key returns the
+    # original result once, never a second redemption / second +20 points.
+    if body.idempotency_key:
+        prior = db.query(models.Redemption).filter(
+            models.Redemption.idempotency_key == body.idempotency_key).first()
+        if prior is not None:
+            coupon = db.query(models.Coupon).filter(
+                models.Coupon.id == prior.coupon_id).first()
+            return {"message": "您的優惠券已成功使用", "coupon_name":
+                    coupon.coupon_name if coupon else "",
+                    "shop_id": prior.shop_id,
+                    "redemption_id": prior.id, "duplicate": True}
     item = db.query(models.WalletItem).filter(
         models.WalletItem.code == body.code).first()
     if item is None:
         raise HTTPException(status_code=400, detail="無效的 QR 碼！")
+    # Line A: a prepare token, when supplied, must be valid for this item.
+    prepared_at = None
+    if body.prepare_token:
+        from ..prepare_token import verify_prepare_token
+        issued = verify_prepare_token(body.prepare_token, item.id)
+        if issued is None:
+            raise HTTPException(status_code=400,
+                                detail="預核銷已失效，請重新預核銷")
+        prepared_at = datetime.fromtimestamp(issued, tz=timezone.utc).replace(
+            tzinfo=None)
     _refresh_expiry(db, item)
     if item.status == 2:
         raise HTTPException(status_code=400, detail="此優惠券已使用")
@@ -106,14 +130,23 @@ def scan_coupon(body: schemas.ScanIn,
         raise HTTPException(status_code=400, detail="今日掃碼已達上限")
     item.status = 2
     item.used_at = _now()
+    # Line A: the presented code dies on consume — a screenshot of it
+    # can never be scanned again, even before the status check.
+    item.code = ""
+    item.qr_expires_at = None
     coupon.used_count += 1
-    db.add(models.Redemption(
+    red = models.Redemption(
         wallet_item_id=item.id, coupon_id=coupon.id, shop_id=coupon.shop_id,
-        scanned_by_vendor_id=vendor.id))
+        scanned_by_vendor_id=vendor.id,
+        idempotency_key=body.idempotency_key or None,
+        prepared_at=prepared_at)
+    db.add(red)
     add_points(db, item.user_id, config.POINTS_REDEEM, "redeem", ref_id=item.id)
     db.commit()
+    db.refresh(red)
     return {"message": "您的優惠券已成功使用", "coupon_name": coupon.coupon_name,
-            "shop_id": coupon.shop_id}
+            "shop_id": coupon.shop_id, "redemption_id": red.id,
+            "duplicate": False}
 
 
 @router.get("/get-vendor-usage-data-new")

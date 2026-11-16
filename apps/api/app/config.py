@@ -32,3 +32,7 @@ QR_TTL_SECONDS = int(os.environ.get("QR_TTL_SECONDS", "900"))  # 15:00
 SCAN_DAILY_LIMIT = int(os.environ.get("SCAN_DAILY_LIMIT", "200"))
 OTP_TTL_SECONDS = int(os.environ.get("OTP_TTL_SECONDS", "600"))
 OTP_LENGTH = 6
+
+# Line A (report §5.4): revoke window after redemption; prepare-token TTL.
+REVOKE_WINDOW_MINUTES = int(os.environ.get("REVOKE_WINDOW_MINUTES", "10"))
+PREPARE_TOKEN_TTL_SECONDS = int(os.environ.get("PREPARE_TOKEN_TTL_SECONDS", "300"))

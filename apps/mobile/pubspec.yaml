@@ -14,6 +14,11 @@ dependencies:
   shared_preferences: ^2.2.0
   qr_flutter: ^4.1.0
   mobile_scanner: ^5.2.0
+  # Line A: Google Maps navigation jump + device location for nearby.
+  # NOTE: not verified locally — no Flutter SDK on this machine, so
+  # `flutter pub get` / `flutter analyze` / real-device build not run.
+  url_launcher: ^6.3.0
+  geolocator: ^13.0.0
 
 dev_dependencies:
   flutter_test:

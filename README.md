@@ -42,7 +42,7 @@ tools/ unpack_assets.py（解包）/ pack_assets.py（打包）
 apps/api/ FastAPI 後端
 app/ main / config / models / schemas / routers / seed
 app/routers/ auth / home / coupons / wallet / search / notifications / vendor
-alembic/ 數據庫遷移（0001 初始建表）
+alembic/ 數據庫遷移（0001 初始建表；0002_line_a 核銷加固；0002_line_b 評分 v1 + 後台 v1）
 tests/ pytest（13 個測試）
 infra/ docker-compose（api + postgres + redis）、.env.example
 docs/ API.md（接口概覽）
@@ -105,6 +105,22 @@ flutter run --dart-define=API_BASE_URL=http://localhost:8000
 
 **商戶版**：金色企業版、發券兩步（預覽 → 提交審核）、掃碼核銷（相機 +
 手動輸碼，錯店/重複/過期/每日 200 次上限）、用量數據、訂閱計劃、商户錢包。
+掃碼核銷現為兩步：預核銷（唯讀查券、顯示券面與門店）→ 確認核銷（冪等鍵，
+重放只算一次）；核銷後 10 分鐘內可撤销（券退回未使用、換新碼）。
+
+**地圖（線 A）**：首頁「附近商户」入口 → 附近列表（Haversine 距離排序）+
+位置示意 marker 視圖 + Google Maps 導航跳轉；支援裝置定位（授權被拒則
+用預設中心 / 手動選地區）。示意圖是非實景地圖，Google Maps 瓦片視圖未接。
+
+**評分 v1（線 B）**：口味 / 環境 / 服務三維 5 分評價 + 文字 / 晒圖
+（預留）/ 標籤，只允許已核銷用戶評價；評價得 +15 積分與計入星級
+拆開——領積分的評價不計入星級，不領積分才計入；商户頁展示聚合分
+（總分 + 三維 + 計入星級的評價數）與評價列表，商户可回覆、可申訴。
+
+**後台 v1（線 B）**：商户入駐審核（提交 → 通過 / 拒絕，拒絕須填原因，
+被拒可重新提交；通過後申請人升為商户角色）+ 隻讀看板（商户 / 券 /
+核銷數據查看，核銷記錄可導出 CSV）+ 用戶列表與操作日誌查看；目前
+只有 `admin` 單一角色，權限分權、結算、內容管理留給後台 v2（F 線）。
 
 **登錄**：郵箱/密碼 + 6 位 OTP（註冊/忘記密碼）、Google/Facebook/Apple
 社交登錄（開發 stub，上線前須做服務端 token 驗證）、customer/vendor
@@ -126,14 +142,26 @@ flutter run --dart-define=API_BASE_URL=http://localhost:8000
 ```bash
 cd apps/api
 ../../.venv/bin/python -m pytest tests/ -v
-# 13 個測試：鑑權（註冊/登錄/OTP/忘記密碼）、首頁分區、搜尋三分支、
+# 33 個測試：鑑權（註冊/登錄/OTP/忘記密碼）、首頁分區、搜尋三分支、
 # 領券→QR→掃碼核銷→積分鏈（+10/+20/+15）、重複領取/重複核銷攔截、
 # 9 積分兌換、商戶發券預覽→建立→審核、用量數據、權限攔截
+# 線 A 新增 11 個：預核銷→核銷→重放冪等→撤销窗口（期內恢復 / 超時拒絕 /
+# 重複撤销拒絕）、錯店預核銷、無預核銷直接核銷仍可用、核銷記錄導出、
+# 附近距離排序 + 半徑篩選、缺定位 400、商户地圖連結
+# 線 B 新增 9 個：未核銷不可評、積分加分但星級不變、不領積分才計入星級、
+# 重複評價攔截、評價校驗、商户回覆與差評申訴、入駐審核流（通過/拒絕/重提）、
+# 後台隻讀看板（含核銷 CSV 導出）
 ```
 
 ## 還沒做的事
 
-- Flutter 真機編譯與 `flutter analyze`（本機無 Flutter SDK，未驗證）
+- Flutter 真機編譯與 `flutter analyze`（本機無 Flutter SDK，未驗證；線 A
+  新增的 `url_launcher` / `geolocator` 依賴未跑過 `flutter pub get`，須在
+  有 SDK 的機器上驗證）
+- Google Maps 實景瓦片地圖視圖（線 A 目前是位置示意 marker 圖；接
+  `google_maps_flutter` 需原生 API Key 配置 + 真機驗證）
+- 出示頁原生防截屏（Android FLAG_SECURE / iOS 截屏遮罩；線 A 目前是動態
+  一次性兌換碼 + 輪換 + 提示文案）
 - 商店上架（App Store / Google Play）、應用簽名、深鏈
 - 真實商户數據對接、FCM 推送、支付、社交登錄服務端驗證
 - Google Key / Client ID 更換（見頂部）

@@ -263,19 +263,79 @@ class _ScanScreenState extends State<ScanScreen> {
   final _code = TextEditingController();
   bool _handled = false;
   String? _result;
+  // Line A two-step redemption: prepare (read-only check) -> confirm consume.
+  Map<String, dynamic>? _prepared;
+  String? _pendingCode;
+  int? _lastRedemptionId;
+  bool _revoking = false;
 
-  Future<void> _scan(String code) async {
+  Future<void> _prepare(String code) async {
     if (_handled) return;
     _handled = true;
     try {
-      final res = await widget.api.scanCoupon(code);
-      setState(() => _result = '使用成功！${res['coupon_name'] ?? ''}');
+      final res = await widget.api.prepareScan(code);
+      if (!mounted) return;
+      setState(() {
+        _prepared = res;
+        _pendingCode = code;
+        _result = res['can_redeem'] == true
+            ? null
+            : (res['reason'] as String? ?? '無法核銷');
+        _lastRedemptionId = null;
+      });
     } on ApiException catch (e) {
-      setState(() => _result = e.message);
+      if (mounted) setState(() => _result = e.message);
     }
     Future.delayed(const Duration(seconds: 2), () {
       if (mounted) setState(() => _handled = false);
     });
+  }
+
+  Future<void> _confirmConsume() async {
+    final code = _pendingCode;
+    final token = _prepared?['prepare_token'] as String?;
+    if (code == null || token == null) return;
+    setState(() => _handled = true);
+    try {
+      final res = await widget.api.scanCoupon(code,
+          prepareToken: token,
+          idempotencyKey: 'scan-${DateTime.now().millisecondsSinceEpoch}');
+      if (!mounted) return;
+      setState(() {
+        _result = '使用成功！${res['coupon_name'] ?? ''}';
+        _lastRedemptionId = res['redemption_id'] as int?;
+        _prepared = null;
+        _pendingCode = null;
+      });
+    } on ApiException catch (e) {
+      if (mounted) {
+        setState(() {
+          _result = e.message;
+          _prepared = null;
+          _pendingCode = null;
+        });
+      }
+    } finally {
+      if (mounted) setState(() => _handled = false);
+    }
+  }
+
+  Future<void> _revoke() async {
+    final rid = _lastRedemptionId;
+    if (rid == null) return;
+    setState(() => _revoking = true);
+    try {
+      await widget.api.revokeRedemption(rid);
+      if (!mounted) return;
+      setState(() {
+        _result = '核銷已撤销，優惠券已退回未使用';
+        _lastRedemptionId = null;
+      });
+    } on ApiException catch (e) {
+      if (mounted) setState(() => _result = e.message);
+    } finally {
+      if (mounted) setState(() => _revoking = false);
+    }
   }
 
   @override
@@ -296,7 +356,7 @@ class _ScanScreenState extends State<ScanScreen> {
                     final value = capture.barcodes.firstOrNull?.rawValue;
                     if (value != null) {
                       final code = Uri.tryParse(value)?.queryParameters['code'] ?? value;
-                      _scan(code);
+                      _prepare(code);
                     }
                   },
                 ),
@@ -319,14 +379,59 @@ class _ScanScreenState extends State<ScanScreen> {
           ),
           const Padding(
             padding: EdgeInsets.all(8),
-            child: Text('請將 QR 碼放入方框中並進行掃描'),
+            child: Text('請將 QR 碼放入方框中並進行掃描\n先預核銷確認券面與門店，再按確認核銷'),
           ),
+          if (_prepared != null && _prepared!['can_redeem'] == true)
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: Card(
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(_prepared!['coupon_name'] as String? ?? '',
+                          style: const TextStyle(
+                              fontWeight: FontWeight.bold, fontSize: 16)),
+                      Text('門店：${_prepared!['shop_name'] ?? ''}'),
+                      const SizedBox(height: 12),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: ElevatedButton(
+                              onPressed: _confirmConsume,
+                              child: const Text('確認核銷'),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          TextButton(
+                            onPressed: () => setState(() {
+                              _prepared = null;
+                              _pendingCode = null;
+                            }),
+                            child: const Text('取消'),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
           if (_result != null)
             Padding(
               padding: const EdgeInsets.all(8),
               child: Text(_result!,
                   style: const TextStyle(
                       fontWeight: FontWeight.bold, fontSize: 16)),
+            ),
+          if (_lastRedemptionId != null)
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: OutlinedButton(
+                onPressed: _revoking ? null : _revoke,
+                child: Text(_revoking ? '撤销中…' : '撤销核銷（10 分鐘內）'),
+              ),
             ),
           Padding(
             padding: const EdgeInsets.all(16),
@@ -342,9 +447,9 @@ class _ScanScreenState extends State<ScanScreen> {
                 const SizedBox(width: 8),
                 ElevatedButton(
                   onPressed: () {
-                    if (_code.text.isNotEmpty) _scan(_code.text);
+                    if (_code.text.isNotEmpty) _prepare(_code.text);
                   },
-                  child: const Text('核銷'),
+                  child: const Text('預核銷'),
                 ),
               ],
             ),

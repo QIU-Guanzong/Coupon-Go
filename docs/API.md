@@ -53,13 +53,81 @@ Endpoint 名稱沿用 Coupon GO! 1.2.6 APK 逆向出的原始名稱（含原始�
 | 方法 | 路徑 | 說明 |
 |---|---|---|
 | POST | `/new-favorite-coupon?coupon_id=` | 領券 → Q Wallet，+10 分；重複領取 409 |
-| POST | `/store-scaned-qr-values?wallet_item_id=` | 生成 QR 碼 + 6 位兌換碼，15:00 有效 |
-| POST | `/new-scan-coupon` | 商戶掃碼核銷 `{code}`，+20 分；錯店/已用/過期/每日 200 次上限 |
+| POST | `/store-scaned-qr-values?wallet_item_id=` | 生成 QR 碼 + 6 位兌換碼，15:00 有效；每次出示輪換新碼（線 A 防截圖） |
+| POST | `/new-scan-coupon/prepare` | **線 A** 預核銷（唯讀查券，`{code}`）→ `can_redeem` + 5 分鐘 prepare token，不改券狀態 |
+| POST | `/new-scan-coupon` | 商戶掃碼核銷 `{code, idempotency_key?, prepare_token?}`，+20 分；錯店/已用/過期/每日 200 次上限；同 `idempotency_key` 重放只算一次（`duplicate: true`）；核銷後兌換碼失效 |
+| POST | `/redemptions/{id}/revoke` | **線 A** 核銷撤销（10 分鐘窗口內；券退回未使用、換新碼、+20 分沖回；超時 400） |
+| GET | `/vendor/redemptions/export?format=json\|csv` | **線 A** 商戶核銷記錄導出 / 匯總（對賬用；admin 看全部） |
 | GET | `/get-favorite-coupons-list?page=&status=&sortby=` | 錢包三狀態：1 未使用 / 2 已使用 / 3 已失效 |
 | GET | `/get-user-record-list` | 消費記錄 |
 | GET | `/points` | 積分餘額 + 明細 |
-| POST | `/review?wallet_item_id=` | 評價已用券，+15 分（一次） |
+| POST | `/review?wallet_item_id=` | 【舊版】評價已用券，+15 分（一次）；不寫評價記錄、不影響星級 |
 | POST | `/points/exchange?coupon_id=` | 9 積分兌換 9 分分券 |
+
+## 地圖（線 A）
+
+| 方法 | 路徑 | 說明 |
+|---|---|---|
+| GET | `/nearby-shops?lat=&lng=&radius_km=&sort=distance` | 附近商户（Haversine 直線距離升序；預設半徑 10 公里，上限 50；缺 lat/lng 400；無座標商户不列入） |
+| GET | `/shops/{id}/map` | 商户位置（經緯度、地址、Google Maps 搜尋 / 導航連結） |
+
+距離是直線距離，不是步行 / 駕車距離與耗時。地圖預設 Google Maps（香港可用）。
+
+## 評分 v1（F6 v1，線 B）
+
+三維 5 分評分（口味 / 環境 / 服務）+ 文字 + 晒圖（預留）+ 標籤。只允許
+已核銷用戶評價（`redemption_id` 即消費憑證；也可傳 `wallet_item_id`，
+取其最近一次核銷記錄）。每張券（每次核銷）只能評價一次；舊版
+`POST /review` 與新版共用 `wallet_items.reviewed` 去重標記。
+
+**積分與星級拆開（防誘導評價）**：`claim_points=true`（默認）時評價
+得 +15 分，但 `counts_toward_rating=false`，**不計入商户星級**；
+`claim_points=false` 時不得分，但 `counts_toward_rating=true`，計入
+星級聚合。`GET /shops/{id}/rating` 只聚合 `status=visible` 且
+`counts_toward_rating=true` 的評價；全是積分評價時
+`review_count=0`、`overall=null`。差評申訴後（`status=disputed`）
+的評價暫時退出聚合。
+
+| 方法 | 路徑 | 說明 |
+|---|---|---|
+| POST | `/reviews` | 寫評價。Body：`{wallet_item_id?, redemption_id?, taste 1–5, ambience 1–5, service 1–5, content ≤1000 字, images[] ≤9（晒圖連結，v1 預留欄位，無上傳接口）, tags[] ≤10, claim_points=true}`；二者至少傳一個。未核銷 400、重複評價 400、維度越界 422。返回 `{message, review, balance}` |
+| GET | `/shops/{id}/reviews?page=&has_images=` | 商户評價列表（僅 `visible`，按新到舊，20/頁）；`has_images=true` 只看有圖 |
+| GET | `/shops/{id}/rating` | 商户評分聚合 `{shop_id, overall, taste, ambience, service, review_count, updated_at}`；無計入星級評價時分數為 `null`、`review_count=0` |
+| POST | `/reviews/{id}/reply` | 商户回覆。該店商户或 admin 可調；Body `{reply ≤500 字}` |
+| POST | `/reviews/{id}/dispute` | 差評申訴。作者 / 該店商户 / admin 可調；Body `{reason}`；申訴後評價退出聚合 |
+
+評價對象示例：`{id, user_id, user_name, shop_id, redemption_id,
+wallet_item_id, taste, ambience, service, overall（三分均值）, content,
+images[], tags[], points_given, counts_toward_rating, status
+（visible/disputed/hidden）, reply_text, replied_at, created_at}`。
+
+## 後台 v1（F4 v1，線 B，`/api/v3/admin` 前綴）
+
+v1 角色：**只有 `admin` 單一角色**（`require_role("admin")`；入駐申請提交
+除外，任何登錄用戶可提交）。權限分權（審核員 / 客服、商户內店長 /
+收銀員 / 財務）留給 F 線（後台 v2）。看板全部**隻讀**，唯一寫操作是
+入駐申請的審核決定；每次審核決定寫入 `admin_audit_logs`。
+
+v1 **沒有**的接口（F 線再做）：訂單管理（等套餐線的 `orders` 表）、
+結算單 / 對賬 / 發票、橫幅 / 內容管理、用戶與角色管理（寫操作）。
+
+| 方法 | 路徑 | 說明 |
+|---|---|---|
+| POST | `/admin/merchant-applications` | 提交入駐申請（登錄即可）。Body：`{shop_name*, contact_name, phone, address, business_license, id_card, shop_photos[]（門店照片連結，v1 預留）, industry_license}`；同一用戶已有 `pending` 申請時 400。201 返回 `{message, application}` |
+| GET | `/admin/merchant-applications?status=&page=` | 入駐申請列表（admin；`status=pending/approved/rejected` 篩選） |
+| GET | `/admin/merchant-applications/{id}` | 入駐申請詳情（admin） |
+| POST | `/admin/merchant-applications/{id}/review` | 審核（admin）。Body `{approve: bool, reject_reason}`；拒絕時 `reject_reason` 必填；已審核的重審 400。通過時申請人 `role` 由 `customer` 升為 `vendor`。被拒絕後可重新提交**新**申請。返回 `{message, application}` |
+| GET | `/admin/dashboard` | 看板總覽（admin，隻讀）：`{total_users, total_shops, total_coupons, coupons_by_status, wallet_by_status{1/2/3}, total_redemptions, total_reviews, rated_reviews, pending_applications, pending_coupons}` |
+| GET | `/admin/shops?page=` | 商户列表（admin，隻讀）：`shop_out` + `vendor_email, coupon_count, redemption_count, rating_overall, review_count` |
+| GET | `/admin/coupons?status=&shop_id=&page=` | 券列表（admin，隻讀） |
+| GET | `/admin/redemptions?shop_id=&page=&format=` | 核銷記錄（admin，隻讀）：`{id, wallet_item_id, coupon_id, coupon_name, shop_id, shop_name, scanned_by_vendor_id, scanned_at}`；`format=csv` 返回 `text/csv` 附件（核銷對賬導出） |
+| GET | `/admin/users?role=&page=` | 用戶列表（admin，**隻讀**；v1 無改角色接口） |
+| GET | `/admin/audit-logs?page=` | 後台操作日誌（admin，隻讀）：`{id, admin_id, action（merchant_application.approve/reject）, target_type, target_id, detail, created_at}` |
+
+入駐申請對象：`{id, user_id, applicant_email, shop_name, contact_name,
+phone, address, business_license, id_card, shop_photos[],
+industry_license, status（pending/approved/rejected）, reject_reason,
+reviewed_by, reviewed_at, created_at}`。
 
 ## 搜尋 / 通知
 
