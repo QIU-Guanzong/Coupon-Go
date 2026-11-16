@@ -40,8 +40,8 @@ from ..models_line_f import (
     ReconciliationReport, Settlement, SettlementItem, ShopMember,
 )
 from ..permissions_line_f import (
-    ALL_ROLES, can_access_shop, get_shop_or_404, has_perm, require_perm,
-    role_permissions,
+    ALL_ROLES, can_access_shop, can_request_invoice_for_shop,
+    get_shop_or_404, has_perm, require_perm, role_permissions,
 )
 from .reviews import recompute_rating, review_out
 
@@ -566,7 +566,11 @@ def create_invoice(body: schemas_line_f.InvoiceCreateIn,
                    db: Session = Depends(get_db)):
     shop = get_shop_or_404(db, body.shop_id)
     if not has_perm(user, "invoices.write"):
-        if not can_access_shop(db, user, shop):
+        # F1: do NOT fall back to can_access_shop here — it is
+        # unconditionally True for auditor/finance, which let an auditor
+        # create invoices for any shop. Only the shop owner or a
+        # shop_members member may request without invoices.write.
+        if not can_request_invoice_for_shop(db, user, shop):
             raise HTTPException(status_code=403, detail="沒有權限為此商户申請發票")
     settlement = None
     if body.settlement_id is not None:

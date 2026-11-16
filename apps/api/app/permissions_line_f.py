@@ -88,6 +88,24 @@ def can_access_shop(db: Session, user: models.User, shop: models.Shop) -> bool:
     return member is not None
 
 
+def can_request_invoice_for_shop(db: Session, user: models.User,
+                                 shop: models.Shop) -> bool:
+    """Invoice-request fallback for callers WITHOUT invoices.write.
+
+    Only the shop owner or a shop_members member may request an invoice
+    for a shop. Unlike can_access_shop, platform roles get NO blanket
+    access here: auditor/finance/support must hold invoices.write
+    (finance does; auditor/support do not), otherwise an auditor could
+    POST an invoice for any shop. Used only by POST /admin/invoices.
+    """
+    if shop.vendor_id == user.id:
+        return True
+    member = (db.query(ShopMember)
+              .filter(ShopMember.shop_id == shop.id,
+                      ShopMember.user_id == user.id).first())
+    return member is not None
+
+
 def require_shop_access(shop_id: int):
     """Dependency: load the shop and check the caller may access it."""
     def _check(user: models.User = Depends(get_current_user),
