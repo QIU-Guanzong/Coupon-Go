@@ -6,7 +6,9 @@ deliberately insecure and must be overridden before any real deployment.
 """
 import os
 
-ENV = os.environ.get("COUPON_GO_ENV", "dev")
+ENV = os.environ.get("APP_ENV") or os.environ.get("COUPON_GO_ENV", "dev")
+# APP_ENV is the canonical name (FIX-1); ENV is the legacy alias.
+APP_ENV = ENV
 SECRET_KEY = os.environ.get("SECRET_KEY", "dev-only-insecure-secret-change-me")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = int(os.environ.get("ACCESS_TOKEN_EXPIRE_MINUTES", "10080"))  # 7 days
@@ -60,6 +62,19 @@ CASHBACK_MISSING_WINDOW_DAYS = int(os.environ.get("CASHBACK_MISSING_WINDOW_DAYS"
 STRIPE_SECRET_KEY = os.environ.get("STRIPE_SECRET_KEY", "")
 STRIPE_PUBLISHABLE_KEY = os.environ.get("STRIPE_PUBLISHABLE_KEY", "")
 STRIPE_WEBHOOK_SECRET = os.environ.get("STRIPE_WEBHOOK_SECRET", "")
+# Stripe webhook signature timestamp tolerance (seconds; Stripe default 300).
+STRIPE_WEBHOOK_TOLERANCE_SECONDS = int(
+    os.environ.get("STRIPE_WEBHOOK_TOLERANCE_SECONDS", "300"))
+
+
+def validate_payment_config():
+    """FIX-1 startup gate: outside dev the webhook endpoint secret must
+    be configured, otherwise a forged webhook could settle orders.
+    Reads module globals at call time so tests can monkeypatch them."""
+    if APP_ENV != "dev" and not STRIPE_WEBHOOK_SECRET:
+        raise RuntimeError(
+            "非開發環境必須配置 STRIPE_WEBHOOK_SECRET，否則拒絕啟動 "
+            "(FIX-1: webhook 簽名校驗無密鑰可驗）")
 # Pending-payment timeout (minutes): an unpaid order older than this is
 # lazily marked timeout and releases its stock reservation.
 PAYMENT_TIMEOUT_MINUTES = int(os.environ.get("PAYMENT_TIMEOUT_MINUTES", "15"))

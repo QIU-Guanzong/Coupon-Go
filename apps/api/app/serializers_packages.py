@@ -52,11 +52,18 @@ def package_out(db: Session, p: Package) -> dict:
 
 
 def payment_out(pay: Payment) -> dict:
+    # FIX-1: a simulator-minted pi_test_… id is forgeable and must never
+    # reach the client (it is the key to forging a webhook). The id stays
+    # in the DB server-side so the webhook can match it. Real Stripe
+    # pi_… ids are not simulator-minted and are left as-is.
+    ref = pay.gateway_ref or ""
+    if ref.startswith("pi_test_"):
+        ref = ""
     return {
         "id": pay.id,
         "order_id": pay.order_id,
         "gateway": pay.gateway,
-        "gateway_ref": pay.gateway_ref or "",
+        "gateway_ref": ref,
         "method": pay.method or "",
         "amount": float(pay.amount or 0),
         "currency": pay.currency or "HKD",

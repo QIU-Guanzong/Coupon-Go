@@ -123,8 +123,9 @@ class PurchaseOut(BaseModel):
 
 
 class ConfirmPaymentIn(BaseModel):
-    """Test-mode payment result (stands in for the Stripe webhook until
-    a real test key + webhook secret exist)."""
+    """Payment result supplied by the client. FIX-1: trusted only in
+    dev without a Stripe key; with a key the gateway is queried and
+    this outcome is ignored; outside dev without a key it is rejected."""
     payment_id: Optional[int] = None
     outcome: str  # succeeded | failed | timeout
     failure_message: str = ""

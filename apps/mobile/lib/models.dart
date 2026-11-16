@@ -223,6 +223,8 @@ class MerchantApplication {
   final String address;
   final String status;
   final String rejectReason;
+}
+
 /// Line D — one cashback earning (see /api/v3/cashback).
 class CashbackTransaction {
   CashbackTransaction.fromJson(Map<String, dynamic> j)

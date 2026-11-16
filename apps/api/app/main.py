@@ -49,6 +49,8 @@ def health():
 
 @app.on_event("startup")
 def startup():
+    # FIX-1 startup gate: non-dev without a webhook secret must not run.
+    config.validate_payment_config()
     init_db()
     if os.environ.get("SEED_ON_STARTUP", "1") == "1":
         from .database import SessionLocal

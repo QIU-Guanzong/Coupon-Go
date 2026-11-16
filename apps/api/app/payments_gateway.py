@@ -12,18 +12,19 @@ connected, no real keys are stored in the repo. Behaviour:
   and ``re_test_…`` refunds with the same shapes Stripe returns, so the
   order → payment → voucher chain works end-to-end without any secret.
 
-Payment confirmation in this build is explicit: the App (or a test)
-calls POST /orders/{id}/confirm-payment with the gateway outcome
-(succeeded / failed / timeout), which stands in for the Stripe webhook
-until a real test key + webhook endpoint secret exist. A minimal
-POST /payments/webhook accepts the same Stripe test-mode event shapes
-(payment_intent.succeeded / payment_intent.payment_failed) and routes
-them through the same apply function; without a webhook secret it only
-accepts events whose payment_intent id was minted by this adapter.
+Payment confirmation in this build is gateway-driven (FIX-1): with a
+Stripe test key configured, POST /orders/{id}/confirm-payment ignores
+the client-supplied outcome and settles only after retrieving the
+payment_intent status from Stripe; without a key the client-supplied
+outcome is accepted only when APP_ENV=dev. POST /payments/webhook
+verifies the Stripe-Signature against STRIPE_WEBHOOK_SECRET (with a
+timestamp tolerance) whenever a key or secret is configured, and is
+refused outright outside dev when neither is configured. The local
+simulator's ``pi_test_…`` ids are server-side only and are never
+returned to clients (see serializers_packages.payment_out).
 """
 import hashlib
 import hmac
-import os
 import time
 import uuid
 
@@ -57,9 +58,12 @@ def create_payment_intent(order_id: int, amount_hkd: float, method: str,
             raise GatewayError("只接受 Stripe 测试密钥（sk_test_…），拒绝正式密钥")
         return _stripe_create_intent(key, order_id, amount_hkd, method, currency)
     # Local test-mode simulator (no secret configured).
+    # NOTE (FIX-1): the client_secret is an opaque cs_test_ token that
+    # does NOT embed the pi_test_ id, so the forgeable intent id never
+    # reaches the client in any field.
     return {
         "gateway_ref": _sim_ref("pi", f"{order_id}:{method}"),
-        "client_secret": _sim_ref("pi", f"secret:{order_id}") + "_secret_test",
+        "client_secret": _sim_ref("cs", f"secret:{order_id}:{method}"),
         "status": "requires_payment_method",
         "method": method,
         "amount": round(float(amount_hkd), 2),
@@ -141,19 +145,69 @@ def _stripe_refund(key: str, gateway_ref: str, amount_hkd: float,
     }
 
 
-def verify_webhook_signature(payload: bytes, signature: str) -> bool:
-    """Test-mode webhook check: with a configured endpoint secret this
-    verifies the Stripe signature; without one it returns False and the
-    webhook route falls back to accepting only adapter-minted ids."""
-    secret = os.environ.get("STRIPE_WEBHOOK_SECRET", "")
-    if not secret:
-        return False
+def retrieve_payment_intent(gateway_ref: str) -> dict:
+    """FIX-1: ask the gateway for a payment_intent's current status.
+    Only meaningful with a Stripe test key configured; the simulator
+    keeps no server-side intent state, so without a key this raises.
+    Returns a Stripe-shaped dict: {gateway_ref, status, ...} where
+    status is Stripe's status (succeeded / canceled /
+    requires_payment_method / requires_action / processing / ...)."""
+    key = config.STRIPE_SECRET_KEY
+    if not key:
+        raise GatewayError("未配置 Stripe 密鑰，無法向網關查詢支付狀態")
+    if not _is_test_key(key):
+        raise GatewayError("只接受 Stripe 測試密鑰（sk_test_…），拒絕正式密鑰")
     try:
-        ts, _, sig = signature.partition(",v1=")
+        res = httpx.get(f"{STRIPE_API}/payment_intents/{gateway_ref}",
+                        auth=(key, ""), timeout=15)
+    except httpx.HTTPError as exc:
+        raise GatewayError(f"Stripe 測試網關連接失敗：{exc}")
+    if res.status_code >= 400:
+        raise GatewayError(f"Stripe 測試網關拒絕：{res.text[:200]}")
+    data = res.json()
+    return {
+        "gateway_ref": data.get("id", gateway_ref),
+        "status": data.get("status", ""),
+        "amount": data.get("amount"),
+        "currency": (data.get("currency") or "HKD").upper(),
+        "simulated": False,
+    }
+
+
+def verify_webhook_signature(payload: bytes, signature: str,
+                             tolerance_seconds: int = None) -> bool:
+    """FIX-1: verify a Stripe webhook signature.
+
+    Header format: ``t=<unix ts>,v1=<hex hmac>,...`` (possibly several
+    v1 values). The signed payload is ``f"{ts}.{raw_body}"`` HMAC-SHA256
+    with STRIPE_WEBHOOK_SECRET (read from config, not os.environ, so
+    tests can monkeypatch it). The timestamp must be within the
+    tolerance (default config.STRIPE_WEBHOOK_TOLERANCE_SECONDS, 300s).
+    Returns False when no secret is configured, the header is missing
+    or malformed, the timestamp is stale, or no v1 signature matches.
+    """
+    secret = config.STRIPE_WEBHOOK_SECRET
+    if not secret or not signature:
+        return False
+    if tolerance_seconds is None:
+        tolerance_seconds = config.STRIPE_WEBHOOK_TOLERANCE_SECONDS
+    try:
+        parts = {}
+        for item in signature.split(","):
+            key, _, value = item.partition("=")
+            if key and value:
+                parts.setdefault(key.strip(), []).append(value.strip())
+        ts_values = parts.get("t") or []
+        sig_values = parts.get("v1") or []
+        if not ts_values or not sig_values:
+            return False
+        ts = int(ts_values[0])
+        if abs(int(time.time()) - ts) > int(tolerance_seconds):
+            return False
         expected = hmac.new(secret.encode(), f"{ts}.".encode() + payload,
                             hashlib.sha256).hexdigest()
-        return hmac.compare_digest(expected, sig)
-    except Exception:
+        return any(hmac.compare_digest(expected, sig) for sig in sig_values)
+    except (ValueError, TypeError):
         return False
 
 

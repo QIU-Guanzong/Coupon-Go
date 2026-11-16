@@ -375,7 +375,9 @@ class _HomeShellState extends State<HomeShell> {
               Navigator.of(context).pop();
               Navigator.of(context).pushNamed('/bargain');
             },
-          ),            leading: const Icon(Icons.restaurant_menu,
+          ),
+          ListTile(
+            leading: const Icon(Icons.restaurant_menu,
                 color: CgColors.primary),
             title: const Text('套餐'),
             onTap: () {

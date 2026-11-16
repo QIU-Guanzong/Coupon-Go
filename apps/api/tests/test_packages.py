@@ -177,7 +177,9 @@ def test_purchase_pay_voucher_wallet_chain(client):
     assert order["payment_status"] == "pending"
     assert order["amount"] == 150 and order["payment_method"] == "fps"
     assert bought["payment"]["status"] == "requires_payment"
-    assert bought["payment"]["gateway_ref"].startswith("pi_test_")
+    # FIX-1: simulator pi_test_ ids are server-side only, never returned.
+    assert bought["payment"]["gateway_ref"] == ""
+    assert "pi_test_" not in bought.get("client_secret", "")
     assert bought["gateway"] == "stripe" and bought["test_mode"] is True
     assert _stock_left(client, pkg["id"]) == before - 1  # stock reserved
 
@@ -349,7 +351,17 @@ def test_webhook_succeeded_issues_voucher(client):
     h = _register_and_login(client, "pkg-webhook@example.com")
     pkg = _create_package(client, name="Webhook 套餐", stock=5)
     bought = _purchase(client, h, pkg["id"], method="fps")
-    ref = bought["payment"]["gateway_ref"]
+    # FIX-1: the pi_test_ id is no longer in the response; read it from
+    # the DB (server-side only). Dev without a secret still accepts an
+    # unsigned webhook; signed/non-dev paths are covered in
+    # test_fix1_payment_gateway.py.
+    from app.models_packages import Payment
+    db = TestingSession()
+    pay = (db.query(Payment)
+           .filter(Payment.order_id == bought["order"]["id"]).first())
+    ref = pay.gateway_ref
+    db.close()
+    assert ref.startswith("pi_test_")
     r = client.post("/api/v3/payments/webhook", json={
         "type": "payment_intent.succeeded",
         "data": {"object": {"id": ref}}})

@@ -4,10 +4,12 @@ Paths follow docs/FEATURE_RESEARCH_20261116.md §12 （套餐）:
   GET  /packages, GET /package-details, POST /packages/{id}/purchase,
   POST /packages/{id}/refund, GET /orders, GET /orders/{id}
 plus the payment lifecycle the report's F1-2/F1-3 requires:
-  POST /orders/{id}/confirm-payment (test-mode gateway result),
+  POST /orders/{id}/confirm-payment (FIX-1: gateway-verified result;
+  client-supplied outcome accepted only in dev without a key),
   POST /orders/{id}/retry-payment, POST /orders/{id}/cancel,
   POST /orders/{id}/refund, POST /orders/process-expired-refunds,
-  POST /payments/webhook (Stripe test-mode events).
+  POST /payments/webhook (Stripe test-mode events, FIX-1:
+  Stripe-Signature verified whenever a key/secret is configured).
 
 Flow: purchase (reserve stock, create order + payment attempt) →
 confirm succeeded → voucher (kind='package' coupon) into Q Wallet
@@ -26,7 +28,7 @@ the settlement (settlement_status='void', net 0).
 import json
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.orm import Session
 
 from .. import config, models
@@ -35,7 +37,7 @@ from ..deps import get_current_user, require_role
 from ..models_packages import Order, Package, Payment, Refund
 from ..payments_gateway import (
     GatewayError, create_payment_intent, refund_payment,
-    verify_webhook_signature,
+    retrieve_payment_intent, verify_webhook_signature,
 )
 from ..serializers_packages import (
     order_out, package_out, payment_out, refund_out,
@@ -440,7 +442,33 @@ def confirm_payment(order_id: int, body: sp.ConfirmPaymentIn,
         attempt = _latest_payment(db, order.id)
     if attempt is None:
         raise HTTPException(status_code=400, detail="訂單沒有待處理的支付")
-    _apply_payment_result(db, order, attempt, body.outcome,
+    # FIX-1: the client-supplied outcome is never trusted on its own.
+    # - Key configured: settle only after querying the gateway for the
+    #   payment_intent status; body.outcome is ignored entirely.
+    # - No key (local simulator): outcome is accepted only in dev;
+    #   any other env gets 403 (a buyer must not self-confirm payment).
+    if config.STRIPE_SECRET_KEY:
+        try:
+            intent = retrieve_payment_intent(attempt.gateway_ref)
+        except GatewayError as exc:
+            raise HTTPException(
+                status_code=502,
+                detail=f"支付網關暫時不可用，請稍後重試：{exc}")
+        status = intent.get("status", "")
+        if status == "succeeded":
+            outcome = "succeeded"
+        elif status == "canceled":
+            outcome = "failed"
+        else:
+            raise HTTPException(
+                status_code=400, detail="支付尚未成功，訂單仍為待支付")
+    elif config.APP_ENV != "dev":
+        raise HTTPException(
+            status_code=403,
+            detail="非開發環境不接受客戶端傳入的支付結果，請以網關通知為準")
+    else:
+        outcome = body.outcome
+    _apply_payment_result(db, order, attempt, outcome,
                           body.failure_message)
     db.refresh(order)
     messages = {
@@ -449,7 +477,7 @@ def confirm_payment(order_id: int, body: sp.ConfirmPaymentIn,
         "timeout": "支付逾時，可重試或取消訂單",
     }
     return {"order": order_out(db, order),
-            "message": messages.get(body.outcome, "")}
+            "message": messages.get(outcome, "")}
 
 
 @router.post("/orders/{order_id}/retry-payment")
@@ -597,11 +625,33 @@ def process_expired_refunds(
 
 # ---------- Stripe test-mode webhook ----------
 @router.post("/payments/webhook")
-def stripe_webhook(body: sp.WebhookIn, db: Session = Depends(get_db)):
-    """Stripe test-mode webhook (no signature secret configured in dev:
-    only events for adapter-minted payment_intent ids are accepted).
+async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
+    """Stripe webhook (FIX-1: signature-verified, gateway-sourced).
+
+    Verification runs on the RAW body before anything in it is trusted:
+    - STRIPE_SECRET_KEY and/or STRIPE_WEBHOOK_SECRET configured:
+      Stripe-Signature is mandatory and must verify (timestamp
+      tolerance); missing / wrong / stale signature -> 400.
+    - Neither configured: accepted unsigned only when APP_ENV=dev
+      (local simulator flow); any other env -> 400 outright.
     Maps payment_intent.succeeded / payment_intent.payment_failed onto
-    the same apply function as confirm-payment."""
+    the same apply function as confirm-payment. A replayed event for
+    an already-settled order returns 200 + ignored (idempotent; the
+    voucher issue path itself is also idempotent)."""
+    raw = await request.body()
+    signature = request.headers.get("Stripe-Signature", "")
+    if config.STRIPE_SECRET_KEY or config.STRIPE_WEBHOOK_SECRET:
+        if not verify_webhook_signature(raw, signature):
+            raise HTTPException(status_code=400, detail="webhook 簽名校驗失敗")
+    elif config.APP_ENV != "dev":
+        raise HTTPException(
+            status_code=400,
+            detail="非開發環境 webhook 須配置簽名密鑰")
+    try:
+        parsed = json.loads(raw) if raw else {}
+        body = sp.WebhookIn.model_validate(parsed)
+    except (ValueError, TypeError):
+        raise HTTPException(status_code=400, detail="webhook 內容不正確")
     data = body.data or {}
     obj = data.get("object") or {}
     gateway_ref = obj.get("id", "")
