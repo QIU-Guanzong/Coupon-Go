@@ -278,6 +278,15 @@ def withdraw(db: Session, user: models.User, amount, method: str,
     if user.name and user.name.strip() and account_name.strip() != user.name.strip():
         raise CashbackError("收款賬戶姓名須與註冊姓名一致")
     now = _now()
+    # FIX-3: lock the user row FIRST (SELECT ... FOR UPDATE on Postgres;
+    # a no-op on SQLite). Everything below — sweep, balance re-check,
+    # daily-limit check, FIFO consume — runs inside this transaction
+    # while the lock is held, so a second concurrent withdrawal blocks
+    # here and re-reads the balance only after this one commits.
+    # populate_existing() refreshes the already-loaded user row so the
+    # lock query is not satisfied from the identity map alone.
+    db.query(models.User).filter(models.User.id == user.id) \
+        .with_for_update().populate_existing().first()
     sweep_user(db, user.id, now)
     bal = balances(db, user.id)
     if amt > Decimal(str(bal["withdrawable_balance"])):

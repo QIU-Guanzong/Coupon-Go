@@ -86,8 +86,11 @@ def revoke_redemption(redemption_id: int,
                       vendor: models.User = Depends(
                           require_role("vendor", "admin")),
                       db: Session = Depends(get_db)):
-    red = db.query(models.Redemption).filter(
-        models.Redemption.id == redemption_id).first()
+    # FIX-3: lock the redemption row before the revoked_at check so a
+    # second concurrent revoke blocks here and sees revoked_at set.
+    red = (db.query(models.Redemption).filter(
+        models.Redemption.id == redemption_id)
+        .with_for_update().populate_existing().first())
     if red is None:
         raise HTTPException(status_code=404, detail="找不到此核銷記錄")
     if red.revoked_at is not None:

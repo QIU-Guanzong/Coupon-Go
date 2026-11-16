@@ -15,7 +15,8 @@ payment goes through app.payments_gateway (Stripe test mode).
 from datetime import datetime, timezone
 
 from sqlalchemy import (
-    Column, DateTime, ForeignKey, Integer, Numeric, String, Text,
+    CheckConstraint, Column, DateTime, ForeignKey, Integer, Numeric, String,
+    Text, UniqueConstraint,
 )
 
 from .database import Base
@@ -69,6 +70,13 @@ class Package(Base):
     status = Column(String(20), default="active", nullable=False)
     created_at = Column(DateTime, default=_now)
 
+    __table_args__ = (
+        # FIX-3 backstop: stock can never go below zero even if a row
+        # lock fails to serialise (e.g. SQLite ignores FOR UPDATE).
+        CheckConstraint("stock_left >= 0",
+                        name="ck_packages_stock_left_nonneg"),
+    )
+
 
 class Order(Base):
     """A paid package order. Free coupon claims never create orders."""
@@ -113,8 +121,18 @@ class Payment(Base):
 
 
 class Refund(Base):
-    """One refund record for an order (原路返回，1–3 个工作日到账）。"""
+    """One refund record for an order (原路返回，1–3 个工作日到账）。
+
+    FIX-3: one refund per (order, reason) — the UNIQUE is the
+    database-level backstop for the row lock in the refund path, so a
+    second concurrent refund of the same order for the same reason
+    cannot insert a second row even where FOR UPDATE is ignored.
+    """
     __tablename__ = "refunds"
+    __table_args__ = (
+        UniqueConstraint("order_id", "reason",
+                         name="uq_refunds_order_reason"),
+    )
     id = Column(Integer, primary_key=True)
     order_id = Column(Integer, ForeignKey("orders.id"), nullable=False)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)

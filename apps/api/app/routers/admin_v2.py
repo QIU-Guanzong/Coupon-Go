@@ -338,7 +338,10 @@ def pay_settlement(settlement_id: int,
                    user: models.User = Depends(
                        require_perm("settlements.write")),
                    db: Session = Depends(get_db)):
-    s = db.query(Settlement).filter(Settlement.id == settlement_id).first()
+    # FIX-3: lock the settlement row before the status check so a
+    # second concurrent pay blocks here and sees status == "paid".
+    s = (db.query(Settlement).filter(Settlement.id == settlement_id)
+         .with_for_update().populate_existing().first())
     if s is None:
         raise HTTPException(status_code=404, detail="找不到此結算單")
     if s.status != "approved":
@@ -567,8 +570,12 @@ def create_invoice(body: schemas_line_f.InvoiceCreateIn,
             raise HTTPException(status_code=403, detail="沒有權限為此商户申請發票")
     settlement = None
     if body.settlement_id is not None:
-        settlement = db.query(Settlement).filter(
-            Settlement.id == body.settlement_id).first()
+        # FIX-3: lock the settlement row before summing already-invoiced
+        # amounts, so a concurrent invoice for the same settlement
+        # blocks here and the cap is re-checked on fresh totals.
+        settlement = (db.query(Settlement).filter(
+            Settlement.id == body.settlement_id)
+            .with_for_update().populate_existing().first())
         if settlement is None:
             raise HTTPException(status_code=404, detail="找不到此結算單")
         if settlement.shop_id != shop.id:

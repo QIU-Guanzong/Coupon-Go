@@ -24,8 +24,8 @@ refundable.
 from datetime import datetime, timezone
 
 from sqlalchemy import (
-    Boolean, Column, DateTime, ForeignKey, Integer, Numeric, String, Text,
-    UniqueConstraint,
+    Boolean, CheckConstraint, Column, DateTime, ForeignKey, Integer, Numeric,
+    String, Text, UniqueConstraint,
 )
 from sqlalchemy.orm import relationship
 
@@ -59,6 +59,13 @@ class BargainCampaign(Base):
     status = Column(String(20), default="active", nullable=False)
     expires_at = Column(DateTime, nullable=False)  # campaign end
     created_at = Column(DateTime, default=_now)
+
+    __table_args__ = (
+        # FIX-3 backstop: same as packages.stock_left (see
+        # models_packages.Package).
+        CheckConstraint("stock_left >= 0",
+                        name="ck_bargain_campaigns_stock_left_nonneg"),
+    )
 
     shop = relationship("Shop")
     sessions = relationship("BargainSession", back_populates="campaign")

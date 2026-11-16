@@ -41,6 +41,7 @@ from decimal import ROUND_HALF_UP, Decimal
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from .. import models
@@ -185,8 +186,11 @@ def session_out(db: Session, s: BargainSession) -> dict:
 def _release_stock(db: Session, s: BargainSession):
     if not s.stock_locked:
         return
-    campaign = db.query(BargainCampaign).filter(
-        BargainCampaign.id == s.campaign_id).first()
+    # FIX-3: lock the campaign row so a release cannot lose an update
+    # against a concurrent start/purchase decrement.
+    campaign = (db.query(BargainCampaign)
+                .filter(BargainCampaign.id == s.campaign_id)
+                .with_for_update().populate_existing().first())
     if campaign and campaign.lock_stock:
         campaign.stock_left += 1
         if campaign.status == "sold_out":
@@ -304,8 +308,11 @@ def start_bargain(campaign_id: int,
                   user: models.User = Depends(get_current_user),
                   db: Session = Depends(get_db)):
     _require_customer(user)
-    campaign = db.query(BargainCampaign).filter(
-        BargainCampaign.id == campaign_id).first()
+    # FIX-3: lock the campaign row; the stock check below then reads
+    # the locked row, and a concurrent start blocks until commit.
+    campaign = (db.query(BargainCampaign).filter(
+        BargainCampaign.id == campaign_id)
+        .with_for_update().populate_existing().first())
     if campaign is None:
         raise HTTPException(status_code=404, detail="找不到此砍價活動")
     if campaign.status == "expired" or (
@@ -334,7 +341,13 @@ def start_bargain(campaign_id: int,
         campaign.stock_left -= 1
         if campaign.stock_left <= 0:
             campaign.status = "sold_out"
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        # FIX-3 backstop: the CHECK (stock_left >= 0) fired — the row
+        # lock did not serialise (SQLite ignores FOR UPDATE).
+        db.rollback()
+        raise HTTPException(status_code=400, detail="已售罄，先到先得")
     db.refresh(session)
     return {"message": "砍價已發起，分享給好友一起砍到底價",
             "payment_simulated": True,
@@ -418,14 +431,19 @@ def purchase_bargain(session_id: int,
                      db: Session = Depends(get_db)):
     _require_customer(user)
     s = _get_session_or_404(db, session_id)
+    # FIX-3: lock the session row (one purchase per session) and the
+    # campaign row (stock decrement below) before re-checking.
+    s = (db.query(BargainSession).filter(BargainSession.id == s.id)
+         .with_for_update().populate_existing().first())
     if s.user_id != user.id:
         raise HTTPException(status_code=403, detail="只有發起人可以下單")
     if s.status != "success":
         raise HTTPException(status_code=400, detail="還未砍到目標價，不能下單")
     if s.wallet_item_id is not None:
         raise HTTPException(status_code=409, detail="已下單生成套餐券")
-    campaign = db.query(BargainCampaign).filter(
-        BargainCampaign.id == s.campaign_id).first()
+    campaign = (db.query(BargainCampaign).filter(
+        BargainCampaign.id == s.campaign_id)
+        .with_for_update().populate_existing().first())
     shop = db.query(models.Shop).filter(models.Shop.id == campaign.shop_id).first()
     if not campaign.lock_stock:
         if campaign.stock_left <= 0:
@@ -453,7 +471,13 @@ def purchase_bargain(session_id: int,
     s.wallet_item_id = item.id
     s.stock_locked = False  # locked unit is now sold, no longer held
     refund = _add_refund(db, s, _money(s.paid_amount) - current, "price_cut")
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        # FIX-3 backstop: the CHECK (stock_left >= 0) fired — the row
+        # lock did not serialise (SQLite ignores FOR UPDATE).
+        db.rollback()
+        raise HTTPException(status_code=400, detail="已售罄，先到先得")
     db.refresh(item)
     return {"message": "成團！套餐券已存入 Q Wallet",
             "payment_simulated": True,

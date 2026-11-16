@@ -29,6 +29,7 @@ import json
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from .. import config, models
@@ -62,6 +63,17 @@ def _get_package(db: Session, package_id: int) -> Package:
     return pkg
 
 
+def _get_package_locked(db: Session, package_id: int) -> Package:
+    # FIX-3: lock the package row before the stock check so a second
+    # concurrent purchase/retry blocks here and re-reads stock_left
+    # only after this transaction commits.
+    pkg = (db.query(Package).filter(Package.id == package_id)
+           .with_for_update().populate_existing().first())
+    if pkg is None:
+        raise HTTPException(status_code=404, detail="找不到此套餐")
+    return pkg
+
+
 def _package_coupon(db: Session, package: Package):
     return (db.query(models.Coupon)
             .filter(models.Coupon.package_id == package.id,
@@ -83,7 +95,10 @@ def _sync_coupon_stock(db: Session, package: Package):
 def _release_stock(db: Session, order: Order):
     if order.package_id is None:
         return
-    pkg = db.query(Package).filter(Package.id == order.package_id).first()
+    # FIX-3: lock the package row so a release cannot lose an update
+    # against a concurrent purchase's decrement.
+    pkg = (db.query(Package).filter(Package.id == order.package_id)
+           .with_for_update().populate_existing().first())
     if pkg is not None:
         pkg.stock_left = min(pkg.stock_total, pkg.stock_left + 1)
         _sync_coupon_stock(db, pkg)
@@ -96,6 +111,20 @@ def _latest_payment(db: Session, order_id: int):
 
 def _get_order_for_user(db: Session, order_id: int, user_id: int) -> Order:
     order = db.query(Order).filter(Order.id == order_id).first()
+    if order is None:
+        raise HTTPException(status_code=404, detail="找不到此訂單")
+    if order.user_id != user_id:
+        raise HTTPException(status_code=403, detail="沒有權限")
+    return order
+
+
+def _get_order_for_user_locked(db: Session, order_id: int,
+                               user_id: int) -> Order:
+    # FIX-3: lock the order row before any check-then-write on it
+    # (refund status, retry state) so a concurrent request for the
+    # same order blocks here instead of passing the check twice.
+    order = (db.query(Order).filter(Order.id == order_id)
+             .with_for_update().populate_existing().first())
     if order is None:
         raise HTTPException(status_code=404, detail="找不到此訂單")
     if order.user_id != user_id:
@@ -181,7 +210,15 @@ def _apply_payment_result(db: Session, order: Order, attempt: Payment,
 
 def _process_refund(db: Session, order: Order, reason: str) -> Refund:
     """Execute a refund: gateway refund (原路返回） + void the voucher +
-    void the settlement. Caller validates policy and voucher state."""
+    void the settlement. Caller validates policy and voucher state.
+
+    FIX-3: the Refund row is claimed (inserted + flushed) BEFORE the
+    gateway call, while the caller holds the order row lock. The
+    (order_id, reason) UNIQUE then fires before any money moves if a
+    second refund slipped past the check (e.g. where FOR UPDATE is
+    ignored); on a gateway failure the whole transaction — claim row
+    included — rolls back.
+    """
     item = (db.query(models.WalletItem)
             .filter(models.WalletItem.order_id == order.id).first())
     if item is None or item.status != 1:
@@ -190,6 +227,16 @@ def _process_refund(db: Session, order: Order, reason: str) -> Refund:
                .filter(Payment.order_id == order.id,
                        Payment.status == "succeeded")
                .order_by(Payment.id.desc()).first())
+    refund = Refund(order_id=order.id, user_id=order.user_id,
+                    amount=order.paid_amount, reason=reason,
+                    status="refunded", gateway_ref="")
+    db.add(refund)
+    order.refund_status = "refunded"
+    try:
+        db.flush()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="此訂單已有退款記錄")
     gateway_ref = ""
     if attempt is not None and attempt.gateway_ref:
         try:
@@ -198,11 +245,7 @@ def _process_refund(db: Session, order: Order, reason: str) -> Refund:
             attempt.status = "refunded"
         except GatewayError as exc:
             raise HTTPException(status_code=502, detail=f"退款網關失敗：{exc}")
-    refund = Refund(order_id=order.id, user_id=order.user_id,
-                    amount=order.paid_amount, reason=reason,
-                    status="refunded", gateway_ref=gateway_ref)
-    db.add(refund)
-    order.refund_status = "refunded"
+    refund.gateway_ref = gateway_ref
     order.settlement_status = "void"
     order.net_amount = 0
     item.status = 3  # 退款后券作废，不可再核销
@@ -342,7 +385,9 @@ def purchase_package(package_id: int, body: sp.PurchaseIn,
                      db: Session = Depends(get_db)):
     if body.payment_method not in PAYMENT_METHODS:
         raise HTTPException(status_code=400, detail="支付方式須為 fps 或 card")
-    pkg = _get_package(db, package_id)
+    # FIX-3: lock the package row; the stock check below then reads
+    # the locked row, and a concurrent purchase blocks until commit.
+    pkg = _get_package_locked(db, package_id)
     if pkg.status != "active":
         raise HTTPException(status_code=400, detail="此套餐暫停發售")
     if pkg.valid_from > _now() or pkg.valid_to < _now():
@@ -364,37 +409,44 @@ def purchase_package(package_id: int, body: sp.PurchaseIn,
                 "訂單已存在，返回原訂單")
     if pkg.stock_left <= 0:
         raise HTTPException(status_code=400, detail="此套餐已售罄")
-    order = Order(
-        user_id=user.id, order_type="package", package_id=pkg.id,
-        amount=pkg.package_price, paid_amount=0,
-        payment_method=body.payment_method, payment_status="pending",
-        refund_status="none", settlement_status="pending",
-        commission_amount=0, net_amount=0, client_ref=body.client_ref or "")
-    db.add(order)
-    # Reserve one unit until the payment settles / fails / times out.
-    pkg.stock_left -= 1
-    _sync_coupon_stock(db, pkg)
-    db.flush()
     try:
-        intent = create_payment_intent(order.id, float(pkg.package_price),
-                                       body.payment_method)
-    except GatewayError as exc:
-        # Gateway unreachable before any attempt existed: drop the
-        # half-made order and release the reservation so a retry is clean.
-        db.delete(order)
-        pkg.stock_left += 1
+        order = Order(
+            user_id=user.id, order_type="package", package_id=pkg.id,
+            amount=pkg.package_price, paid_amount=0,
+            payment_method=body.payment_method, payment_status="pending",
+            refund_status="none", settlement_status="pending",
+            commission_amount=0, net_amount=0, client_ref=body.client_ref or "")
+        db.add(order)
+        # Reserve one unit until the payment settles / fails / times out.
+        pkg.stock_left -= 1
         _sync_coupon_stock(db, pkg)
+        db.flush()
+        try:
+            intent = create_payment_intent(order.id, float(pkg.package_price),
+                                           body.payment_method)
+        except GatewayError as exc:
+            # Gateway unreachable before any attempt existed: drop the
+            # half-made order and release the reservation so a retry is clean.
+            db.delete(order)
+            pkg.stock_left += 1
+            _sync_coupon_stock(db, pkg)
+            db.commit()
+            raise HTTPException(status_code=502,
+                                detail=f"支付網關暫時不可用，請稍後重試：{exc}")
+        attempt = Payment(
+            order_id=order.id, gateway="stripe",
+            gateway_ref=intent.get("gateway_ref", ""),
+            client_secret=intent.get("client_secret", ""),
+            method=body.payment_method, amount=pkg.package_price,
+            currency=intent.get("currency", "HKD"), status="requires_payment")
+        db.add(attempt)
         db.commit()
-        raise HTTPException(status_code=502,
-                            detail=f"支付網關暫時不可用，請稍後重試：{exc}")
-    attempt = Payment(
-        order_id=order.id, gateway="stripe",
-        gateway_ref=intent.get("gateway_ref", ""),
-        client_secret=intent.get("client_secret", ""),
-        method=body.payment_method, amount=pkg.package_price,
-        currency=intent.get("currency", "HKD"), status="requires_payment")
-    db.add(attempt)
-    db.commit()
+    except IntegrityError:
+        # FIX-3 backstop: the CHECK (stock_left >= 0) fired — the row
+        # lock did not serialise (SQLite ignores FOR UPDATE). The
+        # reservation never landed; report sold out instead of a 500.
+        db.rollback()
+        raise HTTPException(status_code=400, detail="此套餐已售罄")
     db.refresh(order)
     db.refresh(attempt)
     return _purchase_response(
@@ -484,13 +536,15 @@ def confirm_payment(order_id: int, body: sp.ConfirmPaymentIn,
 def retry_payment(order_id: int, body: sp.RetryPaymentIn,
                   user: models.User = Depends(get_current_user),
                   db: Session = Depends(get_db)):
-    order = _get_order_for_user(db, order_id, user.id)
+    # FIX-3: lock the order row (one retry at a time per order) and
+    # the package row (stock decrement below) before re-checking.
+    order = _get_order_for_user_locked(db, order_id, user.id)
     if order.payment_status not in ("failed", "timeout"):
         raise HTTPException(status_code=400, detail="只有支付失敗或逾時的訂單可以重試")
     method = body.payment_method or order.payment_method
     if method not in PAYMENT_METHODS:
         raise HTTPException(status_code=400, detail="支付方式須為 fps 或 card")
-    pkg = db.query(Package).filter(Package.id == order.package_id).first()
+    pkg = _get_package_locked(db, order.package_id) if order.package_id else None
     if pkg is None or pkg.stock_left <= 0:
         raise HTTPException(status_code=400, detail="此套餐已售罄，無法重試")
     previous_status = order.payment_status
@@ -498,25 +552,31 @@ def retry_payment(order_id: int, body: sp.RetryPaymentIn,
     order.payment_method = method
     pkg.stock_left -= 1
     _sync_coupon_stock(db, pkg)
-    db.flush()
     try:
-        intent = create_payment_intent(order.id, float(order.amount), method)
-    except GatewayError as exc:
-        # Restore the pre-retry state and release the reservation.
-        order.payment_status = previous_status
-        pkg.stock_left += 1
-        _sync_coupon_stock(db, pkg)
+        db.flush()
+        try:
+            intent = create_payment_intent(order.id, float(order.amount), method)
+        except GatewayError as exc:
+            # Restore the pre-retry state and release the reservation.
+            order.payment_status = previous_status
+            pkg.stock_left += 1
+            _sync_coupon_stock(db, pkg)
+            db.commit()
+            raise HTTPException(status_code=502,
+                                detail=f"支付網關暫時不可用，請稍後重試：{exc}")
+        attempt = Payment(
+            order_id=order.id, gateway="stripe",
+            gateway_ref=intent.get("gateway_ref", ""),
+            client_secret=intent.get("client_secret", ""),
+            method=method, amount=order.amount,
+            currency=intent.get("currency", "HKD"), status="requires_payment")
+        db.add(attempt)
         db.commit()
-        raise HTTPException(status_code=502,
-                            detail=f"支付網關暫時不可用，請稍後重試：{exc}")
-    attempt = Payment(
-        order_id=order.id, gateway="stripe",
-        gateway_ref=intent.get("gateway_ref", ""),
-        client_secret=intent.get("client_secret", ""),
-        method=method, amount=order.amount,
-        currency=intent.get("currency", "HKD"), status="requires_payment")
-    db.add(attempt)
-    db.commit()
+    except IntegrityError:
+        # FIX-3 backstop: the CHECK (stock_left >= 0) fired — the row
+        # lock did not serialise (SQLite ignores FOR UPDATE).
+        db.rollback()
+        raise HTTPException(status_code=400, detail="此套餐已售罄，無法重試")
     db.refresh(order)
     db.refresh(attempt)
     return _purchase_response(db, order, attempt,
@@ -572,7 +632,10 @@ def _refund_order_checked(db: Session, order: Order, reason: str) -> dict:
 def refund_order(order_id: int, body: sp.RefundIn,
                  user: models.User = Depends(get_current_user),
                  db: Session = Depends(get_db)):
-    order = _get_order_for_user(db, order_id, user.id)
+    # FIX-3: lock the order row; _refund_order_checked re-checks
+    # refund_status on the locked row before _process_refund calls
+    # the gateway, so a concurrent refund blocks here.
+    order = _get_order_for_user_locked(db, order_id, user.id)
     return _refund_order_checked(db, order, body.reason)
 
 
@@ -581,12 +644,15 @@ def refund_package(package_id: int, body: sp.RefundIn,
                    user: models.User = Depends(get_current_user),
                    db: Session = Depends(get_db)):
     pkg = _get_package(db, package_id)
+    # FIX-3: lock the newest paid, unrefunded order of this package so
+    # a concurrent refund of the same order blocks here.
     order = (db.query(Order)
              .filter(Order.user_id == user.id,
                      Order.package_id == pkg.id,
                      Order.payment_status == "paid",
                      Order.refund_status == "none")
-             .order_by(Order.id.desc()).first())
+             .order_by(Order.id.desc())
+             .with_for_update().first())
     if order is None:
         raise HTTPException(status_code=404, detail="沒有可退款的已支付訂單")
     return _refund_order_checked(db, order, body.reason)
