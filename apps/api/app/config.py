@@ -22,9 +22,8 @@ POINTS_REDEEM = int(os.environ.get("POINTS_REDEEM", "20"))     # 核銷 +20
 POINTS_REVIEW = int(os.environ.get("POINTS_REVIEW", "15"))     # 評價 +15
 
 # Google services (Places API + Google sign-in).
-# 【待更换】以下值目前暫用原 Coupon GO! 1.2.6 APK bundle 裡提取的舊憑據，
-# 只放在本地 infra/.env（不進倉庫、不推送），讓 Places 與 Google 登錄先跑起來。
-# 上線前必須換成自有新 Key / 新 Client ID，並給原 Key 加 API 限制、輪換原 Key。
+# 【待更换】凭据在本地 infra/.env 配置（不进仓库、不推送），
+# 上线前必须换成自有新 Key / 新 Client ID，并给 API Key 加 API 限制。
 GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY", "")
 GOOGLE_OAUTH_CLIENT_ID_1 = os.environ.get("GOOGLE_OAUTH_CLIENT_ID_1", "")
 GOOGLE_OAUTH_CLIENT_ID_2 = os.environ.get("GOOGLE_OAUTH_CLIENT_ID_2", "")

@@ -2,13 +2,11 @@
 
 > ⚠️ **Google 憑據：上線前必須換成自有新 Key / 新 Client ID**
 >
-> 目前 `infra/.env`（本地文件，**不進倉庫**）裡的 Google API Key 和 2 個 OAuth
-> Client ID，是暫時沿用原 Coupon GO! 1.2.6 APK bundle 裡提取的舊值，讓 Places
-> 接口和 Google 登錄先跑起來。上線前必須：
+> Google API Key 和 2 個 OAuth Client ID 在本地 `infra/.env` 配置（本地文件，**不進倉庫**）。上線前必須：
 >
 > 1. 在 Google Cloud 新建自己的項目，生成新的 API Key 和 OAuth Client ID；
-> 2. 把新值填進本地 `infra/.env`，替換舊值；
-> 3. 給原 API Key 加 API 限制（僅限 Places API），並輪換 / 作廢原 Key。
+> 2. 把新值填進本地 `infra/.env`；
+> 3. 給 API Key 加 API 限制（僅限 Places API）。
 >
 > 倉庫裡只有佔位符（`infra/.env.example`），**沒有任何真實 Key**。
 
@@ -31,7 +29,7 @@ API 是按逆向出的 endpoint 語義重新設計的。
 開發編造的，**不是真實商戶數據**，不要對外宣稱為真實商户。
 - **素材來源**：`apps/mobile/assets-packed/` 裡的 112 個圖片/字體文件來自
 Coupon GO! 1.2.6 APK 拆包，按 Miso（版權方陳述，**未獨立核實**）的指示
-放入倉庫；品牌素材待版權方提供後再替換。原 bundle 裡的 Google API Key /
+放入倉庫；品牌素材待版權方提供後再替換。Google API Key /
 OAuth Client ID 的**值絕不在倉庫裡**。
 
 ## 倉庫結構
