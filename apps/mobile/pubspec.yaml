@@ -1,5 +1,5 @@
 name: coupon_go
-description: "Coupon GO! — 優惠券平台（開發版重構；Flutter + FastAPI）"
+description: "Coupon GO! — 優惠券平台（Flutter + FastAPI）"
 publish_to: "none"
 version: 0.1.0+1
 
@@ -19,6 +19,7 @@ dependencies:
   # `flutter pub get` / `flutter analyze` / real-device build not run.
   url_launcher: ^6.3.0
   geolocator: ^13.0.0
+  image_picker: ^1.2.2
 
 dev_dependencies:
   flutter_test:

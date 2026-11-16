@@ -320,7 +320,7 @@ class CashbackWithdrawal {
   final DateTime? createdAt;
 
   String get statusText =>
-      status == 'paid' ? '已打款' : status == 'failed' ? '打款失敗' : '待打款';}
+      status == 'paid' ? '已到账' : status == 'failed' ? '失败' : '处理中';}
 /// Bargain 2C (line E): campaign / session / help / refund.
 /// Amounts are HKD; see apps/api/app/routers/bargain.py for the rules.
 class BargainCampaign {

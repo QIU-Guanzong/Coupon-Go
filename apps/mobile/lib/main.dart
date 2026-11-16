@@ -69,6 +69,15 @@ class _CouponGoAppState extends State<CouponGoApp> {
                     api: _api, onLogout: () => setState(() => _authed = false)));
           case '/guide':
             return MaterialPageRoute(builder: (_) => const GuideScreen());
+          case '/login':
+            // 返现页 401 时的登录入口：登录成功后回原界面。
+            return MaterialPageRoute(
+                builder: (routeContext) => AuthScreen(
+                    api: _api,
+                    onAuthed: () {
+                      setState(() => _authed = true);
+                      Navigator.of(routeContext).pop();
+                    }));
           case '/nearby': // line A: nearby shops (list + marker view)
             return MaterialPageRoute(
                 builder: (_) => NearbyScreen(api: _api));
@@ -255,6 +264,11 @@ class _HomeShellState extends State<HomeShell> {
                       QrShowScreen(api: widget.api, item: item))),
             )
           : AuthScreen(api: widget.api, onAuthed: widget.onAuthed),
+      // UI_SPEC §1：底部导航补「返现」。未登录时显示登录页，登录成功后
+      // onAuthed 回填 _authed，_index 不变，用户回到返现页。
+      widget.authed
+          ? CashbackScreen(api: widget.api)
+          : AuthScreen(api: widget.api, onAuthed: widget.onAuthed),
     ];
     return Scaffold(
       drawer: _drawer(),
@@ -299,6 +313,8 @@ class _HomeShellState extends State<HomeShell> {
           const BottomNavigationBarItem(
               icon: Icon(Icons.account_balance_wallet_outlined),
               label: 'Q Wallet'),
+          const BottomNavigationBarItem(
+              icon: Icon(Icons.payments_outlined), label: '返現'),
         ],
       ),
     );
