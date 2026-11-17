@@ -35,7 +35,8 @@ def _optional_user(db: Session, authorization: str = None):
 
 
 @router.get("/home")
-def get_home(db: Session = Depends(get_db)):
+def get_home(lat: float = Query(None), lng: float = Query(None),
+             db: Session = Depends(get_db)):
     active = _active_coupons(db)
     popular = active.order_by(models.Coupon.downloads.desc()).limit(10).all()
     week = active.order_by(models.Coupon.id.desc()).limit(10).all()
@@ -43,6 +44,10 @@ def get_home(db: Session = Depends(get_db)):
     recommended = active.order_by(models.Coupon.id).limit(10).all()
     limited = active.filter(models.Coupon.is_limited_time.is_(True)).all()
     shops = db.query(models.Shop).filter(models.Shop.is_approved.is_(True)).limit(10).all()
+    # Gap 10: distance_km on the home coupon lists, only when the
+    # caller sent a location (both lat and lng); otherwise null.
+    has_loc = lat is not None and lng is not None
+    loc = (lat, lng) if has_loc else (None, None)
     return {
         "banners": [
             {"image": "assets/images/bg_main.png", "title": "全新優惠券平台",
@@ -54,11 +59,11 @@ def get_home(db: Session = Depends(get_db)):
             {"id": c.id, "name": c.name, "name_en": c.name_en, "icon": c.icon}
             for c in db.query(models.Category).all()
         ],
-        "popular_coupons": [coupon_out(db, c) for c in popular],
-        "week_coupons": [coupon_out(db, c) for c in week],
-        "most_grab": [coupon_out(db, c) for c in most_grab],
-        "recommended": [coupon_out(db, c) for c in recommended],
-        "limited_time_coupons": [coupon_out(db, c) for c in limited],
+        "popular_coupons": [coupon_out(db, c, lat=loc[0], lng=loc[1]) for c in popular],
+        "week_coupons": [coupon_out(db, c, lat=loc[0], lng=loc[1]) for c in week],
+        "most_grab": [coupon_out(db, c, lat=loc[0], lng=loc[1]) for c in most_grab],
+        "recommended": [coupon_out(db, c, lat=loc[0], lng=loc[1]) for c in recommended],
+        "limited_time_coupons": [coupon_out(db, c, lat=loc[0], lng=loc[1]) for c in limited],
         "popular_merchants": [shop_out(db, s) for s in shops],
         "frequently_used_shops": [shop_out(db, s) for s in shops[:6]],
         "new_shops": [shop_out(db, s) for s in shops[:6]],

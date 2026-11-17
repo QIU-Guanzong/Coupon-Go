@@ -1,9 +1,11 @@
 """Serializers for line C (packages / orders / payments / refunds)."""
 import json
 
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from . import models
+from .models_line_b import Review, ShopRating
 from .models_packages import Order, Package, Payment, Refund
 
 REFUND_POLICY_TEXT = {
@@ -21,11 +23,108 @@ def _parse_json(raw, default):
         return default
 
 
-def package_out(db: Session, p: Package) -> dict:
+def _branch_out(b) -> dict:
+    # Same shape as home.shop_details / get-nearest-branchs.
+    return {"id": b.id, "branch_id": b.id, "shop_id": b.shop_id,
+            "branch_name": b.name, "address": b.address or "",
+            "phone": b.phone or ""}
+
+
+def _review_out(db: Session, r: Review) -> dict:
+    # Same shape as routers.reviews.review_out (kept inline here to
+    # avoid importing a router module from a serializer).
+    user = db.query(models.User).filter(models.User.id == r.user_id).first()
+    return {
+        "id": r.id, "user_id": r.user_id,
+        "user_name": user.name if user else "",
+        "shop_id": r.shop_id, "redemption_id": r.redemption_id,
+        "wallet_item_id": r.wallet_item_id,
+        "taste": r.taste, "ambience": r.ambience, "service": r.service,
+        "overall": r.overall, "content": r.content or "",
+        "images": r.images_list, "tags": r.tags_list,
+        "points_given": r.points_given,
+        "counts_toward_rating": r.counts_toward_rating,
+        "status": r.status, "reply_text": r.reply_text or "",
+        "replied_at": r.replied_at, "created_at": r.created_at,
+    }
+
+
+def package_out(db: Session, p: Package, user_id: int | None = None) -> dict:
     shop = db.query(models.Shop).filter(models.Shop.id == p.shop_id).first()
     original = float(p.original_price or 0)
     price = float(p.package_price or 0)
     save = max(0.0, original - price)
+    rules = _parse_json(p.usage_rules, {})
+    if not isinstance(rules, dict):
+        rules = {}
+    # Gap 10 — images: the package coupon template's image plus the
+    # shop image, de-duplicated, non-empty only. There is no separate
+    # package gallery table; no image is invented when both are empty.
+    images: list[str] = []
+    coupon = (db.query(models.Coupon)
+              .filter(models.Coupon.package_id == p.id,
+                      models.Coupon.kind == "package")
+              .first())
+    for src in (coupon.image if coupon else "",
+                shop.image if shop else ""):
+        if src and src not in images:
+            images.append(src)
+    # Gap 10 — branches: the shop's real Branch rows.
+    branches = (db.query(models.Branch)
+                .filter(models.Branch.shop_id == p.shop_id)
+                .order_by(models.Branch.id).all())
+    # Gap 10 — rating: the ShopRating aggregate (counted, visible
+    # reviews only — see routers.reviews.recompute_rating). None while
+    # the shop has no rating row / no counted review; never invented.
+    rating_row = db.query(ShopRating).filter(
+        ShopRating.shop_id == p.shop_id).first()
+    rating = None
+    if rating_row is not None:
+        rating = {"shop_id": rating_row.shop_id,
+                  "overall": rating_row.overall,
+                  "taste": rating_row.taste,
+                  "ambience": rating_row.ambience,
+                  "service": rating_row.service,
+                  "review_count": rating_row.review_count,
+                  "updated_at": rating_row.updated_at}
+    # Gap 10 — latest_reviews: newest visible reviews for the shop.
+    latest = (db.query(Review)
+              .filter(Review.shop_id == p.shop_id,
+                      Review.status == "visible")
+              .order_by(Review.created_at.desc(), Review.id.desc())
+              .limit(5).all())
+    # Gap 10 — limit_remaining / per_user_limit / time_slots /
+    # stackable: vendor-supplied via usage_rules (see
+    # schemas_packages.UsageRulesIn). There is no separate per-user
+    # limit table: with no per_user_limit configured, the binding
+    # remaining quantity is the stock itself, so limit_remaining is
+    # stock_left. With a limit, it is min(stock_left, limit - bought),
+    # where bought counts this user's non-cancelled orders for this
+    # package; for a guest caller bought is unknown, so the cap
+    # (min(stock_left, limit)) is returned.
+    per_user_limit = rules.get("per_user_limit")
+    if per_user_limit is not None:
+        try:
+            per_user_limit = int(per_user_limit)
+        except (TypeError, ValueError):
+            per_user_limit = None
+    if per_user_limit is None:
+        limit_remaining = p.stock_left
+    else:
+        bought = 0
+        if user_id is not None:
+            bought = int(db.query(func.coalesce(func.sum(Order.quantity), 0))
+                         .filter(Order.user_id == user_id,
+                                 Order.package_id == p.id,
+                                 Order.payment_status != "cancelled")
+                         .scalar() or 0)
+        limit_remaining = max(0, min(p.stock_left or 0,
+                                     per_user_limit - bought))
+    time_slots = rules.get("time_slots") or []
+    if not isinstance(time_slots, list):
+        time_slots = []
+    time_slots = [str(t) for t in time_slots]
+    stackable = rules.get("stackable")  # None = not stated by the vendor
     return {
         "id": p.id,
         "package_id": p.id,
@@ -41,13 +140,21 @@ def package_out(db: Session, p: Package) -> dict:
         "save_percent": round(save / original * 100, 1) if original else 0,
         "valid_from": p.valid_from,
         "valid_to": p.valid_to,
-        "usage_rules": _parse_json(p.usage_rules, {}),
+        "usage_rules": rules,
         "stock_total": p.stock_total,
         "stock_left": p.stock_left,
         "sold_count": max(0, (p.stock_total or 0) - (p.stock_left or 0)),
         "refund_policy": p.refund_policy,
         "refund_policy_text": REFUND_POLICY_TEXT.get(p.refund_policy, ""),
         "status": p.status,
+        "images": images,
+        "branches": [_branch_out(b) for b in branches],
+        "rating": rating,
+        "latest_reviews": [_review_out(db, r) for r in latest],
+        "limit_remaining": limit_remaining,
+        "time_slots": time_slots,
+        "stackable": stackable,
+        "per_user_limit": per_user_limit,
     }
 
 
@@ -80,17 +187,46 @@ def order_out(db: Session, o: Order) -> dict:
     shop = None
     if pkg:
         shop = db.query(models.Shop).filter(models.Shop.id == pkg.shop_id).first()
-    wallet_item_id = None
+    wallet_item = None
     if o.id:
-        item = (db.query(models.WalletItem)
-                .filter(models.WalletItem.order_id == o.id)
-                .first())
-        wallet_item_id = item.id if item else None
+        wallet_item = (db.query(models.WalletItem)
+                       .filter(models.WalletItem.order_id == o.id)
+                       .first())
+    wallet_item_id = wallet_item.id if wallet_item else None
     payments = (db.query(Payment).filter(Payment.order_id == o.id)
                 .order_by(Payment.id).all())
+    # Gap 10 — order_no: there is no stored order-number column; the
+    # number is derived deterministically from the order id, so it is
+    # stable and unique without inventing a separate sequence.
+    order_no = f"CG-{o.id:08d}" if o.id else ""
+    # Gap 10 — refund_amount: sum of this order's Refund rows whose
+    # gateway refund actually succeeded (status 'refunded'); 0 while
+    # no refund exists. Requested/rejected rows contribute nothing.
+    refund_amount = float(db.query(
+        func.coalesce(func.sum(Refund.amount), 0))
+        .filter(Refund.order_id == o.id,
+                Refund.status == "refunded").scalar() or 0)
+    # Gap 10 — voucher_redeemed: the order's voucher (WalletItem) is
+    # used (status 2) — the same fact the redeem path records.
+    voucher_redeemed = bool(wallet_item is not None and (
+        wallet_item.status == 2 or wallet_item.used_at is not None))
+    # Gap 10 — refundable: mirrors the manual-refund gate in
+    # routers.packages._refund_order_checked (paid + no refund yet +
+    # voucher still unused + policy 'anytime'). expiry_only /
+    # non_refundable, used/voided vouchers, and unpaid orders are
+    # not manually refundable.
+    refundable = False
+    if (o.payment_status == "paid" and o.refund_status == "none"
+            and wallet_item is not None and wallet_item.status == 1):
+        coupon = (db.query(models.Coupon).filter(
+            models.Coupon.id == wallet_item.coupon_id).first()
+            if wallet_item.coupon_id else None)
+        policy = (coupon.refund_policy if coupon else None) or "anytime"
+        refundable = policy == "anytime"
     return {
         "id": o.id,
         "order_id": o.id,
+        "order_no": order_no,
         "user_id": o.user_id,
         "order_type": o.order_type,
         "package_id": o.package_id,
@@ -102,6 +238,9 @@ def order_out(db: Session, o: Order) -> dict:
         "payment_method": o.payment_method or "",
         "payment_status": o.payment_status,
         "refund_status": o.refund_status,
+        "refund_amount": refund_amount,
+        "refundable": refundable,
+        "voucher_redeemed": voucher_redeemed,
         "settlement_status": o.settlement_status,
         "commission_amount": float(o.commission_amount or 0),
         "net_amount": float(o.net_amount or 0),

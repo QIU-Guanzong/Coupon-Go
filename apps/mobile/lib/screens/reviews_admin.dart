@@ -1,4 +1,7 @@
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
 
 import '../api_client.dart';
 import '../models.dart';
@@ -7,8 +10,12 @@ import '../widgets/widgets.dart';
 
 /// Line B screens: 3-dim review form + shop reviews (F6 v1) and the
 /// admin v1 management pages (F4 v1: onboarding review + read-only
-/// dashboard). No Flutter SDK is available on this machine, so this file
-/// has NOT been through `flutter analyze` or a real-device build.
+/// dashboard). Gap 9: helpful votes + server-side star distribution.
+/// Gap 11: the review form picks photos and uploads them through
+/// POST /uploads/review-images (see ApiClient.uploadReviewImages)
+/// instead of asking for image URLs. No Flutter SDK is available on
+/// this machine, so this file has NOT been through a real-device build
+/// (see the gap report for what is unverified).
 
 String _stars(int n) => '★' * n + '☆' * (5 - n);
 
@@ -19,8 +26,10 @@ List<String> _splitList(String raw) => raw
     .toList();
 
 /// Review form: opened from a used (status 2) wallet item. Three 1-5
-/// dimensions, text, tags, image URLs (reserved field — v1 has no upload
-/// endpoint, the URLs are stored as-is). The points checkbox is the
+/// dimensions, text, tags, photos. Gap 11: photos are picked from the
+/// camera roll (image_picker) and uploaded to
+/// POST /uploads/review-images first; the returned paths are sent as
+/// images[] to POST /reviews. The points checkbox is the
 /// points/stars split: taking the +15 points means the review does NOT
 /// count toward the shop rating.
 class ReviewFormScreen extends StatefulWidget {
@@ -42,15 +51,43 @@ class _ReviewFormScreenState extends State<ReviewFormScreen> {
   bool _claimPoints = true;
   final _content = TextEditingController();
   final _tags = TextEditingController();
-  final _images = TextEditingController();
+  // Gap 11: picked photos (bytes) awaiting upload; uploaded server
+  // paths are resolved at submit time via uploadReviewImages.
+  final List<Uint8List> _pickedBytes = [];
+  final List<String> _pickedNames = [];
   bool _submitting = false;
 
   @override
   void dispose() {
     _content.dispose();
     _tags.dispose();
-    _images.dispose();
     super.dispose();
+  }
+
+  Future<void> _pickImages() async {
+    const maxImages = 6;
+    if (_pickedBytes.length >= maxImages) {
+      showCgToast(context, '圖片最多 6 張');
+      return;
+    }
+    try {
+      final files = await ImagePicker().pickMultiImage();
+      if (files.isEmpty) return;
+      final take = files.take(maxImages - _pickedBytes.length).toList();
+      final bytes = <Uint8List>[];
+      final names = <String>[];
+      for (final f in take) {
+        bytes.add(await f.readAsBytes());
+        names.add(f.name);
+      }
+      if (!mounted) return;
+      setState(() {
+        _pickedBytes.addAll(bytes);
+        _pickedNames.addAll(names);
+      });
+    } catch (_) {
+      if (mounted) showCgToast(context, '未能打开相册，请重试');
+    }
   }
 
   Widget _dimRow(String label, int value, void Function(int) onPick) {
@@ -74,17 +111,19 @@ class _ReviewFormScreenState extends State<ReviewFormScreen> {
 
   Future<void> _submit() async {
     if (_submitting) return;
-    final images = _splitList(_images.text);
-    if (images.length > 6) {
-      showCgToast(context, '圖片最多 6 張');
-      return;
-    }
     if (_content.text.trim().length > 500) {
       showCgToast(context, '文字最多 500 字');
       return;
     }
     setState(() => _submitting = true);
     try {
+      // Gap 11: upload picked photos first; the server returns the
+      // /uploads/review-images/... paths to send as images[].
+      var images = <String>[];
+      if (_pickedBytes.isNotEmpty) {
+        final uploaded = await widget.api.uploadReviewImages(_pickedBytes);
+        images = uploaded.map((e) => '$e').toList();
+      }
       final data = await widget.api.submitReview(
         walletItemId: widget.item.id,
         redemptionId: widget.redemptionId,
@@ -157,12 +196,50 @@ class _ReviewFormScreenState extends State<ReviewFormScreen> {
                 border: OutlineInputBorder()),
           ),
           const SizedBox(height: 12),
-          TextField(
-            controller: _images,
-            decoration: const InputDecoration(
-                hintText: '圖片連結（用逗號分隔，最多 6 張）',
-                border: OutlineInputBorder()),
+          // Gap 11: pick photos from the camera roll; they are uploaded
+          // to POST /uploads/review-images on submit (no URL typing).
+          OutlinedButton.icon(
+            onPressed: _submitting ? null : _pickImages,
+            icon: const Icon(Icons.photo_library),
+            label: Text(_pickedBytes.isEmpty
+                ? '選擇圖片（最多 6 張）'
+                : '已選 ${_pickedBytes.length} 張（最多 6 張）'),
           ),
+          if (_pickedBytes.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: List.generate(_pickedBytes.length, (i) {
+                return Stack(
+                  children: [
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(8),
+                      child: Image.memory(_pickedBytes[i],
+                          width: 72, height: 72, fit: BoxFit.cover),
+                    ),
+                    Positioned(
+                      right: 0,
+                      top: 0,
+                      child: GestureDetector(
+                        onTap: () => setState(() {
+                          _pickedBytes.removeAt(i);
+                          _pickedNames.removeAt(i);
+                        }),
+                        child: Container(
+                          decoration: const BoxDecoration(
+                              color: Colors.black54,
+                              shape: BoxShape.circle),
+                          child: const Icon(Icons.close,
+                              size: 18, color: Colors.white),
+                        ),
+                      ),
+                    ),
+                  ],
+                );
+              }),
+            ),
+          ],
           const SizedBox(height: 8),
           CheckboxListTile(
             title: const Text('領取 +15 積分'),
@@ -206,11 +283,53 @@ class _ShopReviewsScreenState extends State<ShopReviewsScreen> {
   bool _loading = false;
   String? _error;
   String _sort = 'latest'; // latest | helpful
+  // Gap 9: vote results applied locally after a tap (the model is
+  // immutable); keys are review ids.
+  final Map<int, int> _helpfulCountOverrides = {};
+  final Map<int, bool> _helpedOverrides = {};
 
   @override
   void initState() {
     super.initState();
     _load();
+  }
+
+  int _helpfulCount(Review rev) =>
+      _helpfulCountOverrides[rev.id] ?? rev.helpfulCount;
+
+  bool _helpedByMe(Review rev) =>
+      _helpedOverrides[rev.id] ?? rev.helpedByMe;
+
+  Future<void> _vote(Review rev) async {
+    if (!widget.api.isLoggedIn) {
+      showCgToast(context, '请先登录再投票');
+      return;
+    }
+    final helpful = !_helpedByMe(rev);
+    try {
+      final res =
+          await widget.api.toggleHelpfulReview(rev.id, helpful);
+      if (!mounted) return;
+      setState(() {
+        _helpfulCountOverrides[rev.id] =
+            res['helpful_count'] as int? ?? _helpfulCount(rev);
+        _helpedOverrides[rev.id] =
+            res['helped_by_me'] as bool? ?? helpful;
+      });
+    } on ApiException catch (e) {
+      if (mounted) showCgToast(context, e.message);
+    }
+  }
+
+  /// Resolve a review image path to a loadable URL: absolute http(s)
+  /// URLs pass through, /uploads/... paths are prefixed with the API
+  /// base URL (Gap 11: the list returns server upload paths).
+  String _imageUrl(String path) {
+    if (path.startsWith('http://') || path.startsWith('https://')) {
+      return path;
+    }
+    if (path.startsWith('/')) return '${widget.api.baseUrl}$path';
+    return path;
   }
 
   Future<void> _load() async {
@@ -221,7 +340,7 @@ class _ShopReviewsScreenState extends State<ShopReviewsScreen> {
     try {
       final rating = await widget.api.shopRating(widget.shop.id);
       final list = await widget.api.shopReviews(widget.shop.id,
-          hasImages: _hasImagesOnly);
+          hasImages: _hasImagesOnly, sort: _sort);
       if (!mounted) return;
       setState(() {
         _rating = ShopRating.fromJson(rating);
@@ -241,31 +360,12 @@ class _ShopReviewsScreenState extends State<ShopReviewsScreen> {
     }
   }
 
-  List<Review> get _sortedReviews {
-    final list = List<Review>.of(_reviews);
-    if (_sort == 'helpful') {
-      // No helpful-vote field on the server yet: most useful is
-      // approximated by server helpful count, then带图, then longer text.
-      list.sort((a, b) {
-        final h = b.helpfulCount.compareTo(a.helpfulCount);
-        if (h != 0) return h;
-        final img = (b.images.isNotEmpty ? 1 : 0)
-            .compareTo(a.images.isNotEmpty ? 1 : 0);
-        if (img != 0) return img;
-        return b.content.length.compareTo(a.content.length);
-      });
-    }
-    return list; // server order is newest first
-  }
-
-  /// Star distribution over the reviews currently loaded (page 1).
+  /// Gap 9: star distribution from the server (ALL visible reviews),
+  /// never computed from the loaded page.
   Map<int, int> get _distribution {
-    final m = {5: 0, 4: 0, 3: 0, 2: 0, 1: 0};
-    for (final r in _reviews) {
-      final star = r.overall.round().clamp(1, 5);
-      m[star] = (m[star] ?? 0) + 1;
-    }
-    return m;
+    final d = _rating?.ratingDistribution;
+    if (d == null || d.isEmpty) return {5: 0, 4: 0, 3: 0, 2: 0, 1: 0};
+    return {for (var s = 1; s <= 5; s++) s: d[s] ?? 0};
   }
 
   Widget _distributionBar(int star, int count, int total) {
@@ -307,7 +407,8 @@ class _ShopReviewsScreenState extends State<ShopReviewsScreen> {
   Widget build(BuildContext context) {
     final r = _rating;
     final dist = _distribution;
-    final distTotal = _reviews.length;
+    // Gap 9: distribution is server-side over ALL visible reviews.
+    final distTotal = dist.values.fold<int>(0, (a, b) => a + b);
     return Scaffold(
       appBar: AppBar(title: Text('${widget.shop.name} · 評價')),
       body: Column(
@@ -335,12 +436,6 @@ class _ShopReviewsScreenState extends State<ShopReviewsScreen> {
                             ...[5, 4, 3, 2, 1].map((s) =>
                                 _distributionBar(
                                     s, dist[s] ?? 0, distTotal)),
-                            if (_total > distTotal)
-                              Text(
-                                  '星級分布按已載入的 $distTotal 條統計，共 $_total 條。',
-                                  style: const TextStyle(
-                                      color: CgColors.textSecondary,
-                                      fontSize: 12)),
                             const SizedBox(height: 4),
                             const Text('只有已核销的用户可以写评价。',
                                 style: TextStyle(
@@ -354,18 +449,25 @@ class _ShopReviewsScreenState extends State<ShopReviewsScreen> {
             padding: const EdgeInsets.symmetric(horizontal: 12),
             child: Row(
               children: [
-                const Text('評價列表'),
+                Text('評價列表（共 $_total 條）'),
                 const Spacer(),
                 ChoiceChip(
                   label: const Text('最新'),
                   selected: _sort == 'latest',
-                  onSelected: (_) => setState(() => _sort = 'latest'),
+                  onSelected: (_) {
+                    setState(() => _sort = 'latest');
+                    _load();
+                  },
                 ),
                 const SizedBox(width: 6),
                 ChoiceChip(
                   label: const Text('最有用'),
                   selected: _sort == 'helpful',
-                  onSelected: (_) => setState(() => _sort = 'helpful'),
+                  onSelected: (_) {
+                    // Gap 9: server sort by helpful_count.
+                    setState(() => _sort = 'helpful');
+                    _load();
+                  },
                 ),
                 const SizedBox(width: 6),
                 FilterChip(
@@ -417,9 +519,9 @@ class _ShopReviewsScreenState extends State<ShopReviewsScreen> {
                         : RefreshIndicator(
                             onRefresh: _load,
                             child: ListView.builder(
-                              itemCount: _sortedReviews.length,
+                              itemCount: _reviews.length,
                               itemBuilder: (_, i) {
-                                final rev = _sortedReviews[i];
+                                final rev = _reviews[i];
                                 return Card(
                                   margin:
                                       const EdgeInsets.fromLTRB(12, 8, 12, 0),
@@ -442,13 +544,53 @@ class _ShopReviewsScreenState extends State<ShopReviewsScreen> {
                                                 const EdgeInsets.only(top: 4),
                                             child: Text(rev.content),
                                           ),
+                                        // Gap 11: thumbnails of the
+                                        // uploaded review images.
                                         if (rev.images.isNotEmpty)
                                           Padding(
                                             padding:
-                                                const EdgeInsets.only(top: 4),
-                                            child: Text(
-                                                '有圖 ×${rev.images.length}'),
+                                                const EdgeInsets.only(top: 8),
+                                            child: Wrap(
+                                              spacing: 8,
+                                              runSpacing: 8,
+                                              children: rev.images
+                                                  .map((p) => ClipRRect(
+                                                        borderRadius:
+                                                            BorderRadius
+                                                                .circular(8),
+                                                        child: Image.network(
+                                                          _imageUrl(p),
+                                                          width: 72,
+                                                          height: 72,
+                                                          fit: BoxFit.cover,
+                                                          errorBuilder: (_, __,
+                                                                  ___) =>
+                                                              const SizedBox(
+                                                            width: 72,
+                                                            height: 72,
+                                                            child: Icon(Icons
+                                                                .broken_image),
+                                                          ),
+                                                        ),
+                                                      ))
+                                                  .toList(),
+                                            ),
                                           ),
+                                        // Gap 9: helpful vote toggle.
+                                        Align(
+                                          alignment: Alignment.centerRight,
+                                          child: TextButton.icon(
+                                            onPressed: () => _vote(rev),
+                                            icon: Icon(
+                                                _helpedByMe(rev)
+                                                    ? Icons.thumb_up
+                                                    : Icons.thumb_up_outlined,
+                                                size: 18),
+                                            label: Text(_helpedByMe(rev)
+                                                ? '已投有用 (${_helpfulCount(rev)})'
+                                                : '有用 (${_helpfulCount(rev)})'),
+                                          ),
+                                        ),
                                         if (rev.tags.isNotEmpty)
                                           Text(
                                               '標籤：${rev.tags.join('、')}'),

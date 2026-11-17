@@ -196,7 +196,9 @@ class Review {
         status = j['status'] as String? ?? '',
         replyText = j['reply_text'] as String? ?? '',
         createdAt = DateTime.tryParse(j['created_at'] as String? ?? ''),
-        helpfulCount = j['helpful_count'] as int? ?? 0;
+        helpfulCount = j['helpful_count'] as int? ?? 0,
+        // Gap 9: whether the current user voted this review helpful.
+        helpedByMe = j['helped_by_me'] as bool? ?? false;
 
   final int id;
   final String userName;
@@ -213,7 +215,8 @@ class Review {
   final String status;
   final String replyText;
   final DateTime? createdAt;
-  final int helpfulCount; // UI_SPEC §7 "最有用" sort; 0 until backend sends it
+  final int helpfulCount; // Gap 9: server-side vote count, drives "最有用"
+  final bool helpedByMe; // Gap 9: current user already voted this review
 }
 
 /// Line B: aggregated shop rating; overall is null while no review
@@ -225,7 +228,13 @@ class ShopRating {
         taste = (j['taste'] as num?)?.toDouble(),
         ambience = (j['ambience'] as num?)?.toDouble(),
         service = (j['service'] as num?)?.toDouble(),
-        reviewCount = j['review_count'] as int? ?? 0;
+        reviewCount = j['review_count'] as int? ?? 0,
+        // Gap 9: server-side star distribution over ALL visible reviews
+        // (keys "1".."5"); never computed from the loaded page.
+        ratingDistribution = ((j['rating_distribution'] as Map?)
+                ?.map((k, v) => MapEntry(int.tryParse('$k') ?? 0,
+                    (v as num?)?.toInt() ?? 0)) ??
+            {});
 
   final int shopId;
   final double? overall;
@@ -233,6 +242,7 @@ class ShopRating {
   final double? ambience;
   final double? service;
   final int reviewCount;
+  final Map<int, int> ratingDistribution;
 }
 
 /// Line B: a merchant onboarding application (admin v1).

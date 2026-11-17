@@ -117,7 +117,15 @@ class ApiClient {
           body: {'email': email, 'code': code, 'purpose': purpose});
 
   // ---- discovery ----
-  Future<Map<String, dynamic>> home() async => get('/home');
+  // Gap 10: /home accepts an optional location; when lat/lng are
+  // sent, every home coupon carries distance_km (Haversine) and the
+  // coupon card shows it via Coupon.distanceText. Without a location
+  // the server returns distance_km null and the row stays hidden.
+  Future<Map<String, dynamic>> home({double? lat, double? lng}) async =>
+      get('/home', query: {
+        if (lat != null) 'lat': '$lat',
+        if (lng != null) 'lng': '$lng',
+      });
   Future<List<dynamic>> limitedTime() async =>
       (await get('/get-limited-time-coupons'))['coupons'] as List<dynamic>;
   Future<List<dynamic>> mostGrab() async =>
@@ -178,13 +186,20 @@ class ApiClient {
         'claim_points': claimPoints,
       });
   Future<Map<String, dynamic>> shopReviews(int shopId,
-          {int page = 1, bool hasImages = false}) async =>
+          {int page = 1, bool hasImages = false, String sort = 'latest'}) async =>
       get('/shops/$shopId/reviews', query: {
         'page': '$page',
         if (hasImages) 'has_images': 'true',
+        // Gap 9: sort=helpful is a real server sort by helpful_count.
+        if (sort == 'helpful') 'sort': 'helpful',
       });
   Future<Map<String, dynamic>> shopRating(int shopId) async =>
       get('/shops/$shopId/rating');
+  // Gap 9: vote / cancel a helpful vote on a review. Returns
+  // {review_id, helpful_count, helped_by_me}; one vote per user.
+  Future<Map<String, dynamic>> toggleHelpfulReview(
+          int reviewId, bool helpful) async =>
+      post('/reviews/$reviewId/helpful', body: {'helpful': helpful});
   Future<Map<String, dynamic>> replyReview(int reviewId, String reply) =>
       post('/reviews/$reviewId/reply', body: {'reply': reply});
   Future<Map<String, dynamic>> disputeReview(int reviewId, String reason) =>

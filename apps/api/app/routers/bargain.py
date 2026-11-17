@@ -56,7 +56,7 @@ from sqlalchemy.orm import Session
 
 from .. import models
 from ..database import get_db
-from ..deps import get_current_user, require_role
+from ..deps import get_current_user, get_optional_user, require_role
 from ..models_bargain import (
     BargainCampaign, BargainHelp, BargainRefund, BargainSession,
 )
@@ -120,6 +120,29 @@ def _require_customer(user: models.User) -> models.User:
 # ---- serializers ----
 def campaign_out(db: Session, c: BargainCampaign) -> dict:
     shop = db.query(models.Shop).filter(models.Shop.id == c.shop_id).first()
+    # Gap 10 — image: the linked package's coupon template image when
+    # the campaign is tied to a package, else the shop image. There is
+    # no campaign image column; "" when neither exists.
+    image = ""
+    if c.package_id:
+        coupon = (db.query(models.Coupon)
+                  .filter(models.Coupon.package_id == c.package_id,
+                          models.Coupon.kind == "package").first())
+        if coupon is not None and coupon.image:
+            image = coupon.image
+    if not image and shop is not None:
+        image = shop.image or ""
+    # Gap 10 — helper_count: distinct people who have helped any
+    # session of this campaign (BargainHelp rows, not sessions).
+    helper_count = (db.query(BargainHelp.helper_user_id)
+                    .join(BargainSession,
+                          BargainSession.id == BargainHelp.session_id)
+                    .filter(BargainSession.campaign_id == c.id)
+                    .distinct().count())
+    # Gap 10 — seconds_left: campaign expiry countdown, 0 once ended.
+    seconds_left = 0
+    if c.expires_at:
+        seconds_left = max(0, int((c.expires_at - _now()).total_seconds()))
     return {
         "id": c.id, "campaign_id": c.id,
         "package_id": c.package_id,
@@ -134,6 +157,9 @@ def campaign_out(db: Session, c: BargainCampaign) -> dict:
         "duration_minutes": c.duration_minutes,
         "lock_stock": c.lock_stock,
         "status": c.status,
+        "image": image,
+        "helper_count": helper_count,
+        "seconds_left": seconds_left,
         "expires_at": c.expires_at.isoformat() if c.expires_at else None,
         "created_at": c.created_at.isoformat() if c.created_at else None,
     }
@@ -159,17 +185,42 @@ def _refund_out(r: BargainRefund) -> dict:
     }
 
 
-def session_out(db: Session, s: BargainSession) -> dict:
+def session_out(db: Session, s: BargainSession,
+                user_id: int | None = None) -> dict:
     campaign = db.query(BargainCampaign).filter(
         BargainCampaign.id == s.campaign_id).first()
     seconds_left = 0
     if s.expires_at:
         seconds_left = max(0, int((s.expires_at - _now()).total_seconds()))
+    # Gap 10 — cut_amount_total: original price minus current price,
+    # both server-side values (the sum of the BargainHelp cuts).
+    original = (float(campaign.original_price) if campaign
+                else float(s.paid_amount))
+    current = float(s.current_price)
+    cut_amount_total = round(max(0.0, original - current), 2)
+    # Gap 10 — remaining_amount: current price minus the floor price,
+    # floored at 0 (how much more must be cut to reach the floor).
+    floor = (float(campaign.floor_price) if campaign
+             else float(s.target_price))
+    remaining_amount = round(max(0.0, current - floor), 2)
+    # Gap 10 — is_owner / already_helped need the caller: None /
+    # False for guests (no identity to compare against).
+    is_owner = None if user_id is None else (user_id == s.user_id)
+    already_helped = False
+    if user_id is not None:
+        already_helped = (db.query(BargainHelp)
+                          .filter(BargainHelp.session_id == s.id,
+                                  BargainHelp.helper_user_id == user_id)
+                          .first() is not None)
     return {
         "id": s.id, "session_id": s.id,
         "campaign_id": s.campaign_id,
         "campaign": campaign_out(db, campaign) if campaign else None,
         "user_id": s.user_id,
+        "is_owner": is_owner,
+        "already_helped": already_helped,
+        "cut_amount_total": cut_amount_total,
+        "remaining_amount": remaining_amount,
         "current_price": float(s.current_price),
         "target_price": float(s.target_price),
         "floor_price": float(campaign.floor_price) if campaign else float(s.target_price),
@@ -402,13 +453,14 @@ def start_bargain(campaign_id: int,
     db.refresh(session)
     return {"message": "砍價已發起，分享給好友一起砍到底價",
             "payment_simulated": True,
-            "session": session_out(db, session)}
+            "session": session_out(db, session, user_id=user.id)}
 
 
 @router.get("/bargain-sessions/{session_id}")
-def get_session(session_id: int, db: Session = Depends(get_db)):
+def get_session(session_id: int, db: Session = Depends(get_db),
+                user: models.User | None = Depends(get_optional_user)):
     s = _get_session_or_404(db, session_id)
-    return {"session": session_out(db, s)}
+    return {"session": session_out(db, s, user_id=user.id if user else None)}
 
 
 @router.get("/bargain-my-sessions")
@@ -419,7 +471,8 @@ def my_sessions(user: models.User = Depends(get_current_user),
                 .order_by(BargainSession.id.desc()).all())
     for s in sessions:
         settle_session(db, s)
-    return {"sessions": [session_out(db, s) for s in sessions]}
+    return {"sessions": [session_out(db, s, user_id=user.id)
+                         for s in sessions]}
 
 
 @router.post("/bargain-sessions/{session_id}/help")
@@ -473,7 +526,7 @@ def help_bargain(session_id: int, body: HelpIn | None = None,
     return {"message": "助力成功" if s.status == "active" else "砍價成功！可以底價拿套餐了",
             "cut_amount": float(cut),
             "is_new_user_bonus": is_new,
-            "session": session_out(db, s)}
+            "session": session_out(db, s, user_id=user.id)}
 
 
 @router.post("/bargain-sessions/{session_id}/purchase")
@@ -536,7 +589,7 @@ def purchase_bargain(session_id: int,
             "coupon_id": coupon.id,
             "final_price": float(current),
             "refund": _refund_out(refund) if refund else None,
-            "session": session_out(db, s)}
+            "session": session_out(db, s, user_id=user.id)}
 
 
 @router.post("/bargain/refunds/{refund_id}/retry")

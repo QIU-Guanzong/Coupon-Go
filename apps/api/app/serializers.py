@@ -2,9 +2,11 @@
 from sqlalchemy.orm import Session
 
 from . import models
+from .geo import haversine_km
 
 
-def coupon_out(db: Session, c: models.Coupon, user_id=None):
+def coupon_out(db: Session, c: models.Coupon, user_id=None,
+               lat: float | None = None, lng: float | None = None):
     shop = db.query(models.Shop).filter(models.Shop.id == c.shop_id).first()
     vendor = db.query(models.User).filter(models.User.id == c.vendor_id).first()
     fav = False
@@ -16,6 +18,17 @@ def coupon_out(db: Session, c: models.Coupon, user_id=None):
             .first()
             is not None
         )
+    # Gap 10: straight-line distance from the caller's location to the
+    # coupon's shop; None when no location was sent or the shop has no
+    # coordinates (the client hides the distance row then).
+    distance_km = None
+    if lat is not None and lng is not None:
+        shop_for_dist = shop
+        if shop_for_dist is not None and shop_for_dist.latitude is not None \
+                and shop_for_dist.longitude is not None:
+            distance_km = round(haversine_km(
+                lat, lng, float(shop_for_dist.latitude),
+                float(shop_for_dist.longitude)), 2)
     return {
         "id": c.id,
         "coupon_id": c.id,
@@ -41,6 +54,7 @@ def coupon_out(db: Session, c: models.Coupon, user_id=None):
         "status": c.status,
         "additional_terms": c.additional_terms or "",
         "is_coupon_favorite": fav,
+        "distance_km": distance_km,
     }
 
 

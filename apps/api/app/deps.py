@@ -18,9 +18,34 @@ def get_current_user(
     payload = security.decode_token(creds.credentials)
     if payload is None:
         raise HTTPException(status_code=401, detail="登錄已失效，請重新登錄")
-    user = db.query(models.User).filter(models.User.id == int(payload["sub"])).first()
+    try:
+        user = db.query(models.User).filter(
+            models.User.id == int(payload["sub"])).first()
+    except (KeyError, TypeError, ValueError):
+        return None
     if user is None or not user.is_active:
         raise HTTPException(status_code=401, detail="帳戶不存在或已停用")
+    return user
+
+
+def get_optional_user(
+    creds: HTTPAuthorizationCredentials = Depends(bearer),
+    db: Session = Depends(get_db),
+) -> models.User | None:
+    """Current user when a valid Bearer token is present, else None.
+
+    For public endpoints that personalise one field (e.g. a review's
+    helped_by_me) without requiring login. An invalid/expired token is
+    treated as anonymous, never an error, on these endpoints.
+    """
+    if creds is None:
+        return None
+    payload = security.decode_token(creds.credentials)
+    if payload is None:
+        return None
+    user = db.query(models.User).filter(models.User.id == int(payload["sub"])).first()
+    if user is None or not user.is_active:
+        return None
     return user
 
 

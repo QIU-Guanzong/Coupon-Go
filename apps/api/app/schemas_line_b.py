@@ -42,6 +42,9 @@ class ReviewOut(BaseModel):
     tags: List[str] = []
     points_given: bool = False
     counts_toward_rating: bool = False
+    # Gap 9: server-side helpful votes + whether the caller voted.
+    helpful_count: int = 0
+    helped_by_me: bool = False
     status: str
     reply_text: str = ""
     replied_at: Optional[datetime] = None
@@ -49,6 +52,12 @@ class ReviewOut(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class HelpfulVoteIn(BaseModel):
+    """Gap 9: helpful=True votes (idempotent, one per user);
+    helpful=False cancels the caller's vote."""
+    helpful: bool = True
 
 
 class ReviewReplyIn(BaseModel):

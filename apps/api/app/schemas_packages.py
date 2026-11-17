@@ -19,6 +19,11 @@ class UsageRulesIn(BaseModel):
     need_booking: bool = False
     includes: List[str] = []
     excludes: List[str] = []
+    # Gap 10: vendor-supplied detail fields, stored in the same
+    # usage_rules JSON (no new column). Absent = unknown / no slots.
+    time_slots: List[str] = []
+    stackable: Optional[bool] = None
+    per_user_limit: Optional[int] = Field(default=None, ge=1)
 
 
 class PackageCreateIn(BaseModel):
@@ -60,6 +65,15 @@ class PackageOut(BaseModel):
     refund_policy: str
     refund_policy_text: str = ""
     status: str
+    # Gap 10: detail top-ups (see serializers_packages.package_out).
+    images: List[str] = []
+    branches: List[dict] = []
+    rating: Optional[dict] = None
+    latest_reviews: List[dict] = []
+    limit_remaining: Optional[int] = None
+    time_slots: List[str] = []
+    stackable: Optional[bool] = None
+    per_user_limit: Optional[int] = None
 
     class Config:
         from_attributes = True
@@ -110,6 +124,11 @@ class OrderOut(BaseModel):
     created_at: datetime
     paid_at: Optional[datetime] = None
     payments: List[PaymentOut] = []
+    # Gap 10: order top-ups (see serializers_packages.order_out).
+    order_no: str = ""
+    refund_amount: float = 0
+    refundable: bool = False
+    voucher_redeemed: bool = False
 
     class Config:
         from_attributes = True

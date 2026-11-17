@@ -22,6 +22,7 @@ from datetime import datetime, timezone
 
 from sqlalchemy import (
     Boolean, Column, DateTime, Float, ForeignKey, Integer, String, Text,
+    UniqueConstraint,
 )
 
 from .database import Base
@@ -81,6 +82,25 @@ class Review(Base):
     @property
     def tags_list(self):
         return _json_list(self.tags)
+
+
+class ReviewHelpfulVote(Base):
+    """Gap 9: one "helpful" vote per (review, user).
+
+    A user votes at most once per review (unique constraint); voting
+    again is a no-op and cancelling deletes the row. The count is
+    derived from this table (no denormalised counter to drift).
+    """
+    __tablename__ = "review_helpful_votes"
+    id = Column(Integer, primary_key=True)
+    review_id = Column(Integer, ForeignKey("reviews.id"), nullable=False)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    created_at = Column(DateTime, default=_now)
+
+    __table_args__ = (
+        UniqueConstraint("review_id", "user_id",
+                         name="uq_review_helpful_vote"),
+    )
 
 
 class ShopRating(Base):

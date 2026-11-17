@@ -248,7 +248,8 @@ class SubscriptionPlan(Base):
 # create_all and Alembic) includes the new tables. v0.1 tables above
 # are untouched.
 from .models_line_b import (  # noqa: E402,F401
-    AdminAuditLog, MerchantApplication, Review, ShopRating,
+    AdminAuditLog, MerchantApplication, Review, ReviewHelpfulVote,
+    ShopRating,
 )
 
 # Line D: register cashback tables on Base.metadata (import only; the

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:geolocator/geolocator.dart';
 
 import '../api_client.dart';
 import '../models.dart';
@@ -44,7 +45,26 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<void> _load() async {
     if (mounted) setState(() => _loading = true);
     try {
-      final data = await widget.api.home();
+      // Gap 10: best-effort last-known position only — no permission
+      // prompt on the home page. When the OS has no cached position
+      // (or permission was never granted) home() is called without a
+      // location and the server returns distance_km null, which the
+      // coupon card already hides.
+      double? lat;
+      double? lng;
+      try {
+        final permission = await Geolocator.checkPermission();
+        if (permission == LocationPermission.always ||
+            permission == LocationPermission.whileInUse) {
+          final pos = await Geolocator.getLastKnownPosition();
+          lat = pos?.latitude;
+          lng = pos?.longitude;
+        }
+      } catch (_) {
+        lat = null;
+        lng = null;
+      }
+      final data = await widget.api.home(lat: lat, lng: lng);
       // Packages + bargain campaigns are best-effort: a failure here
       // must not blank the whole home page.
       var packages = <Package>[];

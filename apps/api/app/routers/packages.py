@@ -35,7 +35,7 @@ from sqlalchemy.orm import Session
 
 from .. import config, models
 from ..database import get_db
-from ..deps import get_current_user, require_role
+from ..deps import get_current_user, get_optional_user, require_role
 from ..models_packages import Order, Package, Payment, Refund
 from ..payments_gateway import (
     GatewayError, create_payment_intent, refund_payment,
@@ -336,9 +336,12 @@ def list_packages(shop_id: int = Query(None),
 
 
 @router.get("/package-details")
-def package_details(package_id: int, db: Session = Depends(get_db)):
+def package_details(package_id: int, db: Session = Depends(get_db),
+                    user: models.User | None = Depends(get_optional_user)):
     pkg = _get_package(db, package_id)
-    return {"package": package_out(db, pkg)}
+    # Gap 10: a logged-in caller gets the per-user limit_remaining;
+    # guests get the cap (see serializers_packages.package_out).
+    return {"package": package_out(db, pkg, user_id=user.id if user else None)}
 
 
 @router.post("/packages", status_code=201)
