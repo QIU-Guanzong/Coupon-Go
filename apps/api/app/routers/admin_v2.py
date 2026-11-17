@@ -43,6 +43,7 @@ from ..models_line_f import (
 )
 from ..models_packages import PAYMENT_STATUSES, Order, Package
 from ..serializers_packages import order_out
+from ..settlement_basis import settlement_basis
 from ..permissions_line_f import (
     ALL_ROLES, can_access_shop, can_request_invoice_for_shop,
     get_shop_or_404, has_perm, require_perm, role_permissions,
@@ -91,27 +92,6 @@ def _period_bounds(period: str):
     else:
         end = datetime(year, month + 1, 1)
     return start, end
-
-
-def _face_value(coupon: models.Coupon,
-                redemption: models.Redemption = None) -> Decimal:
-    """Face value a redemption contributes to a settlement.
-
-    F6: prefer the snapshot taken at scan time (redemption.face_value)
-    so a later coupon price change cannot drift the settlement basis.
-    Only legacy redemptions created before the snapshot column existed
-    (face_value NULL) fall back to the live coupon row below:
-    cash_amount, else discount_price, else regular_price, else 0
-    (percentage-only / gift coupons carry no price basis in v0.1).
-    """
-    if redemption is not None and getattr(redemption, "face_value", None) \
-            is not None:
-        return Decimal(str(redemption.face_value))
-    for field in ("cash_amount", "discount_price", "regular_price"):
-        value = getattr(coupon, field, None)
-        if value is not None:
-            return Decimal(str(value))
-    return Decimal("0")
 
 
 def _settlement_out(db: Session, s: Settlement) -> dict:
@@ -357,7 +337,9 @@ def generate_settlement(body: schemas_line_f.SettlementGenerateIn,
     redemptions = (db.query(models.Redemption)
                    .filter(models.Redemption.shop_id == shop.id,
                            models.Redemption.scanned_at >= start,
-                           models.Redemption.scanned_at < end)
+                           models.Redemption.scanned_at < end,
+                           # M6: revoked redemptions never settle.
+                           models.Redemption.revoked_at.is_(None))
                    .order_by(models.Redemption.id).all())
     fresh = [r for r in redemptions if r.id not in settled_ids]
     gross = Decimal("0")
@@ -365,14 +347,19 @@ def generate_settlement(body: schemas_line_f.SettlementGenerateIn,
     for r in fresh:
         coupon = db.query(models.Coupon).filter(
             models.Coupon.id == r.coupon_id).first()
-        amount = _face_value(coupon, r) if coupon else Decimal("0")
+        # M6: one shared basis (see app.settlement_basis). None means
+        # the redemption must not settle (its package order was
+        # refunded) — skip it entirely, do not count it.
+        amount = settlement_basis(db, coupon, redemption=r)
+        if amount is None:
+            continue
         gross += amount
         items.append((r, amount))
     commission = (gross * rate).quantize(Decimal("0.01"))
     net = gross - commission
     settlement = Settlement(
         shop_id=shop.id, period=body.period, period_start=start,
-        period_end=end, redemption_count=len(fresh), gross_amount=gross,
+        period_end=end, redemption_count=len(items), gross_amount=gross,
         commission_rate=rate, commission=commission, net_amount=net,
         status="pending", generated_by=user.id)
     db.add(settlement)
@@ -396,7 +383,7 @@ def generate_settlement(body: schemas_line_f.SettlementGenerateIn,
             commission=(amount * rate).quantize(Decimal("0.01"))))
     _log(db, user.id, "settlement.generate", "settlement", settlement.id,
          f"shop_id={shop.id}; period={body.period}; "
-         f"redemptions={len(fresh)}; gross={gross}; rate={rate}"
+         f"redemptions={len(items)}; gross={gross}; rate={rate}"
          + ("; 无商户费率配置，使用默认 10%" if rate_from_default
             else "; 使用商户配置费率"))
     db.commit()
@@ -615,24 +602,43 @@ def run_reconciliation(body: schemas_line_f.ReconciliationRunIn,
                  .order_by(SettlementItem.id).all())
     item_by_redemption = {i.redemption_id: i for i in items}
     redemption_ids = {r.id for r in redemptions}
+    # M6: this query deliberately does NOT filter revoked_at out —
+    # a revoked redemption WITH a settlement line is the
+    # revoked_but_settled discrepancy below. Revoked redemptions
+    # without a line are correctly excluded (no missing-line row).
     found = []
     for r in redemptions:
         if r.id not in item_by_redemption:
+            if r.revoked_at is not None:
+                continue
             coupon = db.query(models.Coupon).filter(
                 models.Coupon.id == r.coupon_id).first()
+            expected = settlement_basis(db, coupon, redemption=r)
+            if expected is None:
+                continue  # refunded order: correctly excluded
             found.append(("missing_settlement_line", r.id, None,
-                          _face_value(coupon, r) if coupon else Decimal("0"),
-                          None))
+                          expected, None))
     for i in items:
         if i.redemption_id not in redemption_ids:
             found.append(("missing_redemption", i.redemption_id, i.id,
                           None, i.amount))
         else:
             r = next(r for r in redemptions if r.id == i.redemption_id)
+            if r.revoked_at is not None:
+                # M6: settled, then revoked — the line should not exist.
+                found.append(("revoked_but_settled", r.id, i.id,
+                              Decimal("0"), i.amount))
+                continue
             coupon = db.query(models.Coupon).filter(
                 models.Coupon.id == r.coupon_id).first()
-            expected = _face_value(coupon, r) if coupon else Decimal("0")
-            if Decimal(str(i.amount)) != expected:
+            expected = settlement_basis(db, coupon, redemption=r)
+            if expected is None:
+                # M6: order refunded after settlement — the settled
+                # amount should not have been settled; flag for manual
+                # handling instead of silently rewriting the line.
+                found.append(("amount_mismatch", r.id, i.id,
+                              Decimal("0"), i.amount))
+            elif Decimal(str(i.amount)) != expected:
                 found.append(("amount_mismatch", r.id, i.id,
                               expected, i.amount))
     report = (db.query(ReconciliationReport)

@@ -187,8 +187,8 @@ class Redemption(Base):
     # settlement amount for this redemption is frozen here, so a later
     # coupon price change cannot drift the settlement / reconciliation
     # basis. NULL = legacy redemption created before the snapshot
-    # column existed; _face_value falls back to the live coupon row
-    # for those rows only.
+    # column existed; settlement_basis falls back to the live rows
+    # for those rows only (migration 0014 backfills them).
     face_value = Column(Numeric(12, 2), nullable=True)
     # Line A (report §11.2): idempotency + prepare + revoke window.
     idempotency_key = Column(String(80), unique=True, nullable=True)

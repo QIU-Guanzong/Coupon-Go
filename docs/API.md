@@ -290,11 +290,18 @@ v2 在 v1 之上，不改任何 v1 路徑與欄位。權限改為角色制
 等店內權限。v1 的 admin-only 端點保持不變（auditor 暫不能審核入駐申請，
 見 README「還沒做的事」）。
 
-結算口徑（報告 §5.1-8、§14 #6）：**按核銷結算**。毛額 = 該商户該週期
-核銷券的面值之和（`cash_amount`，否則 `discount_price`，否則
-`regular_price`，否則 0）；佣金 = 毛額 × 生成時傳入的
-`commission_rate`（默認 0.10；真實費率按商户逐個談判，v2 只記錄所用
-費率）；淨額 = 毛額 − 佣金。一張核銷最多進一張結算單。
+結算口徑（報告 §5.1-8、§14 #6；M6 起按實付額）：**按核銷結算**。毛額
+= 該商户該週期核銷的結算基數之和；基數取核銷時寫入的
+`face_value` 快照，快照口徑：套餐券取訂單實付
+`Order.paid_amount`，價格券取 `discount_price`，現金券取
+`cash_amount`，免費／禮品／純折扣／純門檻券為 0（`regular_price`
+永不作為結算基數）；快照為 NULL 的遺留核銷按同一口徑以當前訂單／
+券行回退計算。已撤销核銷（`revoked_at` 不為空）不進結算；訂單已
+退款（`refund_status=refunded`）的核銷不進結算；其餘佣金 = 毛額 ×
+生成時傳入的 `commission_rate`（默認 0.10；真實費率按商户逐個談判，
+v2 只記錄所用費率）；淨額 = 毛額 − 佣金。一張核銷最多進一張結算單。
+已生成結算單的週期即使事後發現基數口徑變化也不改舊金額，由對賬
+以 `amount_mismatch` 標記人工處理。
 
 | 方法 | 路徑 | 權限 | 說明 |
 |---|---|---|---|
@@ -347,7 +354,8 @@ decided_at, paid_at, created_at, updated_at, items?}`。
 
 對賬差異類型：`missing_settlement_line`（有核銷、無結算行）、
 `missing_redemption`（有結算行、無此週期核銷）、`amount_mismatch`
-（結算行金額 ≠ 券面值）。差異對象：`{id, report_id,
+（結算行金額 ≠ 結算基數）、`revoked_but_settled`（M6：結算單裡有
+明細、核銷已撤销；`expected_amount=0`，`actual_amount` 為結算行金額）。差異對象：`{id, report_id,
 discrepancy_type, redemption_id, settlement_item_id, expected_amount,
 actual_amount, status（open/resolved）, resolution, resolved_by,
 resolved_at, created_at}`。

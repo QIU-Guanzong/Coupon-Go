@@ -15,6 +15,7 @@ from .. import cashback_service, config, models, schemas
 from ..database import get_db
 from ..deps import add_points, get_current_user, require_role
 from ..serializers import coupon_out
+from ..settlement_basis import settlement_basis
 
 router = APIRouter()
 
@@ -115,6 +116,13 @@ def scan_coupon(body: schemas.ScanIn,
         prepared_at = datetime.fromtimestamp(issued, tz=timezone.utc).replace(
             tzinfo=None)
     _refresh_expiry(db, item)
+    # M2: lock the wallet item row before re-checking its status (same
+    # FIX-3 pattern as revoke_redemption) so two concurrent scans of
+    # one code serialise: the second blocks until the first commits,
+    # then reads status 2 and is rejected — exactly one redemption.
+    item = (db.query(models.WalletItem).filter(
+        models.WalletItem.id == item.id)
+        .with_for_update().populate_existing().first())
     if item.status == 2:
         raise HTTPException(status_code=400, detail="此優惠券已使用")
     if item.status == 3:
@@ -139,17 +147,15 @@ def scan_coupon(body: schemas.ScanIn,
     item.code = ""
     item.qr_expires_at = None
     coupon.used_count += 1
-    # F6: snapshot the coupon face value at scan time, with the same
-    # pricing order as admin_v2._face_value (cash_amount, else
-    # discount_price, else regular_price, else 0 for percentage-only /
-    # gift coupons, which carry no price basis). Settlement generation
-    # and reconciliation read this snapshot, never the live coupon row.
-    face_value = Decimal("0")
-    for _field in ("cash_amount", "discount_price", "regular_price"):
-        _v = getattr(coupon, _field, None)
-        if _v is not None:
-            face_value = Decimal(str(_v))
-            break
+    # M6: snapshot the settlement basis at scan time via the one
+    # shared function (see app.settlement_basis) — package = order
+    # paid_amount, price coupon = discount_price, cash coupon =
+    # cash_amount, free / gift / percentage-only / pure-threshold = 0.
+    # Settlement generation and reconciliation read this snapshot,
+    # never the live coupon row. None means the order was already
+    # refunded: snapshot 0, the redemption never settles anyway.
+    _basis = settlement_basis(db, coupon, wallet_item=item)
+    face_value = _basis if _basis is not None else Decimal("0")
     red = models.Redemption(
         wallet_item_id=item.id, coupon_id=coupon.id, shop_id=coupon.shop_id,
         scanned_by_vendor_id=vendor.id, face_value=face_value,
