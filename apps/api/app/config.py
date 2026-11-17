@@ -105,3 +105,46 @@ def validate_payment_config():
 # Pending-payment timeout (minutes): an unpaid order older than this is
 # lazily marked timeout and releases its stock reservation.
 PAYMENT_TIMEOUT_MINUTES = int(os.environ.get("PAYMENT_TIMEOUT_MINUTES", "15"))
+
+# --- M1: background scheduler (expired refunds / bargain settle /
+# payment-timeout close / cashback sweep) ---
+# SCHEDULER_ENABLED is tri-state: "1" = on, "0" = off, unset = dev
+# default on, non-dev off WITH an explicit startup warning (never
+# silent — see scheduler.validate_scheduler_config).
+SCHEDULER_ENABLED_RAW = os.environ.get("SCHEDULER_ENABLED")
+SCHEDULER_INTERVAL_SECONDS = int(os.environ.get("SCHEDULER_INTERVAL_SECONDS", "300"))
+SCHEDULER_CASHBACK_BATCH_SIZE = int(os.environ.get("SCHEDULER_CASHBACK_BATCH_SIZE", "100"))
+# Row-claim lock lease (non-Postgres fallback): a crashed holder's
+# lock becomes reclaimable after this long.
+SCHEDULER_LOCK_LEASE_SECONDS = int(os.environ.get("SCHEDULER_LOCK_LEASE_SECONDS", "600"))
+
+
+def scheduler_status() -> dict:
+    """Resolve the scheduler switch. Reads module globals at call time
+    so tests can monkeypatch them. Never silently off: the reason
+    string always says why, and non-dev without an explicit setting
+    is off + warned at startup (see app.scheduler)."""
+    raw = SCHEDULER_ENABLED_RAW
+    if raw is not None:
+        enabled = raw.strip().lower() in ("1", "true", "yes", "on")
+        reason = ("SCHEDULER_ENABLED=1：调度器已启用，每 "
+                  f"{SCHEDULER_INTERVAL_SECONDS} 秒执行一次"
+                  if enabled else
+                  "SCHEDULER_ENABLED=0：调度器已显式关闭，过期退款 / 砍价结算 / "
+                  "超时关闭 / 返现 sweep 不会自动执行，只能手动接口补跑")
+        return {"enabled": enabled, "configured_explicitly": True,
+                "interval_seconds": SCHEDULER_INTERVAL_SECONDS,
+                "cashback_batch_size": SCHEDULER_CASHBACK_BATCH_SIZE,
+                "reason": reason}
+    if APP_ENV == "dev":
+        return {"enabled": True, "configured_explicitly": False,
+                "interval_seconds": SCHEDULER_INTERVAL_SECONDS,
+                "cashback_batch_size": SCHEDULER_CASHBACK_BATCH_SIZE,
+                "reason": "开发环境默认启用调度器，"
+                          f"每 {SCHEDULER_INTERVAL_SECONDS} 秒执行一次"}
+    return {"enabled": False, "configured_explicitly": False,
+            "interval_seconds": SCHEDULER_INTERVAL_SECONDS,
+            "cashback_batch_size": SCHEDULER_CASHBACK_BATCH_SIZE,
+            "reason": "非开发环境未配置 SCHEDULER_ENABLED，调度器未启动："
+                      "过期套餐退款 / 砍价到期结算 / 超时订单关闭 / 返现 sweep "
+                      "不会自动执行。请设置 SCHEDULER_ENABLED=1 再启动"}

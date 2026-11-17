@@ -622,18 +622,40 @@ def retry_refund(refund_id: int,
             "refund": _refund_out(refund)}
 
 
-@router.post("/bargain/expire-sweep")
-def expire_sweep(admin: models.User = Depends(require_role("admin")),
-                 db: Session = Depends(get_db)):
+def sweep_expired_bargains(db: Session) -> dict:
+    """M1 shared sweep: settle timed-out bargain sessions (active →
+    failed + full refund; success-but-unpurchased → expired + refund).
+    Used by BOTH the admin manual endpoint and the background
+    scheduler — one logic, two triggers.
+
+    Idempotent: settle_session only transitions active/success
+    sessions, and _add_refund keeps one refund row per
+    (session, reason); a settled session is never selected again.
+    One bad session never blocks the rest."""
     now = _now()
     due = (db.query(BargainSession)
            .filter(BargainSession.expires_at <= now,
                    BargainSession.status.in_(["active", "success"])).all())
-    settled = 0
+    settled, failed = 0, 0
     for s in due:
         before = s.status
-        settle_session(db, s)
-        if s.status in ("failed", "expired") and before != s.status:
-            settled += 1
-    return {"message": "已結算過期砍價", "settled": settled,
-            "checked": len(due)}
+        try:
+            settle_session(db, s)
+            if s.status in ("failed", "expired") and before != s.status:
+                settled += 1
+        except Exception:
+            db.rollback()
+            failed += 1
+            logger.exception("bargain expire-sweep failed session_id=%s",
+                             s.id)
+    return {"settled": settled, "checked": len(due), "failed": failed}
+
+
+@router.post("/bargain/expire-sweep")
+def expire_sweep(admin: models.User = Depends(require_role("admin")),
+                 db: Session = Depends(get_db)):
+    """M1: this manual endpoint now calls the same
+    sweep_expired_bargains() the background scheduler runs — it stays
+    as the admin backfill path."""
+    result = sweep_expired_bargains(db)
+    return {"message": "已結算過期砍價", **result}

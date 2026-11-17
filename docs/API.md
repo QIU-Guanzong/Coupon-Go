@@ -194,7 +194,7 @@ reviewed_by, reviewed_at, created_at}`。
 | GET | `/bargain-my-sessions` | 我的砍價 |
 | POST | `/bargain-sessions/{id}/help` | 助力砍價（customer；`{device_id}`，防刷：每人每單一次、同一設備去重、每日 10 次上限） |
 | POST | `/bargain-sessions/{id}/purchase` | 砍到目標價後下單：生成套餐券（`kind=package`）進 Q Wallet（`source=bargain`，三狀態 1 未使用），退回差價 |
-| POST | `/bargain/expire-sweep` | 結算過期砍價（admin；未成團全額退款 + 釋放庫存） |
+| POST | `/bargain/expire-sweep` | 結算過期砍價（admin；未成團全額退款 + 釋放庫存）。M1：與後台定時任務共用同一份邏輯（見 `docs/SCHEDULER.md`），返回新增 `failed`（單條失敗數，下一周期重試） |
 | POST | `/bargain/refunds/{id}/retry` | 重試一筆失敗的砍價退款（本人或管理員；僅 `failed` 可重試，同一退款記錄原地更新） |
 
 狀態機：`active → success`（砍到底價，或助力人數達上限）→ 下單生成套餐券；`active → failed`（超時未成團，全額退款 + 釋放庫存）；`success → expired`（成團後未在有效期內下單，全額退款 + 釋放庫存）。
@@ -219,7 +219,7 @@ reviewed_by, reviewed_at, created_at}`。
 | GET | `/orders/{id}` | 訂單詳情（含支付記錄、券 id） |
 | POST | `/orders/{id}/refund` | 未核銷退款（特價券 `non_refundable` 攔截；退款後券作廢） |
 | POST | `/packages/{id}/refund` | 按套餐退最近一筆可退訂單 |
-| POST | `/orders/process-expired-refunds` | 管理員觸發：過期自動退（特價券只作廢不退） |
+| POST | `/orders/process-expired-refunds` | 管理員觸發：過期自動退（特價券只作廢不退）。M1：與後台定時任務共用同一份邏輯（見 `docs/SCHEDULER.md`），返回新增 `failed` / `skipped` 計數 |
 | POST | `/payments/webhook` | Stripe 測試模式 webhook（`payment_intent.succeeded/failed`） |
 
 退款默認：未核銷隨時退、過期自動退（原路返回，1–3 個工作日）；

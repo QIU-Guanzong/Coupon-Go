@@ -16,6 +16,7 @@ from .database import init_db
 from .routers import (admin, admin_v2, auth, bargain, cashback, coupons,
                       home, nearby, notifications, packages, redemption,
                       reviews, search, uploads, vendor, wallet)
+from .scheduler import start_scheduler, validate_scheduler_config  # noqa: F401  (M1: also registers models_scheduler.scheduler_locks)
 
 from . import models_cashback  # noqa: F401  (Line D: register cashback tables)
 
@@ -44,7 +45,8 @@ app.mount("/uploads", StaticFiles(directory=config.UPLOAD_DIR), name="uploads")
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "env": config.ENV}
+    return {"status": "ok", "env": config.ENV,
+            "scheduler": config.scheduler_status()}
 
 
 @app.on_event("startup")
@@ -52,6 +54,10 @@ def startup():
     # FIX-1 startup gate: non-dev without a webhook secret must not run.
     config.validate_payment_config()
     init_db()
+    # M1: background scheduler (loud warning in non-dev when it is not
+    # configured — never silently not running).
+    validate_scheduler_config()
+    app.state.scheduler = start_scheduler()
     if os.environ.get("SEED_ON_STARTUP", "1") == "1":
         from .database import SessionLocal
         from .seed import seed
@@ -62,3 +68,12 @@ def startup():
             seed_bargain_campaigns(db)
         finally:
             db.close()
+
+
+@app.on_event("shutdown")
+def shutdown():
+    # M1: stop the in-process scheduler (no-op when it never started).
+    sched = getattr(app.state, "scheduler", None)
+    if sched is not None:
+        sched.shutdown(wait=False)
+        app.state.scheduler = None

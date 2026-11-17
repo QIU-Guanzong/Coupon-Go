@@ -175,6 +175,49 @@ def sweep_user(db: Session, user_id: int, now: datetime = None):
     return confirmed, expired
 
 
+def sweep_all_users(db: Session, batch_size: int = 100,
+                    now: datetime = None):
+    """M1: time-driven transitions for ALL users, in batches
+    (cursor-paginated by user id). Same per-user logic as sweep_user,
+    which only ever ran lazily on one user's own page reads.
+
+    Online pending past its confirm window -> confirmed ->
+    withdrawable. Dine-in pending past its 90-day unlock deadline ->
+    void (expired_90d). Idempotent: a confirmed / voided transaction
+    is no longer pending and is never selected again. One bad user
+    never blocks the rest: per-user failure is logged, rolled back,
+    counted, and retried on the next run.
+    Returns {"users", "confirmed", "expired", "failed"}."""
+    now = now or _now()
+    batch_size = max(1, int(batch_size))
+    confirmed = expired = failed = users = 0
+    last_id = 0
+    while True:
+        rows = (db.query(CashbackTransaction.user_id)
+                .filter(CashbackTransaction.status == "pending",
+                        CashbackTransaction.user_id > last_id)
+                .distinct()
+                .order_by(CashbackTransaction.user_id)
+                .limit(batch_size).all())
+        if not rows:
+            break
+        ids = [r[0] for r in rows]
+        for user_id in ids:
+            try:
+                c, e = sweep_user(db, user_id, now)
+                confirmed += c
+                expired += e
+                users += 1
+                db.commit()
+            except Exception:
+                db.rollback()
+                failed += 1
+                logger.exception("cashback sweep failed user_id=%s", user_id)
+        last_id = ids[-1]
+    return {"users": users, "confirmed": confirmed,
+            "expired": expired, "failed": failed}
+
+
 def record_spend(db: Session,
                                    redemption: models.Redemption
                                    ) -> CashbackTransaction | None:

@@ -282,6 +282,80 @@ def _void_expired_voucher(db: Session, order: Order):
     db.commit()
 
 
+def sweep_expired_packages(db: Session) -> dict:
+    """M1 shared sweep: expired paid package vouchers → auto-refund
+    (or void if non-refundable). Used by BOTH the admin manual
+    endpoint and the background scheduler — one logic, two triggers.
+
+    Idempotent: a refunded order has refund_status='refunded' and is
+    never selected again; a concurrent second refund for the same
+    order hits the (order_id, reason) UNIQUE and is counted skipped.
+    One bad order never blocks the rest: per-order failure is logged,
+    rolled back, counted, and retried on the next run."""
+    refunded, voided, failed, skipped = 0, 0, 0, 0
+    orders = (db.query(Order)
+              .filter(Order.order_type == "package",
+                      Order.payment_status == "paid",
+                      Order.refund_status == "none").all())
+    for order in orders:
+        try:
+            item = (db.query(models.WalletItem)
+                    .filter(models.WalletItem.order_id == order.id).first())
+            if item is None or item.status != 1:
+                continue
+            coupon = db.query(models.Coupon).filter(
+                models.Coupon.id == item.coupon_id).first()
+            if coupon is None or coupon.valid_to >= _now():
+                continue
+            policy = coupon.refund_policy or "anytime"
+            if policy == "non_refundable":
+                _void_expired_voucher(db, order)
+                voided += 1
+            else:
+                _process_refund(db, order, "過期自動退")
+                refunded += 1
+        except HTTPException as exc:
+            db.rollback()
+            if exc.status_code == 409:
+                skipped += 1
+                logger.warning("expired-package sweep skipped order_id=%s: %s",
+                               order.id, exc.detail)
+            else:
+                failed += 1
+                logger.exception("expired-package sweep failed order_id=%s",
+                                 order.id)
+        except Exception:
+            db.rollback()
+            failed += 1
+            logger.exception("expired-package sweep failed order_id=%s",
+                             order.id)
+    return {"refunded": refunded, "voided": voided,
+            "failed": failed, "skipped": skipped}
+
+
+def sweep_payment_timeouts(db: Session) -> dict:
+    """M1 shared sweep: pending orders whose open payment attempt is
+    older than PAYMENT_TIMEOUT_MINUTES → timeout + release stock.
+    Same per-order logic as the lazy _refresh_payment_timeout that
+    runs on order reads, but for ALL pending orders at once.
+    Idempotent: a timed-out order is no longer pending and is never
+    selected again."""
+    closed, failed = 0, 0
+    orders = (db.query(Order)
+              .filter(Order.payment_status == "pending").all())
+    for order in orders:
+        try:
+            _refresh_payment_timeout(db, order)
+            if order.payment_status == "timeout":
+                closed += 1
+        except Exception:
+            db.rollback()
+            failed += 1
+            logger.exception("payment-timeout sweep failed order_id=%s",
+                             order.id)
+    return {"closed": closed, "failed": failed}
+
+
 def _process_expired_for_user(db: Session, user_id: int) -> dict:
     """Expired paid package vouchers → auto-refund (unless the template
     says non-refundable, then just void). Returns counts."""
@@ -690,30 +764,13 @@ def process_expired_refunds(
         admin: models.User = Depends(require_role("admin")),
         db: Session = Depends(get_db)):
     """Sweep: expired paid package vouchers → auto-refund (or void if
-    non-refundable). Idempotent; safe to run on a schedule."""
-    refunded, voided = 0, 0
-    orders = (db.query(Order)
-              .filter(Order.order_type == "package",
-                      Order.payment_status == "paid",
-                      Order.refund_status == "none").all())
-    for order in orders:
-        item = (db.query(models.WalletItem)
-                .filter(models.WalletItem.order_id == order.id).first())
-        if item is None or item.status != 1:
-            continue
-        coupon = db.query(models.Coupon).filter(
-            models.Coupon.id == item.coupon_id).first()
-        if coupon is None or coupon.valid_to >= _now():
-            continue
-        policy = coupon.refund_policy or "anytime"
-        if policy == "non_refundable":
-            _void_expired_voucher(db, order)
-            voided += 1
-        else:
-            _process_refund(db, order, "過期自動退")
-            refunded += 1
-    return {"refunded": refunded, "voided": voided,
-            "message": f"過期自動退 {refunded} 筆，作廢不退 {voided} 筆"}
+    non-refundable). Idempotent; safe to run on a schedule. M1: this
+    manual endpoint now calls the same sweep_expired_packages() the
+    background scheduler runs — it stays as the admin backfill path."""
+    result = sweep_expired_packages(db)
+    return {**result,
+            "message": f"過期自動退 {result['refunded']} 筆，"
+                       f"作廢不退 {result['voided']} 筆"}
 
 
 # ---------- Stripe test-mode webhook ----------
