@@ -175,6 +175,27 @@ def get_profile(user: models.User = Depends(get_current_user)):
     return user
 
 
+@router.get("/me")
+def get_me(user: models.User = Depends(get_current_user)):
+    """Current user: role + the name given at registration.
+
+    The registration name is already stored by /new-register into
+    users.name (see register() above), so no new column or migration
+    is needed: registered_name is that stored value, verbatim — never
+    a made-up default. (If the user later edits their profile name via
+    /update-customer-profile, this follows the current name; freezing
+    the registration-time value would need a separate column.)
+    """
+    return {
+        "id": user.id,
+        "email": user.email,
+        "name": user.name or "",
+        "registered_name": user.name or "",
+        "role": user.role,
+        "phone": user.phone or "",
+    }
+
+
 @router.post("/update-customer-profile", response_model=schemas.UserOut)
 def update_profile(body: schemas.ProfileUpdateIn, user: models.User = Depends(get_current_user),
                    db: Session = Depends(get_db)):

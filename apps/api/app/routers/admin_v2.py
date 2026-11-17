@@ -39,6 +39,8 @@ from ..models_line_f import (
     CmsAnnouncement, CmsBanner, Invoice, ReconciliationDiscrepancy,
     ReconciliationReport, Settlement, SettlementItem, ShopMember,
 )
+from ..models_packages import PAYMENT_STATUSES, Order, Package
+from ..serializers_packages import order_out
 from ..permissions_line_f import (
     ALL_ROLES, can_access_shop, can_request_invoice_for_shop,
     get_shop_or_404, has_perm, require_perm, role_permissions,
@@ -177,6 +179,71 @@ def overview(user: models.User = Depends(require_perm("dashboard.read")),
         "banners_active": db.query(CmsBanner).filter(
             CmsBanner.status == "active").count(),
     }
+
+
+# ---------- orders (Gap 1: admin order list) ----------
+def _admin_order_out(db: Session, o: Order) -> dict:
+    """User-side order_out plus the admin extras: shop_id, the ordering
+    user, and `status` as an alias of payment_status.
+
+    Field names stay identical to user-side GET /orders (order_out);
+    there is no separate order-number column — Order's id IS the order
+    number (order_out already exposes it as both id and order_id).
+    """
+    out = order_out(db, o)
+    pkg = None
+    if o.package_id:
+        pkg = db.query(Package).filter(Package.id == o.package_id).first()
+    buyer = db.query(models.User).filter(models.User.id == o.user_id).first()
+    out["shop_id"] = pkg.shop_id if pkg else None
+    out["user_name"] = buyer.name if buyer else ""
+    out["user_email"] = buyer.email if buyer else ""
+    out["status"] = o.payment_status
+    return out
+
+
+def _merchant_admin_shop_ids(db: Session, user: models.User) -> set:
+    """Shops a merchant-admin may see: shop_members rows plus any
+    shop they own directly (same scope rule as can_access_shop)."""
+    ids = {m.shop_id for m in db.query(ShopMember).filter(
+        ShopMember.user_id == user.id).all()}
+    ids |= {s.id for s in db.query(models.Shop).filter(
+        models.Shop.vendor_id == user.id).all()}
+    return ids
+
+
+@router.get("/admin/orders")
+def list_admin_orders(status: str = Query(None),
+                      page: int = Query(1, ge=1),
+                      page_size: int = Query(20, ge=1, le=100),
+                      user: models.User = Depends(get_current_user),
+                      db: Session = Depends(get_db)):
+    """Admin order list. finance / auditor / admin see all orders;
+    merchant-admin sees only orders of their own shop(s) (matched via
+    the order's package -> shop); every other role gets 403.
+
+    Pagination follows the admin-v2 style (page + _page helper, 20 per
+    page by default); status filters payment_status and unknown values
+    are ignored, like the other admin list endpoints.
+    """
+    if user.role in ("finance", "auditor", "admin"):
+        shop_ids = None
+    elif user.role == "merchant-admin":
+        shop_ids = _merchant_admin_shop_ids(db, user)
+    else:
+        raise HTTPException(status_code=403, detail="沒有權限")
+    q = db.query(Order).order_by(Order.id.desc())
+    if status in PAYMENT_STATUSES:
+        q = q.filter(Order.payment_status == status)
+    if shop_ids is not None:
+        pkg_ids = [p.id for p in db.query(Package.id).filter(
+            Package.shop_id.in_(shop_ids)).all()] if shop_ids else []
+        q = q.filter(Order.package_id.in_(pkg_ids)) if pkg_ids else \
+            q.filter(False)
+    out = _page([_admin_order_out(db, o) for o in q.all()], page, page_size)
+    return {"current_page": out["current_page"],
+            "total_pages": out["total_pages"], "total": out["total"],
+            "orders": out["items"]}
 
 
 # ---------- settlements ----------
