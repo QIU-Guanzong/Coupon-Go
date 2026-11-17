@@ -627,3 +627,120 @@ def test_double_revoke_sequential_rejected(client):
     assert r.status_code == 200, r.text
     r = client.post(f"/api/v3/redemptions/{red_id}/revoke", headers=vh)
     assert r.status_code == 400, r.text
+
+
+# ---------- 7. concurrent helps: total cut never pushes price below floor ----------
+def test_concurrent_helps_never_below_floor__row_lock(client, monkeypatch):
+    """M2: two different people help the same bargain at the same time.
+
+    The headline invariant is the floor: the two cuts together must
+    never push current_price below floor_price (cut_amount() already
+    caps one cut at the remaining amount, but only a serialised
+    read-then-write keeps the SUM capped). The same missing lock also
+    shows up as a lost update — helper_count stays 1 and the second
+    help's cut is silently overwritten — so the test pins the
+    accounting too: helper_count == 2 and the stored cuts sum to the
+    price drop actually recorded.
+    """
+    import app.routers.bargain as bargain_router
+    camp = _make_campaign(client, "M2 併發助力不超底價", stock=5,
+                          original=200, floor=100)
+    owner = _register_and_login(client, "m2-help-owner@example.com")
+    r = client.post(f"/api/v3/bargain-campaigns/{camp['id']}/start",
+                    headers=owner)
+    assert r.status_code == 200, r.text
+    sid = r.json()["session"]["id"]
+    h1 = _register_and_login(client, "m2-help-a@example.com")
+    h2 = _register_and_login(client, "m2-help-b@example.com")
+    # cut_amount() runs between the price/helper_count read and the
+    # commit — sleep there to widen the race window.
+    monkeypatch.setattr(
+        bargain_router, "cut_amount",
+        _sleeping_wrapper(bargain_router.cut_amount, seconds=0.4))
+    headers = [h1, h2]
+    results = _run_two(lambda i, tc: tc.post(
+        f"/api/v3/bargain-sessions/{sid}/help", json={},
+        headers=headers[i]))
+    statuses = sorted(r.status_code for r in results)
+    assert statuses == [200, 200], \
+        f"[{BACKEND}] expected both helps to succeed, got {statuses}: " \
+        f"{[r.text for r in results]}"
+    cuts = [float(r.json()["cut_amount"]) for r in results]
+    db = TestingSession()
+    try:
+        s = db.query(models_bargain.BargainSession).filter(
+            models_bargain.BargainSession.id == sid).first()
+        assert float(s.current_price) >= 100, \
+            f"[{BACKEND}] price cut below floor: {s.current_price}"
+        assert s.helper_count == 2, \
+            f"[{BACKEND}] helper_count={s.helper_count}, one help lost"
+        rows = db.query(models_bargain.BargainHelp).filter(
+            models_bargain.BargainHelp.session_id == sid).all()
+        assert len(rows) == 2, f"[{BACKEND}] {len(rows)} help rows stored"
+        total_cut = sum(float(x.cut_amount) for x in rows)
+        assert total_cut == pytest.approx(200 - float(s.current_price)), \
+            f"[{BACKEND}] recorded cuts {total_cut} != price drop " \
+            f"{200 - float(s.current_price)} (lost update)"
+        assert total_cut == pytest.approx(sum(cuts)), \
+            f"[{BACKEND}] recorded cuts {total_cut} != returned cuts {cuts}"
+    finally:
+        db.close()
+
+
+# ---------- 8. concurrent scans of the same code: only one redeems ----------
+def test_concurrent_scan_same_code_only_one_succeeds__row_lock(
+        client, monkeypatch):
+    """M2: two vendor scans of the same QR code at the same time.
+
+    Exactly one scan succeeds (200); the other is rejected (400) and
+    no second redemption row, second +20 points or second used_count
+    is recorded. Pre-fix both scans read status 1 before either
+    commits, so both succeed.
+    """
+    import app.routers.coupons as coupons_router
+    h = _register_and_login(client, "m2-scan@example.com")
+    r = client.post("/api/v3/new-favorite-coupon",
+                    params={"coupon_id": 22}, headers=h)
+    assert r.status_code == 200, r.text
+    wid = client.get("/api/v3/get-favorite-coupons-list",
+                     headers=h).json()["items"][0]["id"]
+    qr = client.post("/api/v3/store-scaned-qr-values",
+                     params={"wallet_item_id": wid}, headers=h)
+    assert qr.status_code == 200, qr.text
+    code = qr.json()["code"]
+    vh = _vendor_headers(client)
+    db = TestingSession()
+    try:
+        user_id = db.query(models.WalletItem).filter(
+            models.WalletItem.id == wid).first().user_id
+        before = points_balance(db, user_id)
+    finally:
+        db.close()
+    assert before == 10, before  # +10 claim only, not yet redeemed
+    # add_points() runs after the status check, before the commit —
+    # sleep there to widen the race window.
+    monkeypatch.setattr(
+        coupons_router, "add_points",
+        _sleeping_wrapper(coupons_router.add_points, seconds=0.4))
+    results = _run_two(lambda i, tc: tc.post(
+        "/api/v3/new-scan-coupon", json={"code": code}, headers=vh))
+    statuses = sorted(r.status_code for r in results)
+    assert statuses == [200, 400], \
+        f"[{BACKEND}] expected exactly one 200 + one 400, got {statuses}: " \
+        f"{[r.text for r in results]}"
+    db = TestingSession()
+    try:
+        reds = db.query(models.Redemption).filter(
+            models.Redemption.wallet_item_id == wid).all()
+        assert len(reds) == 1, f"[{BACKEND}] {len(reds)} redemptions stored"
+        item = db.query(models.WalletItem).filter(
+            models.WalletItem.id == wid).first()
+        assert item.status == 2, f"[{BACKEND}] item status={item.status}"
+        assert points_balance(db, user_id) == before + 20, \
+            f"[{BACKEND}] redeem points credited more than once"
+        coupon = db.query(models.Coupon).filter(
+            models.Coupon.id == item.coupon_id).first()
+        assert coupon.used_count == 1, \
+            f"[{BACKEND}] used_count={coupon.used_count}"
+    finally:
+        db.close()

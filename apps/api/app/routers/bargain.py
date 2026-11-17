@@ -235,7 +235,6 @@ def session_out(db: Session, s: BargainSession,
         "seconds_left": seconds_left,
         "can_purchase": s.status == "success" and s.wallet_item_id is None,
         "share_link": f"coupon-go://bargain?session={s.id}",
-        "payment_simulated": True,
         "helps": [_help_out(db, h) for h in
                   db.query(BargainHelp).filter(
                       BargainHelp.session_id == s.id)
@@ -452,7 +451,6 @@ def start_bargain(campaign_id: int,
         raise HTTPException(status_code=400, detail="已售罄，先到先得")
     db.refresh(session)
     return {"message": "砍價已發起，分享給好友一起砍到底價",
-            "payment_simulated": True,
             "session": session_out(db, session, user_id=user.id)}
 
 
@@ -481,6 +479,13 @@ def help_bargain(session_id: int, body: HelpIn | None = None,
                  db: Session = Depends(get_db)):
     _require_customer(user)
     s = _get_session_or_404(db, session_id)
+    # M2: lock the session row before the duplicate/floor re-checks
+    # (same FIX-3 pattern as purchase_bargain below) so two concurrent
+    # helps serialise: the second reads the updated current_price /
+    # helper_count, its cut is computed from the new remaining amount,
+    # and the total cut can never push the price below floor_price.
+    s = (db.query(BargainSession).filter(BargainSession.id == s.id)
+         .with_for_update().populate_existing().first())
     if s.status != "active":
         raise HTTPException(status_code=400, detail="此砍價已結束，不能再助力")
     if s.user_id == user.id:
@@ -584,7 +589,6 @@ def purchase_bargain(session_id: int,
         raise HTTPException(status_code=400, detail="已售罄，先到先得")
     db.refresh(item)
     return {"message": "成團！套餐券已存入 Q Wallet",
-            "payment_simulated": True,
             "wallet_item_id": item.id,
             "coupon_id": coupon.id,
             "final_price": float(current),

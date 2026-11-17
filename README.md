@@ -346,3 +346,8 @@ cd apps/api
 網關退款、搶最後 1 個庫存僅 1 單成功、同一結算單付款僅 1 次、併發開票
 總額不超過淨額、同一核銷撤销僅 1 次（另有砍價搶最後 1 件 1 單成功）。
 完整輸出見工作區 `fix3-postgres-run.log` / `f3-postgres-run.log`。
+
+已驗證（2026-11-17，M2，真 Postgres 16.15，本地 apt 安裝）：FIX-3 全 16 個
+通過（新增 2 個併發用例：兩人同時助力同一砍價不超底價、同一券碼同時掃
+兩次僅 1 次核銷成功）、F3 全 8 個通過；`BACKEND` 兩文件皆為 `postgres`。
+完整輸出見工作區 `fix3-postgres-run.log` / `f3-postgres-run.log`（本次已更新）。

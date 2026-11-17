@@ -177,7 +177,6 @@ def dashboard(admin: models.User = Depends(admin_only),
         "total_redemptions": db.query(models.Redemption).count(),
         "total_reviews": db.query(Review).count(),
         "rated_reviews": db.query(Review).filter(
-            Review.counts_toward_rating.is_(True),
             Review.status == "visible").count(),
         "pending_applications": db.query(MerchantApplication).filter(
             MerchantApplication.status == "pending").count(),
