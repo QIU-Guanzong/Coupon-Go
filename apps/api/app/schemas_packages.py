@@ -68,6 +68,10 @@ class PackageOut(BaseModel):
 class PurchaseIn(BaseModel):
     payment_method: str = "fps"  # fps | card
     client_ref: str = ""  # 客户端幂等键：同一键重复下单返回原订单
+    # Gap 7: optional purchase quantity (default 1). Scales the total
+    # price and the stock reservation; the Flutter client already sends
+    # this (api_client.purchasePackage, quantity > 1).
+    quantity: int = Field(default=1, ge=1)
 
 
 class PaymentOut(BaseModel):

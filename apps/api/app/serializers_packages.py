@@ -94,6 +94,7 @@ def order_out(db: Session, o: Order) -> dict:
         "user_id": o.user_id,
         "order_type": o.order_type,
         "package_id": o.package_id,
+        "quantity": o.quantity or 1,
         "package_name": pkg.name if pkg else "",
         "shop_name": shop.name if shop else "",
         "amount": float(o.amount or 0),

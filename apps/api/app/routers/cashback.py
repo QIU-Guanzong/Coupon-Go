@@ -21,10 +21,11 @@ All amounts are HK$. Cashback is a separate ledger from points.
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from .. import models
+from .. import config, models
 from ..database import get_db
 from ..deps import get_current_user
 from .. import cashback_service as svc
@@ -73,6 +74,9 @@ def get_cashback(user: models.User = Depends(get_current_user),
     for t in txns:
         groups.setdefault(t.status, []).append(svc._tx_out(db, t))
     return {**svc.balances(db, user.id),
+            # Gap 4: withdraw limits, from config (not hard-coded).
+            "min_withdraw_hkd": config.CASHBACK_MIN_WITHDRAW_HKD,
+            "daily_withdraw_limit_hkd": config.CASHBACK_DAILY_WITHDRAW_LIMIT_HKD,
             "transactions": [svc._tx_out(db, t) for t in txns],
             "adjustments": svc.adjustments(db, user.id),
             "by_status": {k: len(v) for k, v in groups.items()}}
@@ -103,7 +107,14 @@ def withdraw(body: WithdrawIn, user: models.User = Depends(get_current_user),
         return {"message": "提現申請已提交，待打款",
                 "withdrawal": svc._withdrawal_out(w),
                 **svc.balances(db, user.id)}
-    return _handle(_do)
+    # Gap 6: a failed withdrawal carries the server-side reason in the
+    # response body (failure_reason), not just a generic error message.
+    # The success path is untouched.
+    try:
+        return _do()
+    except CashbackError as e:
+        return JSONResponse(status_code=400, content={
+            "detail": str(e), "failure_reason": str(e)})
 
 
 @router.get("/cashback/withdrawals")
@@ -124,6 +135,18 @@ def void_transaction(txn_id: int, body: VoidIn,
         db.commit()
         return {"message": "返現已作廢", "transaction": svc._tx_out(db, t)}
     return _handle(_do)
+
+
+@router.get("/cashback/missing")
+def list_missing_cashback(limit: int = Query(50, ge=1, le=200),
+                          user: models.User = Depends(get_current_user),
+                          db: Session = Depends(get_db)):
+    """Gap 3: the caller's own Missing Cashback appeals, newest first.
+
+    Four states (models_cashback.CashbackAppeal.status):
+    submitted | under_review | resolved | rejected.
+    """
+    return {"appeals": svc.list_appeals(db, user.id, limit=limit)}
 
 
 @router.post("/cashback/missing")

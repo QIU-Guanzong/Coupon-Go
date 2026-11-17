@@ -117,6 +117,10 @@ class CashbackWithdrawal(Base):
     # pending | paid | failed. v1: pending until ops pays out manually —
     # there is no live FPS/bank payout integration in this build.
     status = Column(String(20), default="pending", nullable=False)
+    # Gap 6: why a payout failed (ops marks the row failed with the
+    # payout provider / bank reason, e.g. "銀行退回：賬戶不存在").
+    # NULL while pending / paid — a successful withdrawal has no reason.
+    failure_reason = Column(String(200), nullable=True)
     created_at = Column(DateTime, default=_now)
     processed_at = Column(DateTime, nullable=True)
 

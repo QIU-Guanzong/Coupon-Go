@@ -59,6 +59,16 @@ def _check_item(db: Session, item: models.WalletItem, vendor: models.User):
     return coupon, None
 
 
+def _phone_last4(phone):
+    """Customer phone last-4 for the merchant check screen.
+
+    Returns None when the customer has no phone on file — never invent
+    digits. Non-digit characters (spaces, dashes) are stripped first.
+    """
+    digits = "".join(ch for ch in (phone or "") if ch.isdigit())
+    return digits[-4:] if digits else None
+
+
 @router.post("/new-scan-coupon/prepare")
 def prepare_scan(body: dict,
                  vendor: models.User = Depends(require_role("vendor", "admin")),
@@ -78,11 +88,24 @@ def prepare_scan(body: dict,
     token, _issued = prepare_token.issue_prepare_token(item.id)
     shop = db.query(models.Shop).filter(
         models.Shop.id == coupon.shop_id).first()
+    # Gap 5: customer phone last-4 (User.phone, via the wallet owner)
+    # and the coupon validity (Coupon.valid_to). The merchant page reads
+    # customer_phone_last4 / valid_to; phone_last4 / valid_until /
+    # expires_at are the same values under the task's names.
+    owner = db.query(models.User).filter(
+        models.User.id == item.user_id).first()
+    last4 = _phone_last4(owner.phone if owner else None)
+    valid_to = coupon.valid_to.isoformat() if coupon.valid_to else None
     return {"can_redeem": True, "reason": "",
             "prepare_token": token, "wallet_item_id": item.id,
             "coupon_name": coupon.coupon_name,
             "shop_id": coupon.shop_id,
             "shop_name": shop.name if shop else "",
+            "phone_last4": last4,
+            "customer_phone_last4": last4,
+            "valid_until": valid_to,
+            "expires_at": valid_to,
+            "valid_to": valid_to,
             "expires_in_seconds": config.PREPARE_TOKEN_TTL_SECONDS}
 
 

@@ -84,15 +84,18 @@ class Shop {
         distanceKm = (j['distance_km'] as num?)?.toDouble(),
         branchCount = j['branch_count'] as int? ?? 0,
         isFavorite = j['is_shop_favorite'] as bool? ?? false,
-        // UI_SPEC §6: served by /nearby-shops only when the backend
-        // includes them (see report — rating / flags / created_at are
-        // still missing from shop_out, so sorting by them falls back
-        // to the server's distance order until the backend adds them).
+        // Gap 8: /nearby-shops now sends rating / has_coupons /
+        // has_packages / created_at (plural keys; singular kept as
+        // fallback for older payloads).
         rating = (j['rating'] as num?)?.toDouble() ??
             (j['overall'] as num?)?.toDouble(),
         reviewCount = j['review_count'] as int? ?? 0,
-        hasCoupon = j['has_coupon'] as bool? ?? false,
-        hasPackage = j['has_package'] as bool? ?? false,
+        hasCoupon = j['has_coupons'] as bool? ??
+            j['has_coupon'] as bool? ??
+            false,
+        hasPackage = j['has_packages'] as bool? ??
+            j['has_package'] as bool? ??
+            false,
         createdAt = DateTime.tryParse(j['created_at'] as String? ?? '');
 
   final int id;
@@ -309,6 +312,8 @@ class CashbackWithdrawal {
         methodText = j['method_text'] as String? ?? '',
         accountName = j['account_name'] as String? ?? '',
         status = j['status'] as String? ?? 'pending',
+        // Gap 6: server-side failure reason; null on pending / paid rows.
+        failureReason = j['failure_reason'] as String?,
         createdAt = DateTime.tryParse(j['created_at'] as String? ?? '');
 
   final int id;
@@ -317,6 +322,7 @@ class CashbackWithdrawal {
   final String methodText;
   final String accountName;
   final String status; // pending | paid | failed
+  final String? failureReason;
   final DateTime? createdAt;
 
   String get statusText =>

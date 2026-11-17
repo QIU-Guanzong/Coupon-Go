@@ -248,6 +248,8 @@ class ApiClient {
       });
   Future<List<dynamic>> cashbackWithdrawals() async =>
       (await get('/cashback/withdrawals'))['withdrawals'] as List<dynamic>;
+  Future<List<dynamic>> cashbackMissingAppeals() async =>
+      (await get('/cashback/missing'))['appeals'] as List<dynamic>;
   Future<Map<String, dynamic>> submitMissingCashback(
           int merchantId, String orderNo, String spentAt, double amount,
           String evidence, String note) =>
@@ -274,12 +276,19 @@ class ApiClient {
       (await get('/get-user-record-list'))['records'] as List<dynamic>;
 
   // ---- line A: nearby map ----
+  // Gap 8: sort is served by /nearby-shops (distance | rating | newest);
+  // the list response now carries rating / has_coupons / has_packages /
+  // created_at, so no per-shop rating calls are needed to sort.
   Future<Map<String, dynamic>> nearbyShops(
-      {required double lat, required double lng, double radiusKm = 10}) async =>
+      {required double lat,
+      required double lng,
+      double radiusKm = 10,
+      String sort = 'distance'}) async =>
       get('/nearby-shops', query: {
         'lat': '$lat',
         'lng': '$lng',
         'radius_km': '$radiusKm',
+        'sort': sort,
       });
   Future<Map<String, dynamic>> shopMap(int shopId) async =>
       get('/shops/$shopId/map');

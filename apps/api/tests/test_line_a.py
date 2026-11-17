@@ -287,8 +287,14 @@ def test_nearby_distance_sorting_and_radius(client):
 def test_nearby_requires_location(client):
     r = client.get("/api/v3/nearby-shops")
     assert r.status_code == 400
+    # Gap 8: sort=rating is now supported (was 400 before); only an
+    # unknown sort value is rejected.
     r = client.get("/api/v3/nearby-shops",
                    params={"lat": 22.2783, "lng": 114.1747, "sort": "rating"})
+    assert r.status_code == 200, r.text
+    assert r.json()["sort"] == "rating"
+    r = client.get("/api/v3/nearby-shops",
+                   params={"lat": 22.2783, "lng": 114.1747, "sort": "price"})
     assert r.status_code == 400
 
 

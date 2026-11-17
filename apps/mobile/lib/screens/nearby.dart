@@ -48,7 +48,6 @@ class _NearbyScreenState extends State<NearbyScreen> {
   double _radiusKm = 5;
   List<Shop> _shops = [];
   bool _loading = false;
-  bool _loadingRatings = false;
   String? _error;
   int? _selectedShopId;
   bool _locating = false;
@@ -57,7 +56,6 @@ class _NearbyScreenState extends State<NearbyScreen> {
   bool _locationGranted = false;
   bool _locationDeclined = false;
   bool _askedPermission = false;
-  Map<int, double?> _ratings = {};
 
   @override
   void initState() {
@@ -83,14 +81,13 @@ class _NearbyScreenState extends State<NearbyScreen> {
     });
     try {
       final data = await widget.api.nearbyShops(
-          lat: _lat, lng: _lng, radiusKm: _radiusKm);
+          lat: _lat, lng: _lng, radiusKm: _radiusKm, sort: _sort.name);
       if (!mounted) return;
       setState(() {
         _shops = ((data['shops'] as List?) ?? [])
             .map((e) => Shop.fromJson(e as Map<String, dynamic>))
             .toList();
       });
-      if (_sort == _NearbySort.rating) await _loadRatings();
     } on ApiException catch (_) {
       if (mounted) setState(() => _error = '网络不稳定，请重试');
     } finally {
@@ -98,26 +95,11 @@ class _NearbyScreenState extends State<NearbyScreen> {
     }
   }
 
-  /// Ratings come from /shops/{id}/rating — the list endpoint does not
-  /// return them. Failures leave that shop unrated (sorted last).
-  Future<void> _loadRatings() async {
-    setState(() => _loadingRatings = true);
-    final entries = await Future.wait(_shops.map((s) async {
-      try {
-        final r = await widget.api.shopRating(s.id);
-        final overall = (r['overall'] as num?)?.toDouble();
-        return MapEntry(s.id, overall);
-      } catch (_) {
-        return MapEntry<int, double?>(s.id, null);
-      }
-    }));
-    if (!mounted) return;
-    setState(() {
-      _ratings = Map.fromEntries(entries);
-      _loadingRatings = false;
-    });
-  }
-
+  /// Server order is authoritative (sort=distance|rating|newest is
+  /// served by /nearby-shops). The client-side pass below only
+  /// re-applies the same order on the payload's own rating / created_at
+  /// fields, e.g. after a local refresh; it never calls per-shop
+  /// rating endpoints.
   List<Shop> get _sortedShops {
     final list = List<Shop>.of(_shops);
     switch (_sort) {
@@ -125,16 +107,14 @@ class _NearbyScreenState extends State<NearbyScreen> {
         break; // server order is distance ascending
       case _NearbySort.rating:
         list.sort((a, b) {
-          final ra = _ratings[a.id] ?? a.rating;
-          final rb = _ratings[b.id] ?? b.rating;
+          final ra = a.rating;
+          final rb = b.rating;
           if (ra == null && rb == null) return 0;
           if (ra == null) return 1;
           if (rb == null) return -1;
           return rb.compareTo(ra);
         });
       case _NearbySort.newest:
-        // created_at is not in the list response yet; shops that carry
-        // one sort newest-first, the rest keep distance order.
         list.sort((a, b) {
           final ca = a.createdAt;
           final cb = b.createdAt;
@@ -147,7 +127,7 @@ class _NearbyScreenState extends State<NearbyScreen> {
     return list;
   }
 
-  double? _ratingOf(Shop s) => _ratings[s.id] ?? s.rating;
+  double? _ratingOf(Shop s) => s.rating;
 
   Future<void> _requestLocation() async {
     if (_askedPermission) return; // asked once; never re-prompt
@@ -490,12 +470,6 @@ class _NearbyScreenState extends State<NearbyScreen> {
                 Expanded(
                   child: Text('中心：$_place · 直線距離'),
                 ),
-                if (_loadingRatings)
-                  const SizedBox(
-                    width: 16,
-                    height: 16,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  ),
               ],
             ),
           ),
@@ -509,14 +483,15 @@ class _NearbyScreenState extends State<NearbyScreen> {
                   selected: _sort == _NearbySort.distance,
                   onSelected: (_) {
                     setState(() => _sort = _NearbySort.distance);
+                    _load();
                   },
                 ),
                 ChoiceChip(
                   label: const Text('評分最高'),
                   selected: _sort == _NearbySort.rating,
-                  onSelected: (_) async {
+                  onSelected: (_) {
                     setState(() => _sort = _NearbySort.rating);
-                    await _loadRatings();
+                    _load();
                   },
                 ),
                 ChoiceChip(
@@ -524,6 +499,7 @@ class _NearbyScreenState extends State<NearbyScreen> {
                   selected: _sort == _NearbySort.newest,
                   onSelected: (_) {
                     setState(() => _sort = _NearbySort.newest);
+                    _load();
                   },
                 ),
               ],

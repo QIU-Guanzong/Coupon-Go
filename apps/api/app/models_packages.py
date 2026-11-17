@@ -86,6 +86,7 @@ class Order(Base):
     # package (report also reserves 'cashback-eligible' for line B)
     order_type = Column(String(30), default="package", nullable=False)
     package_id = Column(Integer, ForeignKey("packages.id"), nullable=True)
+    quantity = Column(Integer, default=1, nullable=False)  # Gap 7: 购买份数
     amount = Column(Numeric(10, 2), nullable=False)       # 应付金额
     paid_amount = Column(Numeric(10, 2), default=0)       # 实付金额
     payment_method = Column(String(20), default="")       # fps | card

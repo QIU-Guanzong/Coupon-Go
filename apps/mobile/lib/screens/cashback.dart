@@ -12,18 +12,19 @@ import '../widgets/widgets.dart';
 
 /// UI_SPEC §5 — 返现：余额、明细、提现、提现记录、漏记申诉。
 ///
-/// 后端缺口（客户端不硬编，见汇报）：
-/// * GET /cashback 不返回提现门槛 / 每日上限：下方具名常量取自后端
-///   config（CASHBACK_MIN_WITHDRAW_HKD=50、
-///   CASHBACK_DAILY_WITHDRAW_LIMIT_HKD=1500），接口补字段后可直接取接口值。
-/// * 提现失败无原因字段：失败行只显示通用文案，重试即重新提交一笔提现。
-/// * 无申诉列表接口：已提交的申诉只保存在本机，状态默认为「已提交」。
+/// 后端缺口已补（Gap 3 / 4 / 6）：
+/// * GET /cashback 返回提现门槛 / 每日上限（min_withdraw_hkd /
+///   daily_withdraw_limit_hkd）；下方具名常量只作接口缺失时的兜底。
+/// * 提现失败有原因字段：失败行显示服务端的 failure_reason；成功路径不动。
+/// * GET /cashback/missing 返回本人申诉列表；本机 SharedPreferences
+///   只作兜底（接口失败或无数据时不丢已存的本地记录）。
 /// * 注册姓名无接口可取（登录接口只返回 token / user_id / role /
 ///   email）：提现只校验姓名必填；注册姓名可传入时才比对一致性。
 /// 用户端不调用已删除的记返现接口（FIX-2）；返现只由核销产生。
 /// 核销成功页不编返现金额：/new-scan-coupon 不返回返现金额字段，
 /// account.dart 的核销成功页已只写「本次消费的返现待确认」，保持不变。
 class CashbackLimits {
+  /// 兜底默认值（与后端 config 一致）；接口返回字段时以接口值为准。
   static const double minWithdrawHkd = 50;
   static const double dailyWithdrawLimitHkd = 1500;
   static const int dineinUnlockDays = 90;
@@ -217,6 +218,10 @@ class _CashbackScreenState extends State<CashbackScreen> {
   double _withdrawable = 0;
   double _pending = 0;
   double _totalEarned = 0;
+  // Gap 4: 取自 GET /cashback 的 min_withdraw_hkd /
+  // daily_withdraw_limit_hkd；接口缺失时用 CashbackLimits 兜底值。
+  double _minWithdraw = CashbackLimits.minWithdrawHkd;
+  double _dailyLimit = CashbackLimits.dailyWithdrawLimitHkd;
   List<CashbackTransaction> _txns = [];
   String _filter = 'all';
   bool _ruleDismissed = false;
@@ -248,6 +253,10 @@ class _CashbackScreenState extends State<CashbackScreen> {
         _withdrawable = (data['withdrawable_balance'] as num?)?.toDouble() ?? 0;
         _pending = (data['pending_balance'] as num?)?.toDouble() ?? 0;
         _totalEarned = (data['total_earned'] as num?)?.toDouble() ?? 0;
+        _minWithdraw = (data['min_withdraw_hkd'] as num?)?.toDouble() ??
+            CashbackLimits.minWithdrawHkd;
+        _dailyLimit = (data['daily_withdraw_limit_hkd'] as num?)?.toDouble() ??
+            CashbackLimits.dailyWithdrawLimitHkd;
         _txns = parsed;
         _loading = false;
       });
@@ -289,12 +298,15 @@ class _CashbackScreenState extends State<CashbackScreen> {
   bool get _hasDineinPending =>
       _txns.any((t) => t.status == 'pending' && t.channel == 'dinein');
 
-  bool get _canWithdraw => _withdrawable >= CashbackLimits.minWithdrawHkd;
+  bool get _canWithdraw => _withdrawable >= _minWithdraw;
 
   Future<void> _openWithdraw() async {
     await Navigator.of(context).push(MaterialPageRoute(
-        builder: (_) =>
-            WithdrawScreen(api: widget.api, balance: _withdrawable)));
+        builder: (_) => WithdrawScreen(
+            api: widget.api,
+            balance: _withdrawable,
+            minWithdrawHkd: _minWithdraw,
+            dailyWithdrawLimitHkd: _dailyLimit)));
     _load();
   }
 
@@ -345,7 +357,7 @@ class _CashbackScreenState extends State<CashbackScreen> {
               ),
               const SizedBox(height: 8),
               Text(
-                  '满 HK\$${CashbackLimits.minWithdrawHkd.toStringAsFixed(0)} 可提现',
+                  '满 HK\$${_minWithdraw.toStringAsFixed(0)} 可提现',
                   textAlign: TextAlign.center,
                   style: const TextStyle(
                       color: CgColors.textSecondary, fontSize: 12)),
@@ -599,7 +611,12 @@ class _TxnCard extends StatelessWidget {
 /// 收款姓名与注册姓名一致（内联报错，不弹窗）。提交后跳提现记录页。
 class WithdrawScreen extends StatefulWidget {
   const WithdrawScreen(
-      {super.key, required this.api, this.balance, this.registeredName});
+      {super.key,
+      required this.api,
+      this.balance,
+      this.registeredName,
+      this.minWithdrawHkd = CashbackLimits.minWithdrawHkd,
+      this.dailyWithdrawLimitHkd = CashbackLimits.dailyWithdrawLimitHkd});
 
   final ApiClient api;
 
@@ -608,6 +625,10 @@ class WithdrawScreen extends StatefulWidget {
 
   /// 注册姓名。无接口可取时为 null，此时只校验姓名必填（见文件头注释）。
   final String? registeredName;
+
+  /// Gap 4：提现门槛 / 每日上限，取自 GET /cashback；未传时用兜底常量。
+  final double minWithdrawHkd;
+  final double dailyWithdrawLimitHkd;
 
   @override
   State<WithdrawScreen> createState() => _WithdrawScreenState();
@@ -620,6 +641,10 @@ class _WithdrawScreenState extends State<WithdrawScreen> {
   String _method = 'fps';
   bool _loadingBalance = false;
   double? _balance;
+  // Gap 4：页面内的门槛 / 上限以构造参数为准；自行拉取余额时如接口
+  // 返回了字段则更新（接口缺失时保持构造参数的兜底值）。
+  late double _minWithdraw;
+  late double _dailyLimit;
   bool _submitting = false;
   bool _touchedAmount = false;
   bool _touchedName = false;
@@ -630,6 +655,8 @@ class _WithdrawScreenState extends State<WithdrawScreen> {
   @override
   void initState() {
     super.initState();
+    _minWithdraw = widget.minWithdrawHkd;
+    _dailyLimit = widget.dailyWithdrawLimitHkd;
     _balance = widget.balance;
     if (_balance != null) {
       _amount.text = _balance!.toStringAsFixed(2);
@@ -663,6 +690,11 @@ class _WithdrawScreenState extends State<WithdrawScreen> {
       setState(() {
         _balance = balance;
         _amount.text = balance.toStringAsFixed(2);
+        _minWithdraw = (data['min_withdraw_hkd'] as num?)?.toDouble() ??
+            widget.minWithdrawHkd;
+        _dailyLimit =
+            (data['daily_withdraw_limit_hkd'] as num?)?.toDouble() ??
+                widget.dailyWithdrawLimitHkd;
         _loadingBalance = false;
       });
     } on ApiException catch (e) {
@@ -684,12 +716,12 @@ class _WithdrawScreenState extends State<WithdrawScreen> {
   String? _amountError() {
     final value = double.tryParse(_amount.text.trim());
     if (value == null || value <= 0) return '请输入提现金额';
-    if (value < CashbackLimits.minWithdrawHkd) {
-      return '未满 HK\$${CashbackLimits.minWithdrawHkd.toStringAsFixed(0)} 提现门槛';
+    if (value < _minWithdraw) {
+      return '未满 HK\$${_minWithdraw.toStringAsFixed(0)} 提现门槛';
     }
     if (_balance != null && value > _balance!) return '超出可提现余额';
-    if (value > CashbackLimits.dailyWithdrawLimitHkd) {
-      return '超出每日上限 HK\$${CashbackLimits.dailyWithdrawLimitHkd.toStringAsFixed(0)}';
+    if (value > _dailyLimit) {
+      return '超出每日上限 HK\$${_dailyLimit.toStringAsFixed(0)}';
     }
     return null;
   }
@@ -761,7 +793,7 @@ class _WithdrawScreenState extends State<WithdrawScreen> {
                     const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
           const SizedBox(height: 4),
           Text(
-              '满 HK\$${CashbackLimits.minWithdrawHkd.toStringAsFixed(0)} 可提现；每日上限 HK\$${CashbackLimits.dailyWithdrawLimitHkd.toStringAsFixed(0)}',
+              '满 HK\$${_minWithdraw.toStringAsFixed(0)} 可提现；每日上限 HK\$${_dailyLimit.toStringAsFixed(0)}',
               style:
                   const TextStyle(color: CgColors.textSecondary, fontSize: 12)),
           const SizedBox(height: 16),
@@ -849,8 +881,8 @@ class _WithdrawScreenState extends State<WithdrawScreen> {
   }
 }
 
-/// 提现记录页（UI_SPEC §5.2）：处理中 / 已到账 / 失败；失败显示通用
-/// 原因与重试（后端提现记录无失败原因字段，重试即重新提交一笔提现）。
+/// 提现记录页（UI_SPEC §5.2）：处理中 / 已到账 / 失败；失败显示服务端
+/// 的 failure_reason（Gap 6），无原因时才显示通用文案；重试即重新提交一笔提现。
 class WithdrawalHistoryScreen extends StatefulWidget {
   const WithdrawalHistoryScreen({super.key, required this.api});
 
@@ -977,9 +1009,12 @@ class _WithdrawalCard extends StatelessWidget {
             ),
             if (w.status == 'failed') ...[
               const SizedBox(height: 6),
-              const Text('处理失败，请重试',
+              Text(
+                  (w.failureReason ?? '').isNotEmpty
+                      ? '失败原因：${w.failureReason}'
+                      : '处理失败，请重试',
                   style:
-                      TextStyle(color: CgColors.textSecondary, fontSize: 12)),
+                      const TextStyle(color: CgColors.textSecondary, fontSize: 12)),
               const SizedBox(height: 8),
               SizedBox(
                 width: double.infinity,
@@ -996,8 +1031,9 @@ class _WithdrawalCard extends StatelessWidget {
   }
 }
 
-/// 本机保存的申诉记录。后端只有 POST /cashback/missing，没有申诉列表
-/// 接口，因此已提交的申诉先存在本机展示，状态默认为「已提交」。
+/// 本机保存的申诉记录。服务端已有 GET /cashback/missing（Gap 3），
+/// 列表优先取接口；本机记录只作兜底（接口失败或无数据时不丢已存记录）。
+/// 服务端返回的 id 是 int，本机存的是 String，fromJson 两边都兼容。
 class LocalAppeal {
   LocalAppeal({
     required this.id,
@@ -1013,7 +1049,7 @@ class LocalAppeal {
   });
 
   factory LocalAppeal.fromJson(Map<String, dynamic> j) => LocalAppeal(
-        id: j['id'] as String? ?? '',
+        id: j['id']?.toString() ?? '',
         shopName: j['shop_name'] as String? ?? '',
         orderNo: j['order_no'] as String? ?? '',
         spentAt:
@@ -1425,7 +1461,8 @@ class _MissingCashbackScreenState extends State<MissingCashbackScreen> {
 }
 
 /// 申诉列表页（UI_SPEC §5.3）：已提交 / 审核中 / 已通过 / 未通过（含原因）。
-/// 后端无申诉列表接口，列表来自本机保存的已提交申诉。
+/// Gap 3：列表优先取 GET /cashback/missing；接口失败或返回空时用本机
+/// 保存的记录兜底，已提交但服务端暂无的本地记录会合并进列表展示。
 class MissingAppealsScreen extends StatefulWidget {
   const MissingAppealsScreen({super.key, required this.api});
 
@@ -1451,18 +1488,44 @@ class _MissingAppealsScreenState extends State<MissingAppealsScreen> {
       _loading = true;
       _failed = false;
     });
+    List<LocalAppeal> local = [];
     try {
-      final items = await _loadLocalAppeals();
-      if (!mounted) return;
-      setState(() {
-        _items = items;
-        _loading = false;
-      });
+      local = await _loadLocalAppeals();
     } catch (_) {
       if (!mounted) return;
       setState(() {
         _loading = false;
         _failed = true;
+      });
+      return;
+    }
+    try {
+      final remote = await widget.api.cashbackMissingAppeals();
+      if (!mounted) return;
+      final server = remote
+          .map((e) => LocalAppeal.fromJson(e as Map<String, dynamic>))
+          .toList();
+      if (server.isEmpty) {
+        // 接口成功但无数据：不丢本地记录。
+        setState(() {
+          _items = local;
+          _loading = false;
+        });
+        return;
+      }
+      // 服务端为准；本地有、服务端暂无的记录合并进来（按 id 去重）。
+      final serverIds = server.map((a) => a.id).toSet();
+      final extras = local.where((a) => !serverIds.contains(a.id)).toList();
+      setState(() {
+        _items = [...server, ...extras];
+        _loading = false;
+      });
+    } catch (_) {
+      // 接口失败：兜底用本地记录。
+      if (!mounted) return;
+      setState(() {
+        _items = local;
+        _loading = false;
       });
     }
   }

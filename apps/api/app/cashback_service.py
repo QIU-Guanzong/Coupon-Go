@@ -106,8 +106,32 @@ def _withdrawal_out(w: CashbackWithdrawal) -> dict:
         "method_text": "轉數快 (FPS)" if w.method == "fps" else "銀行轉賬",
         "account_name": w.account_name,
         "status": w.status,
+        # Gap 6: server-side failure reason; null on pending / paid rows.
+        "failure_reason": w.failure_reason,
+        "processed_at": w.processed_at.isoformat() if w.processed_at else None,
         "created_at": w.created_at.isoformat() if w.created_at else None,
     }
+
+
+def mark_withdrawal_failed(db: Session, withdrawal_id: int,
+                           reason: str) -> CashbackWithdrawal:
+    """Ops path: a pending payout failed at payout time (bank / FPS
+    rejection). There is no live payout integration, so this is the
+    only way a withdrawal becomes failed — ops records the provider's
+    reason here and the client shows it (Gap 6)."""
+    w = db.query(CashbackWithdrawal).filter(
+        CashbackWithdrawal.id == withdrawal_id).first()
+    if w is None:
+        raise CashbackError("找不到此提現記錄")
+    if w.status != "pending":
+        raise CashbackError("只有處理中的提現可以標記為失敗")
+    if not reason or not reason.strip():
+        raise CashbackError("請提供提現失敗原因")
+    w.status = "failed"
+    w.failure_reason = reason.strip()
+    w.processed_at = _now()
+    db.flush()
+    return w
 
 
 def _confirm(db: Session, t: CashbackTransaction, now: datetime):
@@ -540,6 +564,16 @@ def create_appeal(db: Session, user: models.User, merchant_id: int, order_no: st
     return appeal
 
 
+# Gap 3: appeal status text (four states — submitted | under_review |
+# resolved | rejected — defined in models_cashback.CashbackAppeal).
+APPEAL_STATUS_TEXT = {
+    "submitted": "已提交",
+    "under_review": "處理中",
+    "resolved": "已解決",
+    "rejected": "已拒絕",
+}
+
+
 def appeal_out(a: CashbackAppeal, db: Session) -> dict:
     shop = db.query(models.Shop).filter(models.Shop.id == a.merchant_id).first()
     return {
@@ -552,5 +586,15 @@ def appeal_out(a: CashbackAppeal, db: Session) -> dict:
         "evidence": a.evidence,
         "note": a.note,
         "status": a.status,
+        "status_text": APPEAL_STATUS_TEXT.get(a.status, a.status),
         "created_at": a.created_at.isoformat() if a.created_at else None,
+        "resolved_at": a.resolved_at.isoformat() if a.resolved_at else None,
     }
+
+
+def list_appeals(db: Session, user_id: int, limit: int = 50) -> list:
+    """Gap 3: the caller's own Missing Cashback appeals, newest first."""
+    rows = (db.query(CashbackAppeal)
+            .filter(CashbackAppeal.user_id == user_id)
+            .order_by(CashbackAppeal.id.desc()).limit(limit).all())
+    return [appeal_out(a, db) for a in rows]

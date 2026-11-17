@@ -108,7 +108,9 @@ def _release_stock(db: Session, order: Order):
     pkg = (db.query(Package).filter(Package.id == order.package_id)
            .with_for_update().populate_existing().first())
     if pkg is not None:
-        pkg.stock_left = min(pkg.stock_total, pkg.stock_left + 1)
+        # Gap 7: release exactly what this order reserved (1 by default).
+        qty = order.quantity or 1
+        pkg.stock_left = min(pkg.stock_total, pkg.stock_left + qty)
         _sync_coupon_stock(db, pkg)
 
 
@@ -419,28 +421,32 @@ def purchase_package(package_id: int, body: sp.PurchaseIn,
                 db, existing, attempt,
                 attempt.client_secret if attempt else "",
                 "訂單已存在，返回原訂單")
-    if pkg.stock_left <= 0:
+    if pkg.stock_left < body.quantity:
         raise HTTPException(status_code=400, detail="此套餐已售罄")
+    # Gap 7: quantity scales the total price and the stock reservation.
+    total = pkg.package_price * body.quantity
     try:
         order = Order(
             user_id=user.id, order_type="package", package_id=pkg.id,
-            amount=pkg.package_price, paid_amount=0,
+            quantity=body.quantity,
+            amount=total, paid_amount=0,
             payment_method=body.payment_method, payment_status="pending",
             refund_status="none", settlement_status="pending",
             commission_amount=0, net_amount=0, client_ref=body.client_ref or "")
         db.add(order)
-        # Reserve one unit until the payment settles / fails / times out.
-        pkg.stock_left -= 1
+        # Reserve `quantity` units until the payment settles / fails /
+        # times out.
+        pkg.stock_left -= body.quantity
         _sync_coupon_stock(db, pkg)
         db.flush()
         try:
-            intent = create_payment_intent(order.id, float(pkg.package_price),
+            intent = create_payment_intent(order.id, float(total),
                                            body.payment_method)
         except GatewayError as exc:
             # Gateway unreachable before any attempt existed: drop the
             # half-made order and release the reservation so a retry is clean.
             db.delete(order)
-            pkg.stock_left += 1
+            pkg.stock_left += body.quantity
             _sync_coupon_stock(db, pkg)
             db.commit()
             logger.exception("package purchase gateway failed package_id=%s: %s",
@@ -451,7 +457,7 @@ def purchase_package(package_id: int, body: sp.PurchaseIn,
             order_id=order.id, gateway="stripe",
             gateway_ref=intent.get("gateway_ref", ""),
             client_secret=intent.get("client_secret", ""),
-            method=body.payment_method, amount=pkg.package_price,
+            method=body.payment_method, amount=total,
             currency=intent.get("currency", "HKD"), status="requires_payment")
         db.add(attempt)
         db.commit()
