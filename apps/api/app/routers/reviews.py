@@ -17,9 +17,9 @@ Gap 9: helpful votes + server-side star distribution.
 - rating_distribution (1-5 stars each) is computed server-side over
   ALL visible reviews of the shop and returned by both the list and
   the rating endpoints, so the client never stats page 1 only.
-  Distribution covers all visible reviews (including points reviews
-  that do not move the star average); the averages / review_count in
-  the rating endpoint still cover counted reviews only.
+  Distribution covers all visible reviews; since M7 the averages /
+  review_count in the rating endpoint cover the same set (every
+  visible review counts toward the rating, points or not).
 - GET /shops/{shop_id}/reviews?sort=helpful orders by helpful_count
   desc (then newest), so "最有用" is a real server sort.
 
@@ -29,12 +29,15 @@ POST /reviews accepts them as images[] (max 9); the list/detail
 responses return the same paths. Storage stays the local-disk
 placeholder in app/routers/uploads.py (object storage before launch).
 
-Points / stars split (report §5.3-10, task contract): the v0.1
-"review +15 points" must not move stars. A review that takes the
-+15 points has counts_toward_rating=False and never enters
-ShopRating. Only a review that forgoes the points (claim_points=False)
-counts toward the rating. The legacy POST /review endpoint is left
-untouched (points-only, no Review row, no rating effect).
+Points / stars decoupled (M7, supersedes the old split): points and
+stars are two separate books. EVERY visible review counts toward the
+shop rating (counts_toward_rating=True), whether or not it took the
++15 points; claim_points only decides whether points are granted.
+A revoked redemption cannot be reviewed, and revoking a redemption
+hides its review and claws its review points back (see
+hide_reviews_for_revoked_redemption, called from the revoke endpoint).
+The legacy POST /review endpoint is left untouched (points-only, no
+Review row, no rating effect).
 """
 import json
 
@@ -119,11 +122,14 @@ def review_out(db: Session, r: Review, helpful_counts=None,
 
 
 def recompute_rating(db: Session, shop_id: int) -> ShopRating:
-    """Rebuild the ShopRating row from counted, visible reviews only."""
+    """Rebuild the ShopRating row from all visible reviews (M7).
+
+    Points and stars are decoupled: every visible review counts,
+    whether or not it took the review points.
+    """
     counted = (db.query(Review)
                .filter(Review.shop_id == shop_id,
-                       Review.status == "visible",
-                       Review.counts_toward_rating.is_(True)).all())
+                       Review.status == "visible").all())
     row = db.query(ShopRating).filter(ShopRating.shop_id == shop_id).first()
     if row is None:
         row = ShopRating(shop_id=shop_id)
@@ -141,6 +147,43 @@ def recompute_rating(db: Session, shop_id: int) -> ShopRating:
     row.updated_at = _now()
     db.flush()
     return row
+
+
+def hide_reviews_for_revoked_redemption(db: Session, red) -> dict | None:
+    """M7: hide the review(s) of a revoked redemption, claw points back.
+
+    Decision (M7 req 2, "hide or keep-but-stop-counting"): HIDE.
+    The M7 invariant is "every visible review counts toward the
+    rating", so a review that must stop counting cannot stay visible.
+    The row is kept (status "hidden", never deleted) as an audit trail
+    and so an admin can restore it; its points are clawed back with a
+    -15 PointTransaction (reason "review_revoke", same negative-delta
+    pattern as the +20 redeem-points reversal in the revoke endpoint).
+    The wallet item's `reviewed` flag is reset so that, if the returned
+    coupon is re-redeemed, the new redemption can be reviewed fresh.
+    Returns {"review_id", "points_clawed_back", "status"} for the
+    (at most one) review found, else None. Caller commits.
+    """
+    review = (db.query(Review)
+              .filter(Review.redemption_id == red.id,
+                      Review.status == "visible").first())
+    if review is None:
+        return None
+    clawed = 0
+    if review.points_given:
+        clawed = config.POINTS_REVIEW
+        add_points(db, review.user_id, -clawed, "review_revoke",
+                   ref_id=review.id)
+    review.status = "hidden"
+    review.counts_toward_rating = False
+    item = db.query(models.WalletItem).filter(
+        models.WalletItem.id == red.wallet_item_id).first()
+    if item is not None:
+        item.reviewed = False
+    db.flush()
+    recompute_rating(db, red.shop_id)
+    return {"review_id": review.id, "points_clawed_back": clawed,
+            "status": "hidden"}
 
 
 def _resolve_redemption(db: Session, user: models.User,
@@ -176,6 +219,11 @@ def create_review(body: schemas_line_b.ReviewCreateIn,
                   user: models.User = Depends(get_current_user),
                   db: Session = Depends(get_db)):
     item, red = _resolve_redemption(db, user, body)
+    # M7: a revoked redemption cannot be reviewed — checked before the
+    # item-status check so the message stays specific even if the
+    # returned coupon was re-redeemed since (item.status == 2 again).
+    if red.revoked_at is not None:
+        raise HTTPException(status_code=400, detail="此核銷已被撤销，無法評價")
     if item.status != 2:
         raise HTTPException(status_code=400, detail="只有已使用的優惠券可以評價")
     existing = db.query(Review).filter(Review.redemption_id == red.id).first()
@@ -191,18 +239,27 @@ def create_review(body: schemas_line_b.ReviewCreateIn,
         images=json.dumps(body.images, ensure_ascii=False),
         tags=json.dumps(body.tags, ensure_ascii=False),
         points_given=points_given,
-        counts_toward_rating=not points_given,
+        # M7: points never affect the rating — every visible review counts.
+        counts_toward_rating=True,
         status="visible",
     )
     db.add(review)
     item.reviewed = True
-    if points_given:
-        add_points(db, user.id, config.POINTS_REVIEW, "review", ref_id=item.id)
-    db.flush()
+    try:
+        if points_given:
+            add_points(db, user.id, config.POINTS_REVIEW, "review", ref_id=item.id)
+        db.flush()
+    except IntegrityError:
+        # M4: the app-layer duplicate check above can lose a race — two
+        # concurrent submits for one redemption both pass it, then the
+        # DB UNIQUE constraint on reviews.redemption_id fires. That is
+        # still "already reviewed", not a 500: roll back and answer 400.
+        db.rollback()
+        raise HTTPException(status_code=400, detail="已經評價過")
     recompute_rating(db, red.shop_id)
     db.commit()
     db.refresh(review)
-    msg = (f"評價成功，+{config.POINTS_REVIEW} 分；此評價不計入商户星級"
+    msg = (f"評價成功，+{config.POINTS_REVIEW} 分，已計入商户星級"
            if points_given else "評價成功，已計入商户星級")
     return {"message": msg, "review": review_out(db, review),
             "balance": points_balance(db, user.id)}

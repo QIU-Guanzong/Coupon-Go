@@ -14,6 +14,9 @@ This module adds:
   unlocks it triggered roll back to pending; already-withdrawn money
   is recorded as a negative adjustment (see
   cashback_service.void_for_revocation).
+  M7: a review of this redemption is hidden and its +15 review points
+  (if any) are clawed back (reviews.hide_reviews_for_revoked_redemption);
+  the revoke response reports it under "review" (null when no review).
 - GET /vendor/redemptions/export — vendor-scoped redemption records for
   reconciliation (F7-5; JSON default, ?format=csv). Admin sees all shops.
 """
@@ -28,6 +31,7 @@ from ..cashback_service import void_for_revocation
 from ..database import get_db
 from ..deps import add_points, require_role
 from .coupons import _refresh_expiry
+from .reviews import hide_reviews_for_revoked_redemption
 
 router = APIRouter()
 
@@ -151,13 +155,17 @@ def revoke_redemption(redemption_id: int,
     # the dine-in unlocks it triggered; already-withdrawn money is
     # recorded as a negative adjustment (never a negative transaction).
     cashback = void_for_revocation(db, red)
+    # M7: a review of this redemption is hidden and its +15 review
+    # points (if any) are clawed back; no review -> None.
+    review = hide_reviews_for_revoked_redemption(db, red)
     db.commit()
     return {"message": "核銷已撤销，優惠券已退回未使用",
             "redemption_id": red.id,
             "wallet_item_id": red.wallet_item_id,
             "revoked_at": red.revoked_at,
             "revoke_window_minutes": config.REVOKE_WINDOW_MINUTES,
-            "cashback": cashback}
+            "cashback": cashback,
+            "review": review}
 
 
 @router.get("/vendor/redemptions/export")

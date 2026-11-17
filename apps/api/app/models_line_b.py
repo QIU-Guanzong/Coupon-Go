@@ -4,15 +4,16 @@ Kept in a separate module from app.models so line B only adds new tables
 and never edits the v0.1 tables. Imported by app.models (one line) so
 Base.metadata.create_all() and Alembic see them.
 
-Rules (FEATURE_RESEARCH_20261116.md §5.3 / §11):
+Rules (FEATURE_RESEARCH_20261116.md §5.3 / §11, as corrected by M7):
 - Only a redeemed user may review; the Redemption is the proof of
-  consumption. One review per redemption.
-- Points and stars are split: a review that takes the +15 review points
-  (points_given=True) does NOT count toward the shop rating
-  (counts_toward_rating=False) — incentivised reviews must not move stars.
-  A reviewer may opt out of the points (claim_points=False); that review
-  counts toward the rating. ShopRating aggregates counted, visible
-  reviews only.
+  consumption. One review per redemption (DB UNIQUE on
+  reviews.redemption_id, model + migration 0002_line_b).
+- Points and stars are DECOUPLED (M7): every visible review counts
+  toward the shop rating (counts_toward_rating=True), whether or not
+  it took the +15 review points. claim_points only decides whether
+  points are granted; it never affects the rating. The pre-M7 split
+  (points review -> counts_toward_rating=False) is removed; legacy
+  rows were backfilled by migration 0015.
 - images / tags / shop_photos are stored as JSON text. v1 has no file
   upload endpoint; images is a reserved field holding image URLs/paths
   supplied by the client (max 9), to be backed by real upload in v2.
@@ -66,7 +67,9 @@ class Review(Base):
     images = Column(Text, default="[]")           # JSON list, reserved (v1: URLs)
     tags = Column(Text, default="[]")             # JSON list, e.g. 推薦菜
     points_given = Column(Boolean, default=False)
-    counts_toward_rating = Column(Boolean, default=False)
+    # M7: always True for new reviews — points never affect the rating.
+    # (Legacy False rows backfilled by migration 0015.)
+    counts_toward_rating = Column(Boolean, default=True)
     status = Column(String(20), default="visible", nullable=False)
     reply_text = Column(Text, default="")
     replied_at = Column(DateTime, nullable=True)
@@ -104,11 +107,11 @@ class ReviewHelpfulVote(Base):
 
 
 class ShopRating(Base):
-    """Pre-aggregated shop rating. Only counted, visible reviews feed it.
+    """Pre-aggregated shop rating. All visible reviews feed it (M7).
 
     A row exists once a shop has any review; overall/taste/ambience/
-    service are None and review_count is 0 while no review counts
-    toward the rating (e.g. every review so far took points).
+    service are None and review_count is 0 while no visible review
+    exists (e.g. every review so far is disputed or hidden).
     """
     __tablename__ = "shop_ratings"
     shop_id = Column(Integer, ForeignKey("shops.id"), primary_key=True)

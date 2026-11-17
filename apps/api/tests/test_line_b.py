@@ -113,20 +113,25 @@ def test_review_unredeemed_rejected(client):
     assert r.status_code == 400  # not redeemed yet
 
 
-def test_review_points_do_not_move_rating(client):
+def test_review_points_count_toward_rating(client):
+    """M7: a review that takes the +15 points DOES count toward the rating.
+
+    (Pre-M7 this test asserted the opposite split; the split was
+    removed by M7 — points and stars are decoupled, claim_points only
+    decides the points.)"""
     h, wid, rid = _redeem(client, "rev-points@example.com", 2)
     assert client.get("/api/v3/points", headers=h).json()["balance"] == 30
     r = client.post("/api/v3/reviews", json=_review_body(wid), headers=h)
     assert r.status_code == 200, r.text
     assert r.json()["review"]["points_given"] is True
-    assert r.json()["review"]["counts_toward_rating"] is False
+    assert r.json()["review"]["counts_toward_rating"] is True
     assert r.json()["balance"] == 45  # +15 points still given
-    # ...but the rating is untouched: no counted review exists.
+    # ...and the rating now includes it: same set as the distribution.
     rating = client.get("/api/v3/shops/1/rating").json()
-    assert rating["review_count"] == 0 and rating["overall"] is None
+    assert rating["review_count"] == 1 and rating["overall"] == 4.0
     listed = client.get("/api/v3/shops/1/reviews").json()
     assert listed["total"] == 1
-    assert listed["reviews"][0]["counts_toward_rating"] is False
+    assert listed["reviews"][0]["counts_toward_rating"] is True
 
 
 def test_review_without_points_counts_toward_rating(client):

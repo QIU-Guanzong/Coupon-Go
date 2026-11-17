@@ -56,7 +56,7 @@ Endpoint 名稱沿用 Coupon GO! 1.2.6 APK 逆向出的原始名稱（含原始�
 | POST | `/store-scaned-qr-values?wallet_item_id=` | 生成 QR 碼 + 6 位兌換碼，15:00 有效；每次出示輪換新碼（線 A 防截圖） |
 | POST | `/new-scan-coupon/prepare` | **線 A** 預核銷（唯讀查券，`{code}`）→ `can_redeem` + 5 分鐘 prepare token，不改券狀態 |
 | POST | `/new-scan-coupon` | 商戶掃碼核銷 `{code, idempotency_key?, prepare_token?}`，+20 分；錯店/已用/過期/每日 200 次上限；同 `idempotency_key` 重放只算一次（`duplicate: true`）；核銷後兌換碼失效 |
-| POST | `/redemptions/{id}/revoke` | **線 A** 核銷撤销（10 分鐘窗口內；券退回未使用、換新碼、+20 分沖回；超時 400） |
+| POST | `/redemptions/{id}/revoke` | **線 A** 核銷撤销（10 分鐘窗口內；券退回未使用、換新碼、+20 分沖回；超時 400；M7：若該核銷已有評價，評價改為隱藏、已發的 +15 評價積分沖回，響應新增 `review: {review_id, points_clawed_back, status}`，無評價時為 `null`） |
 | GET | `/vendor/redemptions/export?format=json\|csv` | **線 A** 商戶核銷記錄導出 / 匯總（對賬用；admin 看全部） |
 | GET | `/get-favorite-coupons-list?page=&status=&sortby=` | 錢包三狀態：1 未使用 / 2 已使用 / 3 已失效 |
 | GET | `/get-user-record-list` | 消費記錄 |
@@ -80,19 +80,18 @@ Endpoint 名稱沿用 Coupon GO! 1.2.6 APK 逆向出的原始名稱（含原始�
 取其最近一次核銷記錄）。每張券（每次核銷）只能評價一次；舊版
 `POST /review` 與新版共用 `wallet_items.reviewed` 去重標記。
 
-**積分與星級拆開（防誘導評價）**：`claim_points=true`（默認）時評價
-得 +15 分，但 `counts_toward_rating=false`，**不計入商户星級**；
-`claim_points=false` 時不得分，但 `counts_toward_rating=true`，計入
-星級聚合。`GET /shops/{id}/rating` 只聚合 `status=visible` 且
-`counts_toward_rating=true` 的評價；全是積分評價時
+**積分與星級解耦（M7）**：所有 `status=visible` 的評價都計入星級，
+`counts_toward_rating` 恆為 `true`；`claim_points` 只決定是否得
++15 分（默認 `true`，不看分數、不要求好評），不影響星級。
+`GET /shops/{id}/rating` 聚合全部 `visible` 評價；無可見評價時
 `review_count=0`、`overall=null`。差評申訴後（`status=disputed`）
 的評價暫時退出聚合。
 
 | 方法 | 路徑 | 說明 |
 |---|---|---|
-| POST | `/reviews` | 寫評價。Body：`{wallet_item_id?, redemption_id?, taste 1–5, ambience 1–5, service 1–5, content ≤1000 字, images[] ≤9（晒圖連結，v1 預留欄位，無上傳接口）, tags[] ≤10, claim_points=true}`；二者至少傳一個。未核銷 400、重複評價 400、維度越界 422。返回 `{message, review, balance}` |
+| POST | `/reviews` | 寫評價。Body：`{wallet_item_id?, redemption_id?, taste 1–5, ambience 1–5, service 1–5, content ≤1000 字, images[] ≤9（晒圖連結，v1 預留欄位，無上傳接口）, tags[] ≤10, claim_points=true}`；二者至少傳一個。未核銷 400、已撤销核銷 400、重複評價 400、維度越界 422。返回 `{message, review, balance}` |
 | GET | `/shops/{id}/reviews?page=&has_images=` | 商户評價列表（僅 `visible`，按新到舊，20/頁）；`has_images=true` 只看有圖 |
-| GET | `/shops/{id}/rating` | 商户評分聚合 `{shop_id, overall, taste, ambience, service, review_count, updated_at}`；無計入星級評價時分數為 `null`、`review_count=0` |
+| GET | `/shops/{id}/rating` | 商户評分聚合 `{shop_id, overall, taste, ambience, service, review_count, updated_at}`；無可見評價時分數為 `null`、`review_count=0` |
 | POST | `/reviews/{id}/reply` | 商户回覆。該店商户或 admin 可調；Body `{reply ≤500 字}` |
 | POST | `/reviews/{id}/dispute` | 差評申訴。作者 / 該店商户 / admin 可調；Body `{reason}`；申訴後評價退出聚合 |
 
@@ -235,19 +234,20 @@ M3 字段變更：`GET /bargain-sessions/{id}`、`POST /bargain-campaigns/{id}/s
 取其最近一次核銷記錄）。每張券（每次核銷）只能評價一次；舊版
 `POST /review` 與新版共用 `wallet_items.reviewed` 去重標記。
 
-**積分與星級拆開（防誘導評價）**：`claim_points=true`（默認）時評價
-得 +15 分，但 `counts_toward_rating=false`，**不計入商户星級**；
-`claim_points=false` 時不得分，但 `counts_toward_rating=true`，計入
-星級聚合。`GET /shops/{id}/rating` 只聚合 `status=visible` 且
-`counts_toward_rating=true` 的評價；全是積分評價時
+**積分與星級解耦（M7）**：所有 `status=visible` 的評價都計入星級，
+`counts_toward_rating` 恆為 `true`；`claim_points` 只決定是否得
++15 分（默認 `true`，不看分數、不要求好評），不影響星級。
+`GET /shops/{id}/rating` 聚合全部 `visible` 評價；無可見評價時
 `review_count=0`、`overall=null`。差評申訴後（`status=disputed`）
 的評價暫時退出聚合；申訴解決見後台 v2（`POST /reviews/{id}/resolve`）。
+已撤销核銷不能評價（400「此核銷已被撤销，無法評價」）；撤销核銷
+時其評價改為 `hidden`、已發的 +15 分沖回（見撤销接口的 `review` 欄位）。
 
 | 方法 | 路徑 | 說明 |
 |---|---|---|
-| POST | `/reviews` | 寫評價。Body：`{wallet_item_id?, redemption_id?, taste 1–5, ambience 1–5, service 1–5, content ≤1000 字, images[] ≤9（晒圖連結，v1 預留欄位，v2 起由 POST /uploads/review-images 上傳後填入）, tags[] ≤10, claim_points=true}`；二者至少傳一個。未核銷 400、重複評價 400、維度越界 422。返回 `{message, review, balance}` |
+| POST | `/reviews` | 寫評價。Body：`{wallet_item_id?, redemption_id?, taste 1–5, ambience 1–5, service 1–5, content ≤1000 字, images[] ≤9（晒圖連結，v1 預留欄位，v2 起由 POST /uploads/review-images 上傳後填入）, tags[] ≤10, claim_points=true}`；二者至少傳一個。未核銷 400、已撤销核銷 400、重複評價 400、維度越界 422。返回 `{message, review, balance}` |
 | GET | `/shops/{id}/reviews?page=&has_images=` | 商户評價列表（僅 `visible`，按新到舊，20/頁）；`has_images=true` 只看有圖 |
-| GET | `/shops/{id}/rating` | 商户評分聚合 `{shop_id, overall, taste, ambience, service, review_count, updated_at}`；無計入星級評價時分數為 `null`、`review_count=0` |
+| GET | `/shops/{id}/rating` | 商户評分聚合 `{shop_id, overall, taste, ambience, service, review_count, updated_at}`；無可見評價時分數為 `null`、`review_count=0` |
 | POST | `/reviews/{id}/reply` | 商户回覆。該店商户或 admin 可調；Body `{reply ≤500 字}` |
 | POST | `/reviews/{id}/dispute` | 差評申訴。作者 / 該店商户 / admin 可調；Body `{reason}`；申訴後評價退出聚合 |
 
@@ -860,13 +860,11 @@ POST /api/v3/reviews
 `tags[]` ≤ 10；`claim_points` 默認 `true`。成功響應
 `{message, review, balance}`（`balance` 為評價後積分餘額）；
 `claim_points=true` 時 `message` 為
-`評價成功，+15 分；此評價不計入商户星級`，評價得 +15 分但
-`counts_toward_rating=false`，**不計入商户星級**；
+`評價成功，+15 分，已計入商户星級`，評價得 +15 分且計入星級；
 `claim_points=false` 時 `message` 為 `評價成功，已計入商户星級`，
-不得分但計入星級。**注意**：此口徑為現行代碼行為；M7 將改為
-「所有 `visible` 評價都計入星級，積分與星級完全解耦」，M7 合入後
-本節相應更新，在此之前以現行行為為準。錯誤：未核銷 400
-`只有已核銷的優惠券可以評價` / `只有已使用的優惠券可以評價`；
+不得分但同樣計入星級（M7：所有 `visible` 評價都計入星級，積分
+與星級完全解耦，`counts_toward_rating` 恆為 `true`）。錯誤：未核銷 400
+`只有已核銷的優惠券可以評價` / `只有已使用的優惠券可以評價`；已撤销核銷 400 `此核銷已被撤销，無法評價`；
 重複評價 400 `已經評價過`；找不到核銷 / 券 404
 `找不到此核銷記錄` / `找不到此優惠券`；非本人 403
 `只能評價自己的已核銷優惠券`；二者都沒傳 422
@@ -879,8 +877,8 @@ status, reply_text, replied_at, created_at}`（另有列表接口附加的
 `helpful_count` / `helped`，見 `review_out`）。
 
 `GET /shops/{id}/rating` 響應：`{shop_id, overall, taste, ambience,
-service, review_count, rating_distribution, updated_at}`；無計入星級
-評價時分數為 `null`、`review_count=0`。`rating_distribution` 為
+service, review_count, rating_distribution, updated_at}`；無可見評價
+時分數為 `null`、`review_count=0`。`rating_distribution` 為
 1–5 星分佈計數。`GET /shops/{id}/reviews` 響應：
 `{shop_id, current_page, total_pages, total, rating_distribution,
 reviews[]}`；`sort=latest`（默認）/ `helpful`，非法值 422
@@ -894,7 +892,7 @@ reviews[]}`；`sort=latest`（默認）/ `helpful`，非法值 422
 | POST | `/store-scaned-qr-values?wallet_item_id=` | 生成 QR 碼 + 6 位兌換碼，15:00 有效；每次出示輪換新碼 |
 | POST | `/new-scan-coupon/prepare` | 預核銷（唯讀查券，`{code}`）→ `can_redeem` + 5 分鐘 prepare token，不改券狀態 |
 | POST | `/new-scan-coupon` | 商戶掃碼核銷（商户 / admin 調用） |
-| POST | `/redemptions/{id}/revoke` | 核銷撤销（10 分鐘窗口內；券退回未使用、換新碼、+20 分沖回；超時 400） |
+| POST | `/redemptions/{id}/revoke` | 核銷撤销（10 分鐘窗口內；券退回未使用、換新碼、+20 分沖回；超時 400；M7：若該核銷已有評價，評價改為隱藏、已發的 +15 評價積分沖回，響應新增 `review: {review_id, points_clawed_back, status}`，無評價時為 `null`） |
 | GET | `/get-favorite-coupons-list?page=&status=&sortby=` | 錢包列表，三狀態：1 未使用 / 2 已使用 / 3 已失效；20/頁 |
 | GET | `/get-user-record-list` | 消費記錄 |
 | GET | `/points` | 積分餘額 + 明細（最新 50 條） |
