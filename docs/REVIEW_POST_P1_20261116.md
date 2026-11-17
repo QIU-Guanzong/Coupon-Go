@@ -7,12 +7,19 @@
 - **未做的事**：未运行 pytest（143 通过为任务给定基线，未复跑）、未发任何 HTTP 请求、未做并发实测；并发类结论为代码级推导（行锁有无 + 状态检查位置），已在文中标明。
 - **严重程度**：高 = 可直接造成资金/数据错误或越权写；中 = 越权写或审计留痕丢失，需 finance 批准或特定时序才生效；低 = 边界/可用性/文案不一致；观察 = 符合现有设计但值得产品确认。
 
-## 修复状态（2026-11-16，F1/F2/F3 已修并合入 main）
+## 修复状态（2026-11-17，F1/F2/F3、F4–F10 已修并合入 main）
 
 - **F1（中）— 已修，提交 `16460762fe86273c385253470f2a08c4418fd63b`**：`create_invoice` 的回退由 `can_access_shop`（对 auditor 恒真）改为新增的 `can_request_invoice_for_shop`（仅店主或 `shop_members` 成员）；`can_access_shop` 本身未动，读接口仍需它。新增测试 `apps/api/tests/test_f1_invoice_perm.py`（7 条：auditor/support/customer → 403，finance → 201，vendor 自家店 → 201、他家店 → 403，店员自家店 → 201、他家店 → 403）。全量 pytest 150 通过（基线 143 + 7）。
 - **F2（中）— 已修，提交 `79f1a6c626e7f4af03c0fe29d7c6a3ee61c927dd`**：`run_reconciliation` 重跑只删除/重建 `open` 行；`resolved` 行保留不动（含 resolution/resolved_by/resolved_at）；仍存在的底层差异若已有对应已处理行不再重复生成（去重键 `(discrepancy_type, redemption_id, settlement_item_id)`）；`discrepancy_count` 与报告状态按保留行 + 新生成行合计。新增测试 `apps/api/tests/test_f2_recon_rerun.py`（2 条）。三项合入后主目录全量 pytest 160 通过。
 - **F3（中）— 已修，提交 `ffca20cac5abfb21e7a2ab55b150cfca45b4d9cf`**：`approve`/`dispute`/`resolve` 与 `pay` 对齐，对结算单行加 `.with_for_update().populate_existing()` 后再检查状态再转移；状态守卫与 400 文案未动。新增测试 `apps/api/tests/test_f3_settlement_locks.py`（8 条：pay–dispute 等并发 + 串行守卫 + 锁存在性）。并发用例跑在 SQLite fallback（`BEGIN IMMEDIATE` 串行化）下——本机无 Postgres；如有 Postgres 环境，建议以 `F3_POSTGRES_URL` 再跑一次做真验证。F1+F3 合入后主目录全量 pytest 158 通过。
-- F4–F10（低）与 README 缺项未动，另批处理。
+- **F4（低）— 已修，提交 `7a5a401451cb1b8042c0f4589333badc59834712`**：`generate_settlement` 的 `db.flush()` 包 `IntegrityError` 捕获，回滚后返回 409（可重试查询已有结算单）。新增测试 `apps/api/tests/test_f4f6f7_settlement_snapshot.py`（2 条，含 flush 钩子确定性模拟竞态：修复前 500，修复后 409）。
+- **F5（低）— 已修，提交 `7a5a401451cb1b8042c0f4589333badc59834712`**：新增 `MerchantCommissionRate` 表（迁移 `0011_f5_commission_rate_table.py`，`shop_id` 唯一）+ `POST/GET /admin/commission-rates`（finance/admin）；生成时只用已配置费率或默认 10%，显式传不符的费率返回 400，用默认时审计日志写明。新增测试 `apps/api/tests/test_f5_commission_rates.py`（7 条）。
+- **F6（低）— 已修，提交 `7a5a401451cb1b8042c0f4589333badc59834712`**：`Redemption` 加 `face_value` 快照列（迁移 `0010_f4f6f7_settlement_snapshot.py`），核销创建时按当时券价写入；生成与对账三处都读快照，NULL 遗留行才回退当前价。新增测试 `apps/api/tests/test_f4f6f7_settlement_snapshot.py`（4 条：核销后改价仍按旧价、对账 0 差异、百分比券/赠品券快照 0、NULL 回退）。
+- **F7（低）— 已修，提交 `7a5a401451cb1b8042c0f4589333badc59834712`**：`no_settlement` 报告差异全处理后转 `resolved`。新增测试 1 条（在 `test_f4f6f7_settlement_snapshot.py` 内）。
+- **F8（低）— 已修，提交 `7a5a401451cb1b8042c0f4589333badc59834712`**：加店员改邀请制：`ShopMember` 加 `status`（pending/active，迁移 `0012_f8f9_member_invite.py`）、`invited_by`、`invited_at`；新建 `POST /admin/shops/{shop_id}/members/{member_id}/confirm`（仅被加人本人可调，确认后才升 merchant-admin）；目标只接受 customer/merchant-admin，平台角色一律 400；移除最后一个成员身份后降级回 customer；`can_access_shop` 只认 active 成员。新增测试 `apps/api/tests/test_f8f9_member_invite.py`（11 条，F8/F9 共用）。
+- **F9（低）— 已修，提交 `7a5a401451cb1b8042c0f4589333badc59834712`**：`list_shop_members` 除 `members.read` 外，允许本店店主/active 店员读本店列表，他店 403。测试含在 F8/F9 的 11 条内。
+- **F10（低）— 已修，提交 `7a5a401451cb1b8042c0f4589333badc59834712`**：`admin.py` 角色筛选改用 `ALL_ROLES` 7 角色白名单，无效值返回 400。新增测试 `apps/api/tests/test_f10_admin_users_role_filter.py`（6 条）。F4–F10 合入后主目录全量 pytest 261 通过（230 基线 + 31 条新增）。
+- README 缺项：只补两项（中性措辞）：结算周期月结（period 为 YYYY-MM）；砍价退款走网关、当前只接测试模式、真实 key 场景下会失败。其余六项（余额过期、分享佣金合规、香港《商品说明条例》、砍价失败是否退助力次数、套餐部分使用是否按比例退、试点商户名单）需产品拍板，未写定论。
 
 ---
 
@@ -128,29 +135,29 @@ else:
 - 位置：`admin_v2.py:275-334`（`approve`/`dispute`/`resolve` 均为普通查询后赋值提交，无 `with_for_update`），对照 `pay` 的锁（`:343-344`）。
 - 证据（时序推导，未实测并发）：`pay` 持有结算行 `FOR UPDATE` 锁直至提交；`dispute` 在 `pay` 提交前读到 `approved`，其提交时的 `UPDATE` 会等待行锁、随后执行，把已 `paid` 的结算单改回 `disputed`（`dispute` 只检查读入时的状态 `:303`，不重查提交时状态）。同理 `resolve`（读 `disputed` 后改 `approved/pending`）可覆盖并发 `pay` 的结果；`approve` 与 `dispute` 之间亦然。FIX-3 只锁了 `pay` 与发票创建这一对，状态机其余转移未覆盖。`test_fix3_row_locks.py` 只有 pay–pay（`:508`）与发票–发票（`:541`）并发测试，无 pay–dispute 交叉测试。生产用 PostgreSQL（`infra/docker-compose.yml`）时成立；开发 SQLite 的库级锁可能掩盖此问题。
 
-**F4（低）— 并发生成结算单时，唯一约束兜底会以 500 而非 409 失败。**
+**F4（低）【已修，提交 7a5a4014】— 并发生成结算单时，唯一约束兜底会以 500 而非 409 失败。**
 - 位置：`admin_v2.py:183-235`（`existing` 检查 `:189-193` 无锁、无事务隔离说明）；兜底约束 `models_line_f.py:85-87` `uq_settlement_shop_period`。
 - 复现：两请求并发 `POST /admin/settlements/generate` 同商户同周期，均通过 `existing is None` 检查后插入，一方违反唯一约束；代码无 `IntegrityError` 捕获，故返回 500 而非文档承诺的 409。脏数据不会产生（约束兜底有效），仅错误码与可重试性受损。另 `settled_ids`（`:195-197`）全表加载结算行 id，未按商户/周期过滤，仅为性能问题。
 
-**F5（低）— 佣金率无来源表：生成时任意传入 0–1，finance 单人可把佣金定为 0%。**
+**F5（低）【已修，提交 7a5a4014】— 佣金率无来源表：生成时任意传入 0–1，finance 单人可把佣金定为 0%。**
 - 位置：`schemas_line_f.py:13`（`ge=0, le=1`，默认 0.10）；`admin_v2.py:203` 直接采用传入值；`models_line_f.py:14-16` 明确「rate is a per-generation input — the real rate is negotiated per merchant」。
 - 影响：无按商户配置的费率表、无复核、无费率变更审批；`Settlement` 行只记录最终所用费率，审计日志 `settlement.generate` 的 detail 含 `rate=`（`:226-228`），事后可查但事前无控制。与 README「需按商户谈判后逐个设定」一致，属于业务控制缺口而非代码错误。
 
-**F6（低）— 面值取当前券价，无核销时快照；券改价后结算口径漂移、对账误报。**
+**F6（低）【已修，提交 7a5a4014】— 面值取当前券价，无核销时快照；券改价后结算口径漂移、对账误报。**
 - 位置：`_face_value`（`admin_v2.py:88-99`）在生成（`:204-212`）与对账（`:438,447-450`）两处均实时读当前 `Coupon` 行。
 - 复现：某券核销后商户改价（`discount_price/regular_price` 变化）→ 此后生成结算单按新价计入；或结算单生成后改价 → 再跑对账即报 `amount_mismatch`（结算行金额取生成时价，`expected` 取当前价）。百分比券/赠品券无价基时面值为 0（`models_line_f.py:10-12` 已声明），结算毛额会低估该类核销。建议以核销时快照或 `Redemption` 行金额为准，现为口径风险。
 
-**F7（低）— 无结算单的报告在差异全处理后仍停留 `no_settlement`，不转 `resolved`。**
+**F7（低）【已修，提交 7a5a4014】— 无结算单的报告在差异全处理后仍停留 `no_settlement`，不转 `resolved`。**
 - 位置：`admin_v2.py:537-541`：`if open_left == 0 and rep.status == "open": rep.status = "resolved"`。当报告因无结算单而为 `no_settlement` 时，即使全部差异都已处理，状态也不变。列表页按状态筛选会漏掉这类已处理报告。
 
-**F8（低）— 店主可任意拉人并自动提权，无被加人同意校验；移除不降级。**
+**F8（低）【已修，提交 7a5a4014】— 店主可任意拉人并自动提权，无被加人同意校验；移除不降级。**
 - 位置：`admin_v2.py:1021-1055`（加店员）、`:1056-1074`（移除）。
 - 证据：加店员检查仅为 `user.role != "admin" and shop.vendor_id != user.id`（`:1026`），即店主可把任意 `user_id`（含陌生 customer）加为本店店员；`target.role == "customer"` 时自动升为 `merchant-admin`（`:1037-1040`），无邀请/确认环节；也可把已有 finance/auditor 账号加为店员（平台角色不变，`shop_members.role` 写死 `merchant-admin`，双角色并存易混淆）。移除时只删 `ShopMember` 行，不降级平台角色（文档 `docs/API.md` 已写明「不改该用户的平台角色」）；被移除者保留 `merchant-admin` 空头角色（该角色本身无平台权限，`permissions_line_f.py:34-50`，故无越权，仅角色标签残留）。
 
-**F9（低）— 店主/店员看不到自家店员列表。**
+**F9（低）【已修，提交 7a5a4014】— 店主/店员看不到自家店员列表。**
 - 位置：`admin_v2.py:1002-1019` `list_shop_members` 要求 `members.read`，而 `members.read` 仅 finance/auditor/admin（`permissions_line_f.py:46`）；商户端无对应的成员列表接口。店主能加/删店员（`:1021,1056`），却不能列出自家店员，需平台代查。可用性缺口，非安全问题。
 
-**F10（低）— v1 用户列表的角色筛选对新角色静默失效。**
+**F10（低）【已修，提交 7a5a4014】— v1 用户列表的角色筛选对新角色静默失效。**
 - 位置：`apps/api/app/routers/admin.py:275-279`：`if role in ("customer", "vendor", "admin")` 才过滤；传 `role=finance/auditor/support/merchant-admin` 时过滤被忽略，返回全部用户。v1 文件仍在用旧三角色白名单，未随 v2 角色扩展更新。
 
 ### 1.3 观察（非问题，产品确认用）
