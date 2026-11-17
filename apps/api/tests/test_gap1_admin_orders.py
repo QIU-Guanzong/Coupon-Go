@@ -116,6 +116,11 @@ def merchant_admin_headers(client):
     r = client.post("/api/v3/admin/shops/1/members",
                     json={"user_id": me["id"]}, headers=_vendor_headers(client))
     assert r.status_code == 201, r.text
+    # F8: invite is pending until the invitee confirms it.
+    r = client.post(
+        f"/api/v3/admin/shops/1/members/{r.json()['member']['id']}/confirm",
+        headers=h)
+    assert r.status_code == 200, r.text
     # Role changed after the first token was issued: re-login for new role.
     return _login(client, "gap1-staff@example.com")
 

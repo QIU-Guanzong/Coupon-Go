@@ -457,10 +457,17 @@ def test_shop_members(client):
     vh = _vendor_headers(client)
     h = _register_and_login(client, "f-member@example.com")
     uid = client.get("/api/v3/get-profile", headers=h).json()["id"]
-    # shop owner adds a staff member; the user becomes merchant-admin
+    # shop owner invites a staff member (F8: pending, no promotion yet);
+    # the invitee confirms, and only then becomes merchant-admin
     r = client.post("/api/v3/admin/shops/1/members",
                     json={"user_id": uid}, headers=vh)
     assert r.status_code == 201, r.text
+    assert r.json()["member"]["status"] == "pending"
+    assert client.get("/api/v3/get-profile", headers=h).json()["role"] == "customer"
+    member_id = r.json()["member"]["id"]
+    r = client.post(f"/api/v3/admin/shops/1/members/{member_id}/confirm",
+                    headers=h)
+    assert r.status_code == 200, r.text
     assert client.get("/api/v3/get-profile", headers=h).json()["role"] == "merchant-admin"
     # member can read their shop's settlements, but not another shop's
     assert client.get("/api/v3/merchant/shops/1/settlements",

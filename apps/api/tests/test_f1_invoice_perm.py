@@ -134,6 +134,11 @@ def test_f1_shop_member_can_create_invoice_for_own_shop_only(client):
     r = client.post("/api/v3/admin/shops/1/members",
                     json={"user_id": uid}, headers=vh)
     assert r.status_code == 201, r.text
+    # F8: invite is pending until the invitee confirms it.
+    r = client.post(
+        f"/api/v3/admin/shops/1/members/{r.json()['member']['id']}/confirm",
+        headers=h)
+    assert r.status_code == 200, r.text
     assert client.get("/api/v3/get-profile",
                       headers=h).json()["role"] == "merchant-admin"
     r = _invoice(client, h, 1)

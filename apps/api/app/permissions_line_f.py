@@ -45,6 +45,8 @@ PERMISSIONS = {
     "roles.write": set(),            # admin only
     "members.read": {"finance", "auditor"},
     "members.write": set(),          # admin only (+ shop owner, see below)
+    "commission_rates.read": {"finance", "auditor"},
+    "commission_rates.write": {"finance"},
     "reviews.dispute.resolve": {"auditor", "support"},
     "reviews.disputes.read": {"auditor", "support"},
 }
@@ -75,7 +77,9 @@ def get_shop_or_404(db: Session, shop_id: int) -> models.Shop:
 
 
 def can_access_shop(db: Session, user: models.User, shop: models.Shop) -> bool:
-    """Platform staff with read perms, the shop owner, or a staff member."""
+    """Platform staff with read perms, the shop owner, or an ACTIVE
+    staff member. A pending invite (F8) confers no access until the
+    invitee confirms it."""
     if user.role == "admin":
         return True
     if user.role in ("finance", "auditor"):
@@ -84,7 +88,8 @@ def can_access_shop(db: Session, user: models.User, shop: models.Shop) -> bool:
         return True
     member = (db.query(ShopMember)
               .filter(ShopMember.shop_id == shop.id,
-                      ShopMember.user_id == user.id).first())
+                      ShopMember.user_id == user.id,
+                      ShopMember.status == "active").first())
     return member is not None
 
 
@@ -92,8 +97,8 @@ def can_request_invoice_for_shop(db: Session, user: models.User,
                                  shop: models.Shop) -> bool:
     """Invoice-request fallback for callers WITHOUT invoices.write.
 
-    Only the shop owner or a shop_members member may request an invoice
-    for a shop. Unlike can_access_shop, platform roles get NO blanket
+    Only the shop owner or an ACTIVE shop_members member may request an
+    invoice for a shop. Unlike can_access_shop, platform roles get NO blanket
     access here: auditor/finance/support must hold invoices.write
     (finance does; auditor/support do not), otherwise an auditor could
     POST an invoice for any shop. Used only by POST /admin/invoices.
@@ -102,7 +107,8 @@ def can_request_invoice_for_shop(db: Session, user: models.User,
         return True
     member = (db.query(ShopMember)
               .filter(ShopMember.shop_id == shop.id,
-                      ShopMember.user_id == user.id).first())
+                      ShopMember.user_id == user.id,
+                      ShopMember.status == "active").first())
     return member is not None
 
 

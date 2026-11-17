@@ -10,7 +10,16 @@ from pydantic import BaseModel, Field
 class SettlementGenerateIn(BaseModel):
     shop_id: int
     period: str = Field(pattern=r"^\d{4}-(0[1-9]|1[0-2])$")  # YYYY-MM
-    commission_rate: float = Field(default=0.10, ge=0, le=1)
+    # F5: retained for compatibility only. None = not passed. When
+    # passed it must equal the effective rate (the shop's configured
+    # rate, else the 10% default) or generation is rejected with 400;
+    # it is never adopted directly.
+    commission_rate: Optional[float] = Field(default=None, ge=0, le=1)
+
+
+class CommissionRateSetIn(BaseModel):
+    shop_id: int
+    rate: float = Field(ge=0, le=1)
 
 
 class SettlementDisputeIn(BaseModel):

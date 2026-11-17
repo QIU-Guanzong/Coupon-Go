@@ -29,6 +29,7 @@ from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from .. import models, schemas_line_f
@@ -36,8 +37,9 @@ from ..database import get_db
 from ..deps import get_current_user, require_role
 from ..models_line_b import AdminAuditLog, Review
 from ..models_line_f import (
-    CmsAnnouncement, CmsBanner, Invoice, ReconciliationDiscrepancy,
-    ReconciliationReport, Settlement, SettlementItem, ShopMember,
+    CmsAnnouncement, CmsBanner, Invoice, MerchantCommissionRate,
+    ReconciliationDiscrepancy, ReconciliationReport, Settlement,
+    SettlementItem, ShopMember,
 )
 from ..models_packages import PAYMENT_STATUSES, Order, Package
 from ..serializers_packages import order_out
@@ -49,6 +51,10 @@ from .reviews import recompute_rating, review_out
 
 router = APIRouter()
 admin_only = require_role("admin")
+
+# F5: platform default commission rate, used only when a shop has no
+# configured rate in merchant_commission_rates.
+DEFAULT_COMMISSION_RATE = Decimal("0.10")
 
 
 def _now():
@@ -87,12 +93,20 @@ def _period_bounds(period: str):
     return start, end
 
 
-def _face_value(coupon: models.Coupon) -> Decimal:
+def _face_value(coupon: models.Coupon,
+                redemption: models.Redemption = None) -> Decimal:
     """Face value a redemption contributes to a settlement.
 
+    F6: prefer the snapshot taken at scan time (redemption.face_value)
+    so a later coupon price change cannot drift the settlement basis.
+    Only legacy redemptions created before the snapshot column existed
+    (face_value NULL) fall back to the live coupon row below:
     cash_amount, else discount_price, else regular_price, else 0
     (percentage-only / gift coupons carry no price basis in v0.1).
     """
+    if redemption is not None and getattr(redemption, "face_value", None) \
+            is not None:
+        return Decimal(str(redemption.face_value))
     for field in ("cash_amount", "discount_price", "regular_price"):
         value = getattr(coupon, field, None)
         if value is not None:
@@ -203,10 +217,11 @@ def _admin_order_out(db: Session, o: Order) -> dict:
 
 
 def _merchant_admin_shop_ids(db: Session, user: models.User) -> set:
-    """Shops a merchant-admin may see: shop_members rows plus any
+    """Shops a merchant-admin may see: ACTIVE shop_members rows plus any
     shop they own directly (same scope rule as can_access_shop)."""
     ids = {m.shop_id for m in db.query(ShopMember).filter(
-        ShopMember.user_id == user.id).all()}
+        ShopMember.user_id == user.id,
+        ShopMember.status == "active").all()}
     ids |= {s.id for s in db.query(models.Shop).filter(
         models.Shop.vendor_id == user.id).all()}
     return ids
@@ -246,6 +261,65 @@ def list_admin_orders(status: str = Query(None),
             "orders": out["items"]}
 
 
+# ---------- commission rates (F5) ----------
+def _commission_rate_out(db: Session, row: MerchantCommissionRate) -> dict:
+    shop = db.query(models.Shop).filter(models.Shop.id == row.shop_id).first()
+    return {
+        "id": row.id, "shop_id": row.shop_id,
+        "shop_name": shop.name if shop else "",
+        "rate": _money(row.rate), "set_by": row.set_by,
+        "created_at": row.created_at, "updated_at": row.updated_at,
+    }
+
+
+@router.post("/admin/commission-rates", status_code=201)
+def set_commission_rate(body: schemas_line_f.CommissionRateSetIn,
+                        user: models.User = Depends(
+                            require_perm("commission_rates.write")),
+                        db: Session = Depends(get_db)):
+    """Set a shop's commission rate (finance / admin only).
+
+    One row per shop: re-setting updates the existing row. The rate is
+    the single source of truth generate_settlement reads from.
+    """
+    shop = get_shop_or_404(db, body.shop_id)
+    rate = Decimal(str(body.rate))
+    row = (db.query(MerchantCommissionRate)
+           .filter(MerchantCommissionRate.shop_id == shop.id).first())
+    created = row is None
+    if created:
+        row = MerchantCommissionRate(shop_id=shop.id, rate=rate,
+                                     set_by=user.id)
+        db.add(row)
+    else:
+        row.rate = rate
+        row.set_by = user.id
+    db.flush()
+    _log(db, user.id, "commission_rate.set", "merchant_commission_rate",
+         row.id, f"shop_id={shop.id}; rate={rate}; set_by={user.id}")
+    db.commit()
+    db.refresh(row)
+    return {"message": "商户佣金率已设置" if created else "商户佣金率已更新",
+            "commission_rate": _commission_rate_out(db, row)}
+
+
+@router.get("/admin/commission-rates")
+def list_commission_rates(shop_id: int = Query(None),
+                          page: int = Query(1, ge=1),
+                          user: models.User = Depends(
+                              require_perm("commission_rates.read")),
+                          db: Session = Depends(get_db)):
+    """List configured commission rates (finance / auditor / admin)."""
+    q = db.query(MerchantCommissionRate).order_by(
+        MerchantCommissionRate.shop_id)
+    if shop_id:
+        q = q.filter(MerchantCommissionRate.shop_id == shop_id)
+    out = _page([_commission_rate_out(db, r) for r in q.all()], page)
+    return {"current_page": out["current_page"],
+            "total_pages": out["total_pages"], "total": out["total"],
+            "commission_rates": out["items"]}
+
+
 # ---------- settlements ----------
 @router.post("/admin/settlements/generate", status_code=201)
 def generate_settlement(body: schemas_line_f.SettlementGenerateIn,
@@ -253,6 +327,25 @@ def generate_settlement(body: schemas_line_f.SettlementGenerateIn,
                             require_perm("settlements.write")),
                         db: Session = Depends(get_db)):
     shop = get_shop_or_404(db, body.shop_id)
+    # F5: the effective rate comes from the shop's configured rate,
+    # else the platform default 10%. An explicitly passed
+    # commission_rate must equal the effective rate, otherwise the
+    # request is rejected — the request body can no longer set an
+    # arbitrary rate (e.g. finance passing 0%).
+    configured = (db.query(MerchantCommissionRate)
+                  .filter(MerchantCommissionRate.shop_id == shop.id)
+                  .first())
+    if configured is not None:
+        rate = Decimal(str(configured.rate))
+        rate_from_default = False
+    else:
+        rate = DEFAULT_COMMISSION_RATE
+        rate_from_default = True
+    if (body.commission_rate is not None
+            and Decimal(str(body.commission_rate)) != rate):
+        raise HTTPException(
+            status_code=400,
+            detail="传入的佣金率与生效费率不一致（生效费率 %s）" % rate)
     existing = (db.query(Settlement)
                 .filter(Settlement.shop_id == shop.id,
                         Settlement.period == body.period).first())
@@ -267,13 +360,12 @@ def generate_settlement(body: schemas_line_f.SettlementGenerateIn,
                            models.Redemption.scanned_at < end)
                    .order_by(models.Redemption.id).all())
     fresh = [r for r in redemptions if r.id not in settled_ids]
-    rate = Decimal(str(body.commission_rate))
     gross = Decimal("0")
     items = []
     for r in fresh:
         coupon = db.query(models.Coupon).filter(
             models.Coupon.id == r.coupon_id).first()
-        amount = _face_value(coupon) if coupon else Decimal("0")
+        amount = _face_value(coupon, r) if coupon else Decimal("0")
         gross += amount
         items.append((r, amount))
     commission = (gross * rate).quantize(Decimal("0.01"))
@@ -284,7 +376,19 @@ def generate_settlement(body: schemas_line_f.SettlementGenerateIn,
         commission_rate=rate, commission=commission, net_amount=net,
         status="pending", generated_by=user.id)
     db.add(settlement)
-    db.flush()
+    try:
+        db.flush()
+    except IntegrityError:
+        # F4: a concurrent generate for the same (shop, period) passed
+        # the pre-check above and committed first; the unique
+        # constraint uq_settlement_shop_period rejects this second
+        # insert. That is a duplicate-generation conflict, not a server
+        # error: roll back and report 409 so the caller can query the
+        # settlement that already exists.
+        db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail="此商户此結算週期已有結算單（重複生成衝突），請查詢已有結算單")
     for r, amount in items:
         db.add(SettlementItem(
             settlement_id=settlement.id, redemption_id=r.id,
@@ -292,7 +396,9 @@ def generate_settlement(body: schemas_line_f.SettlementGenerateIn,
             commission=(amount * rate).quantize(Decimal("0.01"))))
     _log(db, user.id, "settlement.generate", "settlement", settlement.id,
          f"shop_id={shop.id}; period={body.period}; "
-         f"redemptions={len(fresh)}; gross={gross}; rate={rate}")
+         f"redemptions={len(fresh)}; gross={gross}; rate={rate}"
+         + ("; 无商户费率配置，使用默认 10%" if rate_from_default
+            else "; 使用商户配置费率"))
     db.commit()
     db.refresh(settlement)
     out = _settlement_out(db, settlement)
@@ -515,7 +621,7 @@ def run_reconciliation(body: schemas_line_f.ReconciliationRunIn,
             coupon = db.query(models.Coupon).filter(
                 models.Coupon.id == r.coupon_id).first()
             found.append(("missing_settlement_line", r.id, None,
-                          _face_value(coupon) if coupon else Decimal("0"),
+                          _face_value(coupon, r) if coupon else Decimal("0"),
                           None))
     for i in items:
         if i.redemption_id not in redemption_ids:
@@ -525,7 +631,7 @@ def run_reconciliation(body: schemas_line_f.ReconciliationRunIn,
             r = next(r for r in redemptions if r.id == i.redemption_id)
             coupon = db.query(models.Coupon).filter(
                 models.Coupon.id == r.coupon_id).first()
-            expected = _face_value(coupon) if coupon else Decimal("0")
+            expected = _face_value(coupon, r) if coupon else Decimal("0")
             if Decimal(str(i.amount)) != expected:
                 found.append(("amount_mismatch", r.id, i.id,
                               expected, i.amount))
@@ -630,7 +736,9 @@ def resolve_discrepancy(
         open_left = db.query(ReconciliationDiscrepancy).filter(
             ReconciliationDiscrepancy.report_id == rep.id,
             ReconciliationDiscrepancy.status == "open").count()
-        if open_left == 0 and rep.status == "open":
+        if open_left == 0 and rep.status in ("open", "no_settlement"):
+            # F7: a no_settlement report whose discrepancies are all
+            # resolved is done too — it must not stay no_settlement.
             rep.status = "resolved"
     db.commit()
     return {"message": "差異已處理", "discrepancy": _discrepancy_out(d)}
@@ -1099,10 +1207,15 @@ def change_user_role(user_id: int, body: schemas_line_f.RoleChangeIn,
 # ---------- shop members ----------
 @router.get("/admin/shops/{shop_id}/members")
 def list_shop_members(shop_id: int,
-                      user: models.User = Depends(
-                          require_perm("members.read")),
+                      user: models.User = Depends(get_current_user),
                       db: Session = Depends(get_db)):
     shop = get_shop_or_404(db, shop_id)
+    # F9: members.read holders (finance/auditor/admin) plus the shop's
+    # owner / active members (can_access_shop) may list THIS shop's
+    # members; anyone else gets 403.
+    if not has_perm(user, "members.read") and not can_access_shop(
+            db, user, shop):
+        raise HTTPException(status_code=403, detail="沒有權限")
     rows = (db.query(ShopMember)
             .filter(ShopMember.shop_id == shop.id)
             .order_by(ShopMember.id).all())
@@ -1112,7 +1225,10 @@ def list_shop_members(shop_id: int,
         out.append({"id": m.id, "shop_id": m.shop_id, "user_id": m.user_id,
                     "email": u.email if u else "",
                     "name": u.name if u else "",
-                    "role": m.role, "created_at": m.created_at})
+                    "role": m.role, "status": m.status,
+                    "invited_by": m.invited_by,
+                    "invited_at": m.invited_at,
+                    "created_at": m.created_at})
     return {"shop_id": shop.id, "shop_name": shop.name, "members": out}
 
 
@@ -1127,27 +1243,75 @@ def add_shop_member(shop_id: int, body: schemas_line_f.ShopMemberAddIn,
         models.User.id == body.user_id).first()
     if target is None:
         raise HTTPException(status_code=404, detail="找不到此用戶")
+    # F8: only a customer or an existing merchant-admin may be invited.
+    # Platform roles (admin/finance/auditor/support/vendor) are never
+    # pulled into shop staff.
+    if target.role not in ("customer", "merchant-admin"):
+        raise HTTPException(
+            status_code=400,
+            detail="只有 customer 或 merchant-admin 可以被邀請為店員")
     existing = (db.query(ShopMember)
                 .filter(ShopMember.shop_id == shop.id,
                         ShopMember.user_id == target.id).first())
     if existing is not None:
         raise HTTPException(status_code=400, detail="此用戶已是本店店員")
-    if target.role == "customer":
-        target.role = "merchant-admin"
-        _log(db, user.id, "user.role.change", "user", target.id,
-             "customer -> merchant-admin (added as shop member)")
+    # F8: invite only — status=pending, NO immediate promotion. The
+    # invitee confirms via POST .../members/{member_id}/confirm, and
+    # only then (if they are a customer) become merchant-admin.
     member = ShopMember(shop_id=shop.id, user_id=target.id,
-                        role="merchant-admin", added_by=user.id)
+                        role="merchant-admin", added_by=user.id,
+                        status="pending", invited_by=user.id,
+                        invited_at=_now())
     db.add(member)
     db.flush()
-    _log(db, user.id, "shop.member.add", "shop_member", member.id,
+    _log(db, user.id, "shop.member.invite", "shop_member", member.id,
          f"shop_id={shop.id}; user_id={target.id}")
     db.commit()
     db.refresh(member)
-    return {"message": "店員已加入", "member": {
+    return {"message": "邀請已發送，待對方確認", "member": {
         "id": member.id, "shop_id": member.shop_id,
         "user_id": member.user_id, "email": target.email,
         "name": target.name or "", "role": member.role,
+        "status": member.status, "invited_by": member.invited_by,
+        "invited_at": member.invited_at,
+        "created_at": member.created_at}}
+
+
+@router.post("/admin/shops/{shop_id}/members/{member_id}/confirm")
+def confirm_shop_member(shop_id: int, member_id: int,
+                        user: models.User = Depends(get_current_user),
+                        db: Session = Depends(get_db)):
+    """F8: the invitee confirms their own invite. Only the invitee
+    (member.user_id == caller) may call this; confirming flips the
+    invite to active and promotes a customer to merchant-admin."""
+    shop = get_shop_or_404(db, shop_id)
+    member = (db.query(ShopMember)
+              .filter(ShopMember.id == member_id,
+                      ShopMember.shop_id == shop.id).first())
+    if member is None:
+        raise HTTPException(status_code=404, detail="找不到此邀請")
+    if member.user_id != user.id:
+        raise HTTPException(status_code=403, detail="只有被邀請人本人可以確認")
+    if member.status != "pending":
+        raise HTTPException(status_code=400, detail="此邀請已確認")
+    target = db.query(models.User).filter(
+        models.User.id == member.user_id).first()
+    member.status = "active"
+    if target is not None and target.role == "customer":
+        target.role = "merchant-admin"
+        _log(db, user.id, "user.role.change", "user", target.id,
+             "customer -> merchant-admin (confirmed shop member invite)")
+    _log(db, user.id, "shop.member.confirm", "shop_member", member.id,
+         f"shop_id={shop.id}; user_id={member.user_id}")
+    db.commit()
+    db.refresh(member)
+    return {"message": "已確認加入", "member": {
+        "id": member.id, "shop_id": member.shop_id,
+        "user_id": member.user_id,
+        "email": target.email if target else "",
+        "name": target.name if target else "", "role": member.role,
+        "status": member.status, "invited_by": member.invited_by,
+        "invited_at": member.invited_at,
         "created_at": member.created_at}}
 
 
@@ -1163,7 +1327,21 @@ def remove_shop_member(shop_id: int, member_user_id: int,
                       ShopMember.user_id == member_user_id).first())
     if member is None:
         raise HTTPException(status_code=404, detail="找不到此店員")
+    target = db.query(models.User).filter(
+        models.User.id == member_user_id).first()
     db.delete(member)
+    db.flush()
+    # F8: removing the last ACTIVE membership demotes a merchant-admin
+    # back to customer; members of other shops keep the role.
+    if target is not None and target.role == "merchant-admin":
+        remaining = (db.query(ShopMember)
+                     .filter(ShopMember.user_id == member_user_id,
+                             ShopMember.status == "active").count())
+        if remaining == 0:
+            target.role = "customer"
+            _log(db, user.id, "user.role.change", "user", target.id,
+                 "merchant-admin -> customer "
+                 "(last shop membership removed)")
     _log(db, user.id, "shop.member.remove", "shop_member", member.id,
          f"shop_id={shop.id}; user_id={member_user_id}")
     db.commit()

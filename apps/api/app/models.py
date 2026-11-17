@@ -183,6 +183,13 @@ class Redemption(Base):
     shop_id = Column(Integer, ForeignKey("shops.id"), nullable=False)
     scanned_by_vendor_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     scanned_at = Column(DateTime, default=_now)
+    # F6: face value snapshot at scan time (Numeric, nullable). The
+    # settlement amount for this redemption is frozen here, so a later
+    # coupon price change cannot drift the settlement / reconciliation
+    # basis. NULL = legacy redemption created before the snapshot
+    # column existed; _face_value falls back to the live coupon row
+    # for those rows only.
+    face_value = Column(Numeric(12, 2), nullable=True)
     # Line A (report §11.2): idempotency + prepare + revoke window.
     idempotency_key = Column(String(80), unique=True, nullable=True)
     prepared_at = Column(DateTime, nullable=True)   # pre-redeem check time

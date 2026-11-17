@@ -6,6 +6,7 @@ Original names: new-favorite-coupon (claim), store-scaned-qr-values
 """
 import random
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
@@ -138,9 +139,20 @@ def scan_coupon(body: schemas.ScanIn,
     item.code = ""
     item.qr_expires_at = None
     coupon.used_count += 1
+    # F6: snapshot the coupon face value at scan time, with the same
+    # pricing order as admin_v2._face_value (cash_amount, else
+    # discount_price, else regular_price, else 0 for percentage-only /
+    # gift coupons, which carry no price basis). Settlement generation
+    # and reconciliation read this snapshot, never the live coupon row.
+    face_value = Decimal("0")
+    for _field in ("cash_amount", "discount_price", "regular_price"):
+        _v = getattr(coupon, _field, None)
+        if _v is not None:
+            face_value = Decimal(str(_v))
+            break
     red = models.Redemption(
         wallet_item_id=item.id, coupon_id=coupon.id, shop_id=coupon.shop_id,
-        scanned_by_vendor_id=vendor.id,
+        scanned_by_vendor_id=vendor.id, face_value=face_value,
         idempotency_key=body.idempotency_key or None,
         prepared_at=prepared_at)
     db.add(red)

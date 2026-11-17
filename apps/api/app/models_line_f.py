@@ -11,9 +11,12 @@ Rules (FEATURE_RESEARCH_20261116.md §5.1 / §11):
   is generated for one shop + one YYYY-MM period from that period's
   redemptions. gross = sum of redeemed coupons' face value
   (cash_amount / discount_price / regular_price, else 0);
-  commission = gross * commission_rate (rate is a per-generation input —
-  the real rate is negotiated per merchant, report §14 #6; v2 stores
-  whatever rate was used); net = gross - commission.
+  commission = gross * commission_rate (rate comes from the
+  merchant's configured rate in merchant_commission_rates when one
+  exists, else the platform default 10% — F5; the generate request
+  may still carry commission_rate for compatibility, but it is only
+  accepted when it equals the effective rate, never adopted
+  directly); net = gross - commission.
   Status: pending -> approved / disputed -> paid. A disputed settlement
   returns to pending or approved via the resolve endpoint.
 - Reconciliation compares the period's redemptions against the
@@ -54,6 +57,23 @@ def _json_list(value):
         return parsed if isinstance(parsed, list) else []
     except (ValueError, TypeError):
         return []
+
+
+class MerchantCommissionRate(Base):
+    """F5: the source table for merchant commission rates.
+
+    One row per shop (shop_id unique). generate_settlement uses this
+    shop's rate when a row exists, else the platform default 10%.
+    set_by is the user id that last set the rate.
+    """
+    __tablename__ = "merchant_commission_rates"
+    id = Column(Integer, primary_key=True)
+    shop_id = Column(Integer, ForeignKey("shops.id"), nullable=False,
+                     unique=True)
+    rate = Column(Numeric(5, 4), nullable=False)
+    set_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime, default=_now)
+    updated_at = Column(DateTime, default=_now, onupdate=_now)
 
 
 class Settlement(Base):
@@ -212,14 +232,24 @@ class ShopMember(Base):
 
     A member may read that shop's settlements / reconciliation / invoices
     and raise invoice requests for it. Platform role of the user must be
-    merchant-admin (set automatically on add when the user is a customer).
+    merchant-admin (set automatically on confirm when the user is a
+    customer).
+
+    Membership is invite-only (F8): the owner creates a ``pending``
+    invite; the invitee confirms it themselves, which flips ``status``
+    to ``active``. Only ``active`` rows confer shop access. Rows that
+    predate the invite flow were backfilled to ``active`` (migration
+    0012).
     """
     __tablename__ = "shop_members"
     id = Column(Integer, primary_key=True)
     shop_id = Column(Integer, ForeignKey("shops.id"), nullable=False)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     role = Column(String(20), default="merchant-admin", nullable=False)
+    status = Column(String(20), default="pending", nullable=False)
     added_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+    invited_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+    invited_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=_now)
 
     __table_args__ = (

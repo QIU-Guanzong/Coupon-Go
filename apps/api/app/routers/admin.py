@@ -27,6 +27,7 @@ from .. import models, schemas_line_b
 from ..database import get_db
 from ..deps import get_current_user, require_role
 from ..models_line_b import AdminAuditLog, MerchantApplication, Review
+from ..permissions_line_f import ALL_ROLES
 from ..serializers import coupon_out, shop_out
 
 router = APIRouter()
@@ -276,7 +277,10 @@ def admin_users(role: str = Query(None), page: int = Query(1, ge=1),
                 admin: models.User = Depends(admin_only),
                 db: Session = Depends(get_db)):
     q = db.query(models.User).order_by(models.User.id)
-    if role in ("customer", "vendor", "admin"):
+    if role is not None:
+        if role not in ALL_ROLES:
+            raise HTTPException(status_code=400,
+                                detail="未知角色：%s" % role)
         q = q.filter(models.User.role == role)
     rows = [{"id": u.id, "email": u.email, "name": u.name or "",
              "role": u.role, "is_active": u.is_active,
