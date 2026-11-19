@@ -28,6 +28,7 @@ from sqlalchemy.orm import Session
 
 from .. import config, models, prepare_token
 from ..cashback_service import lock_account, void_for_revocation
+from ..settlement_ledger import reverse_sale
 from ..database import get_db
 from ..deps import add_points, require_role
 from .coupons import _refresh_expiry, ensure_paid_voucher, ensure_redeemable, presented_item
@@ -126,9 +127,11 @@ def revoke_redemption(redemption_id: int, acknowledge_existing: bool = False,
                       db: Session = Depends(get_db)):
     # FIX-3: lock the redemption row before the revoked_at check so a
     # second concurrent revoke blocks here and sees revoked_at set.
+    # Serialize revocations, while allowing a statement being generated to
+    # take its foreign-key reference to this redemption before we credit it.
     red = (db.query(models.Redemption).filter(
         models.Redemption.id == redemption_id)
-        .with_for_update().populate_existing().first())
+        .with_for_update(key_share=True).populate_existing().first())
     if red is None:
         raise HTTPException(status_code=404, detail="找不到此核銷記錄")
     if vendor.role != "admin" and red.shop_id not in _vendor_shop_ids(db, vendor):
@@ -173,6 +176,7 @@ def revoke_redemption(redemption_id: int, acknowledge_existing: bool = False,
     # M7: a review of this redemption is hidden and its +15 review
     # points (if any) are clawed back; no review -> None.
     review = hide_reviews_for_revoked_redemption(db, red)
+    reverse_sale(db, red, "revoked")
     db.commit()
     return {"message": "核銷已撤銷，優惠券已到期" if item.status == 3 else "核銷已撤銷，優惠券已退回未使用",
             "wallet_status": item.status,

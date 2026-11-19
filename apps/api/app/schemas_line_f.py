@@ -3,6 +3,7 @@ CMS / roles / shop members) and review-dispute resolution."""
 from datetime import datetime
 from typing import List, Optional
 
+from decimal import Decimal
 from pydantic import BaseModel, Field
 
 
@@ -95,3 +96,8 @@ class ShopMemberAddIn(BaseModel):
 class ReviewResolveIn(BaseModel):
     decision: str = Field(pattern=r"^(uphold|dismiss)$")
     note: str = Field(default="", max_length=500)
+
+
+class SettlementTransferIn(BaseModel):
+    amount: Decimal = Field(max_digits=12, decimal_places=2)
+    reference: str = Field(min_length=1, max_length=120)

@@ -77,8 +77,7 @@ class _VendorHomeScreenState extends State<VendorHomeScreen> {
             ),
             const SizedBox(height: 8),
             OutlinedButton(
-              onPressed: () => Navigator.of(context).push(MaterialPageRoute(
-                  builder: (_) => RedemptionRecordsScreen(api: widget.api))),
+              onPressed: () => Navigator.of(context).pushNamed('/vendor/records'),
               child: const Text('核銷記錄'),
             ),
             const SizedBox(height: 8),
@@ -104,6 +103,8 @@ class _VendorHomeScreenState extends State<VendorHomeScreen> {
               child: const Text('管理後台（結算 / 對賬 / 發票 / 內容 / 角色）'),
             ),
             const SizedBox(height: 16),
+            OutlinedButton(onPressed: () => Navigator.of(context).pushNamed('/vendor/settlements'),
+                child: const Text('商家結算單')),
             const Text('我的優惠券', style: TextStyle(fontWeight: FontWeight.bold)),
             ..._coupons.map((c) => Card(
                   margin: const EdgeInsets.only(top: 8),

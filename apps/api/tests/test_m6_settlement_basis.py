@@ -26,7 +26,7 @@ silently overwritten).
 import importlib.util
 import os
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from fastapi.testclient import TestClient
@@ -140,8 +140,8 @@ def _create_package(client, shop_id, price=150, original=200, stock=50):
         "items": [{"name": "主菜一份", "qty": 1}],
         "person_count": 2, "original_price": original,
         "package_price": price,
-        "valid_from": "2026-11-01T00:00:00",
-        "valid_to": "2026-12-31T00:00:00",
+        "valid_from": (PERIOD_START - timedelta(days=2)).isoformat(),
+        "valid_to": (PERIOD_END + timedelta(days=2)).isoformat(),
         "usage_rules": {"need_booking": True},
         "stock_total": stock, "refund_policy": "anytime",
     }
@@ -310,7 +310,7 @@ def test_m6_refunded_package_order_excluded_from_settlement(client):
     assert s["gross_amount"] == 0, s
 
 
-def test_m6_revoked_after_settlement_shows_revoked_but_settled(client):
+def test_m6_revoked_after_settlement_keeps_sale_and_credit_note(client):
     fh = _finance_headers(client)
     rid = _redeem(client, "m6-e@example.com", coupon_id=8)  # shop 4, Cash $15
     r = _generate(client, fh, 4)
@@ -318,13 +318,12 @@ def test_m6_revoked_after_settlement_shows_revoked_but_settled(client):
     assert r.json()["settlement"]["gross_amount"] == 15, r.text
     _revoke(client, rid)
     rep = _run_recon(client, fh, 4)
-    assert rep["discrepancy_count"] == 1, rep
-    d = rep["discrepancies"][0]
-    assert d["discrepancy_type"] == "revoked_but_settled", d
-    assert d["redemption_id"] == rid, d
-    assert d["expected_amount"] == 0, d
-    assert d["actual_amount"] == 15, d
-    assert rep["status"] == "open", rep
+    assert rep["discrepancy_count"] == 0 and rep["status"] == "resolved"
+    sid = r.json()["settlement"]["id"]
+    statement = client.get(f"/api/v3/admin/settlements/{sid}", headers=fh).json()["settlement"]
+    assert statement["gross_amount"] == statement["commission"] == statement["net_amount"] == 0
+    assert statement["items"][0]["amount"] == 15
+    assert statement["items"][0]["reversal"]["amount"] == -15
 
 
 def test_m6_recon_missing_line_expected_uses_settlement_basis(client):
@@ -431,3 +430,92 @@ def test_m6_settled_period_amount_unchanged_and_flagged(client):
     s = r.json()["settlement"]
     assert s["gross_amount"] == 188, s  # old settled amount untouched
     assert s["items"][0]["amount"] == 188, s
+
+
+def test_paid_package_credit_and_cash_recovery_are_independent(client):
+    finance = _finance_headers(client)
+    email = "settlement-credit@example.com"
+    rid, order = _redeem_package(client, email, 11, price=19.95, quantity=2)
+    customer = _login(client, email)
+    sid = _generate(client, finance, 11).json()["settlement"]["id"]
+    url = f"/api/v3/admin/settlements/{sid}"
+
+    def statement():
+        return client.get(url, headers=finance).json()["settlement"]
+
+    assert client.get(url, headers=customer).status_code == 403
+    assert client.post(url + "/approve", headers=finance).status_code == 200
+    assert client.post(url + "/pay", headers=finance, json={"amount": 39.9, "reference": "qa-pay"}).status_code == 409
+    for _ in range(2):
+        assert client.post(url + "/pay", headers=finance, json={"amount": 35.91, "reference": "qa-pay"}).status_code == 200
+    assert statement()["commission"] == 3.99
+    inv_url = "/api/v3/admin/invoices"
+    inv = client.post(inv_url, headers=finance, json={
+        "shop_id": 11, "settlement_id": sid, "amount": 35.91, "title": "Audit"})
+    assert inv.status_code == 201, inv.text
+    inv_path = inv_url + "/" + str(inv.json()["invoice"]["id"])
+    assert client.post(inv_path + "/approve", headers=finance).status_code == 200
+    _revoke(client, rid)
+    assert client.post(inv_path + "/issue", headers=finance).status_code == 409
+    refund = client.post(f"/api/v3/orders/{order['id']}/refund", json={}, headers=customer)
+    assert refund.status_code == 200, refund.text
+    assert refund.json()["order"]["refund_status"] == "refunded"
+    s = statement()
+    assert (s["gross_amount"], s["commission"], s["net_amount"]) == (0, 0, 0)
+    assert (s["transferred_net"], s["outstanding_net"]) == (35.91, -35.91)
+    assert len(s["items"]) == 1 and s["items"][0]["reversal"]["commission"] == -3.99
+    assert [t["amount"] for t in s["transfers"]] == [35.91]
+    assert _run_recon(client, finance, 11)["financials"]["outstanding_net"] == -35.91
+    body = {"amount": -35.91, "reference": "recovery-1"}
+    assert client.post(url + "/transfers", json=body, headers=customer).status_code == 403
+    assert client.post(url + "/transfers", json={**body, "amount": -39.9}, headers=finance).status_code == 409
+    for _ in range(2):
+        assert client.post(url + "/transfers", json=body, headers=finance).status_code == 200
+    assert [t["amount"] for t in statement()["transfers"]] == [35.91, -35.91]
+    assert statement()["outstanding_net"] == statement()["transferred_net"] == 0
+    assert _run_recon(client, finance, 11)["discrepancy_count"] == 0
+
+
+def test_per_line_rounding_and_late_paid_sale(client):
+    finance = _finance_headers(client)
+    for n in range(2):
+        _redeem_package(client, f"round-{n}@example.com", 12, price=1.05)
+    s = _generate(client, finance, 12).json()["settlement"]
+    url = f"/api/v3/admin/settlements/{s['id']}"
+    assert (s["gross_amount"], s["commission"], s["net_amount"]) == (2.10, 0.20, 1.90)
+    assert client.post(url + "/approve", headers=finance).status_code == 200
+    assert client.post(url + "/pay", headers=finance).status_code == 200
+    _redeem_package(client, "late-sale@example.com", 12, price=1.05)
+    s = client.get(url, headers=finance).json()["settlement"]
+    assert (s["commission"], s["net_amount"], s["transferred_net"], s["outstanding_net"]) == (0.3, 2.85, 1.9, 0.95)
+    assert client.post(url + "/transfers", headers=finance,
+                       json={"amount": 0.95, "reference": "supplement-1"}).status_code == 200
+    assert _run_recon(client, finance, 12)["financials"]["outstanding_net"] == 0
+
+
+def test_rescan_in_new_period_waits_for_its_own_statement(client):
+    # Model a revoked November sale followed by a December scan of the same voucher.
+    email = "settlement-rescan@example.com"
+    finance = _finance_headers(client)
+    rid, order = _redeem_package(client, email, 14)
+    previous_month_end = PERIOD_START - timedelta(seconds=1)
+    with TestingSession() as db:
+        db.get(models.Redemption, rid).scanned_at = previous_month_end
+        db.commit()
+    r = client.post("/api/v3/admin/settlements/generate", headers=finance,
+                    json={"shop_id": 14, "period": previous_month_end.strftime("%Y-%m")})
+    assert r.status_code == 201, r.text
+    # Revoke within the allowed window for that scan.
+    from unittest.mock import patch
+    with patch("app.routers.redemption._now", return_value=PERIOD_START):
+        _revoke(client, rid)
+    customer = _login(client, email)
+    path = f"/api/v3/orders/{order['id']}"
+    assert client.get(path, headers=customer).json()["order"]["net_amount"] == 0
+    qr = client.post("/api/v3/store-scaned-qr-values", headers=customer,
+                     params={"wallet_item_id": order["wallet_item_id"]}).json()
+    scan = client.post("/api/v3/new-scan-coupon", headers=_vendor_headers(client), json={"code": qr["code"]})
+    assert scan.status_code == 200, scan.text
+    assert client.get(path, headers=customer).json()["order"]["settlement_status"] == "pending"
+    assert _generate(client, finance, 14).status_code == 201
+    assert client.get(path, headers=customer).json()["order"]["net_amount"] == 135

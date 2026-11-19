@@ -232,7 +232,18 @@ def test_reconciliation_run_and_resolve(client):
     assert r.json()["report"]["status"] == "resolved"
     assert r.json()["report"]["discrepancy_count"] == 0
     # one more redemption after the settlement: one open discrepancy
-    _redeem(client, "f-recon-c@example.com", 8)
+    _, _, rid = _redeem(client, "f-recon-c@example.com", 8)
+    # A current scan posts immediately. Simulate a missing historical
+    # posting to exercise the report and manual resolution paths.
+    with TestingSession() as db:
+        line = db.query(models.SettlementItem).filter_by(redemption_id=rid).one()
+        statement = db.get(models.Settlement, line.settlement_id)
+        statement.redemption_count -= 1
+        statement.gross_amount -= line.amount
+        statement.commission -= line.commission
+        statement.net_amount -= line.amount - line.commission
+        db.delete(line)
+        db.commit()
     r = client.post("/api/v3/admin/reconciliation/run",
                     json={"shop_id": shop_id, "period": PERIOD}, headers=fh)
     rep = r.json()["report"]

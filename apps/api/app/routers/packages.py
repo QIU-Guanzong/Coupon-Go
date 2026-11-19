@@ -36,6 +36,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from .. import config, models
+from ..settlement_ledger import reverse_sale
 from ..database import get_db
 from ..deps import get_current_user, get_optional_user, require_role
 from ..models_packages import Order, Package, Payment, Refund
@@ -292,6 +293,9 @@ def _resume_refund(db, order_id):
     status = result["status"]
     if status == "succeeded":
         order.refund_status = refund.status = "refunded"
+        # Older releases could leave a settlement line on a previously revoked voucher.
+        for red in db.query(models.Redemption).join(models.WalletItem).filter(models.WalletItem.order_id == order.id):
+            reverse_sale(db, red, "refunded")
         attempt.status = "refunded"
         order.settlement_status = "void"
         order.commission_amount = order.net_amount = 0

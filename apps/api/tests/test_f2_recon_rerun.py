@@ -221,6 +221,17 @@ def test_rerun_after_settlement_keeps_resolved_row(client):
     # One more redemption after the settlement: fresh open row + the
     # kept resolved row (count 2), report back to open.
     rid_d = _redeem(client, "f2-d@example.com")
+    # A current scan posts immediately. Simulate a missing historical
+    # posting to exercise the report and manual resolution paths.
+    with TestingSession() as db:
+        line = db.query(models.SettlementItem).filter_by(redemption_id=rid_d).one()
+        statement = db.get(models.Settlement, line.settlement_id)
+        statement.redemption_count -= 1
+        statement.gross_amount -= line.amount
+        statement.commission -= line.commission
+        statement.net_amount -= line.amount - line.commission
+        db.delete(line)
+        db.commit()
     rep = _run(client, fh)
     assert rep["discrepancy_count"] == 2, rep
     assert len(rep["discrepancies"]) == 2, rep

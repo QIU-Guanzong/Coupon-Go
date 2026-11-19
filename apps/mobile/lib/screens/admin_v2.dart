@@ -751,9 +751,10 @@ class _OrdersAdminScreenState extends State<OrdersAdminScreen> {
 /// dispute / resolve / pay. Amounts come from redeemed coupons' face
 /// value (see backend); commission_rate is entered per generation.
 class SettlementsScreen extends StatefulWidget {
-  const SettlementsScreen({super.key, required this.api});
+  const SettlementsScreen({super.key, required this.api, this.merchant = false});
 
   final ApiClient api;
+  final bool merchant;
 
   @override
   State<SettlementsScreen> createState() => _SettlementsScreenState();
@@ -768,7 +769,10 @@ class _SettlementsScreenState extends State<SettlementsScreen> {
   final _shopCtrl = TextEditingController();
   final _periodCtrl = TextEditingController(
       text: '${DateTime.now().year}-${DateTime.now().month.toString().padLeft(2, '0')}');
-  final _rateCtrl = TextEditingController(text: '0.10');
+  int _page = 1;
+  int _total = 0;
+  bool _acting = false;
+  bool _canWrite = false;
 
   @override
   void initState() {
@@ -780,18 +784,22 @@ class _SettlementsScreenState extends State<SettlementsScreen> {
   void dispose() {
     _shopCtrl.dispose();
     _periodCtrl.dispose();
-    _rateCtrl.dispose();
+
     super.dispose();
   }
 
   Future<void> _load() async {
     setState(() => _loading = true);
     try {
-      final data = await widget.api.settlements(
+      final data = widget.merchant
+          ? await widget.api.get('/merchant/settlements', query: {'page': '$_page'})
+          : await widget.api.settlements(page: _page,
           status: _statusFilter == 'all' ? null : _statusFilter);
       if (!mounted) return;
       setState(() {
         _items = data['settlements'] as List<dynamic>;
+        _canWrite = !widget.merchant && data['can_write'] == true;
+        _total = data['total'] as int? ?? _items.length;
         _loading = false;
       });
     } on ApiException catch (e) {
@@ -814,7 +822,7 @@ class _SettlementsScreenState extends State<SettlementsScreen> {
 
   Future<void> _exportCsv() async {
     final lines = [
-      'id,shop_name,period,gross_amount,commission,net_amount,status'
+      'id,shop_name,period,gross_amount,commission,net_amount,transferred_net,outstanding_net,status'
     ];
     for (final s in _items) {
       lines.add([
@@ -824,6 +832,7 @@ class _SettlementsScreenState extends State<SettlementsScreen> {
         '${s['gross_amount']}',
         '${s['commission']}',
         '${s['net_amount']}',
+        '${s['transferred_net']}', '${s['outstanding_net']}',
         '${s['status']}',
       ].join(','));
     }
@@ -831,7 +840,7 @@ class _SettlementsScreenState extends State<SettlementsScreen> {
     await showDialog<void>(
       context: context,
       builder: (c) => AlertDialog(
-        title: Text('結算單 CSV（共 ${_items.length} 條）'),
+        title: Text('本頁結算單 CSV（ ${_items.length} 條）'),
         content: SingleChildScrollView(
           child: SelectableText(
               csv.length > 2000 ? '${csv.substring(0, 2000)}…' : csv),
@@ -865,20 +874,80 @@ class _SettlementsScreenState extends State<SettlementsScreen> {
                 style:
                     const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
             Text('${s['period']} · ${_settlementStatusText('${s['status']}')}'),
+            TextButton(onPressed: () => _detail(s['id'] as int, open: false),
+                child: const Text('更新結算明細')),
             const Divider(),
             _drawerRow('核銷筆數', '${s['redemption_count'] ?? 0}'),
             _drawerRow('毛額', _moneyText(s['gross_amount'])),
             _drawerRow('佣金', _moneyText(s['commission'])),
-            _drawerRow('淨額', _moneyText(s['net_amount'])),
+            _drawerRow('商家應收', _moneyText(s['net_amount'])),
+            _drawerRow('已付淨額', _moneyText(s['transferred_net'])),
+            _drawerRow(_balanceLabel(s), _moneyText((s['outstanding_net'] as num).abs())),
+            if (_canWrite && s['status'] == 'paid' && (s['outstanding_net'] as num) != 0)
+              OutlinedButton(onPressed: _acting ? null : () => _recordTransfer(s),
+                  child: Text((s['outstanding_net'] as num) < 0 ? '登記已收回' : '登記已補付')),
+            const Divider(),
+            for (final line in s['items'] as List? ?? []) ...[
+              Text("核銷 #${line['redemption_id']} · ${_moneyText(line['amount'])} · 佣金 ${_moneyText(line['commission'])}"),
+              if (line['reversal'] != null)
+                Text("沖回 #${line['redemption_id']} · ${_moneyText(line['reversal']['amount'])} · 佣金 ${_moneyText(line['reversal']['commission'])}"),
+            ],
+            for (final t in s['transfers'] as List? ?? [])
+              Text("${t['kind'] == 'recovery' ? '收回' : t['kind'] == 'supplement' ? '補付' : '付款'} · ${_moneyText(t['amount'])} · ${t['reference']}"),
+            const Divider(),
             if ((s['dispute_reason'] as String? ?? '').isNotEmpty)
               _drawerRow('爭議原因', '${s['dispute_reason']}'),
-            _drawerRow('建立時間', '${s['created_at'] ?? '—'}'),
-            _drawerRow('確認時間', '${s['decided_at'] ?? '—'}'),
-            _drawerRow('付款時間', '${s['paid_at'] ?? '—'}'),
+            _drawerRow('建立時間', _ledgerTime(s['created_at'] as String?)),
+            _drawerRow('最後決定', _ledgerTime(s['decided_at'] as String?)),
+            _drawerRow('付款時間', _ledgerTime(s['paid_at'] as String?)),
           ],
         ),
       ),
     );
+  }
+
+  String _ledgerTime(String? raw) {
+    if (raw == null) return '—';
+    final parsed = DateTime.tryParse(raw);
+    if (parsed == null) return '—';
+    // Older API responses omit the offset on their UTC timestamps.
+    return formatDateTime(parsed.isUtc ? parsed : DateTime.parse('${raw}Z'));
+  }
+
+  String _balanceLabel(dynamic s) =>
+      (s['outstanding_net'] as num) < 0 ? '待收回' : '待付';
+
+  Future<void> _detail(int id, {bool open = true}) async {
+    try {
+      final data = await widget.api.get('/admin/settlements/$id');
+      if (!mounted) return;
+      setState(() => _selected = data['settlement'] as Map<String, dynamic>);
+      if (open) _scaffoldKey.currentState?.openEndDrawer();
+    } on ApiException catch (e) {
+      if (mounted) showCgToast(context, e.message);
+    }
+  }
+
+  Future<void> _recordTransfer(Map<String, dynamic> s, {bool firstPayment = false}) async {
+    final amount = s['outstanding_net'] as num;
+    var reference = '';
+    final value = await showDialog<String>(context: context, builder: (ctx) => AlertDialog(
+      title: Text(firstPayment ? (amount == 0 ? '結清零額結算單' : '登記已付款') : amount < 0 ? '登記已收回' : '登記已補付'),
+      content: Column(mainAxisSize: MainAxisSize.min, children: [
+        Text('實際金額 ${_moneyText(amount.abs())}'),
+        if (amount != 0) TextField(maxLength: 120, onChanged: (v) => reference = v.trim(),
+          decoration: const InputDecoration(labelText: '轉帳憑證編號')),
+      ]),
+      actions: [
+        TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('取消')),
+        TextButton(onPressed: () => Navigator.pop(ctx, amount == 0 ? 'settlement-${s['id']}' : reference), child: const Text('確認登記')),
+      ]));
+    if (!mounted || value == null) return;
+    if (value.isEmpty) { showCgToast(context, '請填寫轉帳憑證編號'); return; }
+    await _act(() => firstPayment ? widget.api.paySettlement(s['id'] as int, amount, value)
+        : widget.api.post('/admin/settlements/${s['id']}/transfers',
+        body: {'amount': amount, 'reference': value}));
+    if (mounted && !firstPayment) await _detail(s['id'] as int, open: false);
   }
 
   Widget _drawerRow(String label, String value) {
@@ -898,12 +967,16 @@ class _SettlementsScreenState extends State<SettlementsScreen> {
   }
 
   Future<void> _act(Future<Map<String, dynamic>> Function() call) async {
+    if (_acting) return;
+    setState(() => _acting = true);
     try {
       await call();
       if (mounted) showCgToast(context, '已更新');
-      _load();
+      if (mounted) await _load();
     } on ApiException catch (e) {
       if (mounted) showCgToast(context, e.message);
+    } finally {
+      if (mounted) setState(() => _acting = false);
     }
   }
 
@@ -931,6 +1004,7 @@ class _SettlementsScreenState extends State<SettlementsScreen> {
         child: ListView(
           padding: const EdgeInsets.all(16),
           children: [
+            if (_canWrite) ...[
             Wrap(
               spacing: 8,
               children: [
@@ -945,7 +1019,7 @@ class _SettlementsScreenState extends State<SettlementsScreen> {
                     label: Text(f.$2),
                     selected: _statusFilter == f.$1,
                     onSelected: (_) {
-                      setState(() => _statusFilter = f.$1);
+                      setState(() { _statusFilter = f.$1; _page = 1; });
                       _load();
                     },
                   ),
@@ -961,25 +1035,20 @@ class _SettlementsScreenState extends State<SettlementsScreen> {
               controller: _periodCtrl,
               decoration: const InputDecoration(labelText: '結算週期（YYYY-MM）'),
             ),
-            TextField(
-              controller: _rateCtrl,
-              keyboardType: TextInputType.number,
-              decoration: const InputDecoration(labelText: '佣金比例（0–1）'),
-            ),
             const SizedBox(height: 8),
             ElevatedButton(
               onPressed: () async {
                 final shopId = int.tryParse(_shopCtrl.text.trim());
-                final rate = double.tryParse(_rateCtrl.text.trim());
-                if (shopId == null || rate == null) {
-                  showCgToast(context, '請填寫正確的商户 ID 與佣金比例');
+                if (shopId == null) {
+                  showCgToast(context, '請填寫正確的商户 ID');
                   return;
                 }
                 await _act(() => widget.api.generateSettlement(
-                    shopId, _periodCtrl.text.trim(), rate));
+                    shopId, _periodCtrl.text.trim()));
               },
               child: const Text('生成結算單'),
             ),
+            ],
             const SizedBox(height: 16),
             if (_loading)
               const Column(
@@ -996,33 +1065,37 @@ class _SettlementsScreenState extends State<SettlementsScreen> {
                       title: Text(
                           '#${s['id']} · ${s['shop_name']} · ${s['period']}'),
                       subtitle: Text(
-                          '毛額 ${_moneyText(s['gross_amount'])} · 佣金 ${_moneyText(s['commission'])} · 淨額 ${_moneyText(s['net_amount'])} · ${_settlementStatusText('${s['status']}')}'),
-                      onTap: () {
-                        setState(() => _selected =
-                            Map<String, dynamic>.from(s as Map));
-                        _scaffoldKey.currentState?.openEndDrawer();
-                      },
-                      trailing: PopupMenuButton<String>(
+                          '毛額 ${_moneyText(s['gross_amount'])} · 佣金 ${_moneyText(s['commission'])} · 淨額 ${_moneyText(s['net_amount'])} · ${_settlementStatusText('${s['status']}')}'
+                          '\n${_balanceLabel(s)} ${_moneyText((s['outstanding_net'] as num).abs())}'),
+                      onTap: () => _detail(s['id'] as int),
+                      trailing: !_canWrite || s['status'] == 'paid' ? null : PopupMenuButton<String>(
                         onSelected: (v) {
                           final id = s['id'] as int;
                           switch (v) {
                             case 'approve':
                               _act(() => widget.api.approveSettlement(id));
+                            case 'resolve':
+                              _act(() => widget.api.resolveSettlement(id, 'reopen', '重新核對結算金額'));
                             case 'pay':
-                              _act(() => widget.api.paySettlement(id));
+                              _recordTransfer(s as Map<String, dynamic>, firstPayment: true);
                             case 'dispute':
                               _act(() => widget.api.disputeSettlement(
                                   id, '金額有疑問，請核對'));
                           }
                         },
-                        itemBuilder: (_) => const [
-                          PopupMenuItem(value: 'approve', child: Text('確認')),
-                          PopupMenuItem(value: 'dispute', child: Text('提出爭議')),
-                          PopupMenuItem(value: 'pay', child: Text('付款')),
+                        itemBuilder: (_) => [
+                          if (s['status'] == 'disputed') const PopupMenuItem(value: 'resolve', child: Text('退回待確認')),
+                          if (s['status'] == 'pending') const PopupMenuItem(value: 'approve', child: Text('確認')),
+                          if (s['status'] == 'pending' || s['status'] == 'approved') const PopupMenuItem(value: 'dispute', child: Text('提出爭議')),
+                          if (s['status'] == 'approved') const PopupMenuItem(value: 'pay', child: Text('登記付款')),
                         ],
                       ),
                     ),
                   )),
+            if (_total > 20) Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+              TextButton(onPressed: _page <= 1 ? null : () { _page--; _load(); }, child: const Text('上一頁')),
+              TextButton(onPressed: _page * 20 >= _total ? null : () { _page++; _load(); }, child: const Text('下一頁')),
+            ]),
             if (!_loading && _items.isEmpty)
               Padding(
                 padding: const EdgeInsets.only(top: 24),
@@ -1091,6 +1164,37 @@ class _ReconciliationScreenState extends State<ReconciliationScreen> {
     }
   }
 
+  Future<void> _showDifferences(int reportId) async {
+    try {
+      final data = await widget.api.get('/admin/reconciliation/reports/$reportId');
+      if (!mounted) return;
+      final rows = data['report']['discrepancies'] as List;
+      const labels = {
+        'missing_settlement_line': '缺少結算明細', 'missing_redemption': '缺少核銷記錄',
+        'revoked_but_settled': '已撤銷核銷仍有應收', 'amount_mismatch': '核銷金額不符',
+        'commission_mismatch': '佣金不符', 'incorrect_reversal': '沖回金額不符',
+        'reversed_commission_mismatch': '沖回佣金不符', 'unexpected_reversal': '核銷仍有效但已沖回',
+        'gross_total_mismatch': '毛額合計不符', 'commission_total_mismatch': '佣金合計不符',
+        'net_total_mismatch': '商家應收合計不符', 'count_total_mismatch': '有效核銷筆數不符',
+        'payment_entry_count': '付款流水筆數不符', 'invoice_over_settlement': '已開票金額超過商家應收',
+      };
+      await showDialog<void>(context: context, builder: (ctx) => AlertDialog(
+        title: const Text('對賬差異'),
+        content: SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start, children: [
+            for (final d in rows) Padding(padding: const EdgeInsets.only(bottom: 12), child: Text(
+              "${labels[d['discrepancy_type']] ?? '結算差異'} · ${d['status'] == 'resolved' ? '已處理' : '待處理'}"
+              "${d['redemption_id'] == null ? '' : ' · 核銷 #${d['redemption_id']}'}"
+              "\n預期 ${d['expected_amount']} · 記錄 ${d['actual_amount']}"
+              "${(d['resolution'] as String? ?? '').isEmpty ? '' : '\n${d['resolution']}'}")),
+          ])),
+        actions: [TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('關閉'))],
+      ));
+    } on ApiException catch (e) {
+      if (mounted) showCgToast(context, e.message);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -1136,10 +1240,13 @@ class _ReconciliationScreenState extends State<ReconciliationScreen> {
               ..._reports.map((r) => Card(
                     margin: const EdgeInsets.only(top: 8),
                     child: ListTile(
+                      onTap: (r['discrepancy_count'] as int) > 0 ? () => _showDifferences(r['id'] as int) : null,
+                      trailing: (r['discrepancy_count'] as int) > 0 ? const Icon(Icons.chevron_right) : null,
                       title: Text(
                           '#${r['id']} · ${r['shop_name']} · ${r['period']}'),
                       subtitle: Text(
-                          '核銷 ${r['redemption_count']} · 結算行 ${r['settlement_line_count']} · 差異 ${r['discrepancy_count']} · ${r['status']}'),
+                          '有效核銷 ${r['redemption_count']} · 有效結算行 ${r['settlement_line_count']} · 差異 ${r['discrepancy_count']}'
+                          '${r['financials'] == null ? '' : '\n平台佣金 ${formatHkd(r['financials']['commission'])} · 商家應收 ${formatHkd(r['financials']['net_amount'])} · 已付淨額 ${formatHkd(r['financials']['transferred_net'])} · ${(r['financials']['outstanding_net'] as num) < 0 ? '待收回' : '待付'} ${formatHkd((r['financials']['outstanding_net'] as num).abs().toDouble())}'}'),
                     ),
                   )),
             if (!_loading && _reports.isEmpty)

@@ -146,6 +146,10 @@ class _CouponGoAppState extends State<CouponGoApp> {
           case '/vendor/issue':
             return MaterialPageRoute(
                 builder: (_) => IssueCouponScreen(api: _api));
+          case '/vendor/settlements':
+            return MaterialPageRoute(builder: (_) => SettlementsScreen(api: _api, merchant: true));
+          case '/vendor/records':
+            return MaterialPageRoute(builder: (_) => RedemptionRecordsScreen(api: _api));
           case '/vendor/scan':
             return MaterialPageRoute(builder: (_) => ScanScreen(api: _api));
           case '/vendor/usage':

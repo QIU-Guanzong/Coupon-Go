@@ -439,15 +439,16 @@ class ApiClient extends ChangeNotifier {
 
   // ---- admin v2 (line F) ----
   Future<Map<String, dynamic>> adminOverview() async => get('/admin/overview');
-  Future<Map<String, dynamic>> settlements({int? shopId, String? status}) async =>
+  Future<Map<String, dynamic>> settlements({int? shopId, String? status, int page = 1}) async =>
       get('/admin/settlements', query: {
+        'page': '$page',
         if (shopId != null) 'shop_id': '$shopId',
         if (status != null) 'status': status,
       });
   Future<Map<String, dynamic>> generateSettlement(
-          int shopId, String period, double commissionRate) async =>
+          int shopId, String period, [double? commissionRate]) async =>
       post('/admin/settlements/generate', body: {
-        'shop_id': shopId, 'period': period, 'commission_rate': commissionRate,
+        'shop_id': shopId, 'period': period, if (commissionRate != null) 'commission_rate': commissionRate,
       });
   Future<Map<String, dynamic>> approveSettlement(int id) async =>
       post('/admin/settlements/$id/approve');
@@ -457,8 +458,8 @@ class ApiClient extends ChangeNotifier {
           int id, String decision, String note) async =>
       post('/admin/settlements/$id/resolve',
           body: {'decision': decision, 'note': note});
-  Future<Map<String, dynamic>> paySettlement(int id) async =>
-      post('/admin/settlements/$id/pay');
+  Future<Map<String, dynamic>> paySettlement(int id, num amount, String reference) async =>
+      post('/admin/settlements/$id/pay', body: {'amount': amount, 'reference': reference});
   Future<Map<String, dynamic>> reconciliationRun(int shopId, String period) async =>
       post('/admin/reconciliation/run',
           body: {'shop_id': shopId, 'period': period});

@@ -522,3 +522,60 @@ def test_approve_dispute_resolve_issue_select_for_update__lock_present(
                     headers=fh)
     assert r.status_code == 200, r.text
     _assert_locked("resolve")
+
+
+def test_pay_racing_with_revocation_preserves_cash_and_effective_balance(client):
+    _, _, rid = _redeem(client, "f3-revoke-pay@example.com", 11)
+    finance, vendor = _finance_headers(client), _vendor_headers(client)
+    s = _generate(client, finance, 6, PERIOD)
+    url = f"/api/v3/admin/settlements/{s['id']}"
+    assert client.post(url + "/approve", headers=finance).status_code == 200
+    pay, revoke = _run_two(lambda i, tc:
+        tc.post(url + "/pay", headers=finance) if i == 0 else
+        tc.post(f"/api/v3/redemptions/{rid}/revoke", headers=vendor))
+    assert revoke.status_code == 200, revoke.text
+    assert pay.status_code in (400, 200), pay.text
+    s = client.get(url, headers=finance).json()["settlement"]
+    assert s["net_amount"] == s["gross_amount"] == s["commission"] == 0
+    expected = 45 if pay.status_code == 200 else 0
+    assert (s["transferred_net"], s["outstanding_net"]) == (expected, -expected)
+    assert len(s["transfers"]) == int(pay.status_code == 200)
+
+
+@pytest.mark.skipif(BACKEND != "postgres", reason="exercises PostgreSQL FK lock compatibility")
+def test_generate_during_revocation_posts_sale_and_credit_once(client, monkeypatch):
+    from threading import Event
+    from app import settlement_ledger
+    from app.routers import admin_v2
+
+    _, _, rid = _redeem(client, "generate-revoke@example.com", 30)
+    finance, vendor = _finance_headers(client), _vendor_headers(client)
+    generated_lock, revoke_ready = Event(), Event()
+    original_lock = settlement_ledger.lock_shop
+
+    def generate_lock(db, shop_id):
+        shop = original_lock(db, shop_id)
+        generated_lock.set()
+        assert revoke_ready.wait(10)
+        return shop
+
+    def credit_lock(db, shop_id):
+        revoke_ready.set()
+        return original_lock(db, shop_id)
+
+    monkeypatch.setattr(admin_v2, "lock_shop", generate_lock)
+    monkeypatch.setattr(settlement_ledger, "lock_shop", credit_lock)
+
+    def action(i, tc):
+        if i == 0:
+            return tc.post("/api/v3/admin/settlements/generate", headers=finance,
+                           json={"shop_id": 16, "period": PERIOD})
+        assert generated_lock.wait(10)
+        return tc.post(f"/api/v3/redemptions/{rid}/revoke", headers=vendor)
+
+    generated, revoked = _run_two(action)
+    assert generated.status_code == 201 and revoked.status_code == 200
+    sid = generated.json()["settlement"]["id"]
+    row = client.get(f"/api/v3/admin/settlements/{sid}", headers=finance).json()["settlement"]
+    assert row["redemption_count"] == 0 and row["net_amount"] == 0
+    assert len(row["items"]) == 1 and row["items"][0]["reversal"]["amount"] == -80

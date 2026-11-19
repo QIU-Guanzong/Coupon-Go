@@ -111,6 +111,7 @@ class SettlementItem(Base):
     most one settlement (unique redemption_id)."""
     __tablename__ = "settlement_items"
     id = Column(Integer, primary_key=True)
+    rounding_adjustment = Column(Numeric(12, 2), nullable=False, default=0, server_default="0")
     settlement_id = Column(Integer, ForeignKey("settlements.id"), nullable=False)
     redemption_id = Column(Integer, ForeignKey("redemptions.id"),
                            nullable=False, unique=True)
@@ -132,6 +133,7 @@ class ReconciliationReport(Base):
     period = Column(String(7), nullable=False)
     settlement_id = Column(Integer, ForeignKey("settlements.id"), nullable=True)
     redemption_count = Column(Integer, default=0, nullable=False)
+    financial_snapshot = Column(Text, nullable=True)
     settlement_line_count = Column(Integer, default=0, nullable=False)
     discrepancy_count = Column(Integer, default=0, nullable=False)
     status = Column(String(20), default="open", nullable=False)
@@ -255,3 +257,26 @@ class ShopMember(Base):
     __table_args__ = (
         UniqueConstraint("shop_id", "user_id", name="uq_shop_member"),
     )
+
+
+class SettlementReversal(Base):
+    """Exactly one credit note per settled redemption, even after a refund."""
+    __tablename__ = "settlement_reversals"
+    item_id = Column(Integer, ForeignKey("settlement_items.id"), primary_key=True)
+    amount = Column(Numeric(12, 2), nullable=False)
+    commission = Column(Numeric(12, 2), nullable=False)
+    reason = Column(String(20), nullable=False)
+    created_at = Column(DateTime, default=_now, nullable=False)
+
+
+class SettlementTransfer(Base):
+    """Confirmed payouts are positive, money received back is negative."""
+    __tablename__ = "settlement_transfers"
+    id = Column(Integer, primary_key=True)
+    settlement_id = Column(Integer, ForeignKey("settlements.id"), nullable=False, index=True)
+    amount = Column(Numeric(12, 2), nullable=False)
+    kind = Column(String(20), nullable=False)
+    reference = Column(String(120), nullable=False)
+    actor_id = Column(Integer, ForeignKey("users.id"))
+    created_at = Column(DateTime, default=_now, nullable=False)
+    __table_args__ = (UniqueConstraint("settlement_id", "reference", name="uq_settlement_transfer_reference"),)

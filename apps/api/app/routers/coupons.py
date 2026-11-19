@@ -18,6 +18,7 @@ from .. import cashback_service, config, models, schemas
 from ..database import get_db
 from ..deps import add_points, get_current_user, require_role
 from ..serializers import coupon_out
+from ..settlement_ledger import add_scanned_sale
 from ..settlement_basis import settlement_basis
 
 router = APIRouter()
@@ -258,6 +259,7 @@ def scan_coupon(body: schemas.ScanIn,
         cashback_service.record_spend(db, red)
     except cashback_service.CashbackError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    add_scanned_sale(db, red)
     db.commit()
     db.refresh(red)
     return {"message": "您的優惠券已成功使用", "coupon_name": coupon.coupon_name,

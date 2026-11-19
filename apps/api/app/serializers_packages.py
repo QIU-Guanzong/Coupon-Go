@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 
 from . import config, models
 from .models_line_b import Review, ShopRating
+from .models_line_f import Settlement, SettlementItem, SettlementReversal
 from .models_packages import Order, Package, Payment, Refund
 
 REFUND_POLICY_TEXT = {
@@ -215,6 +216,27 @@ def order_out(db: Session, o: Order) -> dict:
             if wallet_item.coupon_id else None)
         policy = (coupon.refund_policy if coupon else None) or "anytime"
         refundable = policy == "anytime"
+    fee, net, settlement_status = o.commission_amount, o.net_amount, o.settlement_status
+    if wallet_item and o.settlement_status != "void":
+        # A returned voucher may be scanned again in a later month. Only the
+        # latest redemption determines the checkout's current statement status.
+        line = (db.query(models.Redemption.revoked_at, SettlementItem, SettlementReversal, Settlement.status)
+                .select_from(models.Redemption)
+                .outerjoin(SettlementItem, SettlementItem.redemption_id == models.Redemption.id)
+                .outerjoin(Settlement, Settlement.id == SettlementItem.settlement_id)
+                .outerjoin(SettlementReversal, SettlementReversal.item_id == SettlementItem.id)
+                .filter(models.Redemption.wallet_item_id == wallet_item.id)
+                .order_by(models.Redemption.id.desc()).first())
+        if line:
+            revoked_at, sale, reversal, status = line
+            if sale is not None:
+                settlement_status = status
+                fee = sale.commission + (reversal.commission if reversal else 0)
+                net = sale.amount + (reversal.amount if reversal else 0) - fee
+            if reversal or (revoked_at and sale is None):
+                settlement_status = "reversed"
+                if sale is None:
+                    fee = net = 0
     return {
         "id": o.id,
         "order_id": o.id,
@@ -235,9 +257,9 @@ def order_out(db: Session, o: Order) -> dict:
         "refund_amount": refund_amount,
         "refundable": refundable,
         "voucher_redeemed": voucher_redeemed,
-        "settlement_status": o.settlement_status,
-        "commission_amount": float(o.commission_amount or 0),
-        "net_amount": float(o.net_amount or 0),
+        "settlement_status": settlement_status,
+        "commission_amount": float(fee or 0),
+        "net_amount": float(net or 0),
         "wallet_item_id": wallet_item_id,
         "created_at": o.created_at,
         "paid_at": o.paid_at,

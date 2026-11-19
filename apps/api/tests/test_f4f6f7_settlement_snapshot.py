@@ -22,7 +22,7 @@ from datetime import datetime, timezone
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
-from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.orm import sessionmaker
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -164,47 +164,27 @@ def test_f4_sequential_duplicate_generate_is_409(client):
     assert r.status_code == 409, r.text
 
 
-def test_f4_concurrent_duplicate_generate_is_409_not_500(client, monkeypatch):
-    # Simulate the race deterministically: the rival settlement is
-    # committed by a separate session inside the first flush of the
-    # generate request, i.e. after the pre-check passed but before the
-    # insert lands — exactly the window a concurrent request hits.
+def test_f4_concurrent_duplicate_generate_is_409_not_500(client):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+
     fh = _finance_headers(client)
-    _redeem(client, "f4-b@example.com", coupon_id=8)  # shop 4, Cash $15
-    year, month = int(PERIOD[:4]), int(PERIOD[5:7])
-    start = datetime(year, month, 1)
-    end = datetime(year + 1, 1, 1) if month == 12 else datetime(year, month + 1, 1)
-    state = {"done": False}
-    orig_flush = Session.flush
+    _redeem(client, "f4-b@example.com", coupon_id=8)
+    barrier = Barrier(2)
 
-    def _flaky_flush(self, *args, **kwargs):
-        # Fire only on the flush that inserts the new Settlement (the
-        # scan/redeem requests in this test flush other objects first).
-        if not state["done"] and any(
-                isinstance(o, Settlement) for o in self.new):
-            state["done"] = True
-            rival = TestingSession()
-            try:
-                rival.add(Settlement(
-                    shop_id=4, period=PERIOD, period_start=start,
-                    period_end=end, redemption_count=0, gross_amount=0,
-                    commission_rate=0.10, commission=0, net_amount=0,
-                    status="pending"))
-                rival.commit()
-            finally:
-                rival.close()
-        return orig_flush(self, *args, **kwargs)
+    def generate():
+        with_client = TestClient(app)
+        try:
+            barrier.wait(timeout=10)
+            return _generate(with_client, fh, 4).status_code
+        finally:
+            with_client.close()
 
-    monkeypatch.setattr(Session, "flush", _flaky_flush)
-    r = _generate(client, fh, 4)
-    assert state["done"], "競態模擬未觸發：flush 鉤子沒有遇到待插入的結算單"
-    assert r.status_code == 409, r.text
-    assert "重複" in r.json()["detail"] or "已有" in r.json()["detail"]
-    db = TestingSession()
-    count = db.query(Settlement).filter(
-        Settlement.shop_id == 4, Settlement.period == PERIOD).count()
-    db.close()
-    assert count == 1
+    with ThreadPoolExecutor(2) as pool:
+        futures = [pool.submit(generate) for _ in range(2)]
+        assert sorted(f.result(timeout=15) for f in futures) == [201, 409]
+    with TestingSession() as db:
+        assert db.query(Settlement).filter_by(shop_id=4, period=PERIOD).count() == 1
 
 
 # ---------- F6 ----------
