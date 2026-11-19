@@ -872,9 +872,12 @@ class _CouponDetailScreenState extends State<CouponDetailScreen> {
           Text('有效日期：至 ${c.validTo?.toLocal().toString().split(' ').first ?? ''}'),
           Text('剩餘數量：${_remaining ?? c.remaining} / ${c.total}'),
           if (c.minSpend > 0) Text('於本店惠顧滿 \$${c.minSpend.toStringAsFixed(0)}'),
-          const SizedBox(height: 16),
-          const Text('條款和條件', style: TextStyle(fontWeight: FontWeight.bold)),
-          Text(c.terms.isEmpty ? '每人限領一次；不可與其他優惠同時使用。' : c.terms),
+          if (c.terms.trim().isNotEmpty) ...[
+            const SizedBox(height: 16),
+            Text(context.tr('條款和條件', 'Terms and conditions'),
+                style: const TextStyle(fontWeight: FontWeight.bold)),
+            Text(c.terms.trim()),
+          ],
         ],
       ),
       bottomNavigationBar: Padding(
