@@ -48,6 +48,7 @@ class _NearbyScreenState extends State<NearbyScreen> {
   double _radiusKm = 5;
   List<Shop> _shops = [];
   bool _loading = false;
+  int _loadGeneration = 0;
   String? _error;
   int? _selectedShopId;
   bool _locating = false;
@@ -75,6 +76,10 @@ class _NearbyScreenState extends State<NearbyScreen> {
   }
 
   Future<void> _load() async {
+    // Area, radius and sort can change while a previous request is in flight.
+    // Only the newest request owns the results, error and loading state.
+    final generation = ++_loadGeneration;
+    bool isCurrent() => mounted && generation == _loadGeneration;
     setState(() {
       _loading = true;
       _error = null;
@@ -82,16 +87,16 @@ class _NearbyScreenState extends State<NearbyScreen> {
     try {
       final data = await widget.api.nearbyShops(
           lat: _lat, lng: _lng, radiusKm: _radiusKm, sort: _sort.name);
-      if (!mounted) return;
+      if (!isCurrent()) return;
       setState(() {
         _shops = ((data['shops'] as List?) ?? [])
             .map((e) => Shop.fromJson(e as Map<String, dynamic>))
             .toList();
       });
     } on ApiException catch (_) {
-      if (mounted) setState(() => _error = '网络不稳定，请重试');
+      if (isCurrent()) setState(() => _error = '网络不稳定，请重试');
     } finally {
-      if (mounted) setState(() => _loading = false);
+      if (isCurrent()) setState(() => _loading = false);
     }
   }
 
