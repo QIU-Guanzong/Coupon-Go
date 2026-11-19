@@ -73,6 +73,8 @@ Endpoint 名稱沿用 Coupon GO! 1.2.6 APK 逆向出的原始名稱（含原始�
 
 距離是直線距離，不是步行 / 駕車距離與耗時。地圖預設 Google Maps（香港可用）。
 
+同一筆訂單購買多份會發一張整券。預核銷的 `package_quantity` 顯示整券份數。核銷記一次，返現按訂單實付金額計。商戶撤銷核銷後，未到期券回到錢包，相關返現沖回。退款處理中（`requested`）暫停出示，原訂單份數在網關確認成功後才回補。網關明確回覆失敗時記為 `rejected`，有效期內可再次申請。已退款券可在錢包的「已失效」查看。庫存含待付預留，已售份數只計已付且未退款的訂單。
+
 ## 評分 v1（F6 v1，線 B）
 
 三維 5 分評分（口味 / 環境 / 服務）+ 文字 + 晒圖（預留）+ 標籤。只允許
@@ -213,6 +215,7 @@ M3 字段變更：`GET /bargain-sessions/{id}`、`POST /bargain-campaigns/{id}/s
 | GET | `/package-details?package_id=` | 套餐詳情（菜品組合、原價/套餐價、退款規則） |
 | POST | `/packages` | 商戶/管理員建立套餐（同時生成 `kind=package` 券模板） |
 | POST | `/packages/{id}/purchase` | 下單（預留庫存，生成訂單 + 支付單；`client_ref` 冪等） |
+| POST | `/orders/{id}/demo-payment` | 本機模擬付款，只限開發環境、無支付密鑰且屬於當前用戶的模擬訂單 |
 | POST | `/orders/{id}/confirm-payment` | 測試模式支付結果 `{outcome: succeeded/failed/timeout}` |
 | POST | `/orders/{id}/retry-payment` | 失敗/逾時訂單重新支付（新支付單） |
 | POST | `/orders/{id}/cancel` | 取消待支付訂單（釋放庫存） |
@@ -220,6 +223,8 @@ M3 字段變更：`GET /bargain-sessions/{id}`、`POST /bargain-campaigns/{id}/s
 | GET | `/orders/{id}` | 訂單詳情（含支付記錄、券 id） |
 | POST | `/orders/{id}/refund` | 未核銷退款（特價券 `non_refundable` 攔截；退款後券作廢） |
 | POST | `/packages/{id}/refund` | 按套餐退最近一筆可退訂單 |
+| GET | `/admin/orders/{id}` | 按後台訂單列表相同權限讀取詳情 |
+| POST | `/admin/orders/{id}/refund` | 平台管理員填寫原因，按顧客同一退款規則處理，保留操作記錄 |
 | POST | `/orders/process-expired-refunds` | 管理員觸發：過期自動退（特價券只作廢不退）。M1：與後台定時任務共用同一份邏輯（見 `docs/SCHEDULER.md`），返回新增 `failed` / `skipped` 計數 |
 | POST | `/payments/webhook` | Stripe 測試模式 webhook（`payment_intent.succeeded/failed`） |
 

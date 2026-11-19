@@ -8,6 +8,7 @@ import '../api_client.dart';
 import '../models.dart';
 import '../theme.dart';
 import '../widgets/widgets.dart';
+import '../widgets/wallet_updates.dart';
 import 'account.dart';
 import 'reviews_admin.dart';
 
@@ -619,6 +620,7 @@ class PackageCheckoutScreen extends StatefulWidget {
 
 class _PackageCheckoutScreenState extends State<PackageCheckoutScreen> {
   int _qty = 1;
+  final Map<String, String> _checkoutRefs = {};
   String _method = 'fps';
   bool _agreed = false;
   bool _busy = false;
@@ -649,14 +651,15 @@ class _PackageCheckoutScreenState extends State<PackageCheckoutScreen> {
     try {
       final res = await widget.api.purchasePackage(pkg.id, _method,
           quantity: _qty,
-          clientRef: 'app-${DateTime.now().millisecondsSinceEpoch}');
+          clientRef: _checkoutRefs.putIfAbsent('$_qty/$_method',
+              () => 'app-${DateTime.now().microsecondsSinceEpoch}'));
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString('last_payment_method', _method);
       final order = PackageOrder.fromJson(res['order'] as Map<String, dynamic>);
       if (!mounted) return;
       setState(() => _busy = false);
       // 支付页完成后进入结果轮询，不再向服务端传支付结果。
-      final done = await showPaymentSheet(context, order);
+      final done = await showPaymentSheet(context, widget.api, order);
       if (done != true || !mounted) return;
       Navigator.of(context).push(MaterialPageRoute(
           builder: (_) => PaymentResultScreen(
@@ -717,32 +720,24 @@ class _PackageCheckoutScreenState extends State<PackageCheckoutScreen> {
                   Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      Semantics(
-                        button: true,
-                        label: '减少数量',
-                        child: IconButton(
-                          icon: const Icon(Icons.remove_circle_outline),
-                          tooltip: '减少数量',
-                          onPressed: _qty > 1
-                              ? () => setState(() => _qty--)
-                              : null,
-                        ),
+                      IconButton(
+                        icon: const Icon(Icons.remove_circle_outline),
+                        tooltip: '减少数量',
+                        onPressed: _qty > 1
+                            ? () => setState(() => _qty--)
+                            : null,
                       ),
                       Text('$_qty',
                           style: const TextStyle(
                               fontSize: 18,
                               fontWeight: FontWeight.bold,
                               fontFeatures: [FontFeature.tabularFigures()])),
-                      Semantics(
-                        button: true,
-                        label: '增加数量',
-                        child: IconButton(
-                          icon: const Icon(Icons.add_circle_outline),
-                          tooltip: '增加数量',
-                          onPressed: _qty < _maxQty
-                              ? () => setState(() => _qty++)
-                              : null,
-                        ),
+                      IconButton(
+                        icon: const Icon(Icons.add_circle_outline),
+                        tooltip: '增加数量',
+                        onPressed: _qty < _maxQty
+                            ? () => setState(() => _qty++)
+                            : null,
                       ),
                     ],
                   ),
@@ -830,11 +825,15 @@ class _PackageCheckoutScreenState extends State<PackageCheckoutScreen> {
           // 购买须知勾选
           Row(
             children: [
-              Checkbox(
-                value: _agreed,
-                onChanged: (v) => setState(() => _agreed = v ?? false),
+              Expanded(
+                child: CheckboxListTile(
+                  value: _agreed,
+                  onChanged: (v) => setState(() => _agreed = v ?? false),
+                  controlAffinity: ListTileControlAffinity.leading,
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text('我已阅读并同意购买须知'),
+                ),
               ),
-              const Expanded(child: Text('我已阅读并同意购买须知')),
               TextButton(
                 onPressed: () => Navigator.of(context).push(MaterialPageRoute(
                     builder: (_) => PackageTermsScreen(package: p))),
@@ -923,7 +922,7 @@ class OrdersScreen extends StatefulWidget {
   State<OrdersScreen> createState() => _OrdersScreenState();
 }
 
-class _OrdersScreenState extends State<OrdersScreen> {
+class _OrdersScreenState extends State<OrdersScreen> with WalletUpdates<OrdersScreen> {
   List<PackageOrder> _orders = [];
   bool _loading = true;
   bool _error = false;
@@ -934,8 +933,14 @@ class _OrdersScreenState extends State<OrdersScreen> {
     _load();
   }
 
-  Future<void> _load() async {
-    if (mounted) setState(() => _loading = true);
+  @override
+  Future<void> syncWallet() => refreshOnReceiptChange(widget.api, () async {
+        await _load(quiet: true);
+        return mounted && !_error;
+      });
+
+  Future<void> _load({bool quiet = false}) async {
+    if (mounted && !quiet) setState(() => _loading = true);
     try {
       final list = await widget.api.orders();
       if (!mounted) return;
@@ -945,6 +950,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
         _error = false;
       });
     } on ApiException catch (_) {
+      if (quiet) rethrow;
       if (mounted) {
         setState(() {
           _loading = false;
@@ -967,7 +973,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
 
   /// 待支付订单：打开支付页，完成後进入结果轮询。
   Future<void> _pay(PackageOrder o) async {
-    final done = await showPaymentSheet(context, o);
+    final done = await showPaymentSheet(context, widget.api, o);
     if (done != true || !mounted) return;
     Navigator.of(context).push(MaterialPageRoute(
         builder: (_) =>
@@ -981,7 +987,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
           o.id, o.paymentMethod.isEmpty ? 'fps' : o.paymentMethod);
       final order = PackageOrder.fromJson(res['order'] as Map<String, dynamic>);
       if (!mounted) return;
-      final done = await showPaymentSheet(context, order);
+      final done = await showPaymentSheet(context, widget.api, order);
       if (done != true) {
         _load();
         return;
@@ -1001,7 +1007,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
       builder: (ctx) => AlertDialog(
         title: const Text('申請退款'),
         content: Text(
-            '訂單 ${o.orderNoText} · ${formatHkd(o.amount)}\n退款后套餐券作废，确定吗？'),
+            '訂單 ${o.orderNoText} · ${formatHkd(o.amount)}\n將退回整張套餐券（${o.quantity} 份），確定嗎？'),
         actions: [
           TextButton(
               onPressed: () => Navigator.of(ctx).pop(false),
@@ -1022,11 +1028,12 @@ class _OrdersScreenState extends State<OrdersScreen> {
       case 1:
         return _orders.where((o) => o.paymentStatus == 'pending').toList();
       case 2:
-        return _orders.where((o) => o.paymentStatus == 'paid').toList();
+        return _orders.where((o) => o.paymentStatus == 'paid' &&
+            o.refundStatus != 'refunded' && o.refundStatus != 'requested').toList();
       case 3:
         return _orders
             .where((o) =>
-                o.refundStatus == 'refunded' || o.refundStatus == 'requested')
+                o.refundStatus == 'refunded')
             .toList();
       default:
         return _orders;
@@ -1176,6 +1183,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
 
 /// 逾時订单服务端已关闭，列表上直接显示「訂單已關閉」。
 String _statusLabel(PackageOrder o) =>
+    o.refundStatus != 'none' ? o.refundStatusText :
     o.paymentStatus == 'timeout' ? '訂單已關閉' : o.paymentStatusText;
 
 /// Order detail (UI_SPEC §3.4): order number, payment method/time,
@@ -1191,7 +1199,7 @@ class OrderDetailScreen extends StatefulWidget {
   State<OrderDetailScreen> createState() => _OrderDetailScreenState();
 }
 
-class _OrderDetailScreenState extends State<OrderDetailScreen> {
+class _OrderDetailScreenState extends State<OrderDetailScreen> with WalletUpdates<OrderDetailScreen> {
   PackageOrder? _order;
   bool _loading = true;
   bool _error = false;
@@ -1203,17 +1211,24 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
     _load();
   }
 
-  Future<void> _load() async {
-    if (mounted) setState(() => _loading = true);
+  @override
+  Future<void> syncWallet() => refreshOnReceiptChange(widget.api, () async {
+        await _load(quiet: true);
+        return mounted && !_error;
+      });
+
+  Future<void> _load({bool quiet = false}) async {
+    if (mounted && !quiet) setState(() => _loading = true);
     try {
       final data = await widget.api.orderDetails(widget.orderId);
       if (!mounted) return;
       setState(() {
-        _order = PackageOrder.fromJson(data['order'] as Map<String, dynamic>);
+        _order = PackageOrder.fromJson(data);
         _loading = false;
         _error = false;
       });
     } on ApiException catch (_) {
+      if (quiet) rethrow;
       if (mounted) {
         setState(() {
           _loading = false;
@@ -1231,7 +1246,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
       builder: (ctx) => AlertDialog(
         title: const Text('申請退款'),
         content: Text(
-            '訂單 ${o.orderNoText} · ${formatHkd(o.amount)}\n退款后套餐券作废，确定吗？'),
+            '訂單 ${o.orderNoText} · ${formatHkd(o.amount)}\n將退回整張套餐券（${o.quantity} 份），確定嗎？'),
         actions: [
           TextButton(
               onPressed: () => Navigator.of(ctx).pop(false),
@@ -1245,9 +1260,9 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
     if (ok != true || !mounted) return;
     setState(() => _busy = true);
     try {
-      await widget.api.refundOrder(o.id);
+      final result = await widget.api.refundOrder(o.id);
       if (!mounted) return;
-      showCgToast(context, '退款申請已提交');
+      showCgToast(context, result['message'] as String? ?? '退款申請已提交');
       _load();
     } on ApiException catch (e) {
       if (mounted) {
@@ -1274,8 +1289,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
         body: _ErrorView(onRetry: _load),
       );
     }
-    final showRefundEta =
-        o.refundStatus == 'requested' || o.refundStatus == 'refunded';
+    final showRefundEta = o.refundStatus == 'refunded' && !o.demoPayment;
     return Scaffold(
       appBar: AppBar(title: const Text('訂單詳情')),
       body: ListView(
@@ -1365,8 +1379,9 @@ class _DetailRow extends StatelessWidget {
 /// 支付页（跳转/对话框）完成后的确认入口：用户在支付页完成支付后
 /// 点「我已完成支付」，调用方随即进入 [PaymentResultScreen] 轮询结果。
 /// 返回 true 表示进入轮询，false/null 表示用户取消，订单留在待支付状态。
-Future<bool?> showPaymentSheet(BuildContext context, PackageOrder order) {
-  return showDialog<bool>(
+Future<bool?> showPaymentSheet(BuildContext context, ApiClient api, PackageOrder order) async {
+  if (order.paymentStatus == 'paid') return true;
+  final confirmed = await showDialog<bool>(
     context: context,
     barrierDismissible: false,
     builder: (ctx) => AlertDialog(
@@ -1374,7 +1389,7 @@ Future<bool?> showPaymentSheet(BuildContext context, PackageOrder order) {
       content: Text(
           '訂單 #${order.id} · ${formatHkd(order.amount)}\n'
           '支付方式：${order.paymentMethodText}\n'
-          '請在支付頁面完成支付，完成後返回此頁確認結果。'),
+          '${order.demoPayment ? '這是模擬付款，不會扣款。' : '請在支付頁面完成支付，完成後返回此頁確認結果。'}'),
       actions: [
         TextButton(
           onPressed: () => Navigator.of(ctx).pop(false),
@@ -1382,11 +1397,19 @@ Future<bool?> showPaymentSheet(BuildContext context, PackageOrder order) {
         ),
         ElevatedButton(
           onPressed: () => Navigator.of(ctx).pop(true),
-          child: const Text('我已完成支付'),
+          child: Text(order.demoPayment ? '模擬付款' : '我已完成支付'),
         ),
       ],
     ),
   );
+  if (confirmed != true || !order.demoPayment) return confirmed;
+  try {
+    await api.post('/orders/${order.id}/demo-payment');
+    return true;
+  } on ApiException catch (e) {
+    if (context.mounted) showCgToast(context, e.message);
+    return false;
+  }
 }
 
 /// 支付结果轮询页（UI_SPEC §3.3）。
@@ -1460,9 +1483,8 @@ class _PaymentResultScreenState extends State<PaymentResultScreen> {
     if (!mounted || _phase != _PollPhase.polling) return;
     _attempts++;
     try {
-      final data = await widget.api.orderDetails(_order.id);
+      final raw = await widget.api.orderDetails(_order.id);
       if (!mounted || _phase != _PollPhase.polling) return;
-      final raw = data['order'] as Map<String, dynamic>;
       final order = PackageOrder.fromJson(raw);
       final created = order.createdAt;
       final expiredPending = order.paymentStatus == 'pending' &&
@@ -1542,7 +1564,7 @@ class _PaymentResultScreenState extends State<PaymentResultScreen> {
       final order = PackageOrder.fromJson(res['order'] as Map<String, dynamic>);
       if (!mounted) return;
       setState(() => _busy = false);
-      final done = await showPaymentSheet(context, order);
+      final done = await showPaymentSheet(context, widget.api, order);
       if (done != true || !mounted) return;
       Navigator.of(context).pushReplacement(MaterialPageRoute(
           builder: (_) => PaymentResultScreen(
@@ -1597,10 +1619,12 @@ class _PaymentResultScreenState extends State<PaymentResultScreen> {
 
   void _openWallet() {
     Navigator.of(context).push(MaterialPageRoute(
-        builder: (_) => WalletScreen(
+        builder: (_) => Scaffold(
+          appBar: AppBar(title: const Text('我的券')),
+          body: WalletScreen(
             api: widget.api,
             onShowQr: (item) => Navigator.of(context).push(MaterialPageRoute(
-                builder: (_) => QrShowScreen(api: widget.api, item: item))))));
+                builder: (_) => QrShowScreen(api: widget.api, item: item)))))));
   }
 
   void _goHome() {

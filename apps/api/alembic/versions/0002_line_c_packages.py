@@ -27,6 +27,13 @@ def _columns(table):
     return {c["name"] for c in sa.inspect(op.get_bind()).get_columns(table)}
 
 
+def _alter(table):
+    # SQLite needs table recreation for FK changes. PostgreSQL can alter
+    # in place and must retain primary keys referenced by other tables.
+    mode = "always" if op.get_bind().dialect.name == "sqlite" else "auto"
+    return op.batch_alter_table(table, recreate=mode)
+
+
 def upgrade():
     tables = _tables()
     if "packages" not in tables:
@@ -97,7 +104,7 @@ def upgrade():
         )
     coupon_cols = _columns("coupons")
     # Batch mode: SQLite cannot ALTER-ADD a column carrying a FK.
-    with op.batch_alter_table("coupons", recreate="always") as batch:
+    with _alter("coupons") as batch:
         if "kind" not in coupon_cols:
             batch.add_column(sa.Column("kind", sa.String(20), server_default="coupon", nullable=False))
         if "package_id" not in coupon_cols:
@@ -109,7 +116,7 @@ def upgrade():
         if "refund_policy" not in coupon_cols:
             batch.add_column(sa.Column("refund_policy", sa.String(20), server_default="anytime", nullable=False))
     wallet_cols = _columns("wallet_items")
-    with op.batch_alter_table("wallet_items", recreate="always") as batch:
+    with _alter("wallet_items") as batch:
         if "source" not in wallet_cols:
             batch.add_column(sa.Column("source", sa.String(20), server_default="claim", nullable=False))
         if "order_id" not in wallet_cols:
@@ -120,13 +127,13 @@ def downgrade():
     tables = _tables()
     wallet_cols = _columns("wallet_items") if "wallet_items" in tables else set()
     # Batch mode: plain DROP COLUMN fails on SQLite for FK columns.
-    with op.batch_alter_table("wallet_items", recreate="always") as batch:
+    with _alter("wallet_items") as batch:
         if "order_id" in wallet_cols:
             batch.drop_column("order_id")
         if "source" in wallet_cols:
             batch.drop_column("source")
     coupon_cols = _columns("coupons") if "coupons" in tables else set()
-    with op.batch_alter_table("coupons", recreate="always") as batch:
+    with _alter("coupons") as batch:
         for name in ("refund_policy", "usage_rules", "person_count",
                      "package_id", "kind"):
             if name in coupon_cols:

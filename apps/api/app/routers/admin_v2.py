@@ -32,7 +32,7 @@ from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from .. import models, schemas_line_f
+from .. import models, schemas_line_f, schemas_packages
 from ..database import get_db
 from ..deps import get_current_user, require_role
 from ..models_line_b import AdminAuditLog, Review
@@ -48,6 +48,7 @@ from ..permissions_line_f import (
     ALL_ROLES, can_access_shop, can_request_invoice_for_shop,
     get_shop_or_404, has_perm, require_perm, role_permissions,
 )
+from .packages import _lock_order, _refund_order_checked
 from .reviews import recompute_rating, review_out
 
 router = APIRouter()
@@ -176,7 +177,7 @@ def overview(user: models.User = Depends(require_perm("dashboard.read")),
 
 
 # ---------- orders (Gap 1: admin order list) ----------
-def _admin_order_out(db: Session, o: Order) -> dict:
+def _admin_order_out(db: Session, o: Order, user: models.User) -> dict:
     """User-side order_out plus the admin extras: shop_id, the ordering
     user, and `status` as an alias of payment_status.
 
@@ -192,6 +193,7 @@ def _admin_order_out(db: Session, o: Order) -> dict:
     out["shop_id"] = pkg.shop_id if pkg else None
     out["user_name"] = buyer.name if buyer else ""
     out["user_email"] = buyer.email if buyer else ""
+    out["admin_refundable"] = user.role == "admin" and out["refundable"]
     out["status"] = o.payment_status
     return out
 
@@ -235,10 +237,38 @@ def list_admin_orders(status: str = Query(None),
             Package.shop_id.in_(shop_ids)).all()] if shop_ids else []
         q = q.filter(Order.package_id.in_(pkg_ids)) if pkg_ids else \
             q.filter(False)
-    out = _page([_admin_order_out(db, o) for o in q.all()], page, page_size)
+    out = _page([_admin_order_out(db, o, user) for o in q.all()], page, page_size)
     return {"current_page": out["current_page"],
             "total_pages": out["total_pages"], "total": out["total"],
             "orders": out["items"]}
+
+
+@router.get("/admin/orders/{order_id}")
+def admin_order_detail(order_id: int, user: models.User = Depends(get_current_user),
+                       db: Session = Depends(get_db)):
+    order = db.get(Order, order_id)
+    if order is None:
+        raise HTTPException(404, "找不到此訂單")
+    if user.role == "merchant-admin":
+        pkg = db.get(Package, order.package_id) if order.package_id else None
+        if not pkg or pkg.shop_id not in _merchant_admin_shop_ids(db, user):
+            raise HTTPException(403, "沒有權限")
+    elif user.role not in ("finance", "auditor", "admin"):
+        raise HTTPException(403, "沒有權限")
+    return {"order": _admin_order_out(db, order, user)}
+
+
+@router.post("/admin/orders/{order_id}/refund")
+def admin_refund_order(order_id: int, body: schemas_packages.RefundIn,
+                       user: models.User = Depends(admin_only), db: Session = Depends(get_db)):
+    reason = body.reason.strip()
+    if not 1 <= len(reason) <= 220:
+        raise HTTPException(400, "請填寫退款原因（最多 220 字）")
+    order = _lock_order(db, order_id)
+    if order is None:
+        raise HTTPException(404, "找不到此訂單")
+    _log(db, user.id, "request_refund", "order", order_id, reason)
+    return _refund_order_checked(db, order, reason)
 
 
 # ---------- commission rates (F5) ----------

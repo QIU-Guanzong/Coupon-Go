@@ -358,10 +358,10 @@ def test_concurrent_refund_only_one_gateway_refund__row_lock(client, monkeypatch
     calls = []
     orig = pkg_router.refund_payment
 
-    def counting(ref, amount, currency="HKD"):
+    def counting(ref, amount, currency="HKD", **kwargs):
         calls.append((ref, amount))
         time.sleep(0.4)  # widen the refund-status check -> gateway window
-        return orig(ref, amount)
+        return orig(ref, amount, **kwargs)
 
     monkeypatch.setattr(pkg_router, "refund_payment", counting)
     results = _run_two(lambda i, tc: tc.post(
@@ -760,3 +760,29 @@ def test_two_customers_claim_last_coupon(client):
         coupon = db.get(models.Coupon, 2)
         assert coupon.remaining == 0 and coupon.downloads == previous_downloads + 1
     assert sorted(client.get("/api/v3/points", headers=h).json()["balance"] for h in customers) == [0, 10]
+
+
+def test_concurrent_package_refund_and_redemption_reconcile__row_lock(client):
+    h = _register_and_login(client, "fix3-package-race@example.com")
+    vh = _vendor_headers(client)
+    pkg = _create_package(client, "整券核銷", stock=3)
+    oid = _buy_paid(client, h, pkg["id"])
+    wid = client.get(f"/api/v3/orders/{oid}", headers=h).json()["order"]["wallet_item_id"]
+    code = client.post("/api/v3/store-scaned-qr-values", params={"wallet_item_id": wid},
+                       headers=h).json()["code"]
+
+    def submit(index, tc):
+        if index == 0:
+            return tc.post(f"/api/v3/orders/{oid}/refund", headers=h, json={})
+        return tc.post("/api/v3/new-scan-coupon", headers=vh, json={"code": code})
+
+    refund, scan = _run_two(submit)
+    assert sorted([refund.status_code, scan.status_code]) == [200, 400]
+    with TestingSession() as db:
+        item = db.get(models.WalletItem, wid)
+        returned = refund.status_code == 200
+        assert item.status == (3 if returned else 2)
+        assert db.get(Package, pkg["id"]).stock_left == (3 if returned else 2)
+        assert item.coupon.used_count == (0 if returned else 1)
+        assert db.query(Refund).filter_by(order_id=oid, status="refunded").count() == int(returned)
+        assert db.query(models.Redemption).filter_by(wallet_item_id=wid).count() == int(not returned)

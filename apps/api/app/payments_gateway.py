@@ -73,15 +73,19 @@ def create_payment_intent(order_id: int, amount_hkd: float, method: str,
 
 
 def refund_payment(gateway_ref: str, amount_hkd: float,
-                   currency: str = "HKD") -> dict:
+                   currency: str = "HKD", *, request_key: str | None = None) -> dict:
     """Refund a succeeded payment (原路返回）. Returns a Stripe-shaped dict."""
     key = config.STRIPE_SECRET_KEY
     if key:
         if not _is_test_key(key):
             raise GatewayError("只接受 Stripe 测试密钥（sk_test_…），拒绝正式密钥")
-        return _stripe_refund(key, gateway_ref, amount_hkd, currency)
+        return _stripe_refund(key, gateway_ref, amount_hkd, currency, request_key)
+    if config.APP_ENV != "dev" or (request_key and not gateway_ref.startswith("pi_test_")):
+        raise GatewayError("退款需要相符的支付網關")
+    refund_ref = _sim_ref("re", f"{gateway_ref}:{amount_hkd}") if not request_key else (
+        "re_test_" + hashlib.sha256(f"{gateway_ref}:{request_key}".encode()).hexdigest()[:24])
     return {
-        "gateway_ref": _sim_ref("re", f"{gateway_ref}:{amount_hkd}"),
+        "gateway_ref": refund_ref,
         "payment_intent": gateway_ref,
         "status": "succeeded",
         "amount": round(float(amount_hkd), 2),
@@ -121,7 +125,7 @@ def _stripe_create_intent(key: str, order_id: int, amount_hkd: float,
 
 
 def _stripe_refund(key: str, gateway_ref: str, amount_hkd: float,
-                   currency: str) -> dict:
+                   currency: str, request_key=None) -> dict:
     payload = {
         "payment_intent": gateway_ref,
         "amount": int(round(float(amount_hkd) * 100)),
@@ -129,20 +133,32 @@ def _stripe_refund(key: str, gateway_ref: str, amount_hkd: float,
     }
     try:
         res = httpx.post(f"{STRIPE_API}/refunds", data=payload,
+                         headers={"Idempotency-Key": request_key} if request_key else {},
                          auth=(key, ""), timeout=15)
     except httpx.HTTPError as exc:
         raise GatewayError(f"Stripe 测试网关连接失败：{exc}")
     if res.status_code >= 400:
         raise GatewayError(f"Stripe 测试网关拒绝：{res.text[:200]}")
     data = res.json()
-    return {
-        "gateway_ref": data.get("id", ""),
-        "payment_intent": gateway_ref,
-        "status": data.get("status", ""),
-        "amount": round(float(amount_hkd), 2),
-        "currency": currency,
-        "simulated": False,
-    }
+    return _refund_result(data)
+
+
+def _refund_result(data):
+    return {"gateway_ref": data.get("id", ""), "payment_intent": data.get("payment_intent"),
+            "status": data.get("status", ""), "amount": data.get("amount", 0) / 100,
+            "currency": data.get("currency", ""), "simulated": False}
+
+
+def retrieve_refund(ref):
+    key = config.STRIPE_SECRET_KEY
+    if not _is_test_key(key):
+        raise GatewayError("退款狀態需要相符的測試網關")
+    try:
+        response = httpx.get(f"{STRIPE_API}/refunds/{ref}", auth=(key, ""), timeout=15)
+        response.raise_for_status()
+        return _refund_result(response.json())
+    except httpx.HTTPError as exc:
+        raise GatewayError("未能確認退款狀態") from exc
 
 
 def retrieve_payment_intent(gateway_ref: str) -> dict:

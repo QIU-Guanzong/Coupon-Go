@@ -446,8 +446,6 @@ class _OnboardingReviewScreenState extends State<OnboardingReviewScreen> {
 /// detail drawer with the payment / refund timeline, admin refund
 /// with double confirmation + a required reason. No charts.
 ///
-/// NOTE: GET /admin/orders does not exist on the backend yet; the
-/// screen shows the standard error state until it lands.
 class OrdersAdminScreen extends StatefulWidget {
   const OrdersAdminScreen({super.key, required this.api});
 
@@ -564,9 +562,15 @@ class _OrdersAdminScreenState extends State<OrdersAdminScreen> {
     );
     if (reason == null || reason.isEmpty) return;
     try {
-      await widget.api.refundOrder(order.id, reason: reason);
-      if (mounted) showCgToast(context, '退款已提交');
-      _load();
+      final result = await widget.api.post('/admin/orders/${order.id}/refund',
+          body: {'reason': reason});
+      if (!mounted) return;
+      setState(() {
+        _selected = PackageOrder.fromJson(result['order'] as Map<String, dynamic>);
+        _detailPayments = _selected!.payments;
+      });
+      showCgToast(context, result['message'] as String? ?? '退款已提交');
+      await _load();
     } on ApiException catch (e) {
       if (mounted) showCgToast(context, e.message);
     }
@@ -618,7 +622,7 @@ class _OrdersAdminScreenState extends State<OrdersAdminScreen> {
             _timelineRow('退款狀態', _refundText(o)),
             _timelineRow('下單時間', _timeText(o.createdAt)),
             _timelineRow('支付時間', _timeText(o.paidAt)),
-            if (o.refundStatus == 'refunded')
+            if (o.refundStatus == 'refunded' && !o.demoPayment)
               const Padding(
                 padding: EdgeInsets.only(top: 8),
                 child: Text('預計 1–3 個工作日原路退回',
@@ -635,7 +639,7 @@ class _OrdersAdminScreenState extends State<OrdersAdminScreen> {
               ..._detailPayments.map((p) => _timelineRow(
                   '${p['status'] ?? ''}',
                   '${formatHkd((p['amount'] as num?)?.toDouble() ?? 0)} · ${_timeText(DateTime.tryParse('${p['created_at'] ?? ''}'))}')),
-            if (o.canRefund) ...[
+            if (o.adminRefundable) ...[
               const SizedBox(height: 16),
               SizedBox(
                 width: double.infinity,

@@ -299,7 +299,7 @@ class _WalletScreenState extends State<WalletScreen>
                                         title: Text(item.couponName),
                                         subtitle: Text(
                                             '${item.shopName} · ${item.statusText}'
-                                            '${item.isPackage ? ' · 套餐券' : ''}'),
+                                            '${item.isPackage ? ' · 套餐券 ×${item.quantity}' : ''}'),
                                         trailing: item.status == 1
                                             ? Row(
                                                 mainAxisSize: MainAxisSize.min,
@@ -307,15 +307,27 @@ class _WalletScreenState extends State<WalletScreen>
                                                   if (item.canRefund)
                                                     TextButton(
                                                       onPressed: () async {
+                                                        final confirmed = await showDialog<bool>(
+                                                          context: context,
+                                                          builder: (ctx) => AlertDialog(
+                                                            title: const Text('申請退款'),
+                                                            content: Text('${item.couponName} · ${item.quantity} 份\n確定退回整張套餐券嗎？'),
+                                                            actions: [
+                                                              TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('取消')),
+                                                              ElevatedButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('確認退款')),
+                                                            ],
+                                                          ),
+                                                        );
+                                                        if (confirmed != true || !mounted) return;
                                                         try {
-                                                          await widget.api
+                                                          final result = await widget.api
                                                               .refundOrder(item
                                                                   .orderId!);
                                                           if (context
                                                               .mounted) {
                                                             showCgToast(
                                                                 context,
-                                                                '退款成功，套餐券已作廢');
+                                                                result['message'] as String? ?? '退款申請已提交');
                                                           }
                                                           _load();
                                                         } on ApiException catch (e) {
@@ -682,7 +694,7 @@ class _ReceiptState extends State<RedemptionSuccessScreen> with WalletUpdates<Re
             if (_revoked) Padding(padding: const EdgeInsets.only(top: 12),
               child: Text(switch (_status) {
                 1 => '優惠券已退回錢包，可重新出示。',
-                3 => '優惠券已到期，可在錢包的「已失效」查看。',
+                3 => '優惠券已失效，可在錢包查看最新狀態。',
                 _ => '這張券其後已再次使用。'
               }, textAlign: TextAlign.center)),
             const SizedBox(height: 24),

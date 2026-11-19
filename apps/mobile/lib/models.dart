@@ -18,6 +18,7 @@ class Coupon {
         validTo = DateTime.tryParse(j['valid_to'] as String? ?? ''),
         remaining = j['remaining'] as int? ?? 0,
         total = j['total'] as int? ?? 0,
+        usedCount = j['used_count'] as int?,
         downloads = j['downloads'] as int? ?? 0,
         status = j['status'] as String? ?? '',
         terms = j['additional_terms'] as String? ?? '',
@@ -42,6 +43,7 @@ class Coupon {
   final DateTime? validTo;
   final int remaining;
   final int total;
+  final int? usedCount;
   final int downloads;
   final String status;
   final String terms;
@@ -134,6 +136,8 @@ class WalletItem {
         reviewed = j['reviewed'] as bool? ?? false,
         source = j['source'] as String? ?? 'claim',
         orderId = j['order_id'] as int?,
+        quantity = j['quantity'] as int? ?? 1,
+        refundStatus = j['refund_status'] as String? ?? 'none',
         isPackage = j['is_package'] as bool? ?? false,
         refundPolicy = j['refund_policy'] as String? ?? 'anytime';
 
@@ -149,10 +153,13 @@ class WalletItem {
   final bool reviewed;
   final String source; // claim | purchase | bargain | exchange
   final int? orderId;
+  final int quantity;
+  final String refundStatus;
   final bool isPackage;
   final String refundPolicy;
 
   String get statusText =>
+      refundStatus == 'refunded' ? '已退款' : refundStatus == 'requested' ? '退款處理中' :
       status == 1 ? '未使用' : status == 2 ? '已使用' : '已失效';
 
   /// Refundable from the wallet: an unused, purchased, refundable voucher.
@@ -750,6 +757,8 @@ class PackageOrder {
             j['order_number'] as String? ??
             j['order_code'] as String? ??
             '',
+        adminRefundable = j['admin_refundable'] == true,
+        demoPayment = j['demo_payment'] as bool? ?? false,
         quantity = j['quantity'] as int? ?? 1,
         refundAmount = (j['refund_amount'] as num?)?.toDouble() ?? 0,
         refundable = j['refundable'] as bool? ?? j['can_refund'] as bool?,
@@ -776,6 +785,8 @@ class PackageOrder {
   final double commissionAmount;
   final double netAmount;
   final String orderNo; // 订单号（服务端未返回时用订单 #id 显示）
+  final bool adminRefundable;
+  final bool demoPayment;
   final int quantity;
   final double refundAmount; // 退款金额（服务端字段）
   final bool? refundable; // 服务端是否可退（未返回时用本地规则兜底）

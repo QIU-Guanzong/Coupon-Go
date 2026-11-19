@@ -23,6 +23,9 @@ depends_on = None
 
 
 def upgrade():
+    # This published revision identifier exceeds Alembic's default 32 characters.
+    if op.get_bind().dialect.name == "postgresql":
+        op.alter_column("alembic_version", "version_num", type_=sa.String(128))
     bind = op.get_bind()
     insp = sa.inspect(bind)
     txn_cols = {c["name"] for c in insp.get_columns("cashback_transactions")}

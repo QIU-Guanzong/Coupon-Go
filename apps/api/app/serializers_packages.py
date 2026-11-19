@@ -4,7 +4,7 @@ import json
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from . import models
+from . import config, models
 from .models_line_b import Review, ShopRating
 from .models_packages import Order, Package, Payment, Refund
 
@@ -47,6 +47,21 @@ def _review_out(db: Session, r: Review) -> dict:
         "status": r.status, "reply_text": r.reply_text or "",
         "replied_at": r.replied_at, "created_at": r.created_at,
     }
+
+
+def purchase_allowance(db, package, user_id):
+    rules = _parse_json(package.usage_rules, {})
+    try:
+        limit = int(rules["per_user_limit"])
+    except (KeyError, TypeError, ValueError):
+        return None, package.stock_left
+    reserved = 0
+    if user_id is not None:
+        reserved = db.query(func.coalesce(func.sum(Order.quantity), 0)).filter(
+            Order.user_id == user_id, Order.package_id == package.id,
+            Order.payment_status.in_(("pending", "paid")), Order.refund_status != "refunded"
+        ).scalar()
+    return limit, max(0, min(package.stock_left, limit - reserved))
 
 
 def package_out(db: Session, p: Package, user_id: int | None = None) -> dict:
@@ -93,33 +108,10 @@ def package_out(db: Session, p: Package, user_id: int | None = None) -> dict:
                       Review.status == "visible")
               .order_by(Review.created_at.desc(), Review.id.desc())
               .limit(5).all())
-    # Gap 10 — limit_remaining / per_user_limit / time_slots /
-    # stackable: vendor-supplied via usage_rules (see
-    # schemas_packages.UsageRulesIn). There is no separate per-user
-    # limit table: with no per_user_limit configured, the binding
-    # remaining quantity is the stock itself, so limit_remaining is
-    # stock_left. With a limit, it is min(stock_left, limit - bought),
-    # where bought counts this user's non-cancelled orders for this
-    # package; for a guest caller bought is unknown, so the cap
-    # (min(stock_left, limit)) is returned.
-    per_user_limit = rules.get("per_user_limit")
-    if per_user_limit is not None:
-        try:
-            per_user_limit = int(per_user_limit)
-        except (TypeError, ValueError):
-            per_user_limit = None
-    if per_user_limit is None:
-        limit_remaining = p.stock_left
-    else:
-        bought = 0
-        if user_id is not None:
-            bought = int(db.query(func.coalesce(func.sum(Order.quantity), 0))
-                         .filter(Order.user_id == user_id,
-                                 Order.package_id == p.id,
-                                 Order.payment_status != "cancelled")
-                         .scalar() or 0)
-        limit_remaining = max(0, min(p.stock_left or 0,
-                                     per_user_limit - bought))
+    per_user_limit, limit_remaining = purchase_allowance(db, p, user_id)
+    sold = db.query(func.coalesce(func.sum(Order.quantity), 0)).filter(
+        Order.package_id == p.id, Order.payment_status == "paid",
+        Order.refund_status != "refunded").scalar()
     time_slots = rules.get("time_slots") or []
     if not isinstance(time_slots, list):
         time_slots = []
@@ -143,7 +135,7 @@ def package_out(db: Session, p: Package, user_id: int | None = None) -> dict:
         "usage_rules": rules,
         "stock_total": p.stock_total,
         "stock_left": p.stock_left,
-        "sold_count": max(0, (p.stock_total or 0) - (p.stock_left or 0)),
+        "sold_count": int(sold),
         "refund_policy": p.refund_policy,
         "refund_policy_text": REFUND_POLICY_TEXT.get(p.refund_policy, ""),
         "status": p.status,
@@ -216,7 +208,7 @@ def order_out(db: Session, o: Order) -> dict:
     # non_refundable, used/voided vouchers, and unpaid orders are
     # not manually refundable.
     refundable = False
-    if (o.payment_status == "paid" and o.refund_status == "none"
+    if (o.payment_status == "paid" and o.refund_status in ("none", "rejected")
             and wallet_item is not None and wallet_item.status == 1):
         coupon = (db.query(models.Coupon).filter(
             models.Coupon.id == wallet_item.coupon_id).first()
@@ -227,6 +219,8 @@ def order_out(db: Session, o: Order) -> dict:
         "id": o.id,
         "order_id": o.id,
         "order_no": order_no,
+        "demo_payment": bool(config.APP_ENV == "dev" and not config.STRIPE_SECRET_KEY and payments
+                             and (payments[-1].gateway_ref or "").startswith("pi_test_")),
         "user_id": o.user_id,
         "order_type": o.order_type,
         "package_id": o.package_id,
@@ -258,7 +252,7 @@ def refund_out(r: Refund) -> dict:
         "order_id": r.order_id,
         "amount": float(r.amount or 0),
         "status": r.status,
-        "gateway_ref": r.gateway_ref or "",
-        "expected_arrival": "原路返回，預計 1–3 個工作日到賬",
+        "gateway_ref": "" if (r.gateway_ref or "").startswith("request-") else r.gateway_ref or "",
+        "expected_arrival": "原路返回，預計 1–3 個工作日到賬" if r.status == "refunded" else "",
         "created_at": r.created_at,
     }

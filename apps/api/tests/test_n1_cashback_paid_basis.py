@@ -259,12 +259,16 @@ def test_package_order_unpaid_earns_nothing(client):
     though the coupon row has a discount_price — an unpaid order is not
     a real spend. (Order precedence: order present -> paid_amount rules.)"""
     h = _register_and_login(client, "n1-unpaid@example.com")
-    vh = _vendor_headers(client)
     order_id = _make_order("n1-unpaid@example.com", paid_amount=0,
                            amount=298)
     c = _make_coupon(shop_id=1, discount_price=100, coupon_type="Price",
                      name="N1 未支付套餐券")
-    _redeem_package(client, h, vh, c, order_id)
+    wid = _claim(client, h, c)
+    _attach_order_to_wallet_item(wid, order_id)
+    qr = client.post("/api/v3/store-scaned-qr-values",
+                     params={"wallet_item_id": wid}, headers=h)
+    assert qr.status_code == 400
+    assert "付款或退款狀態" in qr.json()["detail"]
     assert _txns(client, h) == []
     assert _balances(client, h)["total_earned"] == 0.0
 

@@ -147,7 +147,7 @@ def test_gateway_error_not_leaked_on_refund(client, monkeypatch):
                     json={"outcome": "succeeded"}, headers=h)
     assert r.status_code == 200, r.text
 
-    def _boom(ref, amount, currency="HKD"):
+    def _boom(ref, amount, currency="HKD", **kwargs):
         raise GatewayError("Stripe 测试网关拒绝：{secret-stripe-detail}")
 
     monkeypatch.setattr(packages_router, "refund_payment", _boom)

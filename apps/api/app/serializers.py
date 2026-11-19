@@ -96,7 +96,10 @@ def shop_out(db: Session, s: models.Shop, user_id=None):
 def wallet_out(db: Session, w: models.WalletItem):
     c = db.query(models.Coupon).filter(models.Coupon.id == w.coupon_id).first()
     shop = db.query(models.Shop).filter(models.Shop.id == c.shop_id).first() if c else None
+    order = db.get(models.Order, w.order_id) if w.order_id and w.source == "purchase" else None
     return {
+        "quantity": order.quantity if order else 1,
+        "refund_status": order.refund_status if order else "none",
         "id": w.id,
         "coupon_id": w.coupon_id,
         "coupon_name": c.coupon_name if c else "",

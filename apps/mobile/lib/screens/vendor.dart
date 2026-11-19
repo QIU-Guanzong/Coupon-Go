@@ -110,7 +110,7 @@ class _VendorHomeScreenState extends State<VendorHomeScreen> {
                   child: ListTile(
                     leading: const Icon(Icons.local_offer, color: CgColors.amber),
                     title: Text(c.name),
-                    subtitle: Text('${c.status} · 已下載 ${c.downloads} · 已用 ${c.total - c.remaining}'),
+                    subtitle: Text('剩餘 ${c.remaining} · 已核銷 ${c.usedCount ?? '—'}'),
                   ),
                 )),
             if (_coupons.isEmpty)
@@ -648,6 +648,8 @@ class _ScanScreenState extends State<ScanScreen> {
                                         '—'),
                                 _detailRow('有效期',
                                     _dateText(_prepared!['valid_to'] as String?)),
+                                if (_prepared!['package_quantity'] != null)
+                                  _detailRow('整券核銷', "${_prepared!['package_quantity']} 份"),
                                 _detailRow('是否已使用', '未使用'),
                                 const SizedBox(height: 12),
                                 Row(

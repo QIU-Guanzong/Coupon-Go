@@ -428,10 +428,10 @@ def test_single_item_failure_does_not_block_others(client, monkeypatch):
 
     orig = pkg_router._process_refund
 
-    def _flaky(db, order, reason):
+    def _flaky(db, order, reason, **kwargs):
         if order.id == paid1["id"]:
             raise RuntimeError("simulated refund failure")
-        return orig(db, order, reason)
+        return orig(db, order, reason, **kwargs)
 
     monkeypatch.setattr(pkg_router, "_process_refund", _flaky)
     result = run_all_jobs(session_factory=TestingSession)

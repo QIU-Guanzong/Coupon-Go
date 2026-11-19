@@ -26,7 +26,7 @@ from app.seed import seed  # noqa: E402
 
 engine = create_engine("sqlite://", connect_args={"check_same_thread": False},
                        poolclass=StaticPool)
-TestingSession = sessionmaker(bind=engine)
+TestingSession = sessionmaker(bind=engine, autoflush=False)
 
 
 @pytest.fixture(scope="module")
@@ -435,3 +435,154 @@ def test_free_coupon_and_package_voucher_coexist(client):
     assert len(wallet["items"]) == 2
     assert sources[paid["wallet_item_id"]] == "purchase"
     assert any(s == "claim" for s in sources.values())
+
+
+def test_multi_unit_refund_reconciles_only_on_gateway_success(client, monkeypatch):
+    from app.routers import packages as service
+    h = _register_and_login(client, "pkg-gateway@example.com")
+    pid = _create_package(client, stock=2)["id"]
+    body = {"quantity": 2, "client_ref": "two", "payment_method": "fps"}
+    purchase = f"/api/v3/packages/{pid}/purchase"
+    order = client.post(purchase, json=body, headers=h).json()["order"]
+    oid = order["id"]
+    assert client.post(purchase, json=body, headers=h).json()["order"]["id"] == oid
+    assert _stock_left(client, pid) == 0
+    url = f"/api/v3/orders/{oid}"
+    paid = client.post(url + "/demo-payment", headers=h).json()["order"]
+    assert paid["paid_amount"] == 300 and paid["quantity"] == 2
+    with TestingSession() as db:
+        coupon = db.query(models.Coupon).filter_by(package_id=pid).one()
+        assert coupon.used_count == 0 and coupon.remaining == 0
+        pay_ref = db.query(models.Payment).filter_by(order_id=oid).one().gateway_ref
+    result = dict(gateway_ref="re_one", payment_intent=pay_ref, amount=300,
+                  currency="hkd", status="pending")
+    keys = []
+    def pending(ref, amount, *, request_key):
+        keys.append(request_key)
+        return result
+    monkeypatch.setattr(service, "refund_payment", pending)
+    monkeypatch.setattr(service, "retrieve_refund", lambda ref: result)
+    assert client.post(url + "/refund", json={}, headers=h).json()["refund"]["status"] == "requested"
+    assert _stock_left(client, pid) == 0
+    assert client.get(url, headers=h).json()["order"]["refund_amount"] == 0
+    assert client.post("/api/v3/store-scaned-qr-values", headers=h,
+                       params={"wallet_item_id": paid["wallet_item_id"]}).status_code == 400
+    result["status"] = "failed"
+    assert client.get(url, headers=h).json()["order"]["refundable"]
+    assert _stock_left(client, pid) == 0
+    result["gateway_ref"], result["status"] = "re_two", "succeeded"
+    retry = client.post(url + "/refund", json={}, headers=h).json()["order"]
+    assert retry["refund_amount"] == 300 and retry["settlement_status"] == "void"
+    assert len(set(keys)) == 2
+    assert _stock_left(client, pid) == 2
+    assert client.post(url + "/refund", json={}, headers=h).status_code == 400
+    with TestingSession() as db:
+        coupon = db.query(models.Coupon).filter_by(package_id=pid).one()
+        assert (coupon.used_count, coupon.remaining) == (0, 2)
+
+
+def test_legacy_paid_missing_voucher_and_expired_wallet_reconcile(client):
+    h = _register_and_login(client, "pkg-history@example.com")
+    pid = _create_package(client, stock=3)["id"]
+    _, order = _buy_paid(client, h, pid)
+    with TestingSession() as db:
+        db.delete(db.get(models.WalletItem, order["wallet_item_id"]))
+        db.commit()
+    wallet = "/api/v3/get-favorite-coupons-list"
+    assert len(client.get(wallet, headers=h).json()["items"]) == 1
+    assert len(client.get(wallet, headers=h).json()["items"]) == 1
+    with TestingSession() as db:
+        item = db.query(models.WalletItem).filter_by(order_id=order["id"]).one()
+        item.coupon.valid_to = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=1)
+        item.status = 3
+        db.commit()
+    for _ in range(2):
+        items = client.get(wallet, headers=h).json()["items"]
+        assert len(items) == 1 and items[0]["refund_status"] == "refunded"
+        assert _stock_left(client, pid) == 3
+
+
+def test_admin_refund_uses_same_voucher_and_records_reason(client):
+    h = _register_and_login(client, "pkg-admin-refund@example.com")
+    pid = _create_package(client, stock=2)["id"]
+    _, paid = _buy_paid(client, h, pid)
+    ah = _admin_headers(client)
+    path = f"/api/v3/admin/orders/{paid['id']}"
+    assert client.get(path, headers=ah).json()["order"]["admin_refundable"]
+    assert client.post(path + "/refund", json={"reason": "  "}, headers=ah).status_code == 400
+    assert client.post(path + "/refund", json={"reason": "訂單更正"}, headers=h).status_code == 403
+    assert client.post(path + "/refund", json={"reason": "訂單更正"}, headers=ah).json()["order"]["refund_amount"] == 150
+    assert not client.get(path, headers=ah).json()["order"]["admin_refundable"]
+    assert _stock_left(client, pid) == 2
+    from app.models_line_b import AdminAuditLog
+    with TestingSession() as db:
+        audit = db.query(AdminAuditLog).filter_by(action="request_refund", target_id=paid["id"]).one()
+        assert audit.detail == "訂單更正"
+
+
+def test_multi_unit_retry_and_refund_restore_purchase_limit(client):
+    h = _register_and_login(client, "pkg-quantity-limit@example.com")
+    pid = _create_package(client, stock=5)["id"]
+    with TestingSession() as db:
+        db.get(models.Package, pid).usage_rules = '{"per_user_limit":2}'
+        db.commit()
+    def details():
+        return client.get("/api/v3/package-details", params={"package_id": pid}, headers=h).json()["package"]
+    def purchase(ref):
+        return client.post(f"/api/v3/packages/{pid}/purchase", headers=h,
+                           json={"quantity": 2, "payment_method": "fps", "client_ref": ref})
+    oid = purchase("multi").json()["order"]["id"]
+    assert details()["sold_count"] == 0 and details()["limit_remaining"] == 0
+    assert purchase("extra").status_code == 400
+    _pay(client, h, oid, "failed")
+    assert details()["stock_left"] == 5 and details()["limit_remaining"] == 2
+    path = f"/api/v3/orders/{oid}"
+    assert client.post(path + "/retry-payment", headers=h, json={"payment_method": "card"}).status_code == 200
+    assert details()["stock_left"] == 3
+    _pay(client, h, oid)
+    assert details()["sold_count"] == 2
+    assert client.post(path + "/refund", headers=h, json={}).status_code == 200
+    pkg = details()
+    assert (pkg["stock_left"], pkg["sold_count"], pkg["limit_remaining"]) == (5, 0, 2)
+
+
+def test_refund_response_lost_resumes_same_request(client, monkeypatch):
+    from app.routers import packages as service
+    h = _register_and_login(client, "pkg-refund-resume@example.com")
+    pid = _create_package(client, stock=2)["id"]
+    _, paid = _buy_paid(client, h, pid)
+    path = f"/api/v3/orders/{paid['id']}"
+    send = service.refund_payment
+    calls = []
+
+    def lost_once(ref, amount, *, request_key):
+        result = send(ref, amount, request_key=request_key)
+        calls.append((request_key, result["gateway_ref"]))
+        if len(calls) == 1:
+            raise service.GatewayError("response lost")
+        return result
+
+    monkeypatch.setattr(service, "refund_payment", lost_once)
+    assert client.post(path + "/refund", json={}, headers=h).status_code == 502
+    assert _stock_left(client, pid) == 1
+    order = client.get(path, headers=h).json()["order"]
+    assert order["refund_amount"] == 150 and order["refund_status"] == "refunded"
+    assert len(calls) == 2 and calls[0] == calls[1]
+    assert _stock_left(client, pid) == 2
+
+
+def test_refund_does_not_resell_units_promised_by_an_older_retry(client):
+    h = _register_and_login(client, "pkg-old-oversale@example.com")
+    pid = _create_package(client, stock=3)["id"]
+    _, one = _buy_paid(client, h, pid)
+    two = client.post(f"/api/v3/packages/{pid}/purchase", headers=h,
+                      json={"quantity": 2, "payment_method": "fps"}).json()["order"]
+    _pay(client, h, two["id"])
+    # Two existing customers hold three units against effective capacity two.
+    with TestingSession() as db:
+        db.get(models.Package, pid).stock_total = 2
+        db.commit()
+    assert client.post(f"/api/v3/orders/{one['id']}/refund", json={}, headers=h).status_code == 200
+    assert _stock_left(client, pid) == 0
+    assert client.post(f"/api/v3/orders/{two['id']}/refund", json={}, headers=h).status_code == 200
+    assert _stock_left(client, pid) == 2

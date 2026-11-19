@@ -158,7 +158,7 @@ class RetryPaymentIn(BaseModel):
 
 
 class RefundIn(BaseModel):
-    reason: str = ""
+    reason: str = Field(default="", max_length=255)
 
 
 class RefundOut(BaseModel):

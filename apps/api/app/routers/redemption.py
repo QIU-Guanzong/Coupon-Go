@@ -30,7 +30,7 @@ from .. import config, models, prepare_token
 from ..cashback_service import lock_account, void_for_revocation
 from ..database import get_db
 from ..deps import add_points, require_role
-from .coupons import _refresh_expiry, ensure_redeemable, presented_item
+from .coupons import _refresh_expiry, ensure_paid_voucher, ensure_redeemable, presented_item
 from .reviews import hide_reviews_for_revoked_redemption
 
 router = APIRouter()
@@ -61,6 +61,7 @@ def _check_item(db: Session, item: models.WalletItem, vendor: models.User):
     if coupon is None or coupon.shop_id not in _vendor_shop_ids(db, vendor):
         return coupon, "無效的 QR 碼！此碼屬於其他商店。"
     try:
+        ensure_paid_voucher(db, item)
         ensure_redeemable(coupon)
     except HTTPException as exc:
         return coupon, exc.detail
@@ -103,7 +104,9 @@ def prepare_scan(body: dict,
         models.User.id == item.user_id).first()
     last4 = _phone_last4(owner.phone if owner else None)
     valid_to = coupon.valid_to.isoformat() if coupon.valid_to else None
+    order = db.get(models.Order, item.order_id) if item.source == "purchase" and item.order_id else None
     return {"can_redeem": True, "reason": "",
+            "package_quantity": (order.quantity or 1) if order else None,
             "prepare_token": token, "wallet_item_id": item.id,
             "coupon_name": coupon.coupon_name,
             "shop_id": coupon.shop_id,

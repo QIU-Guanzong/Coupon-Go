@@ -10,6 +10,7 @@ from ..database import get_db
 from ..deps import add_points, get_current_user, points_balance
 from ..models_cashback import WithdrawalEvent
 from ..serializers import wallet_out
+from .packages import sweep_expired_packages
 from .coupons import _refresh_expiry
 
 router = APIRouter()
@@ -22,6 +23,7 @@ def get_wallet(page: int = Query(1, ge=1), status: int = Query(None),
                sortby: str = Query("expiry"),
                user: models.User = Depends(get_current_user),
                db: Session = Depends(get_db)):
+    sweep_expired_packages(db, user_id=user.id)
     items = db.query(models.WalletItem).filter(
         models.WalletItem.user_id == user.id).all()
     for item in items:
@@ -48,7 +50,11 @@ def wallet_revision(user: models.User = Depends(get_current_user), db: Session =
         models.WalletItem, models.WalletItem.id == models.Redemption.wallet_item_id
     ).filter(models.WalletItem.user_id == user.id).one()
     changes = db.query(WithdrawalEvent).filter_by(user_id=user.id).count()
-    return {"revision": f"{counts[0]}:{counts[1]}" + (f":{changes}" if changes else "")}
+    purchases = db.query(models.WalletItem).filter_by(user_id=user.id, source="purchase")
+    order_counts = (purchases.count(), purchases.filter_by(status=3).count(),
+                    db.query(models.Refund).filter_by(user_id=user.id, status="refunded").count())
+    suffix = ":p" + ":".join(map(str, order_counts)) if any(order_counts) else ""
+    return {"revision": f"{counts[0]}:{counts[1]}" + (f":{changes}" if changes else "") + suffix}
 
 
 @router.get("/wallet/items/{item_id}/status")
