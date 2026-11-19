@@ -327,7 +327,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   if (activeCampaigns.isNotEmpty) ...[
                     SectionHeader(title: context.tr('限時砍價','Limited-time bargains'), onViewAll: _openBargainList),
                     SizedBox(
-                      height: 216,
+                      height: 216 + (MediaQuery.textScalerOf(context).scale(16) - 16).clamp(0, 32) * 4,
                       child: ListView.builder(
                         scrollDirection: Axis.horizontal,
                         padding: const EdgeInsets.symmetric(horizontal: 12),
@@ -460,11 +460,7 @@ class _BargainHomeCard extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              SizedBox(
-                height: 88,
-                width: double.infinity,
-                child: _HomeImage(url: campaign.image),
-              ),
+              Expanded(child: SizedBox(width: double.infinity, child: _HomeImage(url: campaign.image))),
               Padding(
                 padding: const EdgeInsets.fromLTRB(8, 6, 8, 0),
                 child: Text(
@@ -511,7 +507,7 @@ class _BargainHomeCard extends StatelessWidget {
                       color: CgColors.textSecondary, fontSize: 11),
                 ),
               ),
-              const Spacer(),
+              const SizedBox(height: 4),
               Padding(
                 padding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
                 child: SizedBox(
