@@ -262,15 +262,16 @@ class ApiClient extends ChangeNotifier {
         if (status != null) 'status': status,
       }))['transactions'] as List<dynamic>;
   Future<Map<String, dynamic>> withdrawCashback(double amount, String method,
-          String accountName, String accountRef) =>
+          String accountName, String accountRef, {String? requestKey}) =>
       post('/cashback/withdraw', body: {
         'amount': amount,
         'method': method,
         'account_name': accountName,
         'account_ref': accountRef,
+        if (requestKey != null) 'request_key': requestKey,
       });
-  Future<List<dynamic>> cashbackWithdrawals() async =>
-      (await get('/cashback/withdrawals'))['withdrawals'] as List<dynamic>;
+  Future<Map<String, dynamic>> withdrawalPage({int? before}) =>
+      get('/cashback/withdrawals', query: {if (before != null) 'before': '$before'});
   Future<List<dynamic>> cashbackMissingAppeals() async =>
       (await get('/cashback/missing'))['appeals'] as List<dynamic>;
   Future<Map<String, dynamic>> submitMissingCashback(

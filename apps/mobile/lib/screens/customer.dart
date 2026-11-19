@@ -736,7 +736,7 @@ class _HomeImage extends StatelessWidget {
       );
     }
     return Image.asset(
-      'assets/images/dummy_image_1.png',
+      url.startsWith('assets/images/') ? url : 'assets/images/dummy_image_1.png',
       fit: BoxFit.cover,
       width: double.infinity,
       height: double.infinity,
@@ -768,7 +768,14 @@ class _SearchScreenState extends State<SearchScreen> {
     try {
       final id = row['id'] as int;
       if (row['kind'] == 'branch' || row['has_branch'] == 1) {
-        await Navigator.push(context, MaterialPageRoute(builder: (_) => BranchResults(api: widget.api, shopId: id, keyword: query)));
+        await Navigator.push(context, MaterialPageRoute(builder: (_) => BranchResults(api: widget.api, shopId: id, keyword: query, openShop: () async {
+          try {
+            final data = await widget.api.shopDetails(id);
+            if (mounted) widget.onOpenShop(Shop.fromJson(data['shop']));
+          } catch (_) {
+            if (mounted) showCgToast(context, context.tr('未能載入，請重試','Could not load. Please retry.'));
+          }
+        })));
       } else if (row['kind'] == 'coupon') {
         final data = await widget.api.couponDetails(id);
         if (mounted) widget.onOpenCoupon(Coupon.fromJson(data['coupon']));
@@ -826,7 +833,7 @@ class _CouponDetailScreenState extends State<CouponDetailScreen> {
   @override
   void initState() {
     super.initState();
-    if (widget.api.isLoggedIn) _readClaim();
+    if (widget.api.isLoggedIn && widget.coupon.packageId == null) _readClaim();
   }
 
   Future<void> _readClaim() async {
@@ -845,6 +852,9 @@ class _CouponDetailScreenState extends State<CouponDetailScreen> {
   @override
   Widget build(BuildContext context) {
     final c = widget.coupon;
+    if (c.packageId != null) {
+      return PackageDetailScreen(api: widget.api, packageId: c.packageId!);
+    }
     return Scaffold(
       appBar: AppBar(title: const Text('優惠券詳情')),
       body: ListView(
@@ -852,7 +862,7 @@ class _CouponDetailScreenState extends State<CouponDetailScreen> {
         children: [
           ClipRRect(
             borderRadius: BorderRadius.circular(12),
-            child: Image.asset('assets/images/dummy_image_1.png',
+            child: Image.asset(c.image.startsWith('assets/images/') ? c.image : 'assets/images/dummy_image_1.png',
                 height: 200, fit: BoxFit.cover,
                 errorBuilder: (_, __, ___) => Container(
                     height: 200, color: CgColors.pageBg)),
@@ -962,7 +972,7 @@ class ShopDetailScreen extends StatelessWidget {
             children: [
               ClipRRect(
                 borderRadius: BorderRadius.circular(12),
-                child: Image.asset('assets/images/dummy_image_1.png',
+                child: Image.asset(shop.image.startsWith('assets/images/') ? shop.image : 'assets/images/dummy_image_1.png',
                     height: 200, fit: BoxFit.cover,
                     errorBuilder: (_, __, ___) => Container(
                         height: 200, color: CgColors.pageBg)),

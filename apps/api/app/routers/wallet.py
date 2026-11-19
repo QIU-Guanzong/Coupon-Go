@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from .. import config, models, schemas
 from ..database import get_db
 from ..deps import add_points, get_current_user, points_balance
+from ..models_cashback import WithdrawalEvent
 from ..serializers import wallet_out
 from .coupons import _refresh_expiry
 
@@ -46,7 +47,8 @@ def wallet_revision(user: models.User = Depends(get_current_user), db: Session =
     counts = db.query(func.count(models.Redemption.id), func.count(models.Redemption.revoked_at)).join(
         models.WalletItem, models.WalletItem.id == models.Redemption.wallet_item_id
     ).filter(models.WalletItem.user_id == user.id).one()
-    return {"revision": f"{counts[0]}:{counts[1]}"}
+    changes = db.query(WithdrawalEvent).filter_by(user_id=user.id).count()
+    return {"revision": f"{counts[0]}:{counts[1]}" + (f":{changes}" if changes else "")}
 
 
 @router.get("/wallet/items/{item_id}/status")

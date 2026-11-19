@@ -5,3 +5,6 @@ the variable weight axis and uses a distinct family name.
 Upstream: https://github.com/google/fonts/tree/2ac7e8ea215d57ea37fa3c7073642d0f2f22b525/ofl/notosanshk
 Source file: NotoSansHK[wght].ttf
 License: SIL Open Font License 1.1 (OFL.txt).
+
+Coupon UI Supplemental contains the remaining bundled Chinese interface glyphs
+from Noto Sans SC Regular, copyright 2014–2021 Adobe, under the same OFL.

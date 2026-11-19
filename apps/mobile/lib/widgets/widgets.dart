@@ -26,7 +26,7 @@ class CouponCard extends StatelessWidget {
                 AspectRatio(
                   aspectRatio: 16 / 9,
                   child: Image.asset(
-                    'assets/images/dummy_image_1.png',
+                    coupon.image.startsWith('assets/images/') ? coupon.image : 'assets/images/dummy_image_1.png',
                     fit: BoxFit.cover,
                     errorBuilder: (_, __, ___) => Container(color: CgColors.pageBg),
                   ),

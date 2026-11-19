@@ -72,7 +72,7 @@ class CgTheme {
     return ThemeData(
       useMaterial3: true,
       fontFamily: 'Roboto',
-      fontFamilyFallback: const ['Coupon UI Fallback'],
+      fontFamilyFallback: const ['Coupon UI Fallback', 'Coupon UI Supplemental'],
       colorScheme: ColorScheme.fromSeed(
         seedColor: CgColors.primary,
         primary: CgColors.primary,
@@ -92,7 +92,8 @@ class CgTheme {
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(12),
           ),
-          textStyle: const TextStyle(fontSize: 17, fontWeight: FontWeight.w600),
+          textStyle: const TextStyle(fontFamily: 'Roboto',
+              fontFamilyFallback: ['Coupon UI Fallback', 'Coupon UI Supplemental'], fontSize: 17, fontWeight: FontWeight.w600),
         ),
       ),
       cardTheme: CardThemeData(
@@ -119,7 +120,7 @@ class CgTheme {
       useMaterial3: true,
       brightness: Brightness.dark,
       fontFamily: 'Roboto',
-      fontFamilyFallback: const ['Coupon UI Fallback'],
+      fontFamilyFallback: const ['Coupon UI Fallback', 'Coupon UI Supplemental'],
       colorScheme: ColorScheme.fromSeed(
         seedColor: CgColors.primary,
         primary: CgColors.primary,
@@ -140,7 +141,8 @@ class CgTheme {
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(12),
           ),
-          textStyle: const TextStyle(fontSize: 17, fontWeight: FontWeight.w600),
+          textStyle: const TextStyle(fontFamily: 'Roboto',
+              fontFamilyFallback: ['Coupon UI Fallback', 'Coupon UI Supplemental'], fontSize: 17, fontWeight: FontWeight.w600),
         ),
       ),
       cardTheme: CardThemeData(

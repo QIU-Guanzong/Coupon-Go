@@ -249,11 +249,11 @@ def create_review(body: schemas_line_b.ReviewCreateIn,
         counts_toward_rating=True,
         status="visible",
     )
-    db.add(review)
     marked = db.query(models.WalletItem).filter_by(id=item.id, status=2, reviewed=False).update(
         {"reviewed": True}, synchronize_session=False)
     if not marked:
         raise HTTPException(400, "優惠券狀態已更新，請返回錢包")
+    db.add(review)
     try:
         if points_given:
             add_points(db, user.id, config.POINTS_REVIEW, "review", ref_id=item.id)

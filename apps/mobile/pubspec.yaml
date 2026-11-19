@@ -39,6 +39,9 @@ flutter:
     - family: Coupon UI Fallback
       fonts:
         - asset: fonts/CouponUIFallback.ttf
+    - family: Coupon UI Supplemental
+      fonts:
+        - asset: fonts/CouponUISupplemental.ttf
     - family: Roboto
       fonts:
         - asset: assets/fonts/Roboto-Regular.ttf

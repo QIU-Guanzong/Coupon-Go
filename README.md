@@ -208,9 +208,8 @@ cd apps/api
 - **線下餐飲**：`pending → confirmed → withdrawable`，**90 天內在同一商戶再消費
   一次才解鎖上一次返現**；90 天內沒再來則過期作廢（`void_reason=expired_90d`）。
   追蹤以核銷記錄為準（`redemption_id`），不用 Cookie 點擊歸因。
-- v1 沒有打款保留環節：`confirmed` 在同一輪掃描（sweep）內即轉為
-  `withdrawable`，但 `confirmed_at` 會留痕；日後如需打款審核，可在
-  `confirmed` 設停留點。`withdrawn` 為擴展的終態。
+- 返現確認後可申請提現。每次申請逐筆預留金額，財務在「管理後台 → 提現審核」批准後仍列作待付款。完成外部轉賬後，財務憑付款參考編號登記。MVP 不會向銀行或 FPS 發出付款指令。
+- 失敗單保留原因及原分攤。系統解除預留，依各筆返現現時資格重算餘額。缺乏分攤的舊失敗單另列待核對金額，財務可在「失敗」分頁核對。無法從原流水唯一配對時會保留原賬並提示人工核對。
 
 返現進 Q Wallet，與積分並列展示、明細分開記賬（絕不混用
 `point_transactions`；另建 `cashback_transactions`）。接口見

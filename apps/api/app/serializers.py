@@ -32,6 +32,7 @@ def coupon_out(db: Session, c: models.Coupon, user_id=None,
     return {
         "id": c.id,
         "coupon_id": c.id,
+        "package_id": c.package_id if c.kind == "package" else None,
         "shop_id": c.shop_id,
         "vendor_name": vendor.name if vendor else "",
         "shop_name": shop.name if shop else "",

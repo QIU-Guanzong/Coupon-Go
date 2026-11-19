@@ -27,6 +27,8 @@ from sqlalchemy.orm import Session
 
 from .. import config, models
 from ..database import get_db
+from ..permissions_line_f import require_perm
+from ..models_cashback import WithdrawalEvent, WithdrawalAllocation
 from ..deps import get_current_user
 from .. import cashback_service as svc
 from ..cashback_service import CashbackError
@@ -37,6 +39,7 @@ router = APIRouter()
 
 class WithdrawIn(BaseModel):
     amount: float = Field(gt=0)
+    request_key: str | None = Field(None, min_length=1, max_length=80)
     method: str = "fps"                  # fps | bank
     account_name: str
     account_ref: str = ""                # FPS ID / 银行账号
@@ -104,9 +107,9 @@ def withdraw(body: WithdrawIn, user: models.User = Depends(get_current_user),
              db: Session = Depends(get_db)):
     def _do():
         w = svc.withdraw(db, user, body.amount, body.method,
-                         body.account_name, body.account_ref)
+                         body.account_name, body.account_ref, body.request_key)
         db.commit()
-        return {"message": "提現申請已提交，待打款",
+        return {"message": "已收到提現申請",
                 "withdrawal": svc._withdrawal_out(w),
                 **svc.balances(db, user.id)}
     # Gap 6: a failed withdrawal carries the server-side reason in the
@@ -120,12 +123,14 @@ def withdraw(body: WithdrawIn, user: models.User = Depends(get_current_user),
 
 
 @router.get("/cashback/withdrawals")
-def list_withdrawals(user: models.User = Depends(get_current_user),
+def list_withdrawals(before: int | None = None, user: models.User = Depends(get_current_user),
                      db: Session = Depends(get_db)):
-    rows = (db.query(CashbackWithdrawal)
-            .filter(CashbackWithdrawal.user_id == user.id)
-            .order_by(CashbackWithdrawal.id.desc()).limit(50).all())
-    return {"withdrawals": [svc._withdrawal_out(w) for w in rows]}
+    q = db.query(CashbackWithdrawal).filter_by(user_id=user.id)
+    if before is not None:
+        q = q.filter(CashbackWithdrawal.id < before)
+    rows = q.order_by(CashbackWithdrawal.id.desc()).limit(51).all()
+    return {"withdrawals": [withdrawal_detail(db, w) for w in rows[:50]],
+            "next": rows[49].id if len(rows) > 50 else None}
 
 
 @router.post("/cashback/transactions/{txn_id}/void")
@@ -163,3 +168,36 @@ def missing_cashback(body: MissingIn,
         return {"message": "申訴已提交，調查期最長 120 天",
                 "appeal": svc.appeal_out(a, db)}
     return _handle(_do)
+
+def withdrawal_detail(db, w):
+    events = db.query(WithdrawalEvent).filter_by(withdrawal_id=w.id).order_by(WithdrawalEvent.created_at).all()
+    allocations = db.query(WithdrawalAllocation).filter_by(withdrawal_id=w.id).order_by(WithdrawalAllocation.transaction_id).all()
+    return {**svc._withdrawal_out(w),
+            "allocations": [{"transaction_id": a.transaction_id, "amount": float(a.amount)} for a in allocations],
+            "hold_released": any(e.status == "failed" for e in events),
+            "events": [{"status": e.status, "at": e.created_at.isoformat(), "detail": e.detail} for e in events]}
+
+
+class WithdrawalReview(BaseModel):
+    status: str = Field(pattern="^(approved|paid|failed)$")
+    detail: str = Field("", max_length=200)
+
+
+@router.get("/admin/withdrawals")
+def review_queue(status: str = "pending", before: int | None = None,
+                 operator=Depends(require_perm("withdrawals.review")), db: Session = Depends(get_db)):
+    q = db.query(CashbackWithdrawal).filter_by(status=status)
+    if before is not None:
+        q = q.filter(CashbackWithdrawal.id < before)
+    rows = q.order_by(CashbackWithdrawal.id.desc()).limit(51).all()
+    return {"withdrawals": [{**withdrawal_detail(db, w), "account_ref": w.account_ref} for w in rows[:50]],
+            "next": rows[49].id if len(rows) > 50 else None}
+
+
+@router.post("/admin/withdrawals/{withdrawal_id}")
+def review_withdrawal(withdrawal_id: int, body: WithdrawalReview,
+                      operator=Depends(require_perm("withdrawals.review")), db: Session = Depends(get_db)):
+    w = _handle(lambda: svc.process_withdrawal(db, withdrawal_id, body.status, body.detail, operator.id))
+    result = withdrawal_detail(db, w)
+    db.commit()
+    return result

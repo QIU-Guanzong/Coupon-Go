@@ -35,10 +35,12 @@ from datetime import datetime, timedelta, timezone
 from decimal import ROUND_HALF_UP, Decimal
 import logging
 
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from . import config, models
 from .models_cashback import (
+    WithdrawalAllocation, WithdrawalEvent,
     CashbackAdjustment,
     CashbackAppeal,
     CashbackTransaction,
@@ -75,7 +77,7 @@ def _tx_out(db: Session, t: CashbackTransaction) -> dict:
             "confirmed": "已確認",
             "withdrawable": "可提現",
             "void": "已失效",
-            "withdrawn": "已提現",
+            "withdrawn": "已撥作提現",
         }.get(t.status, t.status)
     return {
         "id": t.id,
@@ -117,21 +119,84 @@ def _withdrawal_out(w: CashbackWithdrawal) -> dict:
 
 def mark_withdrawal_failed(db: Session, withdrawal_id: int,
                            reason: str) -> CashbackWithdrawal:
-    """Ops path: a pending payout failed at payout time (bank / FPS
-    rejection). There is no live payout integration, so this is the
-    only way a withdrawal becomes failed — ops records the provider's
-    reason here and the client shows it (Gap 6)."""
-    w = db.query(CashbackWithdrawal).filter(
-        CashbackWithdrawal.id == withdrawal_id).first()
-    if w is None:
+    return process_withdrawal(db, withdrawal_id, "failed", reason)
+
+
+def _allocations(db, w):
+    rows = db.query(WithdrawalAllocation).filter_by(withdrawal_id=w.id).all()
+    if not rows:
+        # Old releases did not record partial FIFO holds. Subtract every
+        # known outstanding allocation, then use only an unambiguous match.
+        candidates = []
+        txns = db.query(CashbackTransaction).filter_by(user_id=w.user_id).filter(
+            CashbackTransaction.withdrawn_amount > 0).all()
+        for t in txns:
+            known = (db.query(WithdrawalAllocation, CashbackWithdrawal.status)
+                     .join(CashbackWithdrawal, CashbackWithdrawal.id == WithdrawalAllocation.withdrawal_id)
+                     .filter(WithdrawalAllocation.transaction_id == t.id).all())
+            left = money(t.withdrawn_amount) - sum(a.amount for a, status in known if status != "failed")
+            if left > 0:
+                candidates.append((t, left))
+        unknown = db.query(CashbackWithdrawal).filter_by(user_id=w.user_id).filter(
+            ~CashbackWithdrawal.id.in_(db.query(WithdrawalAllocation.withdrawal_id))).all()
+        total = sum(left for _, left in candidates)
+        if sum(other.amount for other in unknown) != total:
+            raise CashbackError("舊提現總額不符，請財務核對原始流水")
+        if total != w.amount:
+            # A single source can fund several old requests. Use this
+            # only when legacy totals also reconcile to every remaining hold.
+            if len(candidates) == 1:
+                candidates = [(candidates[0][0], w.amount)]
+            else:
+                raise CashbackError("舊提現未能逐筆配對，請財務核對原始流水")
+        rows = [WithdrawalAllocation(withdrawal_id=w.id, transaction_id=t.id, amount=left)
+                for t, left in candidates]
+        db.add_all(rows)
+    if sum(a.amount for a in rows) != w.amount:
+        raise CashbackError("提現明細金額不符，請財務核對")
+    return rows
+
+
+def process_withdrawal(db, withdrawal_id, target, detail="", actor_id=None):
+    owner = db.query(CashbackWithdrawal.user_id).filter_by(id=withdrawal_id).scalar()
+    if owner is None:
         raise CashbackError("找不到此提現記錄")
-    if w.status != "pending":
-        raise CashbackError("只有處理中的提現可以標記為失敗")
-    if not reason or not reason.strip():
-        raise CashbackError("請提供提現失敗原因")
-    w.status = "failed"
-    w.failure_reason = reason.strip()
-    w.processed_at = _now()
+    lock_account(db, owner)
+    w = db.query(CashbackWithdrawal).filter_by(id=withdrawal_id).populate_existing().one()
+    detail = detail.strip()
+    event = db.get(WithdrawalEvent, (w.id, target))
+    if event and w.status == target and event.detail == detail:
+        return w
+    if target not in {"approved", "paid", "failed"} or w.status not in {
+        "approved": ("pending",), "paid": ("approved",), "failed": ("pending", "approved", "failed")
+    }[target] or event:
+        raise CashbackError("提現狀態已變更，請重新整理")
+    if target in ("paid", "failed") and not detail:
+        raise CashbackError("請填寫付款參考編號或失敗原因")
+    if target in ("approved", "paid") and not w.account_ref:
+        raise CashbackError("缺少收款賬戶，請退回申請並通知顧客重新提交")
+    if target == "failed":
+        allocations = _allocations(db, w)
+        for a in allocations:
+            t = db.get(CashbackTransaction, a.transaction_id)
+            if t.user_id != owner or t.withdrawn_amount < a.amount:
+                raise CashbackError("提現明細金額不符，請財務核對")
+            t.withdrawn_amount -= a.amount
+            if t.status == "withdrawn":
+                t.status = "withdrawable"
+                t.withdrawal_id = None
+                unlock = db.get(models.Redemption, t.unlocked_by_redemption_id) if t.unlocked_by_redemption_id else None
+                if unlock and unlock.revoked_at:
+                    _restore_unlock(db, t, unlock.id)
+            if t.void_reason == "revoked":
+                db.add(CashbackAdjustment(user_id=owner, redemption_id=t.redemption_id,
+                       amount=a.amount, reason="withdrawal_released"))
+        w.failure_reason = detail
+    if target in ("paid", "failed"):
+        w.processed_at = _now()
+    w.status = target
+    db.add(WithdrawalEvent(withdrawal_id=w.id, user_id=owner, actor_id=actor_id,
+                           status=target, detail=detail))
     db.flush()
     return w
 
@@ -147,7 +212,10 @@ def _confirm(db: Session, t: CashbackTransaction, now: datetime):
 
 def lock_account(db: Session, user_id: int):
     # Use the same user row as withdrawals. NO KEY UPDATE permits FK checks.
-    db.query(models.User.id).filter_by(id=user_id).with_for_update(key_share=True).one()
+    if db.get_bind().dialect.name == "sqlite":
+        db.query(models.User).filter_by(id=user_id).update({"id": user_id}, synchronize_session=False)
+    else:
+        db.query(models.User.id).filter_by(id=user_id).with_for_update(key_share=True).one()
 
 
 def sweep_user(db: Session, user_id: int, now: datetime = None):
@@ -364,6 +432,32 @@ def adjustments(db: Session, user_id: int) -> list:
     return [_adjustment_out(a) for a in rows]
 
 
+def _restore_unlock(db, t, revoked_id):
+    alternatives = (db.query(models.Redemption)
+                    .join(models.WalletItem, models.WalletItem.id == models.Redemption.wallet_item_id)
+                    .filter(models.WalletItem.user_id == t.user_id,
+                            models.Redemption.shop_id == t.merchant_id,
+                            models.Redemption.revoked_at.is_(None),
+                            models.Redemption.id != revoked_id,
+                            models.Redemption.id != t.redemption_id,
+                            models.Redemption.scanned_at >= t.created_at))
+    deadline = t.expires_at or t.created_at + timedelta(days=config.CASHBACK_DINEIN_UNLOCK_DAYS)
+    other = alternatives.filter(models.Redemption.scanned_at < deadline).order_by(
+        models.Redemption.scanned_at, models.Redemption.id).first()
+    if other is not None:
+        t.unlocked_by_redemption_id = other.id
+        t.confirmed_at = other.scanned_at
+        return False
+    t.confirmed_at = None
+    t.unlocked_by_redemption_id = None
+    if deadline <= _now():
+        t.status = "void"
+        t.void_reason = "expired_90d"
+    else:
+        t.status = "pending"
+    return t.status == "pending"
+
+
 def void_for_revocation(db: Session,
                         redemption: models.Redemption) -> dict:
     """P1-1: reverse the cashback effects of a revoked redemption.
@@ -423,28 +517,7 @@ def void_for_revocation(db: Session,
         # A third valid visit can still qualify the predecessor after the
         # middle visit is reversed. Transfer provenance so a later reversal
         # of that third visit is also handled correctly.
-        alternatives = (db.query(models.Redemption)
-                        .join(models.WalletItem, models.WalletItem.id == models.Redemption.wallet_item_id)
-                        .filter(models.WalletItem.user_id == t.user_id,
-                                models.Redemption.shop_id == t.merchant_id,
-                                models.Redemption.revoked_at.is_(None),
-                                models.Redemption.id != redemption.id,
-                                models.Redemption.id != t.redemption_id,
-                                models.Redemption.scanned_at >= t.created_at))
-        deadline = t.expires_at or t.created_at + timedelta(days=config.CASHBACK_DINEIN_UNLOCK_DAYS)
-        other = alternatives.filter(models.Redemption.scanned_at < deadline).order_by(
-            models.Redemption.scanned_at, models.Redemption.id).first()
-        if other is not None:
-            t.unlocked_by_redemption_id = other.id
-            t.confirmed_at = other.scanned_at
-            continue
-        t.confirmed_at = None
-        t.unlocked_by_redemption_id = None
-        if deadline <= _now():
-            t.status = "void"
-            t.void_reason = "expired_90d"
-        else:
-            t.status = "pending"
+        if _restore_unlock(db, t, redemption.id):
             summary["reverted_to_pending"] += 1
         # Preserve both original earning and paid allocation for future reversals.
     if summary["voided_own"] or summary["reverted_to_pending"] \
@@ -483,8 +556,16 @@ def balances(db: Session, user_id: int) -> dict:
         (money(a.amount) for a in db.query(CashbackAdjustment)
          .filter(CashbackAdjustment.user_id == user_id).all()),
         Decimal("0"))
+    by_state = dict(db.query(CashbackWithdrawal.status, func.sum(CashbackWithdrawal.amount)).filter_by(
+        user_id=user_id).group_by(CashbackWithdrawal.status).all())
+    legacy_failed = db.query(func.sum(CashbackWithdrawal.amount)).filter_by(user_id=user_id, status="failed").filter(
+        ~CashbackWithdrawal.id.in_(db.query(WithdrawalEvent.withdrawal_id).filter_by(
+            user_id=user_id, status="failed"))).scalar() or 0
     withdrawable += adjustment_total
     return {
+        "withdrawal_unreconciled": float(legacy_failed),
+        "withdrawal_held": float(by_state.get("pending", 0) + by_state.get("approved", 0)),
+        "withdrawal_paid": float(by_state.get("paid", 0)),
         "withdrawable_balance": float(withdrawable),
         "pending_balance": float(pending),
         "tracked_balance": float(tracked),
@@ -494,7 +575,7 @@ def balances(db: Session, user_id: int) -> dict:
 
 
 def withdraw(db: Session, user: models.User, amount, method: str,
-             account_name: str, account_ref: str = "") -> CashbackWithdrawal:
+             account_name: str, account_ref: str = "", request_key: str = None) -> CashbackWithdrawal:
     """Withdraw withdrawable cashback. FIFO-consumes transactions."""
     if method not in ("fps", "bank"):
         raise CashbackError("提現方式須為 fps（轉數快）或 bank（銀行轉賬）")
@@ -514,15 +595,16 @@ def withdraw(db: Session, user: models.User, amount, method: str,
     if account_name.strip() != user.name.strip():
         raise CashbackError("收款賬戶姓名須與註冊姓名一致")
     now = _now()
-    # FIX-3: lock the user row FIRST (SELECT ... FOR UPDATE on Postgres;
-    # a no-op on SQLite). Everything below — sweep, balance re-check,
-    # daily-limit check, FIFO consume — runs inside this transaction
-    # while the lock is held, so a second concurrent withdrawal blocks
-    # here and re-reads the balance only after this one commits.
-    # populate_existing() refreshes the already-loaded user row so the
-    # lock query is not satisfied from the identity map alone.
-    db.query(models.User).filter(models.User.id == user.id) \
-        .with_for_update().populate_existing().first()
+    # Serialize retries, balances, daily limits and FIFO allocations per account.
+    lock_account(db, user.id)
+    if request_key:
+        event = db.query(WithdrawalEvent).filter_by(user_id=user.id, request_key=request_key).first()
+        if event:
+            prior = db.get(CashbackWithdrawal, event.withdrawal_id)
+            if (prior.amount, prior.method, prior.account_name, prior.account_ref) != (
+                    amt, method, account_name.strip(), (account_ref or "").strip()):
+                raise CashbackError("申請資料已變更，請重新提交")
+            return prior
     sweep_user(db, user.id, now)
     bal = balances(db, user.id)
     if amt > Decimal(str(bal["withdrawable_balance"])):
@@ -531,7 +613,7 @@ def withdraw(db: Session, user: models.User, amount, method: str,
     today = (db.query(CashbackWithdrawal)
              .filter(CashbackWithdrawal.user_id == user.id,
                      CashbackWithdrawal.created_at >= day_start,
-                     CashbackWithdrawal.status.in_(("pending", "paid"))).all())
+                     CashbackWithdrawal.status.in_(("pending", "approved", "paid"))).all())
     today_total = sum((money(w.amount) for w in today), Decimal("0"))
     if today_total + amt > Decimal(str(config.CASHBACK_DAILY_WITHDRAW_LIMIT_HKD)):
         raise CashbackError(
@@ -543,6 +625,7 @@ def withdraw(db: Session, user: models.User, amount, method: str,
                            status="pending")
     db.add(w)
     db.flush()
+    db.add(WithdrawalEvent(withdrawal_id=w.id, status="pending", user_id=user.id, actor_id=user.id, request_key=request_key))
     remaining = amt
     txns = (db.query(CashbackTransaction)
             .filter(CashbackTransaction.user_id == user.id,
@@ -560,6 +643,7 @@ def withdraw(db: Session, user: models.User, amount, method: str,
         if money(t.withdrawn_amount) >= money(t.amount):
             t.status = "withdrawn"
             t.withdrawal_id = w.id
+        db.add(WithdrawalAllocation(withdrawal_id=w.id, transaction_id=t.id, amount=take))
         remaining -= take
     if remaining > 0:  # pragma: no cover — balances check above prevents this
         raise CashbackError("可提現餘額不足")

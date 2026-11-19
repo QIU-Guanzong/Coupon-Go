@@ -23,7 +23,7 @@ import 'widgets/widgets.dart';
 void main() {
   LicenseRegistry.addLicense(() async* {
     final license = await rootBundle.loadString('fonts/OFL.txt');
-    yield LicenseEntryWithLineBreaks(['Coupon UI Fallback (Noto Sans HK)'], license);
+    yield LicenseEntryWithLineBreaks(['Coupon UI Fallback (Noto Sans HK)', 'Coupon UI Supplemental (Noto Sans SC)'], license);
   });
   runApp(const CouponGoApp());
 }
@@ -71,15 +71,14 @@ class _CouponGoAppState extends State<CouponGoApp> {
 
   @override
   Widget build(BuildContext context) {
+    if (!_ready) return const Directionality(textDirection: TextDirection.ltr, child: SplashScreen());
     return LanguageScope(language: _language, child: Builder(builder: (c) => MaterialApp(
       locale: LanguageScope.of(c).english ? const Locale('en') : const Locale.fromSubtags(languageCode: 'zh', scriptCode: 'Hant', countryCode: 'HK'),
       supportedLocales: const [Locale('en'), Locale.fromSubtags(languageCode: 'zh', scriptCode: 'Hant', countryCode: 'HK')],
       localizationsDelegates: GlobalMaterialLocalizations.delegates,
       title: 'Coupon GO!',
       theme: CgTheme.light(),
-      home: !_ready
-          ? const SplashScreen()
-          : HomeShell(
+      home: HomeShell(
               api: _api,
               authed: _authed,
               vendorMode: _vendorMode,
@@ -191,27 +190,14 @@ class _CouponGoAppState extends State<CouponGoApp> {
 }
 
 /// Splash: original splash.gif, ~3.1s, full screen.
-class SplashScreen extends StatefulWidget {
+class SplashScreen extends StatelessWidget {
   const SplashScreen({super.key});
 
   @override
-  State<SplashScreen> createState() => _SplashScreenState();
-}
-
-class _SplashScreenState extends State<SplashScreen> {
-  @override
-  void initState() {
-    super.initState();
-    Future.delayed(const Duration(milliseconds: 3100), () {
-      if (mounted) setState(() {});
-    });
-  }
-
-  @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: CgColors.primary,
-      body: Center(
+    return ColoredBox(
+      color: CgColors.primary,
+      child: Center(
         child: Image.asset(
           'assets/images/splash.gif',
           fit: BoxFit.cover,

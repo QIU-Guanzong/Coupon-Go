@@ -19,7 +19,7 @@ Funding default: merchant commission (funded_by="merchant_commission").
 from datetime import datetime, timezone
 from decimal import Decimal
 
-from sqlalchemy import Column, DateTime, ForeignKey, Integer, Numeric, String, Text
+from sqlalchemy import Column, DateTime, ForeignKey, Integer, Numeric, String, Text, UniqueConstraint
 
 from .database import Base
 
@@ -114,8 +114,7 @@ class CashbackWithdrawal(Base):
     method = Column(String(20), nullable=False)              # fps | bank
     account_name = Column(String(120), nullable=False)       # must match registered name
     account_ref = Column(String(120), default="")            # FPS ID / bank account (v1 demo field)
-    # pending | paid | failed. v1: pending until ops pays out manually —
-    # there is no live FPS/bank payout integration in this build.
+    # pending -> approved -> paid. Both open stages can transition to failed.
     status = Column(String(20), default="pending", nullable=False)
     # Gap 6: why a payout failed (ops marks the row failed with the
     # payout provider / bank reason, e.g. "銀行退回：賬戶不存在").
@@ -145,3 +144,23 @@ class CashbackAppeal(Base):
     status = Column(String(20), default="submitted", nullable=False)
     created_at = Column(DateTime, default=_now)
     resolved_at = Column(DateTime, nullable=True)
+
+
+class WithdrawalAllocation(Base):
+    """Original holds, retained after release for reconciliation."""
+    __tablename__ = "cashback_withdrawal_allocations"
+    withdrawal_id = Column(Integer, ForeignKey("cashback_withdrawals.id"), primary_key=True)
+    transaction_id = Column(Integer, ForeignKey("cashback_transactions.id"), primary_key=True)
+    amount = Column(Numeric(10, 2), nullable=False)
+
+
+class WithdrawalEvent(Base):
+    __tablename__ = "cashback_withdrawal_events"
+    withdrawal_id = Column(Integer, ForeignKey("cashback_withdrawals.id"), primary_key=True)
+    status = Column(String(20), primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    actor_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    request_key = Column(String(80), nullable=True)
+    detail = Column(String(200), nullable=False, default="")
+    created_at = Column(DateTime, default=_now, nullable=False)
+    __table_args__ = (UniqueConstraint("user_id", "request_key"),)

@@ -179,3 +179,112 @@ def test_failed_withdrawal_record_carries_failure_reason(client):
     assert len(wds) == 1
     assert wds[0]["status"] == "failed"
     assert wds[0]["failure_reason"] == "銀行退回：賬戶不存在"
+
+
+def test_review_release_then_pay_reconciles_fifo_and_replays(client):
+    h = _register_and_login(client, "review-reconcile@example.com")
+    _earn_withdrawable(client, h)
+    vh = _vendor_headers(client)
+    _redeem(client, h, vh, _make_coupon())
+    finance = client.post("/api/v3/login", json={"email": "finance@coupon-go.example",
+                                                  "password": "Demo123!"}).json()
+    fh = {"Authorization": "Bearer " + finance["access_token"]}
+    body = {"amount": 75, "account_name": "Test", "account_ref": "demo-ref", "request_key": "first"}
+    def apply():
+        response = client.post("/api/v3/cashback/withdraw", headers=h, json=body)
+        assert response.status_code == 200, response.text
+        return response.json()["withdrawal"]["id"]
+    def act(wid, status, detail=""):
+        return client.post(f"/api/v3/admin/withdrawals/{wid}", headers=fh, json={"status":status, "detail": detail})
+    def check(available, held, paid):
+        balance = client.get("/api/v3/cashback", headers=h).json()
+        assert [balance[k] for k in ("withdrawable_balance", "withdrawal_held", "withdrawal_paid")] == [available, held, paid]
+        assert available + held + paid + balance["pending_balance"] == balance["total_earned"]
+    assert client.get("/api/v3/admin/withdrawals", headers=h).status_code == 403
+    first = apply()
+    assert apply() == first
+    check(45, 75, 0)
+    assert act(first, "paid", "premature").status_code == 400
+    assert act(first, "approved").status_code == 200
+    check(45, 75, 0)
+    for _ in range(2):
+        assert act(first, "failed", "示範銀行退回").status_code == 200
+        check(120, 0, 0)
+    assert apply() == first
+    body["request_key"] = "second"
+    second = apply()
+    assert second != first
+    assert act(second, "approved").status_code == 200
+    for _ in range(2):
+        assert act(second, "paid", "TEST-REF-02").status_code == 200
+        check(45, 0, 75)
+    assert act(second, "failed", "late").status_code == 400
+    history = client.get("/api/v3/cashback/withdrawals", headers=h).json()["withdrawals"]
+    assert history[1]["hold_released"]
+    assert [e["status"] for e in history[0]["events"]] == ["pending", "approved", "paid"]
+    assert history[0]["events"][-1]["detail"] == "TEST-REF-02"
+
+
+def test_legacy_failed_hold_recovered_once(client):
+    h = _register_and_login(client, "legacy-reconcile@example.com")
+    _earn_withdrawable(client, h)
+    wid = _withdraw(client, h, 50).json()["withdrawal"]["id"]
+    with TestingSession() as db:
+        db.query(models_cashback.WithdrawalAllocation).filter_by(withdrawal_id=wid).delete()
+        db.query(models_cashback.WithdrawalEvent).filter_by(withdrawal_id=wid).delete()
+        db.get(models_cashback.CashbackWithdrawal, wid).status = "failed"
+        db.commit()
+    assert client.get("/api/v3/cashback", headers=h).json()["withdrawal_unreconciled"] == 50
+    for _ in range(2):
+        _mark_withdrawal_failed(wid, "舊單退回")
+    assert client.get("/api/v3/cashback", headers=h).json()["withdrawal_unreconciled"] == 0
+    assert client.get("/api/v3/cashback", headers=h).json()["withdrawable_balance"] == 60
+
+
+def test_demo_catalogue_repeat_preserves_stock(client):
+    from app.seed_showcase import seed_showcase, MERCHANTS
+    with TestingSession() as db:
+        seed_showcase(db)
+        shop = db.query(models.Shop).filter_by(name=MERCHANTS[0][0]).one()
+        pkg = db.query(models.Package).filter_by(shop_id=shop.id).first()
+        pkg.stock_left -= 1
+        db.commit()
+        remaining = pkg.stock_left
+        seed_showcase(db)
+        assert db.query(models.Shop).count() == 26
+        assert db.query(models.Package).count() == 14
+        assert db.get(models.Package, pkg.id).stock_left == remaining
+        assert db.query(models.Coupon).filter_by(package_id=pkg.id).count() == 1
+
+
+def test_failed_hold_after_earning_revoked_offsets_clawback(client):
+    h = _register_and_login(client, "revoked-hold@example.com")
+    vendor = _vendor_headers(client)
+    first = _redeem(client, h, vendor, _make_coupon())
+    _redeem(client, h, vendor, _make_coupon())
+    wid = _withdraw(client, h, 60).json()["withdrawal"]["id"]
+    from app import cashback_service as svc
+    with TestingSession() as db:
+        redemption = db.get(models.Redemption, first["redemption_id"])
+        redemption.revoked_at = _now()
+        svc.void_for_revocation(db, redemption)
+        db.commit()
+    _mark_withdrawal_failed(wid, "退回")
+    bal = client.get("/api/v3/cashback", headers=h).json()
+    assert [bal[k] for k in ("withdrawable_balance", "withdrawal_held", "adjustment_total")] == [0, 0, 0]
+    assert sorted(a["amount"] for a in bal["adjustments"]) == [-60, 60]
+
+
+def test_history_can_reach_oldest_request(client):
+    h = _register_and_login(client, "history-pages@example.com")
+    with TestingSession() as db:
+        uid = db.query(models.User.id).filter_by(email="history-pages@example.com").scalar()
+        db.add_all([models_cashback.CashbackWithdrawal(user_id=uid, amount=50, method="fps",
+                    account_name="Test", status="paid") for _ in range(53)])
+        db.commit()
+    first = client.get("/api/v3/cashback/withdrawals", headers=h).json()
+    second = client.get("/api/v3/cashback/withdrawals", params={"before":first["next"]}, headers=h).json()
+    ids = [w["id"] for page in (first, second) for w in page["withdrawals"]]
+    assert len(ids) == len(set(ids)) == 53
+    assert ids == sorted(ids, reverse=True)
+    assert second["next"] is None

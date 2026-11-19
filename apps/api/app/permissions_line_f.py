@@ -33,6 +33,7 @@ ALL_ROLES = [
 # permission -> roles allowed (admin is always allowed on top).
 PERMISSIONS = {
     "dashboard.read": {"finance", "auditor", "support"},
+    "withdrawals.review": {"finance"},
     "settlements.read": {"finance", "auditor"},
     "settlements.write": {"finance"},
     "reconciliation.read": {"finance", "auditor"},

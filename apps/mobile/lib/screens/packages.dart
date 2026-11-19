@@ -98,8 +98,9 @@ class _PackageListScreenState extends State<PackageListScreen> {
                           return Card(
                             margin: const EdgeInsets.only(bottom: 12),
                             child: ListTile(
-                              leading: const Icon(Icons.restaurant_menu,
-                                  color: CgColors.primary),
+                              leading: p.images.isEmpty ? const Icon(Icons.restaurant_menu, color: CgColors.primary)
+                                  : SizedBox(width: 64, height: 56, child: ClipRRect(
+                                      borderRadius: BorderRadius.circular(6), child: _PkgImage(url: p.images.first))),
                               title: Text(p.name),
                               subtitle: Text(
                                   '${p.shopName} · ${p.personCount} 人用 · 已售 ${p.soldCount}'),
@@ -329,8 +330,8 @@ class _PackageDetailScreenState extends State<PackageDetailScreen> {
               style: const TextStyle(color: CgColors.textSecondary)),
           const SizedBox(height: 12),
           // 价格区
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.end,
+          Wrap(
+            spacing: 8, runSpacing: 4, crossAxisAlignment: WrapCrossAlignment.center,
             children: [
               Text(formatHkd(p.packagePrice),
                   style: const TextStyle(
@@ -338,7 +339,6 @@ class _PackageDetailScreenState extends State<PackageDetailScreen> {
                       fontSize: 28,
                       fontWeight: FontWeight.bold,
                       fontFeatures: [FontFeature.tabularFigures()])),
-              const SizedBox(width: 10),
               Padding(
                 padding: const EdgeInsets.only(bottom: 4),
                 child: Text(formatHkd(p.originalPrice),
@@ -346,7 +346,6 @@ class _PackageDetailScreenState extends State<PackageDetailScreen> {
                         decoration: TextDecoration.lineThrough,
                         color: CgColors.textSecondary)),
               ),
-              const SizedBox(width: 8),
               if (p.saveAmount > 0)
                 Padding(
                   padding: const EdgeInsets.only(bottom: 4),
@@ -354,7 +353,6 @@ class _PackageDetailScreenState extends State<PackageDetailScreen> {
                       label: Text('省 ${formatHkd(p.saveAmount)}'),
                       visualDensity: VisualDensity.compact),
                 ),
-              const Spacer(),
               Padding(
                 padding: const EdgeInsets.only(bottom: 4),
                 child: Text('已售 ${p.soldCount}',
@@ -433,6 +431,8 @@ class _PackageDetailScreenState extends State<PackageDetailScreen> {
                   : p.validFrom == null
                       ? '至 ${formatDateYmd(p.validTo)}'
                       : '${formatDateYmd(p.validFrom)} 至 ${formatDateYmd(p.validTo)}'),
+          if (p.includes.isNotEmpty) _RuleRow(label: '已包括', value: p.includes.join('、')),
+          if (p.excludes.isNotEmpty) _RuleRow(label: '另收費', value: p.excludes.join('、')),
           if (p.timeSlots.isNotEmpty)
             _RuleRow(label: '可用时段', value: p.timeSlots.join('、')),
           _RuleRow(label: '是否需预约', value: p.needBooking ? '需提前预约' : '无需预约'),
@@ -931,7 +931,7 @@ class _PkgImage extends StatelessWidget {
       );
     }
     return Image.asset(
-      'assets/images/dummy_image_1.png',
+      url.startsWith('assets/images/') ? url : 'assets/images/dummy_image_1.png',
       fit: BoxFit.cover,
       width: double.infinity,
       height: double.infinity,

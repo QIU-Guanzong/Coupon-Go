@@ -1,7 +1,8 @@
 /// Data models matching the FastAPI /api/v3 responses.
 class Coupon {
   Coupon.fromJson(Map<String, dynamic> j)
-      : id = j['coupon_id'] as int? ?? j['id'] as int? ?? 0,
+      : packageId = j['package_id'] as int?,
+        id = j['coupon_id'] as int? ?? j['id'] as int? ?? 0,
         shopId = j['shop_id'] as int? ?? 0,
         shopName = j['shop_name'] as String? ?? '',
         vendorName = j['vendor_name'] as String? ?? '',
@@ -25,6 +26,7 @@ class Coupon {
             (j['distance'] as num?)?.toDouble();
 
   final int id;
+  final int? packageId;
   final int shopId;
   final String shopName;
   final String vendorName;
@@ -321,11 +323,17 @@ class CashbackWithdrawal {
         method = j['method'] as String? ?? 'fps',
         methodText = j['method_text'] as String? ?? '',
         accountName = j['account_name'] as String? ?? '',
+        holdReleased = j['hold_released'] == true,
+        events = List<Map<String, dynamic>>.from(j['events'] ?? []),
+        allocations = List<Map<String, dynamic>>.from(j['allocations'] ?? []),
         status = j['status'] as String? ?? 'pending',
         // Gap 6: server-side failure reason; null on pending / paid rows.
         failureReason = j['failure_reason'] as String?,
         createdAt = DateTime.tryParse(j['created_at'] as String? ?? '');
 
+  final List<Map<String, dynamic>> allocations;
+  final bool holdReleased;
+  final List<Map<String, dynamic>> events;
   final int id;
   final double amount;
   final String method; // fps | bank
@@ -336,7 +344,12 @@ class CashbackWithdrawal {
   final DateTime? createdAt;
 
   String get statusText =>
-      status == 'paid' ? '已到账' : status == 'failed' ? '失败' : '处理中';}
+      switch (status) {
+        'paid' => '已付款', 'approved' => '已審核 · 待付款',
+        'failed' => '提現失敗', _ => '待審核',
+      };
+}
+
 /// Bargain 2C (line E): campaign / session / help / refund.
 /// Amounts are HKD; see apps/api/app/routers/bargain.py for the rules.
 class BargainCampaign {

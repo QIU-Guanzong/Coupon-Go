@@ -6,6 +6,7 @@ import '../models.dart';
 import '../theme.dart';
 import '../widgets/widgets.dart';
 import 'reviews_admin.dart';
+import 'withdrawal_review.dart';
 
 /// Admin v2 home (line F). UI_SPEC §9 first phase: onboarding review,
 /// orders and settlements are the three first-phase blocks; the other
@@ -30,6 +31,8 @@ class AdminHomeScreen extends StatelessWidget {
       ('訂單', Icons.receipt_long, ['admin', 'finance', 'support'],
           () => MaterialPageRoute(
               builder: (_) => OrdersAdminScreen(api: api))),
+      ('提現審核', Icons.account_balance_wallet_outlined, ['admin', 'finance'],
+          () => MaterialPageRoute(builder: (_) => WithdrawalReviewScreen(api: api))),
       ('結算單', Icons.receipt_long, ['admin', 'finance'],
           () => MaterialPageRoute(
               builder: (_) => SettlementsScreen(api: api))),

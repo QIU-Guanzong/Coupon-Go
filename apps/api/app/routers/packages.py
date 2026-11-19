@@ -433,6 +433,14 @@ def create_package(body: sp.PackageCreateIn,
         raise HTTPException(status_code=404, detail="找不到此商店")
     if vendor.role == "vendor" and shop.vendor_id != vendor.id:
         raise HTTPException(status_code=403, detail="只能為自己的商店建立套餐")
+    pkg, coupon = store_package(db, shop, body)
+    db.commit()
+    db.refresh(pkg)
+    return {"package": package_out(db, pkg),
+            "coupon_id": coupon.id, "message": "套餐已建立"}
+
+
+def store_package(db: Session, shop: models.Shop, body: sp.PackageCreateIn):
     pkg = Package(
         shop_id=body.shop_id, name=body.name, name_en=body.name_en,
         items=json.dumps([i.model_dump() for i in body.items],
@@ -463,10 +471,8 @@ def create_package(body: sp.PackageCreateIn,
                                ensure_ascii=False),
         refund_policy=body.refund_policy)
     db.add(coupon)
-    db.commit()
-    db.refresh(pkg)
-    return {"package": package_out(db, pkg),
-            "coupon_id": coupon.id, "message": "套餐已建立"}
+    db.flush()
+    return pkg, coupon
 
 
 # ---------- purchase ----------

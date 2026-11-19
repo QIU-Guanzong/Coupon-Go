@@ -61,11 +61,13 @@ def startup():
     if os.environ.get("SEED_ON_STARTUP", "1") == "1":
         from .database import SessionLocal
         from .seed import seed
+        from .seed_showcase import seed_showcase
         from .seed_bargain import seed_bargain_campaigns
         db = SessionLocal()
         try:
             seed(db)
             seed_bargain_campaigns(db)
+            seed_showcase(db)
         finally:
             db.close()
 

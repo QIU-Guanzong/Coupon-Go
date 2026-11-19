@@ -178,9 +178,11 @@ class BranchResults extends StatelessWidget {
       {super.key,
       required this.api,
       required this.shopId,
+      required this.openShop,
       required this.keyword});
   final ApiClient api;
   final int shopId;
+  final VoidCallback openShop;
   final String keyword;
   @override
   Widget build(BuildContext context) => Scaffold(
@@ -210,11 +212,14 @@ class BranchResults extends StatelessWidget {
                                                     'branch_id':
                                                         "${branch['branch_id']}"
                                                   }),
-                                          content: (details) => ListTile(
-                                              title: Text(
-                                                  details['address'] ?? ''),
-                                              subtitle: Text(
-                                                  details['phone'] ?? ''))),
+                                          content: (details) => ListView(children: [
+                                            ListTile(title: Text(details['address'] ?? ''),
+                                                subtitle: Text(details['phone'] ?? '')),
+                                            ListTile(leading: const Icon(Icons.storefront),
+                                                title: Text(c.tr('商戶詳情及優惠', 'Merchant details and offers')),
+                                                trailing: const Icon(Icons.chevron_right),
+                                                onTap: openShop),
+                                          ])),
                                     )))),
                 ])),
       );

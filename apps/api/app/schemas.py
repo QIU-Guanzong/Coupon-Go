@@ -80,6 +80,7 @@ class DeleteAccountIn(BaseModel):
 
 # ---------- coupons / shops ----------
 class CouponOut(BaseModel):
+    package_id: Optional[int] = None
     id: int
     coupon_id: int
     shop_id: int

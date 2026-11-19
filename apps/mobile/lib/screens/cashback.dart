@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:math';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
@@ -220,6 +221,7 @@ class _CashbackScreenState extends State<CashbackScreen> with WalletUpdates<Cash
   bool _needsLogin = false;
   String? _error;
   double _withdrawable = 0;
+  double _held = 0, _paid = 0, _unreconciled = 0;
   double _pending = 0;
   double _totalEarned = 0;
   double _adjustment = 0;
@@ -266,6 +268,9 @@ class _CashbackScreenState extends State<CashbackScreen> with WalletUpdates<Cash
       });
       setState(() {
         _withdrawable = (data['withdrawable_balance'] as num?)?.toDouble() ?? 0;
+        _unreconciled = (data['withdrawal_unreconciled'] as num?)?.toDouble() ?? 0;
+        _held = (data['withdrawal_held'] as num?)?.toDouble() ?? 0;
+        _paid = (data['withdrawal_paid'] as num?)?.toDouble() ?? 0;
         _pending = (data['pending_balance'] as num?)?.toDouble() ?? 0;
         _adjustment = (data['adjustment_total'] as num?)?.toDouble() ?? 0;
         _totalEarned = (data['total_earned'] as num?)?.toDouble() ?? 0;
@@ -362,8 +367,10 @@ class _CashbackScreenState extends State<CashbackScreen> with WalletUpdates<Cash
               _buildBalanceCard(context),
               if (_adjustment < 0)
                 Padding(padding: const EdgeInsets.only(top: 8),
-                  child: Text('核銷已撤銷，已提現的 ${formatHkd(-_adjustment)} 已從可提現餘額扣回。')),
+                  child: Text('核銷已撤銷，已撥作提現的 ${formatHkd(-_adjustment)} 已從可提現餘額扣回。')),
               const SizedBox(height: 8),
+              Text('提現處理中 ${formatHkd(_held)}　已付款 ${formatHkd(_paid)}'),
+              if (_unreconciled > 0) Text('舊提現待核對 ${formatHkd(_unreconciled)}'),
               Text('累计已赚 ${formatHkd(_totalEarned)}',
                   style: const TextStyle(
                       color: CgColors.textSecondary, fontSize: 12)),
@@ -497,7 +504,7 @@ class _CashbackScreenState extends State<CashbackScreen> with WalletUpdates<Cash
       ('all', '全部'),
       ('pending', '待确认'),
       ('withdrawable', '可提现'),
-      ('withdrawn', '已提现'),
+      ('withdrawn', '已撥作提現'),
       ('void', '已失效'),
     ];
     return SingleChildScrollView(
@@ -534,7 +541,7 @@ class _TxnCard extends StatelessWidget {
       case 'withdrawable':
         return '可提现';
       case 'withdrawn':
-        return '已提现';
+        return '已撥作提現';
       case 'void':
         return '已失效';
       default:
@@ -659,6 +666,7 @@ class _WithdrawScreenState extends State<WithdrawScreen> {
   final _name = TextEditingController();
   final _ref = TextEditingController();
   String _method = 'fps';
+  String? _requestKey, _requestBody;
   bool _loadingBalance = false;
   double? _balance;
   // Gap 4：页面内的门槛 / 上限以构造参数为准；自行拉取余额时如接口
@@ -683,6 +691,7 @@ class _WithdrawScreenState extends State<WithdrawScreen> {
     } else {
       _fetchBalance();
     }
+    _ref.addListener(() => setState(() {}));
     _amount.addListener(() {
       _touchedAmount = true;
       setState(() {});
@@ -761,7 +770,7 @@ class _WithdrawScreenState extends State<WithdrawScreen> {
       !_loadingBalance &&
       _balance != null &&
       _amountError() == null &&
-      _nameError() == null;
+      _nameError() == null && _ref.text.trim().isNotEmpty;
 
   bool get _showAmountError => _submitAttempted || _touchedAmount;
   bool get _showNameError => _submitAttempted || _touchedName;
@@ -775,8 +784,14 @@ class _WithdrawScreenState extends State<WithdrawScreen> {
       _needsLogin = false;
     });
     try {
+      final body = jsonEncode([_method, _name.text.trim(), _ref.text.trim(), _amount.text.trim()]);
+      if (_requestBody != body) {
+        final random = Random.secure();
+        _requestKey = base64UrlEncode(List.generate(18, (_) => random.nextInt(256)));
+        _requestBody = body;
+      }
       await widget.api.withdrawCashback(double.parse(_amount.text.trim()),
-          _method, _name.text.trim(), _ref.text.trim());
+          _method, _name.text.trim(), _ref.text.trim(), requestKey: _requestKey);
       if (!mounted) return;
       Navigator.of(context).pushReplacement(MaterialPageRoute(
           builder: (_) => WithdrawalHistoryScreen(api: widget.api)));
@@ -913,8 +928,10 @@ class WithdrawalHistoryScreen extends StatefulWidget {
       _WithdrawalHistoryScreenState();
 }
 
-class _WithdrawalHistoryScreenState extends State<WithdrawalHistoryScreen> {
+class _WithdrawalHistoryScreenState extends State<WithdrawalHistoryScreen> with WalletUpdates<WithdrawalHistoryScreen> {
   bool _loading = true;
+  int? _next;
+  int _generation = 0;
   bool _needsLogin = false;
   String? _error;
   List<CashbackWithdrawal> _items = [];
@@ -925,28 +942,47 @@ class _WithdrawalHistoryScreenState extends State<WithdrawalHistoryScreen> {
     _load();
   }
 
-  Future<void> _load() async {
+  @override
+  Future<void> syncWallet() async {
+    if (_loading) return;
+    await refreshOnReceiptChange(widget.api, () async {
+      await _load(quiet: true);
+      return mounted && _error == null;
+    });
+  }
+
+  Future<void> _load({bool quiet = false, bool more = false}) async {
+    final generation = ++_generation;
     setState(() {
-      _loading = true;
+      if (!quiet) _loading = true;
       _error = null;
       _needsLogin = false;
     });
     try {
-      final wds = await widget.api.cashbackWithdrawals();
-      if (!mounted) return;
+      // Refresh all previously displayed pages so older decisions stay in sync.
+      final oldest = quiet && _items.isNotEmpty ? _items.last.id : null;
+      final rows = <CashbackWithdrawal>[if (more) ..._items];
+      int? cursor = more ? _next : null;
+      do {
+        final page = await widget.api.withdrawalPage(before: cursor);
+        rows.addAll((page['withdrawals'] as List).map((w) => CashbackWithdrawal.fromJson(w)));
+        cursor = page['next'] as int?;
+      } while (cursor != null && oldest != null && cursor > oldest);
+      if (!mounted || generation != _generation) return;
       setState(() {
-        _items = wds.map((e) => CashbackWithdrawal.fromJson(e)).toList();
+        _items = rows;
+        _next = cursor;
         _loading = false;
       });
     } on ApiException catch (e) {
-      if (!mounted) return;
+      if (!mounted || generation != _generation) return;
       setState(() {
         _loading = false;
         _error = e.message;
         _needsLogin = e.status == 401;
       });
     } catch (_) {
-      if (!mounted) return;
+      if (!mounted || generation != _generation) return;
       setState(() {
         _loading = false;
         _error = 'network';
@@ -982,6 +1018,8 @@ class _WithdrawalHistoryScreenState extends State<WithdrawalHistoryScreen> {
                       _load();
                     },
                   )),
+            if (!_loading && _error == null && _next != null)
+              TextButton(onPressed: () => _load(more: true), child: const Text('較早的提現記錄')),
           ],
         ),
       ),
@@ -1022,12 +1060,20 @@ class _WithdrawalCard extends StatelessWidget {
             ),
             const SizedBox(height: 8),
             Text(
-              '${w.methodText} · ${w.accountName}'
+              '#${w.id} · ${w.methodText} · ${w.accountName}'
               '${date == null ? '' : ' · ${_dateYmd(date)}'}',
               style:
                   const TextStyle(color: CgColors.textSecondary, fontSize: 12),
             ),
+            if (w.allocations.isNotEmpty)
+              ExpansionTile(tilePadding: EdgeInsets.zero, title: const Text('對應返現流水'),
+                children: [for (final allocation in w.allocations)
+                  ListTile(title: Text('返現 #${allocation['transaction_id']}'),
+                    trailing: Text(formatHkd((allocation['amount'] as num).toDouble())))]),
+            for (final event in w.events.where((e) => e['status'] == 'paid'))
+              Text('付款參考編號 ${event['detail']}'),
             if (w.status == 'failed') ...[
+              Text(w.holdReleased ? '提現預留已解除，可用金額見返現餘額。' : '舊單退回金額待財務核對。'),
               const SizedBox(height: 6),
               Text(
                   (w.failureReason ?? '').isNotEmpty
