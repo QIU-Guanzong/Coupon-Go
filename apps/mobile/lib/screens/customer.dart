@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../api_client.dart';
 import '../language.dart';
@@ -926,34 +927,79 @@ class _CouponDetailScreenState extends State<CouponDetailScreen> {
 }
 
 /// Shop detail: photos, info, branches, coupons from this shop.
-class ShopDetailScreen extends StatelessWidget {
+class ShopDetailScreen extends StatefulWidget {
   const ShopDetailScreen({super.key, required this.api, required this.shop,
-    required this.onOpenCoupon});
+    required this.onOpenCoupon, this.launchExternal});
 
   final ApiClient api;
   final Shop shop;
   final void Function(Coupon) onOpenCoupon;
+  final Future<bool> Function(Uri)? launchExternal;
+
+  @override
+  State<ShopDetailScreen> createState() => _ShopDetailScreenState();
+}
+
+class _ShopDetailScreenState extends State<ShopDetailScreen> {
+  late Future<Map<String, dynamic>> _detail = widget.api.shopDetails(widget.shop.id);
+
+  void _reload() {
+    final result = widget.api.shopDetails(widget.shop.id);
+    setState(() { _detail = result; });
+  }
+
+  Future<void> _launch(Uri uri) async {
+    try {
+      final launched = await (widget.launchExternal?.call(uri) ??
+          launchUrl(uri, mode: LaunchMode.externalApplication));
+      if (launched) return;
+    } catch (_) {
+      // Stay on the shop screen if no system handler can open the link.
+    }
+    if (mounted) {
+      showCgToast(context, context.tr('未能開啟連結', 'Could not open the link'));
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
+    final api = widget.api;
+    final initialShop = widget.shop;
     return Scaffold(
       appBar: AppBar(
-        title: Text(shop.name),
+        title: Text(initialShop.name),
         actions: [
-          FavoriteControl(api: api, id: shop.id, shop: true, initial: shop.isFavorite),
+          FavoriteControl(api: api, id: initialShop.id, shop: true, initial: initialShop.isFavorite),
         ],
       ),
       body: FutureBuilder<Map<String, dynamic>>(
-        future: api.shopDetails(shop.id),
+        future: _detail,
         builder: (context, snap) {
-          if (!snap.hasData) {
+          if (snap.connectionState != ConnectionState.done) {
             return const Padding(
               padding: EdgeInsets.all(16),
               child: Column(children: [SkeletonBox(height: 200)]),
             );
           }
+          if (snap.hasError || !snap.hasData) {
+            return Center(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(context.tr('未能載入商店資料', 'Could not load store details')),
+                  TextButton(onPressed: _reload, child: Text(context.tr('重試', 'Retry'))),
+                ],
+              ),
+            );
+          }
           final data = snap.data!;
-          final coupons = (data['coupons'] as List)
+          final shop = data['shop'] is Map<String, dynamic>
+              ? Shop.fromJson(data['shop'] as Map<String, dynamic>)
+              : initialShop;
+          final phone = shop.phone.trim().isEmpty ? initialShop.phone : shop.phone;
+          final dialNumber = phone.replaceAll(RegExp(r'[\s().-]'), '');
+          final canDial = RegExp(r'^\+?[0-9]+$').hasMatch(dialNumber);
+          final coupons = ((data['coupons'] as List?) ?? [])
               .map((e) => Coupon.fromJson(e))
               .toList();
           final branches = (data['branches'] as List?) ?? [];
@@ -968,14 +1014,20 @@ class ShopDetailScreen extends StatelessWidget {
               Text(shop.name,
                   style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
               Text('${shop.areaName} · ${shop.categoryName}'),
-              Text(shop.address),
-              Text(shop.phone),
+              if (shop.address.isNotEmpty) Text(shop.address),
+              if (phone.trim().isNotEmpty)
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: const Icon(Icons.call_outlined),
+                  title: Text(phone),
+                  onTap: canDial ? () => _launch(Uri(scheme: 'tel', path: dialNumber)) : null,
+                ),
               if (shop.description.isNotEmpty) Text(shop.description),
               const SizedBox(height: 8),
               ListTile(
                 leading: const Icon(Icons.star, color: CgColors.amber),
-                title: const Text('評分與評價'),
-                subtitle: const Text('口味 / 環境 / 服務三維評分'),
+                title: Text(context.tr('評分與評價', 'Ratings and reviews')),
+                subtitle: Text(context.tr('口味、環境及服務', 'Taste, ambience and service')),
                 trailing: const Icon(Icons.chevron_right),
                 onTap: () => Navigator.of(context).push(MaterialPageRoute(
                     builder: (_) =>
@@ -983,23 +1035,32 @@ class ShopDetailScreen extends StatelessWidget {
               ),
               const SizedBox(height: 8),
               if (branches.isNotEmpty) ...[
-                const Text('分店', style: TextStyle(fontWeight: FontWeight.bold)),
-                ...branches.map((b) => ListTile(
-                      leading: const Icon(Icons.store),
-                      title: Text(b['branch_name'] as String),
-                      subtitle: Text((b['address'] as String?) ?? ''),
+                Text(context.tr('分店', 'Branches'),
+                    style: const TextStyle(fontWeight: FontWeight.bold)),
+                ...branches.map((b) {
+                  final address = (b['address'] as String?)?.trim() ?? '';
+                  return ListTile(
+                    leading: const Icon(Icons.store),
+                    title: Text((b['branch_name'] as String?) ?? ''),
+                    subtitle: address.isEmpty ? null : Text(address),
+                    trailing: address.isEmpty ? null : const Icon(Icons.map_outlined),
+                    onTap: address.isEmpty ? null : () => _launch(Uri.https(
+                      'www.google.com', '/maps/search/', {'api': '1', 'query': address},
                     )),
+                  );
+                }),
               ],
               const SizedBox(height: 8),
-              const Text('本店優惠券', style: TextStyle(fontWeight: FontWeight.bold)),
+              Text(context.tr('本店優惠券', 'Store coupons'),
+                  style: const TextStyle(fontWeight: FontWeight.bold)),
               ...coupons.map((c) => ListTile(
                     leading: const Icon(Icons.local_offer, color: CgColors.primary),
                     title: Text(c.name),
                     subtitle: Text(c.amountText),
                     trailing: const Icon(Icons.chevron_right),
-                    onTap: () => onOpenCoupon(c),
+                    onTap: () => widget.onOpenCoupon(c),
                   )),
-              if (coupons.isEmpty) const Text('暫時沒有優惠券。'),
+              if (coupons.isEmpty) Text(context.tr('暫時沒有優惠券。', 'No coupons right now.')),
             ],
           );
         },

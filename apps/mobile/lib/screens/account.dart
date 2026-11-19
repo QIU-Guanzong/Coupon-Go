@@ -837,54 +837,28 @@ class _SettingsScreenState extends State<SettingsScreen> {
             subtitle: Text((draft ?? language.english) ? 'English' : '繁體中文'),
             trailing: const Icon(Icons.chevron_right),
             onTap: () => setState(() => language.draft = language.english)),
-          if (widget.api.isLoggedIn) ...[
           ListTile(
-            title: const Text('新手指南 / 常見問題'),
+            title: Text(t('新手指南 / 常見問題', 'Guide and FAQs')),
             trailing: const Icon(Icons.chevron_right),
             onTap: () => Navigator.of(context).pushNamed('/guide'),
           ),
           ListTile(
-            title: const Text('關於 Coupon GO!'),
-            subtitle: const Text('版本 v0.1.0'),
-            onTap: () {},
+            title: Text(t('關於 Coupon GO!', 'About Coupon GO!')),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => Navigator.of(context).push(MaterialPageRoute(
+              builder: (_) => const CouponGoAboutScreen(),
+            )),
           ),
-          const Divider(),
-          ListTile(
-            title: const Text('登出', style: TextStyle(color: CgColors.primary)),
-            onTap: () async {
-              await widget.api.clearToken();
-              widget.onLogout();
-            },
-          ),
-          ListTile(
-            title: const Text('刪除帳戶', style: TextStyle(color: Colors.red)),
-            onTap: () async {
-              final ok = await showDialog<bool>(
-                context: context,
-                builder: (c) => AlertDialog(
-                  title: const Text('刪除帳戶'),
-                  content: const Text('請填寫刪除原因。刪除後帳戶將停用。'),
-                  actions: [
-                    TextButton(
-                        onPressed: () => Navigator.pop(c, false),
-                        child: const Text('取消')),
-                    TextButton(
-                        onPressed: () => Navigator.pop(c, true),
-                        child: const Text('確認刪除')),
-                  ],
-                ),
-              );
-              if (ok == true) {
-                try {
-                  await widget.api.post('/delete-account', body: {'reason': '用戶申請'});
-                  await widget.api.clearToken();
-                  widget.onLogout();
-                } on ApiException catch (e) {
-                  if (context.mounted) showCgToast(context, e.message);
-                }
-              }
-            },
-          ),
+          if (widget.api.isLoggedIn) ...[
+            const Divider(),
+            ListTile(
+              title: Text(t('登出', 'Log out'),
+                  style: const TextStyle(color: CgColors.primary)),
+              onTap: () async {
+                await widget.api.clearToken();
+                widget.onLogout();
+              },
+            ),
           ],
         ],
       ),
@@ -907,6 +881,25 @@ class _SettingsScreenState extends State<SettingsScreen> {
       ]),
     );
   }
+}
+
+/// Legal document links will be shown only when real published documents are available.
+class CouponGoAboutScreen extends StatelessWidget {
+  const CouponGoAboutScreen({super.key});
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
+        appBar: AppBar(title: Text(context.tr('關於 Coupon GO!', 'About Coupon GO!'))),
+        body: ListView(
+          children: [
+            ListTile(
+              title: Text(context.tr('開源授權', 'Open source licenses')),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () => showLicensePage(context: context, applicationName: 'Coupon GO!'),
+            ),
+          ],
+        ),
+      );
 }
 
 /// Guide + FAQ (local, behaviour-based).
