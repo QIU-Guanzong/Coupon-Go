@@ -10,6 +10,7 @@ export 'guest_auth.dart' show AuthScreen;
 import '../models.dart';
 import '../theme.dart';
 import '../widgets/widgets.dart';
+import '../widgets/wallet_updates.dart';
 import 'cashback.dart';
 import 'reviews_admin.dart';
 
@@ -27,7 +28,7 @@ class WalletScreen extends StatefulWidget {
 }
 
 class _WalletScreenState extends State<WalletScreen>
-    with SingleTickerProviderStateMixin {
+    with SingleTickerProviderStateMixin, WalletUpdates<WalletScreen> {
   late final TabController _tab = TabController(length: 3, vsync: this);
   int? _balance;
   double? _cashbackWithdrawable;
@@ -59,24 +60,46 @@ class _WalletScreenState extends State<WalletScreen>
     super.dispose();
   }
 
-  Future<void> _load() async {
+  @override
+  bool get walletPageActive => widget.active;
+
+  @override
+  Future<void> syncWallet() async {
+    if (_loading || _moreBusy) return;
+    await refreshOnReceiptChange(widget.api, () async {
+      await _load(quiet: true);
+      return mounted && _error == null;
+    });
+  }
+
+  Future<void> _load({bool quiet = false}) async {
     final request = ++_request;
     final status = _tab.index + 1;
     setState(() {
-      _loading = true;
+      if (!quiet) _loading = true;
       _error = null;
       _moreBusy = false;
     });
     try {
       unawaited(_loadBalances(request));
+      final keepPages = quiet ? _page : 1;
       final wallet = await widget.api.wallet(status: status);
+      final pages = wallet['total_pages'] as int? ?? 1;
+      final last = keepPages.clamp(1, pages);
+      final items = List<dynamic>.of(wallet['items'] as List);
+      for (var page = 2; page <= last; page++) {
+        if (!mounted || request != _request) return;
+        final more = await widget.api.wallet(status: status, page: page);
+        items.addAll(more['items'] as List);
+      }
       if (!mounted || request != _request) return;
       setState(() {
-        _page = 1;
-        _pages = wallet['total_pages'] as int? ?? 1;
-        _items = (wallet['items'] as List)
+        _page = last;
+        _pages = pages;
+        final seen = <int>{};
+        _items = items
             .map((e) => WalletItem.fromJson(e))
-            .toList();
+            .where((item) => seen.add(item.id)).toList();
         _loading = false;
       });
     } catch (_) {
@@ -134,7 +157,8 @@ class _WalletScreenState extends State<WalletScreen>
 
   @override
   Widget build(BuildContext context) {
-    return Column(
+    return Center(child: ConstrainedBox(constraints: const BoxConstraints(maxWidth: 760),
+      child: Column(
       children: [
         Container(
           width: double.infinity,
@@ -152,8 +176,6 @@ class _WalletScreenState extends State<WalletScreen>
                       fontWeight: FontWeight.bold)),
               const SizedBox(height: 8),
               const Text('領券 +10　核銷 +20　評價 +15',
-                  style: TextStyle(color: Colors.white70, fontSize: 12)),
-              const Text('領積分的評價不計入商户星級（防誘導評價）',
                   style: TextStyle(color: Colors.white70, fontSize: 12)),
               const SizedBox(height: 12),
               // Line D: cashback balance sits next to points, separate ledger.
@@ -370,7 +392,7 @@ class _WalletScreenState extends State<WalletScreen>
                     ),
         ),
       ],
-    );
+    )));
   }
 }
 
@@ -409,19 +431,24 @@ class _QrShowScreenState extends State<QrShowScreen> {
       try {
         final result = await widget.api.get('/wallet/items/${widget.item.id}/status');
         if (!mounted) return;
-        if (result['status'] == 3) {
-          _timer?.cancel();
-          _pollTimer?.cancel();
-          setState(() { _expired = true; _payload = null; _code = null; _secondsLeft = 0; _qrError = '此優惠券已到期'; });
-          return;
-        }
-        if (result['status'] == 2 && mounted && ModalRoute.of(context)?.isCurrent == true) {
+        final reversedBeforePoll = result['revoked'] == true &&
+            result['has_code'] == false && _code != null && !_generating;
+        if ((result['status'] == 2 || reversedBeforePoll) &&
+            ModalRoute.of(context)?.isCurrent == true) {
           _redeemed = true;
           _timer?.cancel();
           _pollTimer?.cancel();
           Navigator.of(context).pushReplacement(MaterialPageRoute(
               builder: (_) => RedemptionSuccessScreen(
-                  api: widget.api, item: widget.item)));
+                api: widget.api, item: widget.item,
+                redemptionId: result['redemption_id'] as int?,
+                initiallyRevoked: reversedBeforePoll,
+                initialStatus: result['status'] as int,
+              )));
+        } else if (result['status'] == 3) {
+          _timer?.cancel();
+          _pollTimer?.cancel();
+          setState(() { _expired = true; _payload = null; _code = null; _secondsLeft = 0; _qrError = '此優惠券已到期'; });
         }
       } catch (_) {
         // Retry the authoritative status on the next tick.
@@ -607,61 +634,68 @@ class _QrShowScreenState extends State<QrShowScreen> {
 /// Redemption success (UI_SPEC §8): the QR page closes itself on
 /// redemption and lands here — voucher name, shop, cashback note,
 /// and the "去評價" entry (only for a not-yet-reviewed voucher).
-class RedemptionSuccessScreen extends StatelessWidget {
-  const RedemptionSuccessScreen(
-      {super.key, required this.api, required this.item});
-
+class RedemptionSuccessScreen extends StatefulWidget {
+  const RedemptionSuccessScreen({super.key, required this.api, required this.item,
+    this.redemptionId, this.initiallyRevoked = false, this.initialStatus = 2});
   final ApiClient api;
   final WalletItem item;
+  final int? redemptionId;
+  final bool initiallyRevoked;
+  final int initialStatus;
+  @override
+  State<RedemptionSuccessScreen> createState() => _ReceiptState();
+}
+
+class _ReceiptState extends State<RedemptionSuccessScreen> with WalletUpdates<RedemptionSuccessScreen> {
+  late bool _revoked = widget.initiallyRevoked;
+  late int _status = widget.initialStatus;
+  late bool _reviewed = widget.item.reviewed;
+
+  @override
+  Future<void> syncWallet() async {
+    final data = await widget.api.get('/wallet/items/${widget.item.id}/status',
+        query: {if (widget.redemptionId != null) 'redemption_id': '${widget.redemptionId}'});
+    if (!mounted) return;
+    setState(() {
+      _revoked = data['revoked'] == true;
+      _status = data['status'] as int;
+      _reviewed = data['reviewed'] == true;
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
+    final title = _revoked ? '商家已撤銷核銷' : '核銷成功';
     return Scaffold(
-      appBar: AppBar(title: const Text('核銷成功')),
-      body: Center(
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              const Icon(Icons.check_circle,
-                  size: 72, color: CgColors.success),
-              const SizedBox(height: 16),
-              const Text('核銷成功',
-                  style:
-                      TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
-              const SizedBox(height: 12),
-              Text(item.couponName,
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(fontSize: 18)),
-              Text(item.shopName,
-                  style: const TextStyle(color: CgColors.textSecondary)),
-              const SizedBox(height: 16),
-              const SizedBox(height: 24),
-              if (!item.reviewed)
-                SizedBox(
-                  width: double.infinity,
-                  child: ElevatedButton(
-                    onPressed: () {
-                      Navigator.of(context).push(MaterialPageRoute(
-                          builder: (_) =>
-                              ReviewFormScreen(api: api, item: item)));
-                    },
-                    child: const Text('去評價'),
-                  ),
-                ),
-              const SizedBox(height: 8),
-              SizedBox(
-                width: double.infinity,
-                child: OutlinedButton(
-                  onPressed: () => Navigator.of(context).pop(),
-                  child: const Text('返回錢包'),
-                ),
-              ),
-            ],
-          ),
+      appBar: AppBar(title: const Text('核銷結果')),
+      body: Center(child: SingleChildScrollView(padding: const EdgeInsets.all(24),
+        child: ConstrainedBox(constraints: const BoxConstraints(maxWidth: 440),
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            Icon(_revoked ? Icons.undo : Icons.check_circle, size: 64,
+                color: _revoked ? CgColors.textSecondary : CgColors.success),
+            const SizedBox(height: 16),
+            Semantics(liveRegion: true, child: Text(title, style: Theme.of(context).textTheme.headlineSmall)),
+            const SizedBox(height: 12),
+            Text(widget.item.couponName, textAlign: TextAlign.center,
+                style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
+            Text(widget.item.shopName, style: const TextStyle(color: CgColors.textSecondary)),
+            if (_revoked) Padding(padding: const EdgeInsets.only(top: 12),
+              child: Text(switch (_status) {
+                1 => '優惠券已退回錢包，可重新出示。',
+                3 => '優惠券已到期，可在錢包的「已失效」查看。',
+                _ => '這張券其後已再次使用。'
+              }, textAlign: TextAlign.center)),
+            const SizedBox(height: 24),
+            if (!_revoked && !_reviewed)
+              ElevatedButton(onPressed: () async {
+                final done = await Navigator.of(context).push(MaterialPageRoute(builder: (_) =>
+                    ReviewFormScreen(api: widget.api, item: widget.item, redemptionId: widget.redemptionId)));
+                if (mounted && done == true) setState(() => _reviewed = true);
+              }, child: const Text('去評價')),
+            OutlinedButton(onPressed: () => Navigator.of(context).pop(), child: const Text('返回錢包')),
+          ]),
         ),
-      ),
+      )),
     );
   }
 }

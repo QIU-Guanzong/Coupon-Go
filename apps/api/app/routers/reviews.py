@@ -164,26 +164,32 @@ def hide_reviews_for_revoked_redemption(db: Session, red) -> dict | None:
     Returns {"review_id", "points_clawed_back", "status"} for the
     (at most one) review found, else None. Caller commits.
     """
-    review = (db.query(Review)
-              .filter(Review.redemption_id == red.id,
-                      Review.status == "visible").first())
-    if review is None:
+    review = db.query(Review).filter_by(redemption_id=red.id).with_for_update().first()
+    item = db.get(models.WalletItem, red.wallet_item_id)
+    if not item.reviewed and review is None:
         return None
+    # The original /review endpoint wrote only the item flag and a ledger entry.
+    # Hidden and disputed reviews can also have an outstanding reward.
     clawed = 0
-    if review.points_given:
-        clawed = config.POINTS_REVIEW
-        add_points(db, review.user_id, -clawed, "review_revoke",
-                   ref_id=review.id)
-    review.status = "hidden"
-    review.counts_toward_rating = False
-    item = db.query(models.WalletItem).filter(
-        models.WalletItem.id == red.wallet_item_id).first()
-    if item is not None:
-        item.reviewed = False
-    db.flush()
-    recompute_rating(db, red.shop_id)
-    return {"review_id": review.id, "points_clawed_back": clawed,
-            "status": "hidden"}
+    if review is None or review.points_given:
+        award = db.query(models.PointTransaction).filter(
+            models.PointTransaction.user_id == item.user_id,
+            models.PointTransaction.ref_id == item.id,
+            models.PointTransaction.reason == "review",
+            models.PointTransaction.created_at >= red.scanned_at
+        ).order_by(models.PointTransaction.id.desc()).first()
+        if award is not None:
+            clawed = award.delta
+            add_points(db, item.user_id, -clawed, "review_revoke",
+                       ref_id=review.id if review else red.id)
+    item.reviewed = False
+    if review is not None:
+        review.status = "hidden"
+        review.counts_toward_rating = False
+        db.flush()
+        recompute_rating(db, red.shop_id)
+    return {"review_id": review.id if review else None, "points_clawed_back": clawed,
+            "status": "hidden" if review else "revoked"}
 
 
 def _resolve_redemption(db: Session, user: models.User,
@@ -191,7 +197,7 @@ def _resolve_redemption(db: Session, user: models.User,
     """Return (wallet_item, redemption) for the review, or raise."""
     if body.redemption_id is not None:
         red = db.query(models.Redemption).filter(
-            models.Redemption.id == body.redemption_id).first()
+            models.Redemption.id == body.redemption_id).with_for_update().first()
         if red is None:
             raise HTTPException(status_code=404, detail="找不到此核銷記錄")
         item = db.query(models.WalletItem).filter(
@@ -207,7 +213,7 @@ def _resolve_redemption(db: Session, user: models.User,
             raise HTTPException(status_code=404, detail="找不到此優惠券")
         red = (db.query(models.Redemption)
                .filter(models.Redemption.wallet_item_id == item.id)
-               .order_by(models.Redemption.id.desc()).first())
+               .order_by(models.Redemption.id.desc()).with_for_update().first())
         if red is None:
             raise HTTPException(status_code=400, detail="只有已核銷的優惠券可以評價")
         return item, red
@@ -244,7 +250,10 @@ def create_review(body: schemas_line_b.ReviewCreateIn,
         status="visible",
     )
     db.add(review)
-    item.reviewed = True
+    marked = db.query(models.WalletItem).filter_by(id=item.id, status=2, reviewed=False).update(
+        {"reviewed": True}, synchronize_session=False)
+    if not marked:
+        raise HTTPException(400, "優惠券狀態已更新，請返回錢包")
     try:
         if points_given:
             add_points(db, user.id, config.POINTS_REVIEW, "review", ref_id=item.id)

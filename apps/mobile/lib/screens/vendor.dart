@@ -282,7 +282,24 @@ class _IssueCouponScreenState extends State<IssueCouponScreen> {
   }
 }
 
-/// Scan: camera via mobile_scanner + manual code entry fallback.
+Future<bool?> _confirmRevoke(BuildContext context, String coupon) =>
+    showDialog<bool>(
+      context: context,
+      builder: (c) => AlertDialog(
+        title: const Text('撤銷核銷'),
+        content: Text('確定撤銷「$coupon」的這筆核銷？顧客的積分及相關返現會一併更新。'),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(c, false),
+              child: const Text('取消')),
+          TextButton(
+              onPressed: () => Navigator.pop(c, true),
+              child: const Text('確認撤銷')),
+        ],
+      ),
+    );
+
+/// Scan with the camera or enter a six-digit code.
 class ScanScreen extends StatefulWidget {
   const ScanScreen({super.key, required this.api});
 
@@ -303,7 +320,9 @@ class _ScanScreenState extends State<ScanScreen> {
   bool _revoking = false;
   // UI_SPEC §8: full-screen success / failure result pages.
   String? _successCouponName;
+  String? _revokedMessage;
   DateTime? _redeemedAt;
+  int _revokeSeconds = 600;
   String? _errorReason;
   Timer? _revokeTimer;
 
@@ -327,6 +346,7 @@ class _ScanScreenState extends State<ScanScreen> {
       _prepared = null;
       _pendingCode = null;
       _successCouponName = null;
+      _revokedMessage = null;
       _redeemedAt = null;
       _errorReason = null;
       _lastRedemptionId = null;
@@ -385,6 +405,7 @@ class _ScanScreenState extends State<ScanScreen> {
         _successCouponName =
             res['coupon_name'] as String? ?? _prepared?['coupon_name'] as String? ?? '';
         _lastRedemptionId = res['redemption_id'] as int?;
+        _revokeSeconds = ((res['revoke_window_minutes'] as int?) ?? 10) * 60;
         _redeemedAt = DateTime.tryParse(res['scanned_at'] as String? ?? '') ?? DateTime.now();
         _prepared = null;
         _pendingCode = null;
@@ -424,30 +445,21 @@ class _ScanScreenState extends State<ScanScreen> {
   Future<void> _revoke() async {
     final rid = _lastRedemptionId;
     if (rid == null) return;
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (c) => AlertDialog(
-        title: const Text('撤銷核銷'),
-        content: const Text('撤銷後優惠券退回未使用，確定撤銷嗎？'),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(c, false),
-              child: const Text('取消')),
-          TextButton(
-              onPressed: () => Navigator.pop(c, true),
-              child: const Text('確認撤銷')),
-        ],
-      ),
-    );
-    if (ok != true) return;
+    final ok = await _confirmRevoke(context, _successCouponName ?? '優惠券');
+    if (ok != true || !mounted || _revoking) return;
     setState(() => _revoking = true);
     try {
-      await widget.api.revokeRedemption(rid);
+      final receipt = await widget.api.revokeRedemption(rid);
       if (!mounted) return;
-      showCgToast(context, '核銷已撤銷，優惠券已退回未使用');
-      _resetScan();
+      _revokeTimer?.cancel();
+      setState(() {
+        _lastRedemptionId = null;
+        _revokedMessage = receipt['message'] as String?;
+      });
     } on ApiException catch (e) {
       if (mounted) showCgToast(context, e.message);
+    } catch (_) {
+      if (mounted) showCgToast(context, '未能確認撤銷結果，請重試');
     } finally {
       if (mounted) setState(() => _revoking = false);
     }
@@ -457,7 +469,7 @@ class _ScanScreenState extends State<ScanScreen> {
   int get _revokeLeft {
     if (_redeemedAt == null) return 0;
     final elapsed = DateTime.now().difference(_redeemedAt!).inSeconds;
-    return (600 - elapsed).clamp(0, 600);
+    return (_revokeSeconds - elapsed).clamp(0, _revokeSeconds);
   }
 
   Widget _detailRow(String label, String value) {
@@ -484,10 +496,11 @@ class _ScanScreenState extends State<ScanScreen> {
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          const Icon(Icons.check_circle, size: 72, color: CgColors.success),
+          Icon(_revokedMessage == null ? Icons.check_circle : Icons.undo, size: 72,
+              color: _revokedMessage == null ? CgColors.success : CgColors.textSecondary),
           const SizedBox(height: 16),
-          const Text('已核銷',
-              style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
+          Text(_revokedMessage ?? '已核銷', textAlign: TextAlign.center,
+              style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
           const SizedBox(height: 8),
           Text(_successCouponName ?? '',
               textAlign: TextAlign.center,
@@ -740,6 +753,24 @@ class _RedemptionRecordsScreenState extends State<RedemptionRecordsScreen> {
     }
   }
 
+  int? _revokingId;
+
+  Future<void> _revokeRecord(Map<String, dynamic> record) async {
+    if (_revokingId != null) return;
+    final id = record['redemption_id'] as int;
+    final ok = await _confirmRevoke(context, record['coupon_name'] as String);
+    if (!mounted || ok != true) return;
+    setState(() => _revokingId = id);
+    try {
+      await widget.api.revokeRedemption(id);
+      if (mounted) await _load();
+    } catch (e) {
+      if (mounted) showCgToast(context, e is ApiException ? e.message : '未能確認撤銷結果，請重試');
+    } finally {
+      if (mounted) setState(() => _revokingId = null);
+    }
+  }
+
   String _dateLabel(DateTime? d) =>
       d == null ? '全部' : '${d.year}-${d.month}-${d.day}';
 
@@ -889,6 +920,8 @@ class _RedemptionRecordsScreenState extends State<RedemptionRecordsScreen> {
                               itemBuilder: (_, i) {
                                 final r = _records[i];
                                 final revoked = r['revoked'] == true;
+                                final deadline = DateTime.tryParse(r['revoke_until'] as String? ?? '');
+                                final canRevoke = !revoked && deadline != null && deadline.isAfter(DateTime.now());
                                 return Card(
                                   margin: const EdgeInsets.fromLTRB(
                                       12, 8, 12, 0),
@@ -897,7 +930,10 @@ class _RedemptionRecordsScreenState extends State<RedemptionRecordsScreen> {
                                         '${r['coupon_name'] ?? ''}'),
                                     subtitle: Text(
                                         '${r['shop_name'] ?? ''} · ${r['scanned_at'] ?? ''}'),
-                                    trailing: Text(
+                                    trailing: canRevoke ? TextButton(
+                                      onPressed: _revokingId == null ? () => _revokeRecord(r) : null,
+                                      child: const Text('撤銷核銷'),
+                                    ) : Text(
                                         revoked ? '已撤銷' : '已核銷',
                                         style: TextStyle(
                                             color: revoked

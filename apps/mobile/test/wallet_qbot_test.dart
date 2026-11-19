@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:coupon_go/api_client.dart';
 import 'package:coupon_go/language.dart';
+import 'package:coupon_go/models.dart';
 import 'package:coupon_go/screens/account.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -29,7 +30,39 @@ class JourneyApi extends ApiClient {
   }
 }
 
+class ReceiptApi extends JourneyApi {
+  bool revoked = false;
+  String? receiptId;
+
+  @override
+  Future<Map<String, dynamic>> get(String path,
+      {Map<String, String>? query}) async {
+    receiptId = query?['redemption_id'];
+    return {'status': 2, 'revoked': revoked, 'reviewed': false};
+  }
+}
+
 void main() {
+  testWidgets(
+      'the original receipt changes after reversal even if the coupon is used again',
+      (tester) async {
+    final api = ReceiptApi();
+    await tester.pumpWidget(MaterialApp(
+        home: RedemptionSuccessScreen(
+      api: api,
+      item: WalletItem.fromJson({'id': 8}),
+      redemptionId: 24,
+    )));
+    expect(find.text('去評價'), findsOneWidget);
+    api.revoked = true;
+    await tester.pump(const Duration(seconds: 5));
+    await tester.pump();
+    expect(api.receiptId, '24');
+    expect(find.text('商家已撤銷核銷'), findsOneWidget);
+    expect(find.text('這張券其後已再次使用。'), findsOneWidget);
+    expect(find.text('去評價'), findsNothing);
+  });
+
   testWidgets('cleared conversation ignores a pending reply', (tester) async {
     final api = JourneyApi();
     await tester.pumpWidget(LanguageScope(

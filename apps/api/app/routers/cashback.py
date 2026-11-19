@@ -66,20 +66,21 @@ def _handle(fn):
 def get_cashback(user: models.User = Depends(get_current_user),
                  db: Session = Depends(get_db)):
     svc.sweep_user(db, user.id)
-    db.commit()
     txns = (db.query(CashbackTransaction)
             .filter(CashbackTransaction.user_id == user.id)
             .order_by(CashbackTransaction.id.desc()).limit(50).all())
     groups: dict[str, list] = {}
     for t in txns:
         groups.setdefault(t.status, []).append(svc._tx_out(db, t))
-    return {**svc.balances(db, user.id),
+    result = {**svc.balances(db, user.id),
             # Gap 4: withdraw limits, from config (not hard-coded).
             "min_withdraw_hkd": config.CASHBACK_MIN_WITHDRAW_HKD,
             "daily_withdraw_limit_hkd": config.CASHBACK_DAILY_WITHDRAW_LIMIT_HKD,
             "transactions": [svc._tx_out(db, t) for t in txns],
             "adjustments": svc.adjustments(db, user.id),
             "by_status": {k: len(v) for k, v in groups.items()}}
+    db.commit()
+    return result
 
 
 @router.get("/cashback/transactions")
@@ -88,13 +89,14 @@ def list_transactions(status: str = Query(None),
                       user: models.User = Depends(get_current_user),
                       db: Session = Depends(get_db)):
     svc.sweep_user(db, user.id)
-    db.commit()
     q = db.query(CashbackTransaction).filter(
         CashbackTransaction.user_id == user.id)
     if status:
         q = q.filter(CashbackTransaction.status == status)
     txns = q.order_by(CashbackTransaction.id.desc()).limit(limit).all()
-    return {"transactions": [svc._tx_out(db, t) for t in txns]}
+    result = {"transactions": [svc._tx_out(db, t) for t in txns]}
+    db.commit()
+    return result
 
 
 @router.post("/cashback/withdraw")

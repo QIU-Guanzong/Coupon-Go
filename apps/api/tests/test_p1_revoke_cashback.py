@@ -249,3 +249,25 @@ def test_revoke_redemption_without_cashback_ok(client):
     r = client.post(f"/api/v3/redemptions/{scan['redemption_id']}/revoke",
                     headers=vh)
     assert r.status_code == 200, r.text
+
+
+def test_third_visit_remains_a_valid_unlock_after_middle_reversal(client):
+    customer = _register_and_login(client, "three-visits@example.com")
+    vendor = _vendor_headers(client)
+    first, middle, last = [_redeem(client, customer, vendor, _make_coupon()) for _ in range(3)]
+    _revoke(client, vendor, middle["redemption_id"])
+    assert _txn_for(client, customer, first["redemption_id"])["status"] == "withdrawable"
+    _revoke(client, vendor, last["redemption_id"])
+    assert _txn_for(client, customer, first["redemption_id"])["status"] == "pending"
+
+
+def test_reversing_original_earning_retains_partial_payout_debt(client):
+    customer = _register_and_login(client, "partial-then-revoke@example.com")
+    vendor = _vendor_headers(client)
+    first, second = [_redeem(client, customer, vendor, _make_coupon()) for _ in range(2)]
+    assert _withdraw(client, customer, 50).status_code == 200
+    _revoke(client, vendor, second["redemption_id"])
+    assert _balances(client, customer)["total_earned"] == 60
+    _revoke(client, vendor, first["redemption_id"])
+    balances = _balances(client, customer)
+    assert balances["withdrawable_balance"] == -50 and balances["pending_balance"] == 0

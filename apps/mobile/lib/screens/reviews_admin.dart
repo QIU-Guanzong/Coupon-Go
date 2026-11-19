@@ -244,7 +244,7 @@ class _ReviewFormScreenState extends State<ReviewFormScreen> {
           CheckboxListTile(
             title: const Text('領取 +15 積分'),
             subtitle: const Text(
-                '領積分的評價不計入商户星級（防誘導評價）；不領積分則計入星級。'),
+                '核銷撤銷後，這筆評價積分也會扣回。'),
             value: _claimPoints,
             onChanged: (v) => setState(() => _claimPoints = v ?? true),
           ),
@@ -595,7 +595,7 @@ class _ShopReviewsScreenState extends State<ShopReviewsScreen> {
                                           Text(
                                               '標籤：${rev.tags.join('、')}'),
                                         if (!rev.countsTowardRating)
-                                          const Text('積分評價 · 不計入星級',
+                                          const Text('此評價未計入星級',
                                               style: TextStyle(
                                                   color:
                                                       CgColors.textSecondary,

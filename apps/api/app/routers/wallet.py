@@ -2,6 +2,7 @@
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from .. import config, models, schemas
@@ -40,13 +41,29 @@ def get_wallet(page: int = Query(1, ge=1), status: int = Query(None),
     }
 
 
+@router.get("/wallet/revision")
+def wallet_revision(user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
+    counts = db.query(func.count(models.Redemption.id), func.count(models.Redemption.revoked_at)).join(
+        models.WalletItem, models.WalletItem.id == models.Redemption.wallet_item_id
+    ).filter(models.WalletItem.user_id == user.id).one()
+    return {"revision": f"{counts[0]}:{counts[1]}"}
+
+
 @router.get("/wallet/items/{item_id}/status")
-def wallet_item_status(item_id: int, user: models.User = Depends(get_current_user),
+def wallet_item_status(item_id: int, redemption_id: int | None = None, user: models.User = Depends(get_current_user),
                        db: Session = Depends(get_db)):
     item = db.query(models.WalletItem).filter_by(id=item_id, user_id=user.id).first()
     if item is None:
         raise HTTPException(status_code=404, detail="找不到此優惠券")
-    return {"id": item.id, "status": _refresh_expiry(db, item).status}
+    _refresh_expiry(db, item)
+    receipts = db.query(models.Redemption).filter_by(wallet_item_id=item.id)
+    receipt = (receipts.filter_by(id=redemption_id).first() if redemption_id is not None
+               else receipts.order_by(models.Redemption.id.desc()).first())
+    if redemption_id is not None and receipt is None:
+        raise HTTPException(404, "找不到此核銷記錄")
+    return {"id": item.id, "status": item.status, "reviewed": item.reviewed,
+            "has_code": bool(item.code), "redemption_id": receipt.id if receipt else None,
+            "revoked": receipt is not None and receipt.revoked_at is not None}
 
 
 @router.get("/get-user-record-list")
@@ -62,7 +79,8 @@ def get_records(user: models.User = Depends(get_current_user),
         s = db.query(models.Shop).filter(models.Shop.id == r.shop_id).first()
         out.append({"id": r.id, "coupon_name": c.coupon_name if c else "",
                     "shop_name": s.name if s else "",
-                    "scanned_at": r.scanned_at})
+                    "scanned_at": r.scanned_at, "revoked_at": r.revoked_at,
+                    "revoked": r.revoked_at is not None})
     return {"records": out}
 
 
@@ -91,7 +109,9 @@ def review(wallet_item_id: int, rating: int = Query(5, ge=1, le=5),
         raise HTTPException(status_code=400, detail="只有已使用的優惠券可以評價")
     if item.reviewed:
         raise HTTPException(status_code=400, detail="已經評價過")
-    item.reviewed = True
+    if not db.query(models.WalletItem).filter_by(id=item.id, status=2, reviewed=False).update(
+            {"reviewed": True}, synchronize_session=False):
+        raise HTTPException(400, "優惠券狀態已更新，請返回錢包")
     add_points(db, user.id, config.POINTS_REVIEW, "review", ref_id=item.id)
     db.commit()
     return {"message": f"評價成功，+{config.POINTS_REVIEW} 分",

@@ -27,7 +27,7 @@ from fastapi.responses import PlainTextResponse
 from sqlalchemy.orm import Session
 
 from .. import config, models, prepare_token
-from ..cashback_service import void_for_revocation
+from ..cashback_service import lock_account, void_for_revocation
 from ..database import get_db
 from ..deps import add_points, require_role
 from .coupons import _refresh_expiry, ensure_redeemable, presented_item
@@ -35,7 +35,7 @@ from .reviews import hide_reviews_for_revoked_redemption
 
 router = APIRouter()
 
-REVOKE_WINDOW = timedelta(minutes=10)
+REVOKE_WINDOW = timedelta(minutes=config.REVOKE_WINDOW_MINUTES)
 
 
 def _now():
@@ -117,7 +117,7 @@ def prepare_scan(body: dict,
 
 
 @router.post("/redemptions/{redemption_id}/revoke")
-def revoke_redemption(redemption_id: int,
+def revoke_redemption(redemption_id: int, acknowledge_existing: bool = False,
                       vendor: models.User = Depends(
                           require_role("vendor", "admin")),
                       db: Session = Depends(get_db)):
@@ -128,32 +128,41 @@ def revoke_redemption(redemption_id: int,
         .with_for_update().populate_existing().first())
     if red is None:
         raise HTTPException(status_code=404, detail="找不到此核銷記錄")
-    if red.revoked_at is not None:
-        raise HTTPException(status_code=400, detail="此核銷已被撤销")
     if vendor.role != "admin" and red.shop_id not in _vendor_shop_ids(db, vendor):
-        raise HTTPException(status_code=403, detail="沒有權限")
-    if _now() - red.scanned_at > REVOKE_WINDOW:
-        raise HTTPException(status_code=400,
-                            detail="已超過 10 分鐘撤销窗口，請聯絡客服處理")
-    item = db.query(models.WalletItem).filter(
-        models.WalletItem.id == red.wallet_item_id).first()
-    coupon = db.query(models.Coupon).filter(
-        models.Coupon.id == red.coupon_id).first()
-    # Coupon returns to unused; the presented code dies (cleared) so any
-    # screenshot of it is useless — the next present rotates a fresh code.
-    if item is not None:
-        item.status = 1
-        item.used_at = None
-        item.code = ""
-        item.qr_expires_at = None
-    if coupon is not None and coupon.used_count > 0:
-        coupon.used_count -= 1
-    red.revoked_at = _now()
-    red.revoked_by = vendor.id
-    # Reverse the +20 redeem points so the ledger matches the reversal.
-    if item is not None:
-        add_points(db, item.user_id, -config.POINTS_REDEEM, "revoke",
-                   ref_id=red.id)
+        raise HTTPException(403, "沒有權限")
+    now = _now()
+    if red.revoked_at is not None:
+        if acknowledge_existing:
+            return {"message": "此筆核銷已撤銷", "redemption_id": red.id,
+                    "wallet_item_id": red.wallet_item_id, "revoked_at": red.revoked_at}
+        raise HTTPException(400, "此核銷已被撤销")
+    if now - red.scanned_at > REVOKE_WINDOW:
+        raise HTTPException(400, f"已超過 {config.REVOKE_WINDOW_MINUTES} 分鐘撤销窗口，請聯絡客服處理")
+
+    # The conditional write also serializes duplicate requests on SQLite.
+    marked = db.query(models.Redemption).filter_by(id=red.id, revoked_at=None).update(
+        {"revoked_at": now, "revoked_by": vendor.id}, synchronize_session=False)
+    if not marked:
+        if acknowledge_existing:
+            db.refresh(red)
+            return {"message": "此筆核銷已撤銷", "redemption_id": red.id,
+                    "wallet_item_id": red.wallet_item_id, "revoked_at": red.revoked_at}
+        raise HTTPException(400, "此核銷已被撤销")
+    item = db.query(models.WalletItem).filter_by(id=red.wallet_item_id).with_for_update().one()
+    lock_account(db, item.user_id)
+    item.status = 3 if item.coupon.valid_to <= now else 1
+    item.used_at = None
+    item.code = ""
+    item.qr_expires_at = None
+    db.query(models.Coupon).filter(models.Coupon.id == red.coupon_id,
+                                   models.Coupon.used_count > 0).update(
+        {models.Coupon.used_count: models.Coupon.used_count - 1}, synchronize_session=False)
+    # Refund the actual ledger award even if the points policy changed since the scan.
+    award = db.query(models.PointTransaction).filter_by(
+        user_id=item.user_id, reason="redeem", ref_id=item.id
+    ).order_by(models.PointTransaction.id.desc()).first()
+    if award is not None:
+        add_points(db, item.user_id, -award.delta, "revoke", ref_id=red.id)
     # P1-1: void this redemption's own cashback earning and roll back
     # the dine-in unlocks it triggered; already-withdrawn money is
     # recorded as a negative adjustment (never a negative transaction).
@@ -162,7 +171,8 @@ def revoke_redemption(redemption_id: int,
     # points (if any) are clawed back; no review -> None.
     review = hide_reviews_for_revoked_redemption(db, red)
     db.commit()
-    return {"message": "核銷已撤销，優惠券已退回未使用",
+    return {"message": "核銷已撤銷，優惠券已到期" if item.status == 3 else "核銷已撤銷，優惠券已退回未使用",
+            "wallet_status": item.status,
             "redemption_id": red.id,
             "wallet_item_id": red.wallet_item_id,
             "revoked_at": red.revoked_at,
@@ -192,6 +202,7 @@ def export_redemptions(format: str = Query("json", pattern="^(json|csv)$"),
             "shop_id": r.shop_id,
             "shop_name": s.name if s else "",
             "scanned_at": r.scanned_at.isoformat() if r.scanned_at else None,
+            "revoke_until": (r.scanned_at + REVOKE_WINDOW).replace(tzinfo=timezone.utc).isoformat(),
             "scanned_by_vendor_id": r.scanned_by_vendor_id,
             "revoked": r.revoked_at is not None,
             "revoked_at": r.revoked_at.isoformat() if r.revoked_at else None,

@@ -9,6 +9,7 @@ import '../api_client.dart';
 import '../models.dart';
 import '../theme.dart';
 import '../widgets/widgets.dart';
+import '../widgets/wallet_updates.dart';
 
 /// UI_SPEC §5 — 返现：余额、明细、提现、提现记录、漏记申诉。
 ///
@@ -100,6 +101,8 @@ String? _voidReasonText(String? reason) {
       return '90 天内未再次消费';
     case 'cancelled':
       return '订单已取消';
+    case 'revoked':
+      return '商家已撤銷核銷';
     case 'returned':
       return '订单已退货';
     default:
@@ -211,13 +214,15 @@ class CashbackScreen extends StatefulWidget {
   State<CashbackScreen> createState() => _CashbackScreenState();
 }
 
-class _CashbackScreenState extends State<CashbackScreen> {
+class _CashbackScreenState extends State<CashbackScreen> with WalletUpdates<CashbackScreen> {
+  int _generation = 0;
   bool _loading = true;
   bool _needsLogin = false;
   String? _error;
   double _withdrawable = 0;
   double _pending = 0;
   double _totalEarned = 0;
+  double _adjustment = 0;
   // Gap 4: 取自 GET /cashback 的 min_withdraw_hkd /
   // daily_withdraw_limit_hkd；接口缺失时用 CashbackLimits 兜底值。
   double _minWithdraw = CashbackLimits.minWithdrawHkd;
@@ -232,16 +237,26 @@ class _CashbackScreenState extends State<CashbackScreen> {
     _load();
   }
 
-  Future<void> _load() async {
+  @override
+  Future<void> syncWallet() async {
+    if (_loading) return;
+    await refreshOnReceiptChange(widget.api, () async {
+      await _load(quiet: true);
+      return mounted && _error == null;
+    });
+  }
+
+  Future<void> _load({bool quiet = false}) async {
+    final generation = ++_generation;
     setState(() {
-      _loading = true;
+      if (!quiet) _loading = true;
       _error = null;
       _needsLogin = false;
     });
     try {
       final data = await widget.api.cashback();
-      final txns = await widget.api.cashbackTransactions();
-      if (!mounted) return;
+      final txns = data['transactions'] as List;
+      if (!mounted || generation != _generation) return;
       final parsed = txns.map((e) => CashbackTransaction.fromJson(e)).toList();
       parsed.sort((a, b) {
         final ca = a.createdAt;
@@ -252,6 +267,7 @@ class _CashbackScreenState extends State<CashbackScreen> {
       setState(() {
         _withdrawable = (data['withdrawable_balance'] as num?)?.toDouble() ?? 0;
         _pending = (data['pending_balance'] as num?)?.toDouble() ?? 0;
+        _adjustment = (data['adjustment_total'] as num?)?.toDouble() ?? 0;
         _totalEarned = (data['total_earned'] as num?)?.toDouble() ?? 0;
         _minWithdraw = (data['min_withdraw_hkd'] as num?)?.toDouble() ??
             CashbackLimits.minWithdrawHkd;
@@ -261,14 +277,14 @@ class _CashbackScreenState extends State<CashbackScreen> {
         _loading = false;
       });
     } on ApiException catch (e) {
-      if (!mounted) return;
+      if (!mounted || generation != _generation) return;
       setState(() {
         _loading = false;
         _error = e.message;
         _needsLogin = e.status == 401;
       });
     } catch (_) {
-      if (!mounted) return;
+      if (!mounted || generation != _generation) return;
       setState(() {
         _loading = false;
         _error = 'network';
@@ -332,7 +348,8 @@ class _CashbackScreenState extends State<CashbackScreen> {
           ),
         ],
       ),
-      body: RefreshIndicator(
+      body: Center(child: ConstrainedBox(constraints: const BoxConstraints(maxWidth: 760),
+        child: RefreshIndicator(
         onRefresh: _load,
         child: ListView(
           padding: const EdgeInsets.all(16),
@@ -343,6 +360,9 @@ class _CashbackScreenState extends State<CashbackScreen> {
               _ErrorView(onRetry: _load, needsLogin: _needsLogin)
             else ...[
               _buildBalanceCard(context),
+              if (_adjustment < 0)
+                Padding(padding: const EdgeInsets.only(top: 8),
+                  child: Text('核銷已撤銷，已提現的 ${formatHkd(-_adjustment)} 已從可提現餘額扣回。')),
               const SizedBox(height: 8),
               Text('累计已赚 ${formatHkd(_totalEarned)}',
                   style: const TextStyle(
@@ -390,7 +410,7 @@ class _CashbackScreenState extends State<CashbackScreen> {
             ],
           ],
         ),
-      ),
+      ))),
     );
   }
 

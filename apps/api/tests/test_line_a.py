@@ -356,3 +356,50 @@ def test_refresh_requires_new_merchant_confirmation(client):
     assert stale.status_code == 400 and _points(client, h) == 10
     current = client.post("/api/v3/new-scan-coupon/prepare", headers=vh, json={"code": code}).json()
     assert current["can_redeem"] and current["prepare_token"] != old["prepare_token"]
+
+
+def test_legacy_review_reversal_and_receipt_survives_reuse(client):
+    customer = _register_and_login(client, "legacy-review-reversal@example.com")
+    vendor = _vendor_headers(client)
+    wid, code = _claim_and_qr(client, customer, 2)
+    base = "/api/v3"
+    def revision():
+        return client.get(base + "/wallet/revision", headers=customer).json()["revision"]
+    scan = client.post(base + "/new-scan-coupon", headers=vendor, json={"code": code}).json()
+    rid = scan["redemption_id"]
+    assert client.post(base + "/review", headers=customer, params={"wallet_item_id": wid}).status_code == 200
+    before = revision()
+    assert _points(client, customer) == 45
+    path = f"{base}/redemptions/{rid}/revoke"
+    assert client.post(path, headers=vendor).status_code == 200
+    assert revision() != before
+    assert client.post(path, headers=vendor, params={"acknowledge_existing": True}).status_code == 200
+    assert _points(client, customer) == 10
+    qr = client.post(base + "/store-scaned-qr-values", headers=customer, params={"wallet_item_id": wid}).json()
+    assert client.post(base + "/new-scan-coupon", headers=vendor, json={"code": qr["code"]}).status_code == 200
+    status = client.get(f"{base}/wallet/items/{wid}/status", headers=customer, params={"redemption_id":rid}).json()
+    assert status["revoked"] and status["status"] == 2 and not status["reviewed"]
+
+
+def test_revoke_expired_coupon_refunds_historical_award(client, monkeypatch):
+    from app import config
+    customer = _register_and_login(client, "revoke-after-expiry@example.com")
+    vendor = _vendor_headers(client)
+    wid, code = _claim_and_qr(client, customer, 5)
+    rid = client.post("/api/v3/new-scan-coupon", headers=vendor, json={"code": code}).json()["redemption_id"]
+    with _db() as db:
+        # Expire only this fixture's coupon; restore it after the request.
+        coupon = db.get(models.Coupon, 5)
+        previous = coupon.valid_to
+        coupon.valid_to = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(seconds=1)
+        db.commit()
+    try:
+        monkeypatch.setattr(config, "POINTS_REDEEM", 50)
+        result = client.post(f"/api/v3/redemptions/{rid}/revoke", headers=vendor)
+        assert result.status_code == 200 and result.json()["wallet_status"] == 3
+        assert _points(client, customer) == 10
+        assert client.get(f"/api/v3/wallet/items/{wid}/status", headers=customer).json()["status"] == 3
+    finally:
+        with _db() as db:
+            db.get(models.Coupon, 5).valid_to = previous
+            db.commit()

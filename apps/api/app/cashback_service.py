@@ -83,7 +83,9 @@ def _tx_out(db: Session, t: CashbackTransaction) -> dict:
         "shop_name": shop.name if shop else "",
         "redemption_id": t.redemption_id,
         "channel": t.channel,
-        "amount": float(t.amount),
+        "earned_amount": float(t.amount),
+        "amount": float(money(t.amount) - money(t.withdrawn_amount or 0)
+                        if t.status in ("pending", "withdrawable", "confirmed") else t.amount),
         "rate": float(t.rate),
         "status": t.status,
         "status_text": status_text,
@@ -143,6 +145,11 @@ def _confirm(db: Session, t: CashbackTransaction, now: datetime):
     db.flush()
 
 
+def lock_account(db: Session, user_id: int):
+    # Use the same user row as withdrawals. NO KEY UPDATE permits FK checks.
+    db.query(models.User.id).filter_by(id=user_id).with_for_update(key_share=True).one()
+
+
 def sweep_user(db: Session, user_id: int, now: datetime = None):
     """Time-driven transitions for one user (idempotent, lazy — run on read).
 
@@ -152,6 +159,7 @@ def sweep_user(db: Session, user_id: int, now: datetime = None):
     it happens in record_spend().
     Returns (confirmed_count, expired_count).
     """
+    lock_account(db, user_id)
     now = now or _now()
     confirmed = expired = 0
     txns = (db.query(CashbackTransaction)
@@ -377,7 +385,7 @@ def void_for_revocation(db: Session,
       undone; the earning itself is still valid because its own
       redemption stands). If part of it was already withdrawn, only
       the un-withdrawn remainder goes back to pending (amount is
-      reduced to the remainder, withdrawn_amount reset to 0); the
+      retained gross with its original withdrawn allocation); the
       paid part stays paid and no adjustment is recorded for it — the
       money was paid for a real earning. A fully-withdrawn
       predecessor is complete and is left untouched.
@@ -390,7 +398,7 @@ def void_for_revocation(db: Session,
     summary = {"voided_own": 0, "reverted_to_pending": 0, "adjustments": []}
     own = db.query(CashbackTransaction).filter(
         CashbackTransaction.redemption_id == redemption.id).first()
-    if own is not None and own.status != "void":
+    if own is not None and own.void_reason != "revoked":
         withdrawn = money(own.withdrawn_amount or 0)
         if withdrawn > 0:
             adj = CashbackAdjustment(
@@ -412,32 +420,33 @@ def void_for_revocation(db: Session,
     for t in unlocked:
         if t.status not in ("confirmed", "withdrawable"):
             continue  # withdrawn (complete) / pending / void: untouched
-        withdrawn = money(t.withdrawn_amount or 0)
-        if withdrawn <= 0:
-            t.status = "pending"
-            t.confirmed_at = None
-            t.unlocked_by_redemption_id = None
-            summary["reverted_to_pending"] += 1
-        elif withdrawn >= money(t.amount):
-            # Fully paid out: nothing left to revert; the earning is
-            # complete. Leave it withdrawn.
+        # A third valid visit can still qualify the predecessor after the
+        # middle visit is reversed. Transfer provenance so a later reversal
+        # of that third visit is also handled correctly.
+        alternatives = (db.query(models.Redemption)
+                        .join(models.WalletItem, models.WalletItem.id == models.Redemption.wallet_item_id)
+                        .filter(models.WalletItem.user_id == t.user_id,
+                                models.Redemption.shop_id == t.merchant_id,
+                                models.Redemption.revoked_at.is_(None),
+                                models.Redemption.id != redemption.id,
+                                models.Redemption.id != t.redemption_id,
+                                models.Redemption.scanned_at >= t.created_at))
+        deadline = t.expires_at or t.created_at + timedelta(days=config.CASHBACK_DINEIN_UNLOCK_DAYS)
+        other = alternatives.filter(models.Redemption.scanned_at < deadline).order_by(
+            models.Redemption.scanned_at, models.Redemption.id).first()
+        if other is not None:
+            t.unlocked_by_redemption_id = other.id
+            t.confirmed_at = other.scanned_at
             continue
+        t.confirmed_at = None
+        t.unlocked_by_redemption_id = None
+        if deadline <= _now():
+            t.status = "void"
+            t.void_reason = "expired_90d"
         else:
-            # Partially withdrawn: only the remainder goes back to
-            # pending; the paid part stays paid (no adjustment — the
-            # earning is real, only its confirmation is rolled back).
-            remainder = money(money(t.amount) - withdrawn)
-            logger.info(
-                "revoke cashback: redemption_id=%s reverts unlock of "
-                "txn id=%s (HK$%s of HK$%s withdrawn); HK$%s returns "
-                "to pending", redemption.id, t.id, withdrawn, t.amount,
-                remainder)
-            t.amount = remainder
-            t.withdrawn_amount = Decimal("0")
             t.status = "pending"
-            t.confirmed_at = None
-            t.unlocked_by_redemption_id = None
             summary["reverted_to_pending"] += 1
+        # Preserve both original earning and paid allocation for future reversals.
     if summary["voided_own"] or summary["reverted_to_pending"] \
             or summary["adjustments"]:
         db.flush()
@@ -460,12 +469,14 @@ def balances(db: Session, user_id: int) -> dict:
     total_earned = Decimal("0")
     for t in txns:
         if t.status == "void":
+            if t.void_reason == "expired_90d":
+                total_earned += money(t.withdrawn_amount or 0)
             continue
         total_earned += money(t.amount)
         if t.status in ("confirmed", "withdrawable"):
             withdrawable += money(t.amount) - money(t.withdrawn_amount or 0)
         elif t.status == "pending":
-            pending += money(t.amount)
+            pending += money(t.amount) - money(t.withdrawn_amount or 0)
         elif t.status == "tracked":
             tracked += money(t.amount)
     adjustment_total = sum(

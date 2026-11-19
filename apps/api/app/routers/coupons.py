@@ -165,6 +165,7 @@ def scan_coupon(body: schemas.ScanIn,
         coupon = db.get(models.Coupon, prior.coupon_id)
         return {"message": "您的優惠券已成功使用", "coupon_name": coupon.coupon_name,
                 "shop_id": prior.shop_id, "redemption_id": prior.id,
+                "revoke_window_minutes": config.REVOKE_WINDOW_MINUTES,
                 "scanned_at": prior.scanned_at.replace(tzinfo=timezone.utc), "duplicate": True}
 
     replay = prior_result()
@@ -206,6 +207,7 @@ def scan_coupon(body: schemas.ScanIn,
         models.Redemption.scanned_at >= today_start).count()
     if scans_today >= config.SCAN_DAILY_LIMIT:
         raise HTTPException(status_code=400, detail="今日掃碼已達上限")
+    cashback_service.lock_account(db, item.user_id)
     consumed = db.query(models.WalletItem).filter(
         models.WalletItem.id == item.id, models.WalletItem.status == 1,
         models.WalletItem.code == body.code, models.WalletItem.qr_expires_at > _now()
@@ -251,6 +253,7 @@ def scan_coupon(body: schemas.ScanIn,
     db.refresh(red)
     return {"message": "您的優惠券已成功使用", "coupon_name": coupon.coupon_name,
             "shop_id": coupon.shop_id, "redemption_id": red.id,
+            "revoke_window_minutes": config.REVOKE_WINDOW_MINUTES,
             "scanned_at": red.scanned_at.replace(tzinfo=timezone.utc), "duplicate": False}
 
 

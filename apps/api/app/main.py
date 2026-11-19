@@ -77,3 +77,8 @@ def shutdown():
     if sched is not None:
         sched.shutdown(wait=False)
         app.state.scheduler = None
+
+# Opt-in distribution of the compiled Flutter Web app from the API origin.
+# Mount last so API, OpenAPI, uploads and health routes retain precedence.
+if web_directory := os.getenv("COUPON_WEB_DIR"):
+    app.mount("/", StaticFiles(directory=web_directory, html=True), name="coupon-web")

@@ -12,11 +12,12 @@ import 'package:shared_preferences/shared_preferences.dart';
 /// attached automatically when present.
 class ApiClient extends ChangeNotifier {
   ApiClient({String? baseUrl})
-      : baseUrl = baseUrl ??
-            const String.fromEnvironment(
-              'API_BASE_URL',
-              defaultValue: 'http://localhost:8000',
-            );
+      : baseUrl = baseUrl ?? _configuredBase;
+
+  static String get _configuredBase {
+    const url = String.fromEnvironment('API_BASE_URL', defaultValue: 'http://localhost:8000');
+    return url.isEmpty ? Uri.base.origin : url;
+  }
 
   final String baseUrl;
   String? _token;
@@ -319,7 +320,7 @@ class ApiClient extends ChangeNotifier {
   Future<Map<String, dynamic>> prepareScan(String code) async =>
       post('/new-scan-coupon/prepare', body: {'code': code});
   Future<Map<String, dynamic>> revokeRedemption(int redemptionId) async =>
-      post('/redemptions/$redemptionId/revoke');
+      post('/redemptions/$redemptionId/revoke', query: {'acknowledge_existing': 'true'});
   Future<Map<String, dynamic>> vendorRedemptionsExport() async =>
       get('/vendor/redemptions/export');
   // UI_SPEC §8 — vendor redemption records with a client-side date
