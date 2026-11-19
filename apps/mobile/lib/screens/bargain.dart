@@ -1114,7 +1114,7 @@ class _ErrorView extends StatelessWidget {
           children: [
             const Icon(Icons.wifi_off, size: 48, color: CgColors.textSecondary),
             const SizedBox(height: 12),
-            const Text('网络不稳定，请重试', textAlign: TextAlign.center),
+            const Text('網絡不穩定，請重試', textAlign: TextAlign.center),
             const SizedBox(height: 16),
             ElevatedButton(
               style: ElevatedButton.styleFrom(

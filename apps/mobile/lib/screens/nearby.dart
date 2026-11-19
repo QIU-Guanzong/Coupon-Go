@@ -94,7 +94,7 @@ class _NearbyScreenState extends State<NearbyScreen> {
             .toList();
       });
     } on ApiException catch (_) {
-      if (isCurrent()) setState(() => _error = '网络不稳定，请重试');
+      if (isCurrent()) setState(() => _error = '網絡不穩定，請重試');
     } finally {
       if (isCurrent()) setState(() => _loading = false);
     }
@@ -325,7 +325,7 @@ class _NearbyScreenState extends State<NearbyScreen> {
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          const Text('网络不稳定，请重试'),
+          const Text('網絡不穩定，請重試'),
           const SizedBox(height: 12),
           ElevatedButton(onPressed: _load, child: const Text('重試')),
         ],

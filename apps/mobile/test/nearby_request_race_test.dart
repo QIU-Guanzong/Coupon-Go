@@ -100,7 +100,7 @@ void main() {
     api.requests[0].completeError(ApiException(503, 'unavailable'));
     await tester.pump();
     expect(find.text('最新結果'), findsOneWidget);
-    expect(find.text('网络不稳定，请重试'), findsNothing);
+    expect(find.text('網絡不穩定，請重試'), findsNothing);
     expect(tester.takeException(), isNull);
   });
 
@@ -108,7 +108,7 @@ void main() {
     final api = await open(tester);
     api.requests[0].completeError(ApiException(503, 'unavailable'));
     await tester.pump();
-    expect(find.text('网络不稳定，请重试'), findsOneWidget);
+    expect(find.text('網絡不穩定，請重試'), findsOneWidget);
     await tester.tap(find.text('重試'));
     await tester.pump();
     expect(api.requests, hasLength(2));

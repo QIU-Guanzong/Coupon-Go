@@ -5,6 +5,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../api_client.dart';
+import '../language.dart';
 import '../models.dart';
 import '../theme.dart';
 import '../widgets/widgets.dart';
@@ -208,7 +209,7 @@ class _PackageDetailScreenState extends State<PackageDetailScreen> {
     if (await canLaunchUrl(uri)) {
       await launchUrl(uri, mode: LaunchMode.externalApplication);
     } else if (mounted) {
-      showCgToast(context, '无法打开地图');
+      showCgToast(context, '未能開啟地圖');
     }
   }
 
@@ -1059,7 +1060,7 @@ class _OrdersScreenState extends State<OrdersScreen> with WalletUpdates<OrdersSc
       length: 4,
       child: Scaffold(
         appBar: AppBar(
-          title: const Text('我的訂單'),
+          title: Text(context.tr('我的訂單', 'My orders')),
           bottom: const TabBar(
             tabs: [
               Tab(text: '全部'),

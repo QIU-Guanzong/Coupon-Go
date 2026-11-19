@@ -353,7 +353,7 @@ class _ShopReviewsScreenState extends State<ShopReviewsScreen> {
     } on ApiException catch (_) {
       if (mounted) {
         setState(() {
-          _error = '网络不稳定，请重试';
+          _error = '網絡不穩定，請重試';
           _loading = false;
         });
       }
@@ -496,7 +496,7 @@ class _ShopReviewsScreenState extends State<ShopReviewsScreen> {
                         child: Column(
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: [
-                            const Text('网络不稳定，请重试'),
+                            const Text('網絡不穩定，請重試'),
                             const SizedBox(height: 12),
                             ElevatedButton(
                                 onPressed: _load, child: const Text('重試')),
@@ -666,7 +666,7 @@ class _MerchantReviewReplyScreenState
     } on ApiException catch (_) {
       if (mounted) {
         setState(() {
-          _error = '网络不稳定，请重试';
+          _error = '網絡不穩定，請重試';
           _loading = false;
         });
       }
@@ -724,7 +724,7 @@ class _MerchantReviewReplyScreenState
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      const Text('网络不稳定，请重试'),
+                      const Text('網絡不穩定，請重試'),
                       const SizedBox(height: 12),
                       ElevatedButton(
                           onPressed: _load, child: const Text('重試')),

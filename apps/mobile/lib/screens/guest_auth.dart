@@ -287,7 +287,7 @@ class _AuthScreenState extends State<AuthScreen> {
                     child: Text(step == _Step.login
                         ? t('登錄', 'Login')
                         : step == _Step.register
-                            ? t('確定', 'Sure')
+                            ? t('確定', 'Confirm')
                             : t('繼續', 'Continue'))),
                 if (step == _Step.login)
                   OutlinedButton(

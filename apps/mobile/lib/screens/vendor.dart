@@ -86,7 +86,7 @@ class _VendorHomeScreenState extends State<VendorHomeScreen> {
             OutlinedButton(
               onPressed: () {
                 if (_coupons.isEmpty) {
-                  showCgToast(context, '暫無商户資料，無法查看評價');
+                  showCgToast(context, '暫無商戶資料，無法查看評價');
                   return;
                 }
                 final shop = _coupons.first;
@@ -344,8 +344,8 @@ class _IssueCouponScreenState extends State<IssueCouponScreen> {
                 if (context.mounted) showCgToast(context, e.message);
               }
             },
-            child: const Text('預覽並提交',
-                style: TextStyle(color: CgColors.textPrimary)),
+            child: Text(context.tr('檢查並提交', 'Review and submit'),
+                style: const TextStyle(color: CgColors.textPrimary)),
           ),
         ],
       ),
@@ -819,7 +819,7 @@ class _RedemptionRecordsScreenState extends State<RedemptionRecordsScreen> {
     } on ApiException catch (_) {
       if (mounted) {
         setState(() {
-          _error = '网络不稳定，请重试';
+          _error = '網絡不穩定，請重試';
           _loading = false;
         });
       }
@@ -966,7 +966,7 @@ class _RedemptionRecordsScreenState extends State<RedemptionRecordsScreen> {
                         child: Column(
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: [
-                            const Text('网络不稳定，请重试'),
+                            const Text('網絡不穩定，請重試'),
                             const SizedBox(height: 12),
                             ElevatedButton(
                                 onPressed: _load, child: const Text('重試')),

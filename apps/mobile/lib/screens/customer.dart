@@ -833,6 +833,18 @@ class _CouponDetailScreenState extends State<CouponDetailScreen> {
   @override
   Widget build(BuildContext context) {
     final c = widget.coupon;
+    final validDate = c.validTo;
+    final validText = validDate?.toLocal().toString().split(' ').first;
+    final remaining = _remaining ?? c.remaining;
+    final amount = c.type == 'Cash' && c.cashAmount != null
+        ? context.tr('減 \$${c.cashAmount!.toStringAsFixed(0)}',
+            'HK\$${c.cashAmount!.toStringAsFixed(0)} off')
+        : c.type == 'Discount' && c.percentage != null
+            ? context.tr('${(c.percentage! / 10).toStringAsFixed(c.percentage! % 10 == 0 ? 0 : 1)} 折',
+                '${c.percentage!.toStringAsFixed(c.percentage! % 1 == 0 ? 0 : 1)}% of regular price')
+            : c.type == 'Gift'
+                ? context.tr(c.amountText, 'Free ${c.gift}')
+                : c.amountText;
     if (c.packageId != null) {
       return PackageDetailScreen(api: widget.api, packageId: c.packageId!);
     }
@@ -856,28 +868,36 @@ class _CouponDetailScreenState extends State<CouponDetailScreen> {
           const SizedBox(height: 6),
           Text(c.shopName, style: const TextStyle(color: CgColors.textSecondary)),
           const SizedBox(height: 12),
-          Row(
+          Wrap(
+            spacing: 10,
+            runSpacing: 6,
+            crossAxisAlignment: WrapCrossAlignment.center,
             children: [
-              Text(c.amountText,
+              Text(amount,
                   style: const TextStyle(
                       color: CgColors.primary,
                       fontSize: 26,
                       fontWeight: FontWeight.bold)),
-              if (c.regularPrice != null) ...[
-                const SizedBox(width: 10),
+              if (c.regularPrice != null)
                 Text('\$${c.regularPrice!.toStringAsFixed(0)}',
                     style: const TextStyle(
                         decoration: TextDecoration.lineThrough,
                         color: CgColors.textSecondary)),
-              ],
-              const Spacer(),
-              Chip(label: Text(c.daysLeft > 0 ? '剩 ${c.daysLeft} 日' : '即將到期')),
+              if (validDate != null)
+                Chip(label: Text(c.daysLeft > 0
+                  ? context.tr('剩 ${c.daysLeft} 日', '${c.daysLeft} days left')
+                  : validDate.isBefore(DateTime.now())
+                      ? context.tr('已到期', 'Expired')
+                      : context.tr('即將到期', 'Ends soon'))),
             ],
           ),
           const SizedBox(height: 12),
-          Text('有效日期：至 ${c.validTo?.toLocal().toString().split(' ').first ?? ''}'),
-          Text('剩餘數量：${_remaining ?? c.remaining} / ${c.total}'),
-          if (c.minSpend > 0) Text('於本店惠顧滿 \$${c.minSpend.toStringAsFixed(0)}'),
+          if (validText != null)
+            Text(context.tr('有效日期：至 $validText', 'Valid until $validText')),
+          Text(context.tr('剩餘數量：$remaining / ${c.total}', 'Remaining: $remaining / ${c.total}')),
+          if (c.minSpend > 0) Text(context.tr(
+              '於本店惠顧滿 \$${c.minSpend.toStringAsFixed(0)}',
+              'Minimum spend HK\$${c.minSpend.toStringAsFixed(0)}')),
           if (c.terms.trim().isNotEmpty) ...[
             const SizedBox(height: 16),
             Text(context.tr('條款和條件', 'Terms and conditions'),
@@ -907,19 +927,23 @@ class _CouponDetailScreenState extends State<CouponDetailScreen> {
                       _remaining = result['coupon']?['remaining'] as int?;
                     });
                     if (context.mounted) {
-                      showCgToast(context, '已存入 Q Wallet（+10 分）');
+                      showCgToast(context, context.tr('已存入 Q Wallet', 'Saved to Q Wallet'));
                     }
                   } on ApiException catch (e) {
                     if (!context.mounted) return;
                     if (e.status == 409) setState(() => _claimed = true);
                     showCgToast(context, e.message);
                   } catch (_) {
-                    if (context.mounted) showCgToast(context, '未能確認領券結果，請重試');
+                    if (context.mounted) showCgToast(context, context.tr('未能確認領券結果，請重試', 'Could not confirm the claim. Try again.'));
                   } finally {
                     if (mounted) setState(() => _claiming = false);
                   }
                 },
-          child: Text(_claimed ? '已領取' : _claiming ? '領取中…' : '立即領取'),
+          child: Text(_claimed
+              ? context.tr('已領取', 'Claimed')
+              : _claiming
+                  ? context.tr('領取中…', 'Claiming…')
+                  : context.tr('立即領取', 'Claim now')),
         ),
       ),
     );

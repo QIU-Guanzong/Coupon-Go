@@ -491,7 +491,7 @@ class _HomeShellState extends State<HomeShell> {
             ListTile(
               leading:
                   const Icon(Icons.receipt_long, color: CgColors.primary),
-              title: const Text('我的訂單'),
+              title: Text(context.tr('我的訂單', 'My orders')),
               onTap: () {
                 Navigator.of(context).pop();
                 Navigator.of(context).pushNamed('/orders');

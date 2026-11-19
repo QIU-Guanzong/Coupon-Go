@@ -131,7 +131,7 @@ class _DiscoveryScreenState extends State<DiscoveryScreen> {
                           category = draftCategory;
                           regionPanel = null;
                         }),
-                    child: Text(t('確定', 'Sure'))),
+                    child: Text(t('確定', 'Confirm'))),
               ])),
         ] else
           Expanded(
