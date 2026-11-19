@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:math';
 import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart' show ChangeNotifier;
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -9,7 +10,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 /// Base URL comes from --dart-define=API_BASE_URL, defaulting to the local
 /// dev server. Guest calls (home, banners) need no token; Bearer token is
 /// attached automatically when present.
-class ApiClient {
+class ApiClient extends ChangeNotifier {
   ApiClient({String? baseUrl})
       : baseUrl = baseUrl ??
             const String.fromEnvironment(
@@ -25,16 +26,22 @@ class ApiClient {
     _token = prefs.getString('access_token');
   }
 
-  Future<void> saveToken(String token) async {
+  Future<void> saveToken(String token, {bool persist = true}) async {
     _token = token;
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setString('access_token', token);
+    if (persist) {
+      await prefs.setString('access_token', token);
+    } else {
+      await prefs.remove('access_token');
+    }
+    notifyListeners();
   }
 
   Future<void> clearToken() async {
     _token = null;
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove('access_token');
+    notifyListeners();
   }
 
   bool get isLoggedIn => _token != null;

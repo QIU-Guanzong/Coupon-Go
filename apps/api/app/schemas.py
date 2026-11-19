@@ -62,6 +62,7 @@ class UserOut(BaseModel):
     phone: str
     role: str
     locale: str
+    limited_time_notify: bool = True
 
     class Config:
         from_attributes = True

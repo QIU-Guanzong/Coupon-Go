@@ -1,11 +1,12 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-permission android:name="android.permission.INTERNET" />
     <!-- Camera: QR scanning (mobile_scanner, vendor ScanScreen). -->
     <uses-permission android:name="android.permission.CAMERA" />
     <!-- Location: nearby shops (geolocator). -->
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <application
-        android:label="coupon_go"
+        android:label="Coupon GO!"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
         <activity

@@ -124,6 +124,11 @@ def test_search_suggestion_three_branches(client):
     assert r.status_code == 200
     kinds = {s["kind"] for s in r.json()["suggestions"]}
     assert "coupon" in kinds and "shop" in kinds
+    hotpot = client.post("/api/v3/auto-suggestion-new", params={"keyword": "火鍋"})
+    branch = next(row for row in hotpot.json()["suggestions"] if row["kind"] == "branch")
+    branches = client.get("/api/v3/get-nearest-branchs", params={"shop_id": branch["id"]})
+    branch_id = branches.json()["branches"][0]["branch_id"]
+    assert client.get("/api/v3/branch-details", params={"branch_id": branch_id}).json()["shop_id"] == branch["id"]
 
 
 def test_coupon_and_shop_details(client):

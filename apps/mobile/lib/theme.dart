@@ -72,6 +72,7 @@ class CgTheme {
     return ThemeData(
       useMaterial3: true,
       fontFamily: 'Roboto',
+      fontFamilyFallback: const ['Coupon UI Fallback'],
       colorScheme: ColorScheme.fromSeed(
         seedColor: CgColors.primary,
         primary: CgColors.primary,
@@ -118,6 +119,7 @@ class CgTheme {
       useMaterial3: true,
       brightness: Brightness.dark,
       fontFamily: 'Roboto',
+      fontFamilyFallback: const ['Coupon UI Fallback'],
       colorScheme: ColorScheme.fromSeed(
         seedColor: CgColors.primary,
         primary: CgColors.primary,

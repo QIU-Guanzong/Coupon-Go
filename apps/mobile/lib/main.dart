@@ -1,6 +1,12 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart' show LicenseRegistry, LicenseEntryWithLineBreaks;
+import 'package:flutter/services.dart' show rootBundle;
+import 'package:flutter_localizations/flutter_localizations.dart';
 
 import 'api_client.dart';
+import 'language.dart';
+import 'screens/guest_auth.dart' show guestLoginPrompt;
+import 'package:share_plus/share_plus.dart';
 import 'models.dart';
 import 'screens/account.dart';
 import 'screens/admin_v2.dart';
@@ -15,6 +21,10 @@ import 'theme.dart';
 import 'widgets/widgets.dart';
 
 void main() {
+  LicenseRegistry.addLicense(() async* {
+    final license = await rootBundle.loadString('fonts/OFL.txt');
+    yield LicenseEntryWithLineBreaks(['Coupon UI Fallback (Noto Sans HK)'], license);
+  });
   runApp(const CouponGoApp());
 }
 
@@ -27,6 +37,7 @@ class CouponGoApp extends StatefulWidget {
 
 class _CouponGoAppState extends State<CouponGoApp> {
   final _api = ApiClient();
+  final _language = AppLanguage();
   bool _ready = false;
   bool _authed = false;
   bool _vendorMode = false;
@@ -34,7 +45,8 @@ class _CouponGoAppState extends State<CouponGoApp> {
   @override
   void initState() {
     super.initState();
-    _api.loadToken().then((_) {
+    _api.addListener(_sessionChanged);
+    Future.wait([_api.loadToken(), _language.load()]).then((_) {
       setState(() {
         _ready = true;
         _authed = _api.isLoggedIn;
@@ -42,9 +54,27 @@ class _CouponGoAppState extends State<CouponGoApp> {
     });
   }
 
+  void _sessionChanged() {
+    setState(() {
+      _authed = _api.isLoggedIn;
+      if (!_authed) _vendorMode = false;
+    });
+  }
+
+  @override
+  void dispose() {
+    _api.removeListener(_sessionChanged);
+    _api.dispose();
+    _language.dispose();
+    super.dispose();
+  }
+
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
+    return LanguageScope(language: _language, child: Builder(builder: (c) => MaterialApp(
+      locale: LanguageScope.of(c).english ? const Locale('en') : const Locale.fromSubtags(languageCode: 'zh', scriptCode: 'Hant', countryCode: 'HK'),
+      supportedLocales: const [Locale('en'), Locale.fromSubtags(languageCode: 'zh', scriptCode: 'Hant', countryCode: 'HK')],
+      localizationsDelegates: GlobalMaterialLocalizations.delegates,
       title: 'Coupon GO!',
       theme: CgTheme.light(),
       home: !_ready
@@ -54,7 +84,7 @@ class _CouponGoAppState extends State<CouponGoApp> {
               authed: _authed,
               vendorMode: _vendorMode,
               onAuthed: () => setState(() => _authed = true),
-              onLogout: () => setState(() => _authed = false),
+              onLogout: () => setState(() { _authed = false; _vendorMode = false; }),
               onToggleMode: () =>
                   setState(() => _vendorMode = !_vendorMode),
             ),
@@ -66,7 +96,7 @@ class _CouponGoAppState extends State<CouponGoApp> {
           case '/settings':
             return MaterialPageRoute(
                 builder: (_) => SettingsScreen(
-                    api: _api, onLogout: () => setState(() => _authed = false)));
+                    api: _api, onLogout: () => setState(() { _authed = false; _vendorMode = false; })));
           case '/guide':
             return MaterialPageRoute(builder: (_) => const GuideScreen());
           case '/login':
@@ -156,7 +186,7 @@ class _CouponGoAppState extends State<CouponGoApp> {
         }
         return null;
       },
-    );
+    )));
   }
 }
 
@@ -222,6 +252,17 @@ class HomeShell extends StatefulWidget {
 
 class _HomeShellState extends State<HomeShell> {
   int _index = 0;
+  final _visited = <int>{0};
+
+  @override
+  void didUpdateWidget(HomeShell oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.authed && !widget.authed) {
+      _index = 0;
+      _visited.clear();
+      _visited.add(0);
+    }
+  }
 
   void _openCoupon(Coupon c) {
     Navigator.of(context).push(MaterialPageRoute(
@@ -240,6 +281,45 @@ class _HomeShellState extends State<HomeShell> {
             api: widget.api, onOpenCoupon: _openCoupon, onOpenShop: _openShop)));
   }
 
+  Future<bool> _authenticate({bool vendor = false}) async {
+    return await Navigator.of(context).push<bool>(MaterialPageRoute(
+      builder: (c) => AuthScreen(api: widget.api, vendor: vendor, onAuthed: () {
+        widget.onAuthed();
+        Navigator.pop(c, true);
+      }),
+    )) ?? false;
+  }
+
+  Future<bool> _allowMember() async {
+    if (widget.api.isLoggedIn) return true;
+    if (!await guestLoginPrompt(context) || !mounted) return false;
+    return _authenticate();
+  }
+
+  Future<void> _openCorporate() async {
+    if (!widget.vendorMode) {
+      if (widget.api.isLoggedIn) {
+        try {
+          final user = await widget.api.get('/me');
+          if (!mounted) return;
+          if (!['vendor', 'admin'].contains(user['role']) && !await _authenticate(vendor: true)) return;
+        } catch (_) {
+          if (mounted) showCgToast(context, context.tr('未能確認企業帳戶，請重試', 'Could not verify your business account. Please retry.'));
+          return;
+        }
+      } else if (!await _authenticate(vendor: true)) {
+        return;
+      }
+    }
+    if (mounted) widget.onToggleMode();
+  }
+
+  void _openDiscovery() {
+    Navigator.of(context).push(MaterialPageRoute(builder: (_) => DiscoveryScreen(
+      api: widget.api, onOpenSearch: _openSearch, onOpenCoupon: _openCoupon,
+    )));
+  }
+
   @override
   Widget build(BuildContext context) {
     if (widget.vendorMode) return _vendorShell();
@@ -249,72 +329,53 @@ class _HomeShellState extends State<HomeShell> {
         onOpenCoupon: _openCoupon,
         onOpenShop: _openShop,
         onOpenSearch: _openSearch,
+        onNotifications: () async {
+          if (await _allowMember() && context.mounted) Navigator.of(context).pushNamed('/notifications');
+        },
         onOpenLimited: () => Navigator.of(context).push(MaterialPageRoute(
             builder: (_) => LimitedTimeScreen(
                 api: widget.api, onOpenCoupon: _openCoupon))),
       ),
-      FavoritesScreen(api: widget.api, onOpenCoupon: _openCoupon),
+      widget.api.isLoggedIn ? FavoritesScreen(api: widget.api, onOpenCoupon: _openCoupon) : const SizedBox.shrink(),
       const SizedBox(), // Let's Go! — handled by onTap below
       LimitedTimeScreen(api: widget.api, onOpenCoupon: _openCoupon),
-      widget.authed
+      widget.api.isLoggedIn
           ? WalletScreen(
               api: widget.api,
               onShowQr: (item) => Navigator.of(context).push(MaterialPageRoute(
                   builder: (_) =>
                       QrShowScreen(api: widget.api, item: item))),
             )
-          : AuthScreen(api: widget.api, onAuthed: widget.onAuthed),
-      // UI_SPEC §1：底部导航补「返现」。未登录时显示登录页，登录成功后
-      // onAuthed 回填 _authed，_index 不变，用户回到返现页。
-      widget.authed
-          ? CashbackScreen(api: widget.api)
-          : AuthScreen(api: widget.api, onAuthed: widget.onAuthed),
+          : const SizedBox.shrink(),
     ];
     return Scaffold(
       drawer: _drawer(),
-      floatingActionButton: FloatingActionButton(
-        backgroundColor: CgColors.primary,
-        onPressed: () => Navigator.of(context).pushNamed('/qbot'),
-        child: Image.asset('assets/images/img_logo_cropped.png',
-            width: 36,
-            errorBuilder: (_, __, ___) =>
-                const Text('Q仔', style: TextStyle(color: Colors.white))),
-      ),
-      body: IndexedStack(index: _index, children: pages),
+      body: IndexedStack(index: _index, children: [for (var i = 0; i < pages.length; i++) _visited.contains(i) ? pages[i] : const SizedBox.shrink()]),
       bottomNavigationBar: BottomNavigationBar(
         currentIndex: _index,
         type: BottomNavigationBarType.fixed,
         selectedItemColor: CgColors.primary,
-        onTap: (i) {
+        onTap: (i) async {
           if (i == 2) {
-            _openSearch(); // Let's Go!
+            _openDiscovery();
             return;
           }
-          setState(() => _index = i);
+          if ((i == 1 || i == 4) && !await _allowMember()) return;
+          if (mounted) setState(() { _visited.add(i); _index = i; });
         },
         items: [
-          const BottomNavigationBarItem(icon: Icon(Icons.home), label: '主頁'),
-          const BottomNavigationBarItem(
-              icon: Icon(Icons.favorite_border), label: '收藏'),
+          BottomNavigationBarItem(icon: Image.asset('assets/images/ic_home.png',height: 24, width: 24), label: context.tr('主頁', 'Home')),
           BottomNavigationBarItem(
-            icon: Container(
-              padding: const EdgeInsets.all(8),
-              decoration: const BoxDecoration(
-                color: CgColors.primary,
-                shape: BoxShape.circle,
-              ),
-              child: const Text("Let's Go!",
-                  style: TextStyle(color: Colors.white, fontSize: 10)),
-            ),
+              icon: Image.asset('assets/images/ic_heart_empty.png',height: 24, width: 24), label: context.tr('收藏', 'Collect')),
+          BottomNavigationBarItem(
+            icon: Image.asset('assets/images/ic_lets_go.png', height: 36, width: 42),
             label: "Let's Go!",
           ),
-          const BottomNavigationBarItem(
-              icon: Icon(Icons.timer_outlined), label: '限時'),
-          const BottomNavigationBarItem(
-              icon: Icon(Icons.account_balance_wallet_outlined),
+          BottomNavigationBarItem(
+              icon: Image.asset('assets/images/ic_limited_time.png',height: 24, width: 24), label: context.tr('限時', 'Limited Time')),
+          BottomNavigationBarItem(
+              icon: Image.asset('assets/images/ic_wallet.png',height: 24, width: 24),
               label: 'Q Wallet'),
-          const BottomNavigationBarItem(
-              icon: Icon(Icons.payments_outlined), label: '返現'),
         ],
       ),
     );
@@ -362,8 +423,8 @@ class _HomeShellState extends State<HomeShell> {
                 Image.asset('assets/images/img_logo.png', height: 64,
                     errorBuilder: (_, __, ___) => const SizedBox()),
                 const SizedBox(height: 8),
-                const Text('更多',
-                    style: TextStyle(
+                Text(context.tr('更多','More'),
+                    style: const TextStyle(
                         color: Colors.white,
                         fontSize: 20,
                         fontWeight: FontWeight.bold)),
@@ -372,13 +433,11 @@ class _HomeShellState extends State<HomeShell> {
           ),
           ListTile(
             leading: const Icon(Icons.person, color: CgColors.primary),
-            title: Text(widget.authed ? '我的帳戶' : '登錄'),
+            title: Text(widget.api.isLoggedIn ? context.tr('我的帳戶','Account') : context.tr('登錄','Login')),
             onTap: () {
               Navigator.of(context).pop();
-              if (!widget.authed) {
-                Navigator.of(context).push(MaterialPageRoute(
-                    builder: (_) =>
-                        AuthScreen(api: widget.api, onAuthed: widget.onAuthed)));
+              if (!widget.api.isLoggedIn) {
+                _authenticate();
               } else {
                 Navigator.of(context).pushNamed('/settings');
               }
@@ -386,7 +445,7 @@ class _HomeShellState extends State<HomeShell> {
           ),
           ListTile(
             leading: const Icon(Icons.content_cut, color: CgColors.primary),
-            title: const Text('砍價'),
+            title: Text(context.tr('砍價','Bargains')),
             onTap: () {
               Navigator.of(context).pop();
               Navigator.of(context).pushNamed('/bargain');
@@ -395,7 +454,7 @@ class _HomeShellState extends State<HomeShell> {
           ListTile(
             leading: const Icon(Icons.restaurant_menu,
                 color: CgColors.primary),
-            title: const Text('套餐'),
+            title: Text(context.tr('套餐','Packages')),
             onTap: () {
               Navigator.of(context).pop();
               Navigator.of(context).pushNamed('/packages');
@@ -412,15 +471,24 @@ class _HomeShellState extends State<HomeShell> {
               },
             ),          ListTile(
             leading: const Icon(Icons.card_giftcard, color: CgColors.primary),
-            title: const Text('邀請好友'),
-            onTap: () {
+            title: Text(context.tr('邀請好友','Invite Friends')),
+            onTap: () async {
               Navigator.of(context).pop();
-              showCgToast(context, '邀請您一齊加入Coupon-GO!，探索更多衣食住行優惠券！');
+              final box = context.findRenderObject() as RenderBox?;
+              try {
+                await SharePlus.instance.share(ShareParams(
+                  text: "${context.tr('邀請您一齊加入 Coupon GO！', 'Join me on Coupon GO!')} "
+                      'https://play.google.com/store/apps/details?id=com.techmatch.coupongonew',
+                  sharePositionOrigin: box == null ? null : box.localToGlobal(Offset.zero) & box.size,
+                ));
+              } catch (_) {
+                if (mounted) showCgToast(context, context.tr('未能開啟分享', 'Sharing is unavailable'));
+              }
             },
           ),
           ListTile(
             leading: const Icon(Icons.settings, color: CgColors.primary),
-            title: const Text('設置'),
+            title: Text(context.tr('設置','Settings')),
             onTap: () {
               Navigator.of(context).pop();
               Navigator.of(context).pushNamed('/settings');
@@ -428,16 +496,16 @@ class _HomeShellState extends State<HomeShell> {
           ),
           ListTile(
             leading: const Icon(Icons.store, color: CgColors.primary),
-            title: Text(widget.vendorMode ? '切換到用戶版' : '企業服務'),
+            title: Text(widget.vendorMode ? context.tr('切換到用戶版','Consumer') : context.tr('企業服務','Corporate')),
             onTap: () {
               Navigator.of(context).pop();
-              widget.onToggleMode();
+              _openCorporate();
             },
           ),
           ListTile(
             leading:
                 const Icon(Icons.storefront, color: CgColors.primary),
-            title: const Text('商戶入駐申請'),
+            title: Text(context.tr('商戶入駐申請','Merchant application')),
             onTap: () {
               Navigator.of(context).pop();
               Navigator.of(context).pushNamed('/admin/apply');
@@ -446,15 +514,17 @@ class _HomeShellState extends State<HomeShell> {
           ListTile(
             leading: const Icon(Icons.admin_panel_settings,
                 color: CgColors.primary),
-            title: const Text('管理後台'),
+            title: Text(context.tr('管理後台','Administration')),
             onTap: () {
               Navigator.of(context).pop();
               Navigator.of(context).pushNamed('/admin');
             },
           ),
+          ListTile(leading: const Icon(Icons.chat_outlined), title: const Text('Q仔'),
+            onTap: () { Navigator.of(context).pop(); Navigator.of(context).pushNamed('/qbot'); }),
           ListTile(
             leading: const Icon(Icons.help_outline, color: CgColors.primary),
-            title: const Text('新手指南'),
+            title: Text(context.tr('新手指南','Guide')),
             onTap: () {
               Navigator.of(context).pop();
               Navigator.of(context).pushNamed('/guide');

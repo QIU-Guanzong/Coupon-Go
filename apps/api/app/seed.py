@@ -149,6 +149,11 @@ def seed(db: Session) -> dict:
         shops.append(s)
     db.flush()
 
+    # A seeded multi-branch merchant exercises the third search destination.
+    hotpot = shops[1]
+    db.add(models.Branch(shop_id=hotpot.id, name=f"{hotpot.name} · 總店",
+                         address=hotpot.address, phone=hotpot.phone))
+
     for i, (shop_i, ctype, cname, amt, days, total) in enumerate(COUPONS):
         c = models.Coupon(
             shop_id=shops[shop_i].id, vendor_id=vendor.id,

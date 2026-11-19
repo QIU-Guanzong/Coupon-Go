@@ -2,6 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
 
 import '../api_client.dart';
+import '../language.dart';
+import 'discovery.dart';
+import 'guest_auth.dart' show guestLoginPrompt;
+export 'discovery.dart' show DiscoveryScreen;
 import '../models.dart';
 import '../theme.dart';
 import '../widgets/widgets.dart';
@@ -15,13 +19,14 @@ import 'reviews_admin.dart';
 /// helping asks for login on the target page, then returns.
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key, required this.api, required this.onOpenCoupon,
-    required this.onOpenShop, required this.onOpenSearch, required this.onOpenLimited});
+    required this.onOpenShop, required this.onOpenSearch, required this.onOpenLimited, required this.onNotifications});
 
   final ApiClient api;
   final void Function(Coupon) onOpenCoupon;
   final void Function(Shop) onOpenShop;
   final VoidCallback onOpenSearch;
   final VoidCallback onOpenLimited;
+  final VoidCallback onNotifications;
 
   @override
   State<HomeScreen> createState() => _HomeScreenState();
@@ -92,7 +97,7 @@ class _HomeScreenState extends State<HomeScreen> {
         _error = false;
       });
       _loadAreaCoupons();
-    } on ApiException catch (_) {
+    } catch (_) {
       if (mounted) {
         setState(() {
           _loading = false;
@@ -163,10 +168,12 @@ class _HomeScreenState extends State<HomeScreen> {
               ],
             ),
             actions: [
+              IconButton(tooltip: 'Q仔', icon: Image.asset('assets/images/img_logo_cropped.png', width: 30),
+                onPressed: () => Navigator.of(context).pushNamed('/qbot')),
               IconButton(
                 icon: const Icon(Icons.notifications_outlined),
-                tooltip: '通知',
-                onPressed: () => Navigator.of(context).pushNamed('/notifications'),
+                tooltip: context.tr('通知','Notifications'),
+                onPressed: widget.onNotifications,
               ),
             ],
             bottom: PreferredSize(
@@ -175,7 +182,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
                 child: Semantics(
                   button: true,
-                  label: '搜索商户或优惠',
+                  label: context.tr('搜尋商戶或優惠','Search stores and offers'),
                   child: GestureDetector(
                     onTap: widget.onOpenSearch,
                     child: Container(
@@ -185,12 +192,12 @@ class _HomeScreenState extends State<HomeScreen> {
                         color: Colors.white,
                         borderRadius: BorderRadius.circular(22),
                       ),
-                      child: const Row(
+                      child: Row(
                         children: [
-                          Icon(Icons.search, color: CgColors.textSecondary),
-                          SizedBox(width: 8),
-                          Text('搜索商户或优惠',
-                              style: TextStyle(color: CgColors.textSecondary)),
+                          const Icon(Icons.search, color: CgColors.textSecondary),
+                          const SizedBox(width: 8),
+                          Text(context.tr('搜尋商戶或優惠','Search stores and offers'),
+                              style: const TextStyle(color: CgColors.textSecondary)),
                         ],
                       ),
                     ),
@@ -200,7 +207,7 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
           ),
           if (_loading)
-            const SliverFillRemaining(
+            const SliverToBoxAdapter(
               child: Padding(
                 padding: EdgeInsets.all(16),
                 child: Column(children: [
@@ -223,13 +230,13 @@ class _HomeScreenState extends State<HomeScreen> {
                       const Icon(Icons.wifi_off,
                           size: 48, color: CgColors.textSecondary),
                       const SizedBox(height: 12),
-                      const Text('网络不稳定，请重试', textAlign: TextAlign.center),
+                      Text(context.tr('網絡不穩定，請重試','Connection problem. Please retry.'), textAlign: TextAlign.center),
                       const SizedBox(height: 16),
                       ElevatedButton(
                         style: ElevatedButton.styleFrom(
                             minimumSize: const Size(160, 48)),
                         onPressed: _load,
-                        child: const Text('重试'),
+                        child: Text(context.tr('重試','Retry')),
                       ),
                     ],
                   ),
@@ -249,7 +256,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       children: ['全部地區', '香港', '九龍', '新界'].map((a) {
                         final selected = _area == a;
                         return ChoiceChip(
-                          label: Text(a),
+                          label: Text(context.tr(a, const {'全部地區':'All regions','香港':'Hong Kong','九龍':'Kowloon','新界':'New Territories'}[a] ?? a)),
                           selected: selected,
                           selectedColor: CgColors.primary,
                           labelStyle: TextStyle(
@@ -312,13 +319,13 @@ class _HomeScreenState extends State<HomeScreen> {
                         onPressed: () =>
                             Navigator.of(context).pushNamed('/nearby'),
                         icon: const Icon(Icons.near_me),
-                        label: const Text('附近商户 · 按距離排序'),
+                        label: Text(context.tr('附近商戶 · 按距離排序','Nearby shops by distance')),
                       ),
                     ),
                   ),
                   // 限时砍价：无进行中活动时整块不显示
                   if (activeCampaigns.isNotEmpty) ...[
-                    SectionHeader(title: '限时砍价', onViewAll: _openBargainList),
+                    SectionHeader(title: context.tr('限時砍價','Limited-time bargains'), onViewAll: _openBargainList),
                     SizedBox(
                       height: 216,
                       child: ListView.builder(
@@ -364,12 +371,12 @@ class _HomeScreenState extends State<HomeScreen> {
                     ),
                   ],
                   // 热门套餐：2 列网格
-                  SectionHeader(title: '热门套餐', onViewAll: _openPackageList),
+                  SectionHeader(title: context.tr('熱門套餐','Popular packages'), onViewAll: _openPackageList),
                   if (_packages.isEmpty)
-                    const Padding(
-                      padding: EdgeInsets.symmetric(horizontal: 16),
-                      child: Text('暂时没有热门套餐。',
-                          style: TextStyle(color: CgColors.textSecondary)),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 16),
+                      child: Text(context.tr('暫時沒有熱門套餐。','No popular packages yet.'),
+                          style: const TextStyle(color: CgColors.textSecondary)),
                     )
                   else
                     GridView.builder(
@@ -390,22 +397,22 @@ class _HomeScreenState extends State<HomeScreen> {
                       ),
                     ),
                   // 附近优惠：纵向列表（沿用领券卡片，右下加距离）
-                  const SectionHeader(title: '附近优惠'),
+                  SectionHeader(title: context.tr('附近優惠','Nearby offers')),
                   if (nearby.isEmpty)
                     Padding(
                       padding: const EdgeInsets.symmetric(horizontal: 16),
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          const Text('附近暂时没有优惠。',
+                          Text(context.tr('附近暫時沒有優惠。','No nearby offers yet.'),
                               style:
-                                  TextStyle(color: CgColors.textSecondary)),
+                                  const TextStyle(color: CgColors.textSecondary)),
                           const SizedBox(height: 12),
                           OutlinedButton(
                             style: OutlinedButton.styleFrom(
                                 minimumSize: const Size(160, 48)),
                             onPressed: _load,
-                            child: const Text('重新整理'),
+                            child: Text(context.tr('重新整理','Refresh')),
                           ),
                         ],
                       ),
@@ -518,7 +525,7 @@ class _BargainHomeCard extends StatelessWidget {
                       textStyle: const TextStyle(fontSize: 14),
                     ),
                     onPressed: onTap,
-                    child: const Text('去砍价'),
+                    child: Text(context.tr('去砍價','Bargain')),
                   ),
                 ),
               ),
@@ -603,7 +610,7 @@ class _PackageHomeCard extends StatelessWidget {
                 child: ElevatedButton(
                   style: ElevatedButton.styleFrom(padding: EdgeInsets.zero),
                   onPressed: onTap,
-                  child: const Text('立即抢购'),
+                  child: Text(context.tr('立即搶購','Buy now')),
                 ),
               ),
             ),
@@ -686,7 +693,7 @@ class _NearbyCouponRow extends StatelessWidget {
                             const EdgeInsets.symmetric(horizontal: 16),
                       ),
                       onPressed: onTap,
-                      child: const Text('领取'),
+                      child: Text(context.tr('領取','Collect')),
                     ),
                   ),
                   const SizedBox(height: 6),
@@ -757,91 +764,49 @@ class SearchScreen extends StatefulWidget {
 
 class _SearchScreenState extends State<SearchScreen> {
   final _ctrl = TextEditingController();
-  List<dynamic> _suggestions = [];
-  final _recent = <String>['壽司', '火鍋', '咖啡'];
-  final _hot = ['壽司', '咖啡', '火鍋', '美容', '拉麵', '健身', '眼鏡', 'Spa'];
+  String query = '';
+  @override
+  void dispose() { _ctrl.dispose(); super.dispose(); }
 
-  Future<void> _onChanged(String kw) async {
-    if (kw.isEmpty) {
-      setState(() => _suggestions = []);
-      return;
-    }
+  Future<void> open(Map row) async {
     try {
-      final list = await widget.api.suggestions(kw);
-      if (mounted) setState(() => _suggestions = list);
-    } on ApiException catch (_) {}
+      final id = row['id'] as int;
+      if (row['kind'] == 'branch' || row['has_branch'] == 1) {
+        await Navigator.push(context, MaterialPageRoute(builder: (_) => BranchResults(api: widget.api, shopId: id, keyword: query)));
+      } else if (row['kind'] == 'coupon') {
+        final data = await widget.api.couponDetails(id);
+        if (mounted) widget.onOpenCoupon(Coupon.fromJson(data['coupon']));
+      } else {
+        final data = await widget.api.shopDetails(id);
+        if (mounted) widget.onOpenShop(Shop.fromJson(data['shop']));
+      }
+    } catch (_) {
+      if (mounted) showCgToast(context, context.tr('未能載入，請重試','Could not load. Please retry.'));
+    }
   }
 
   @override
   Widget build(BuildContext context) {
+    final t = context.tr;
     return Scaffold(
-      appBar: AppBar(
-        title: TextField(
-          controller: _ctrl,
-          autofocus: true,
-          decoration: const InputDecoration(
-            hintText: '搜索商户或优惠',
-            border: InputBorder.none,
-            prefixIcon: Icon(Icons.search),
-          ),
-          onChanged: _onChanged,
-        ),
-      ),
-      body: _suggestions.isEmpty
-          ? ListView(
-              padding: const EdgeInsets.all(16),
-              children: [
-                const Text('最近搜尋',
-                    style: TextStyle(fontWeight: FontWeight.bold)),
-                Wrap(
-                  spacing: 8,
-                  children: _recent
-                      .map((w) => ActionChip(
-                          label: Text(w),
-                          onPressed: () {
-                            _ctrl.text = w;
-                            _onChanged(w);
-                          }))
-                      .toList(),
-                ),
-                const SizedBox(height: 16),
-                const Text('熱門搜尋',
-                    style: TextStyle(fontWeight: FontWeight.bold)),
-                Wrap(
-                  spacing: 8,
-                  children: _hot
-                      .map((w) => ActionChip(
-                          label: Text(w),
-                          onPressed: () {
-                            _ctrl.text = w;
-                            _onChanged(w);
-                          }))
-                      .toList(),
-                ),
-              ],
-            )
-          : ListView.builder(
-              itemCount: _suggestions.length,
-              itemBuilder: (_, i) {
-                final s = _suggestions[i] as Map;
-                final isCoupon = s['kind'] == 'coupon';
-                return ListTile(
-                  leading: Icon(isCoupon ? Icons.local_offer : Icons.store),
-                  title: Text(s['title'] as String),
-                  subtitle: Text((s['subtitle'] as String?) ?? ''),
-                  onTap: () async {
-                    final id = s['id'] as int;
-                    if (isCoupon) {
-                      final d = await widget.api.couponDetails(id);
-                      widget.onOpenCoupon(Coupon.fromJson(d['coupon']));
-                    } else {
-                      final d = await widget.api.shopDetails(id);
-                      widget.onOpenShop(Shop.fromJson(d['shop']));
-                    }
-                  },
-                );
-              },
-            ),
+      appBar: AppBar(title: TextField(controller: _ctrl, autofocus: true,
+        decoration: InputDecoration(hintText: t('搜尋商戶或優惠','Search stores and offers'), prefixIcon: const Icon(Icons.search)),
+        onChanged: (value) => setState(() => query = value.trim()))),
+      body: query.isEmpty ? ListView(padding: const EdgeInsets.all(16), children: [
+        Text(t('最近搜尋','Recent Searches'),style: Theme.of(context).textTheme.titleMedium),
+        if (!widget.api.isLoggedIn) Text(t('沒有資料','No Data Found')) else
+          RequestView(load: () => widget.api.get('/get-search-history'), content: (data) {
+            final history = data['history'] as List;
+            if (history.isEmpty) return Text(t('沒有資料','No Data Found'));
+            return Wrap(children: [for (final item in history) ActionChip(label: Text(item['search_value']),
+              onPressed: () => setState(() { _ctrl.text = item['search_value']; query = _ctrl.text; }))]);
+          }),
+        const SizedBox(height: 16), Text(t('熱門搜尋','Popular Searches'),style: Theme.of(context).textTheme.titleMedium),
+        Text(t('沒有資料','No Data Found')),
+      ]) : RequestView(key: ValueKey(query), load: () => widget.api.suggestions(query), content: (rows) =>
+        rows.isEmpty ? Center(child: Text(t('沒有資料','No Data Found'))) : ListView(children: [
+          for (final row in rows) ListTile(title: Text(row['title']), subtitle: Text(row['subtitle'] ?? ''), onTap: () => open(row)),
+        ])),
     );
   }
 }
@@ -915,7 +880,13 @@ class _CouponDetailScreenState extends State<CouponDetailScreen> {
               ? null
               : () async {
                   try {
+                    if (!widget.api.isLoggedIn) {
+                      if (!await guestLoginPrompt(context) || !context.mounted) return;
+                      await Navigator.of(context).pushNamed('/login');
+                      if (!widget.api.isLoggedIn || !mounted) return;
+                    }
                     await widget.api.claimCoupon(c.id);
+                    if (!mounted) return;
                     setState(() => _claimed = true);
                     if (context.mounted) {
                       showCgToast(context, '已存入 Q Wallet（+10 分）');
@@ -1025,34 +996,7 @@ class CategoryScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text('分類')),
-      body: FutureBuilder<List<dynamic>>(
-        future: api.classification(categoryId: categoryId),
-        builder: (context, snap) {
-          if (!snap.hasData) {
-            return const Padding(
-              padding: EdgeInsets.all(16),
-              child: Column(children: [SkeletonBox(height: 180)]),
-            );
-          }
-          final coupons =
-              snap.data!.map((e) => Coupon.fromJson(e)).toList();
-          if (coupons.isEmpty) return const Center(child: Text('找不到優惠券！'));
-          return GridView.builder(
-            padding: const EdgeInsets.all(12),
-            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-              crossAxisCount: 2,
-              childAspectRatio: 0.78,
-              crossAxisSpacing: 8,
-              mainAxisSpacing: 8,
-            ),
-            itemCount: coupons.length,
-            itemBuilder: (_, i) => CouponCard(
-              coupon: coupons[i],
-              onTap: () => onOpenCoupon(coupons[i]),
-            ),
-          );
-        },
-      ),
+      body: CouponResults(load: () => api.classification(categoryId: categoryId), onOpenCoupon: onOpenCoupon),
     );
   }
 }
@@ -1067,28 +1011,66 @@ class LimitedTimeScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('限時搶購')),
-      body: FutureBuilder<List<dynamic>>(
-        future: api.limitedTime(),
-        builder: (context, snap) {
-          if (!snap.hasData) {
-            return const Padding(
-              padding: EdgeInsets.all(16),
-              child: Column(children: [SkeletonBox(height: 180)]),
-            );
-          }
-          final coupons = snap.data!.map((e) => Coupon.fromJson(e)).toList();
-          return ListView.builder(
-            padding: const EdgeInsets.all(12),
-            itemCount: coupons.length,
-            itemBuilder: (_, i) => Padding(
-              padding: const EdgeInsets.only(bottom: 8),
-              child: CouponCard(
-                  coupon: coupons[i], onTap: () => onOpenCoupon(coupons[i])),
-            ),
-          );
-        },
-      ),
+      appBar: AppBar(title: Text(context.tr('限時','Limited Time'))),
+      body: Column(children: [
+        _LimitedNotification(key: ValueKey(api.isLoggedIn), api: api),
+        Expanded(child: CouponResults(load: api.limitedTime, onOpenCoupon: onOpenCoupon)),
+      ]),
     );
+  }
+}
+
+class _LimitedNotification extends StatefulWidget {
+  const _LimitedNotification({super.key, required this.api});
+  final ApiClient api;
+  @override
+  State<_LimitedNotification> createState() => _LimitedNotificationState();
+}
+
+class _LimitedNotificationState extends State<_LimitedNotification> {
+  bool enabled = false, busy = false, failed = false;
+  @override
+  void initState() {
+    super.initState();
+    if (widget.api.isLoggedIn) load();
+  }
+
+  Future<void> load() async {
+    setState(() { busy = true; failed = false; });
+    try {
+      final data = await widget.api.get('/get-profile');
+      if (mounted) setState(() => enabled = data['limited_time_notify'] as bool);
+    } catch (_) {
+      if (mounted) setState(() => failed = true);
+    } finally {
+      if (mounted) setState(() => busy = false);
+    }
+  }
+
+  Future<void> change(bool value) async {
+    if (!widget.api.isLoggedIn) {
+      if (await guestLoginPrompt(context) && mounted) {
+        await Navigator.of(context).pushNamed('/login');
+      }
+      return;
+    }
+    setState(() => busy = true);
+    try {
+      final data = await widget.api.post('/limited-time-notification', query: {'enabled': '$value'});
+      if (mounted) setState(() => enabled = data['limited_time_notification'] as bool);
+    } catch (_) {
+      if (mounted) showCgToast(context, context.tr('未能儲存通知設定','Could not save notification settings'));
+    } finally {
+      if (mounted) setState(() => busy = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final label = context.tr('限時優惠券通知','Limited-time coupon notifications');
+    if (failed) return ListTile(title: Text(label), trailing: TextButton(onPressed: load, child: Text(context.tr('重試','Retry'))));
+    return SwitchListTile(title: Text(label),
+      subtitle: Text(context.tr('在此查看限時優惠券','Find limited-time coupons here')),
+      value: enabled, onChanged: busy ? null : change);
   }
 }

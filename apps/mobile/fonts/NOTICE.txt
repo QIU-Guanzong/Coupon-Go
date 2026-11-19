@@ -1,0 +1,7 @@
+Coupon UI Fallback is a glyph subset of Noto Sans HK for the bundled interface
+and sample catalog. Roboto remains the primary text face. The subset retains
+the variable weight axis and uses a distinct family name.
+
+Upstream: https://github.com/google/fonts/tree/2ac7e8ea215d57ea37fa3c7073642d0f2f22b525/ofl/notosanshk
+Source file: NotoSansHK[wght].ttf
+License: SIL Open Font License 1.1 (OFL.txt).

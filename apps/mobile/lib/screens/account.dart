@@ -4,6 +4,8 @@ import 'package:flutter/material.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 
 import '../api_client.dart';
+import '../language.dart';
+export 'guest_auth.dart' show AuthScreen;
 import '../models.dart';
 import '../theme.dart';
 import '../widgets/widgets.dart';
@@ -714,49 +716,22 @@ class SettingsScreen extends StatefulWidget {
 }
 
 class _SettingsScreenState extends State<SettingsScreen> {
-  bool _limitedNotify = true;
-  String _lang = '繁體中文';
+
 
   @override
   Widget build(BuildContext context) {
+    final language = LanguageScope.of(context);
+    final t = context.tr;
+    final draft = language.draft;
     return Scaffold(
-      appBar: AppBar(title: const Text('設置')),
-      body: ListView(
+      appBar: AppBar(title: Text(t('設置','Settings'))),
+      body: Stack(children: [ListView(
         children: [
-          SwitchListTile(
-            title: const Text('限時搶購通知'),
-            subtitle: Text(_limitedNotify ? '已開啟' : '已關閉'),
-            value: _limitedNotify,
-            onChanged: (v) async {
-              try {
-                await widget.api.post('/limited-time-notification',
-                    query: {'enabled': '$v'});
-                setState(() => _limitedNotify = v);
-              } on ApiException catch (e) {
-                if (context.mounted) showCgToast(context, e.message);
-              }
-            },
-          ),
-          ListTile(
-            title: const Text('語言'),
-            subtitle: Text(_lang),
+          ListTile(title: Text(t('語言','Languages')),
+            subtitle: Text((draft ?? language.english) ? 'English' : '繁體中文'),
             trailing: const Icon(Icons.chevron_right),
-            onTap: () async {
-              final picked = await showDialog<String>(
-                context: context,
-                builder: (c) => SimpleDialog(
-                  title: const Text('選擇語言'),
-                  children: ['繁體中文', 'English'].map((l) {
-                    return SimpleDialogOption(
-                      onPressed: () => Navigator.pop(c, l),
-                      child: Text(l),
-                    );
-                  }).toList(),
-                ),
-              );
-              if (picked != null) setState(() => _lang = picked);
-            },
-          ),
+            onTap: () => setState(() => language.draft = language.english)),
+          if (widget.api.isLoggedIn) ...[
           ListTile(
             title: const Text('新手指南 / 常見問題'),
             trailing: const Icon(Icons.chevron_right),
@@ -804,8 +779,26 @@ class _SettingsScreenState extends State<SettingsScreen> {
               }
             },
           ),
+          ],
         ],
       ),
+      if (draft != null) ...[
+        ModalBarrier(color: Colors.black38, dismissible: true,
+          onDismiss: () => setState(() => language.draft = null)),
+        Align(alignment: Alignment.bottomCenter, child: Material(
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(18)),
+          child: SafeArea(child: Column(mainAxisSize: MainAxisSize.min, children: [
+            for (final english in [true,false]) ListTile(
+              title: Text(english ? 'English' : '繁體中文'),
+              trailing: Icon(draft == english ? Icons.radio_button_checked : Icons.radio_button_off),
+              onTap: () => setState(() => language.draft = english)),
+            Padding(padding: const EdgeInsets.all(12), child: FilledButton(
+              onPressed: () async { await language.commit(draft); if (mounted) setState(() {}); },
+              child: Text(t('提交','Submit')))),
+          ])),
+        )),
+      ],
+      ]),
     );
   }
 }
@@ -951,127 +944,6 @@ class _QBotScreenState extends State<QBotScreen> {
             ),
           ),
         ],
-      ),
-    );
-  }
-}
-
-/// Auth: email login / register / 6-digit OTP.
-class AuthScreen extends StatefulWidget {
-  const AuthScreen({super.key, required this.api, required this.onAuthed});
-
-  final ApiClient api;
-  final VoidCallback onAuthed;
-
-  @override
-  State<AuthScreen> createState() => _AuthScreenState();
-}
-
-class _AuthScreenState extends State<AuthScreen> {
-  final _email = TextEditingController();
-  final _password = TextEditingController();
-  final _name = TextEditingController();
-  final _otp = TextEditingController();
-  bool _isRegister = false;
-  bool _awaitingOtp = false;
-  bool _isVendor = false;
-
-  Future<void> _submit() async {
-    try {
-      if (_awaitingOtp) {
-        final data = await widget.api.verifyOtp(
-            _email.text, _otp.text, 'register');
-        await widget.api.saveToken(data['access_token'] as String);
-        widget.onAuthed();
-        return;
-      }
-      if (_isRegister) {
-        await widget.api.register(_email.text, _password.text, _name.text,
-            _isVendor ? 'vendor' : 'customer');
-        setState(() => _awaitingOtp = true);
-        if (mounted) showCgToast(context, '請輸入 6 位數驗證碼。');
-      } else {
-        await widget.api.login(_email.text, _password.text);
-        widget.onAuthed();
-      }
-    } on ApiException catch (e) {
-      if (mounted) showCgToast(context, e.message);
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: CgColors.primary,
-      appBar: AppBar(title: Text(_isRegister ? '註冊' : '登錄')),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          children: [
-            Image.asset('assets/images/img_logo.png', height: 120,
-                errorBuilder: (_, __, ___) => const SizedBox(height: 120)),
-            const SizedBox(height: 8),
-            const Text('請註冊或登入。',
-                style: TextStyle(color: Colors.white, fontSize: 18)),
-            const SizedBox(height: 24),
-            if (_awaitingOtp)
-              TextField(
-                controller: _otp,
-                keyboardType: TextInputType.number,
-                maxLength: 6,
-                decoration: const InputDecoration(hintText: '請輸入 6 位數驗證碼。'),
-              )
-            else ...[
-              if (_isRegister)
-                TextField(
-                  controller: _name,
-                  decoration: const InputDecoration(hintText: '姓名'),
-                ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: _email,
-                keyboardType: TextInputType.emailAddress,
-                decoration: const InputDecoration(hintText: '電郵'),
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: _password,
-                obscureText: true,
-                decoration: const InputDecoration(hintText: '密碼（至少 6 個字符，含特殊字符）'),
-              ),
-              if (_isRegister) ...[
-                const SizedBox(height: 12),
-                SwitchListTile(
-                  title: const Text('註冊為商戶', style: TextStyle(color: Colors.white)),
-                  value: _isVendor,
-                  onChanged: (v) => setState(() => _isVendor = v),
-                ),
-              ],
-            ],
-            const SizedBox(height: 16),
-            SizedBox(
-              width: double.infinity,
-              child: ElevatedButton(
-                style: ElevatedButton.styleFrom(backgroundColor: Colors.white),
-                onPressed: _submit,
-                child: Text(
-                  _awaitingOtp ? '驗證' : _isRegister ? '註冊' : '使用電子郵件帳戶繼續',
-                  style: const TextStyle(color: CgColors.primary),
-                ),
-              ),
-            ),
-            TextButton(
-              onPressed: () => setState(() {
-                _isRegister = !_isRegister;
-                _awaitingOtp = false;
-              }),
-              child: Text(
-                _isRegister ? '已有帳戶？去登錄' : '未有帳戶？去註冊',
-                style: const TextStyle(color: Colors.white),
-              ),
-            ),
-          ],
-        ),
       ),
     );
   }
