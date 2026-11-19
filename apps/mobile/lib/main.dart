@@ -254,13 +254,13 @@ class _HomeShellState extends State<HomeShell> {
     }
   }
 
-  void _openCoupon(Coupon c) {
-    Navigator.of(context).push(MaterialPageRoute(
+  Future<void> _openCoupon(Coupon c) async {
+    await Navigator.of(context).push(MaterialPageRoute(
         builder: (_) => CouponDetailScreen(api: widget.api, coupon: c)));
   }
 
-  void _openShop(Shop s) {
-    Navigator.of(context).push(MaterialPageRoute(
+  Future<void> _openShop(Shop s) async {
+    await Navigator.of(context).push(MaterialPageRoute(
         builder: (_) => ShopDetailScreen(
             api: widget.api, shop: s, onOpenCoupon: _openCoupon)));
   }
@@ -326,7 +326,7 @@ class _HomeShellState extends State<HomeShell> {
             builder: (_) => LimitedTimeScreen(
                 api: widget.api, onOpenCoupon: _openCoupon))),
       ),
-      widget.api.isLoggedIn ? FavoritesScreen(api: widget.api, onOpenCoupon: _openCoupon) : const SizedBox.shrink(),
+      widget.api.isLoggedIn ? FavoritesScreen(api: widget.api, onOpenCoupon: _openCoupon, onOpenShop: _openShop, active: _index == 1) : const SizedBox.shrink(),
       const SizedBox(), // Let's Go! — handled by onTap below
       LimitedTimeScreen(api: widget.api, onOpenCoupon: _openCoupon),
       widget.api.isLoggedIn
@@ -529,10 +529,18 @@ class _HomeShellState extends State<HomeShell> {
 
 /// Favorites tab: favorite coupons + shops.
 class FavoritesScreen extends StatefulWidget {
-  const FavoritesScreen({super.key, required this.api, required this.onOpenCoupon});
+  const FavoritesScreen({
+    super.key,
+    required this.api,
+    required this.onOpenCoupon,
+    required this.onOpenShop,
+    this.active = true,
+  });
 
   final ApiClient api;
-  final void Function(Coupon) onOpenCoupon;
+  final Future<void> Function(Coupon) onOpenCoupon;
+  final Future<void> Function(Shop) onOpenShop;
+  final bool active;
 
   @override
   State<FavoritesScreen> createState() => _FavoritesScreenState();
@@ -541,6 +549,9 @@ class FavoritesScreen extends StatefulWidget {
 class _FavoritesScreenState extends State<FavoritesScreen> {
   List<Coupon> _coupons = [];
   List<Shop> _shops = [];
+  bool _loading = true;
+  bool _hasError = false;
+  int _request = 0;
 
   @override
   void initState() {
@@ -548,32 +559,60 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
     _load();
   }
 
+  @override
+  void didUpdateWidget(FavoritesScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.active && !oldWidget.active) _load();
+  }
+
   Future<void> _load() async {
+    final request = ++_request;
+    setState(() {
+      _loading = true;
+      _hasError = false;
+    });
     try {
-      final c = await widget.api.get('/favorite-coupon-list');
-      final s = await widget.api.get('/get-collection-shops');
-      if (!mounted) return;
+      final rows = await Future.wait([
+        widget.api.get('/favorite-coupon-list'),
+        widget.api.get('/get-collection-shops'),
+      ]);
+      if (!mounted || request != _request) return;
       setState(() {
-        _coupons =
-            (c['coupons'] as List).map((e) => Coupon.fromJson(e)).toList();
-        _shops = (s['shops'] as List).map((e) => Shop.fromJson(e)).toList();
+        _coupons = (rows[0]['coupons'] as List)
+            .map((e) => Coupon.fromJson(e))
+            .toList();
+        _shops = (rows[1]['shops'] as List)
+            .map((e) => Shop.fromJson(e))
+            .toList();
+        _loading = false;
       });
-    } on ApiException catch (e) {
-      if (mounted) showCgToast(context, e.message);
+    } catch (_) {
+      if (!mounted || request != _request) return;
+      setState(() {
+        _hasError = true;
+        _loading = false;
+      });
     }
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('收藏')),
+      appBar: AppBar(title: Text(context.tr('收藏', 'Favorites'))),
       body: RefreshIndicator(
         onRefresh: _load,
         child: ListView(
+          physics: const AlwaysScrollableScrollPhysics(),
           padding: const EdgeInsets.all(12),
           children: [
-            const Text('收藏優惠券', style: TextStyle(fontWeight: FontWeight.bold)),
-            if (_coupons.isEmpty) const Text('暫時沒有收藏的優惠券。'),
+            if (_hasError) ListTile(
+              title: Text(context.tr('未能載入收藏', 'Could not load favorites')),
+              trailing: TextButton(onPressed: _load, child: Text(context.tr('重試', 'Retry'))),
+            ),
+            if (_loading && _coupons.isEmpty && _shops.isEmpty)
+              const SkeletonBox(height: 72),
+            Text(context.tr('收藏優惠券', 'Saved coupons'), style: const TextStyle(fontWeight: FontWeight.bold)),
+            if (!_loading && !_hasError && _coupons.isEmpty) Text(context.tr('暫時沒有收藏的優惠券。', 'No saved coupons yet.')),
             ..._coupons.map((c) => Card(
                   margin: const EdgeInsets.only(top: 8),
                   child: ListTile(
@@ -581,12 +620,15 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
                         color: CgColors.primary),
                     title: Text(c.name),
                     subtitle: Text(c.shopName),
-                    onTap: () => widget.onOpenCoupon(c),
+                    onTap: () async {
+                      await widget.onOpenCoupon(c);
+                      if (mounted) await _load();
+                    },
                   ),
                 )),
             const SizedBox(height: 16),
-            const Text('收藏商店', style: TextStyle(fontWeight: FontWeight.bold)),
-            if (_shops.isEmpty) const Text('暫時沒有收藏的商店。'),
+            Text(context.tr('收藏商店', 'Saved stores'), style: const TextStyle(fontWeight: FontWeight.bold)),
+            if (!_loading && !_hasError && _shops.isEmpty) Text(context.tr('暫時沒有收藏的商店。', 'No saved stores yet.')),
             ..._shops.map((s) => Card(
                   margin: const EdgeInsets.only(top: 8),
                   child: ListTile(
@@ -594,6 +636,11 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
                         const Icon(Icons.store, color: CgColors.primary),
                     title: Text(s.name),
                     subtitle: Text(s.address),
+                    trailing: const Icon(Icons.chevron_right),
+                    onTap: () async {
+                      await widget.onOpenShop(s);
+                      if (mounted) await _load();
+                    },
                   ),
                 )),
           ],

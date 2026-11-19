@@ -9,6 +9,7 @@ export 'discovery.dart' show DiscoveryScreen;
 import '../models.dart';
 import '../theme.dart';
 import '../widgets/widgets.dart';
+import '../widgets/favorite_control.dart';
 import 'bargain.dart';
 import 'packages.dart';
 import 'reviews_admin.dart';
@@ -830,7 +831,12 @@ class _CouponDetailScreenState extends State<CouponDetailScreen> {
       return PackageDetailScreen(api: widget.api, packageId: c.packageId!);
     }
     return Scaffold(
-      appBar: AppBar(title: const Text('優惠券詳情')),
+      appBar: AppBar(
+        title: Text(context.tr('優惠券詳情', 'Coupon details')),
+        actions: [
+          FavoriteControl(api: widget.api, id: c.id, initial: c.isFavorite),
+        ],
+      ),
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
@@ -923,7 +929,12 @@ class ShopDetailScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: Text(shop.name)),
+      appBar: AppBar(
+        title: Text(shop.name),
+        actions: [
+          FavoriteControl(api: api, id: shop.id, shop: true, initial: shop.isFavorite),
+        ],
+      ),
       body: FutureBuilder<Map<String, dynamic>>(
         future: api.shopDetails(shop.id),
         builder: (context, snap) {
@@ -1002,7 +1013,7 @@ class CategoryScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text('分類')),
-      body: CouponResults(load: () => api.classification(categoryId: categoryId), onOpenCoupon: onOpenCoupon),
+      body: CouponResults(api: api, load: () => api.classification(categoryId: categoryId), onOpenCoupon: onOpenCoupon),
     );
   }
 }
@@ -1020,7 +1031,7 @@ class LimitedTimeScreen extends StatelessWidget {
       appBar: AppBar(title: Text(context.tr('限時','Limited Time'))),
       body: Column(children: [
         _LimitedNotification(key: ValueKey(api.isLoggedIn), api: api),
-        Expanded(child: CouponResults(load: api.limitedTime, onOpenCoupon: onOpenCoupon)),
+        Expanded(child: CouponResults(api: api, load: api.limitedTime, onOpenCoupon: onOpenCoupon)),
       ]),
     );
   }
