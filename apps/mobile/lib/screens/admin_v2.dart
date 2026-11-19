@@ -887,6 +887,28 @@ class _SettlementsScreenState extends State<SettlementsScreen> {
               OutlinedButton(onPressed: _acting ? null : () => _recordTransfer(s),
                   child: Text((s['outstanding_net'] as num) < 0 ? '登記已收回' : '登記已補付')),
             const Divider(),
+            const Text('發票', style: TextStyle(fontWeight: FontWeight.bold)),
+            _drawerRow('已開票', _moneyText(s['invoice_issued_amount'])),
+            _drawerRow('已沖紅', _moneyText(s['invoice_credited_amount'])),
+            _drawerRow('開票淨額', _moneyText(s['invoice_net_issued_amount'])),
+            _drawerRow('申請中', _moneyText(s['invoice_reserved_amount'])),
+            _drawerRow('可開票', _moneyText(s['invoice_available_amount'])),
+            if ((s['invoice_excess_amount'] as num? ?? 0) > 0)
+              _drawerRow('待處理超額', _moneyText(s['invoice_excess_amount'])),
+            for (final inv in s['invoices'] as List? ?? []) ...[
+              Text("發票 #${inv['id']} · ${inv['title']} · ${_moneyText(inv['amount'])} · ${switch (inv['status']) { 'issued' => '已開具', 'pending' => '待審核', 'approved' => '已批准', 'rejected' => '已拒絕', _ => inv['status'] }}"),
+              if (inv['status'] == 'issued') ...[
+                Text("已沖紅 ${_moneyText(inv['credited_amount'])} · 開票淨額 ${_moneyText(inv['net_issued_amount'])}"),
+                for (final credit in inv['credits'] as List? ?? [])
+                  Text("沖紅 ${_moneyText(credit['amount'])} · ${credit['reference']}"),
+              ],
+            ],
+            if (widget.merchant && (s['invoice_available_amount'] as num? ?? 0) > 0)
+              OutlinedButton(
+                onPressed: _acting ? null : () => _requestInvoice(s),
+                child: const Text('申請發票'),
+              ),
+            const Divider(),
             for (final line in s['items'] as List? ?? []) ...[
               Text("核銷 #${line['redemption_id']} · ${_moneyText(line['amount'])} · 佣金 ${_moneyText(line['commission'])}"),
               if (line['reversal'] != null)
@@ -904,6 +926,46 @@ class _SettlementsScreenState extends State<SettlementsScreen> {
         ),
       ),
     );
+  }
+
+  Future<void> _requestInvoice(Map<String, dynamic> s) async {
+    var title = '';
+    var amount = '${s['invoice_available_amount']}';
+    var taxId = '';
+    final result = await showDialog<Map<String, dynamic>>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('申請發票'),
+        content: SingleChildScrollView(child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text('可開票 ${_moneyText(s['invoice_available_amount'])}'),
+            TextField(maxLength: 160, onChanged: (value) => title = value,
+                decoration: const InputDecoration(labelText: '發票抬頭')),
+            TextFormField(initialValue: amount, onChanged: (value) => amount = value,
+                keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                decoration: const InputDecoration(labelText: '申請金額')),
+            TextField(maxLength: 60, onChanged: (value) => taxId = value,
+                decoration: const InputDecoration(labelText: '稅號（選填）')),
+          ],
+        )),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('取消')),
+          TextButton(onPressed: () => Navigator.pop(ctx, {
+            'title': title.trim(), 'amount': double.tryParse(amount.trim()),
+            'tax_id': taxId.trim(), 'shop_id': s['shop_id'], 'settlement_id': s['id'],
+          }), child: const Text('提交申請')),
+        ],
+      ),
+    );
+    if (!mounted || result == null) return;
+    final value = result['amount'] as double?;
+    if ((result['title'] as String).isEmpty || value == null || value <= 0) {
+      showCgToast(context, '請填寫發票抬頭和有效金額');
+      return;
+    }
+    await _act(() => widget.api.createInvoice(result));
+    if (mounted) await _detail(s['id'] as int, open: false);
   }
 
   String _ledgerTime(String? raw) {
@@ -1246,6 +1308,7 @@ class _ReconciliationScreenState extends State<ReconciliationScreen> {
                           '#${r['id']} · ${r['shop_name']} · ${r['period']}'),
                       subtitle: Text(
                           '有效核銷 ${r['redemption_count']} · 有效結算行 ${r['settlement_line_count']} · 差異 ${r['discrepancy_count']}'
+                          '${r['financials'] == null || r['financials']['invoice_issued_amount'] == null ? '' : '\n已開票 ${formatHkd(r['financials']['invoice_issued_amount'])} · 已沖紅 ${formatHkd(r['financials']['invoice_credited_amount'])} · 開票淨額 ${formatHkd(r['financials']['invoice_net_issued_amount'])} · 可開票 ${formatHkd(r['financials']['invoice_available_amount'])} · 超額 ${formatHkd(r['financials']['invoice_excess_amount'])}'}'
                           '${r['financials'] == null ? '' : '\n平台佣金 ${formatHkd(r['financials']['commission'])} · 商家應收 ${formatHkd(r['financials']['net_amount'])} · 已付淨額 ${formatHkd(r['financials']['transferred_net'])} · ${(r['financials']['outstanding_net'] as num) < 0 ? '待收回' : '待付'} ${formatHkd((r['financials']['outstanding_net'] as num).abs().toDouble())}'}'),
                     ),
                   )),
@@ -1275,6 +1338,10 @@ class InvoicesScreen extends StatefulWidget {
 class _InvoicesScreenState extends State<InvoicesScreen> {
   List<dynamic> _items = [];
   bool _loading = true;
+  bool _acting = false;
+  bool _canWrite = false;
+  int _page = 1;
+  int _totalPages = 1;
 
   @override
   void initState() {
@@ -1285,10 +1352,12 @@ class _InvoicesScreenState extends State<InvoicesScreen> {
   Future<void> _load() async {
     setState(() => _loading = true);
     try {
-      final data = await widget.api.invoices();
+      final data = await widget.api.get('/admin/invoices', query: {'page': '$_page'});
       if (!mounted) return;
       setState(() {
         _items = data['invoices'] as List<dynamic>;
+        _canWrite = data['can_write'] == true;
+        _totalPages = data['total_pages'] as int? ?? 1;
         _loading = false;
       });
     } on ApiException catch (e) {
@@ -1299,13 +1368,79 @@ class _InvoicesScreenState extends State<InvoicesScreen> {
   }
 
   Future<void> _act(Future<Map<String, dynamic>> Function() call) async {
+    if (_acting) return;
+    setState(() => _acting = true);
     try {
       await call();
-      if (mounted) showCgToast(context, '已更新');
-      _load();
+      if (!mounted) return;
+      showCgToast(context, '已更新');
+      await _load();
     } on ApiException catch (e) {
       if (mounted) showCgToast(context, e.message);
+    } finally {
+      if (mounted) setState(() => _acting = false);
     }
+  }
+
+  String _status(String status) => switch (status) {
+        'pending' => '待審核',
+        'approved' => '已批准',
+        'issued' => '已開具',
+        'rejected' => '已拒絕',
+        _ => status,
+      };
+
+  String _money(dynamic value) => formatHkd((value as num? ?? 0).toDouble());
+
+  Future<void> _showInvoice(Map<String, dynamic> inv) async {
+    await showDialog<void>(context: context, builder: (ctx) => AlertDialog(
+      title: Text('發票 #${inv['id']}'),
+      content: SingleChildScrollView(child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('${inv['title']} · ${inv['shop_name']}'),
+          Text('狀態 ${_status('${inv['status']}')}'),
+          Text('申請金額 ${_money(inv['amount'])}'),
+          if (inv['status'] == 'issued') ...[
+            Text('已沖紅 ${_money(inv['credited_amount'])}'),
+            Text('開票淨額 ${_money(inv['net_issued_amount'])}'),
+            for (final credit in inv['credits'] as List? ?? [])
+              Text('沖紅 ${_money(credit['amount'])} · ${credit['reference']}'),
+          ],
+        ],
+      )),
+      actions: [TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('關閉'))],
+    ));
+  }
+
+  Future<void> _recordCredit(Map<String, dynamic> inv) async {
+    var amount = '';
+    var reference = '';
+    final data = await showDialog<Map<String, String>>(context: context, builder: (ctx) => AlertDialog(
+      title: const Text('登記已沖紅'),
+      content: SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min, children: [
+        Text('開票淨額 ${_money(inv['net_issued_amount'])}'),
+        TextField(onChanged: (value) => amount = value,
+          keyboardType: const TextInputType.numberWithOptions(decimal: true),
+          decoration: const InputDecoration(labelText: '已沖紅金額')),
+        TextField(maxLength: 120, onChanged: (value) => reference = value,
+          decoration: const InputDecoration(labelText: '沖紅憑證編號')),
+      ])),
+      actions: [
+        TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('取消')),
+        TextButton(onPressed: () => Navigator.pop(ctx, {'amount': amount.trim(), 'reference': reference.trim()}),
+          child: const Text('確認登記')),
+      ],
+    ));
+    if (!mounted || data == null) return;
+    final value = double.tryParse(data['amount']!);
+    if (value == null || value <= 0 || data['reference']!.isEmpty) {
+      showCgToast(context, '請填寫有效金額和沖紅憑證編號');
+      return;
+    }
+    await _act(() => widget.api.post('/admin/invoices/${inv['id']}/credits',
+      body: {'amount': value, 'reference': data['reference']}));
   }
 
   @override
@@ -1321,37 +1456,41 @@ class _InvoicesScreenState extends State<InvoicesScreen> {
               const Center(child: CircularProgressIndicator())
             else
               ..._items.map((inv) => Card(
-                    margin: const EdgeInsets.only(top: 8),
-                    child: ListTile(
-                      title: Text('#${inv['id']} · ${inv['title']}'),
-                      subtitle: Text(
-                          '${inv['shop_name']} · 金額 ${inv['amount']} · ${inv['status']}'),
-                      trailing: PopupMenuButton<String>(
-                        onSelected: (v) {
-                          final id = inv['id'] as int;
-                          switch (v) {
-                            case 'approve':
-                              _act(() => widget.api.approveInvoice(id));
-                            case 'reject':
-                              _act(() => widget.api
-                                  .rejectInvoice(id, '資料不全，請補充'));
-                            case 'issue':
-                              _act(() => widget.api.issueInvoice(id));
-                          }
-                        },
-                        itemBuilder: (_) => const [
-                          PopupMenuItem(value: 'approve', child: Text('批准')),
-                          PopupMenuItem(value: 'reject', child: Text('拒絕')),
-                          PopupMenuItem(value: 'issue', child: Text('開具')),
-                        ],
-                      ),
+                margin: const EdgeInsets.only(top: 8),
+                child: ListTile(
+                  title: Text('#${inv['id']} · ${inv['title']}'),
+                  subtitle: Text('${inv['shop_name']} · ${_money(inv['amount'])} · ${_status('${inv['status']}')}'
+                    '${inv['status'] == 'issued' ? '\n已沖紅 ${_money(inv['credited_amount'])} · 開票淨額 ${_money(inv['net_issued_amount'])}' : ''}'),
+                  onTap: () => _showInvoice(inv as Map<String, dynamic>),
+                  trailing: !_canWrite || inv['status'] == 'rejected'
+                    || (inv['status'] == 'issued' && (inv['net_issued_amount'] as num? ?? 0) <= 0)
+                    ? null : PopupMenuButton<String>(
+                      enabled: !_acting,
+                      onSelected: (v) {
+                        final id = inv['id'] as int;
+                        switch (v) {
+                          case 'approve': _act(() => widget.api.approveInvoice(id));
+                          case 'reject': _act(() => widget.api.rejectInvoice(id, '資料不全，請補充'));
+                          case 'issue': _act(() => widget.api.issueInvoice(id));
+                          case 'credit': _recordCredit(inv as Map<String, dynamic>);
+                        }
+                      },
+                      itemBuilder: (_) => [
+                        if (inv['status'] == 'pending') const PopupMenuItem(value: 'approve', child: Text('批准')),
+                        if (inv['status'] == 'pending' || inv['status'] == 'approved')
+                          const PopupMenuItem(value: 'reject', child: Text('拒絕')),
+                        if (inv['status'] == 'approved') const PopupMenuItem(value: 'issue', child: Text('開具')),
+                        if (inv['status'] == 'issued') const PopupMenuItem(value: 'credit', child: Text('登記已沖紅')),
+                      ],
                     ),
-                  )),
+                ),
+              )),
             if (!_loading && _items.isEmpty)
-              const Padding(
-                padding: EdgeInsets.only(top: 24),
-                child: Text('暫時沒有發票申請'),
-              ),
+              const Padding(padding: EdgeInsets.only(top: 24), child: Text('暫時沒有發票申請')),
+            if (_totalPages > 1) Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+              TextButton(onPressed: _page <= 1 ? null : () { _page--; _load(); }, child: const Text('上一頁')),
+              TextButton(onPressed: _page >= _totalPages ? null : () { _page++; _load(); }, child: const Text('下一頁')),
+            ]),
           ],
         ),
       ),

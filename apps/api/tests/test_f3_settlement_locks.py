@@ -579,3 +579,20 @@ def test_generate_during_revocation_posts_sale_and_credit_once(client, monkeypat
     row = client.get(f"/api/v3/admin/settlements/{sid}", headers=finance).json()["settlement"]
     assert row["redemption_count"] == 0 and row["net_amount"] == 0
     assert len(row["items"]) == 1 and row["items"][0]["reversal"]["amount"] == -80
+
+
+@pytest.mark.skipif(BACKEND != "postgres", reason="exercises PostgreSQL invoice credit locking")
+def test_concurrent_invoice_credits_cannot_exceed_issued_amount(client):
+    finance = _finance_headers(client)
+    statement = _pending_settlement(client, "invoice-credit-pg@example.com", 10, 5)
+    response = client.post("/api/v3/admin/invoices", headers=finance, json={
+        "shop_id": 5, "settlement_id": statement["id"], "amount": 90, "title": "Test"})
+    assert response.status_code == 201, response.text
+    path = "/api/v3/admin/invoices/" + str(response.json()["invoice"]["id"])
+    assert client.post(path + "/approve", headers=finance).status_code == 200
+    assert client.post(path + "/issue", headers=finance).status_code == 200
+    results = _run_two(lambda i, tc: tc.post(path + "/credits", headers=finance,
+                       json={"amount": 60, "reference": f"CN-{i}"}))
+    assert sorted(r.status_code for r in results) == [200, 409]
+    issued = client.get(path, headers=finance).json()["invoice"]
+    assert issued["credited_amount"] == 60 and len(issued["credits"]) == 1

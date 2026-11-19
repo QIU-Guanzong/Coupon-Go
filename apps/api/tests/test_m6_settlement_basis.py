@@ -519,3 +519,119 @@ def test_rescan_in_new_period_waits_for_its_own_statement(client):
     assert client.get(path, headers=customer).json()["order"]["settlement_status"] == "pending"
     assert _generate(client, finance, 14).status_code == 201
     assert client.get(path, headers=customer).json()["order"]["net_amount"] == 135
+
+
+def test_issued_invoice_partial_credits_and_reconciliation(client):
+    finance = _finance_headers(client)
+    email = "issued-credit@example.com"
+    rid, order = _redeem_package(client, email, 15, price=100)
+    sid = _generate(client, finance, 15).json()["settlement"]["id"]
+    statement_url = f"/api/v3/admin/settlements/{sid}"
+    invoice_url = "/api/v3/admin/invoices"
+    request = {"shop_id": 15, "settlement_id": sid, "amount": 90, "title": "Receipt"}
+    invoice = client.post(invoice_url, json=request, headers=finance)
+    assert invoice.status_code == 201, invoice.text
+    path = invoice_url + "/" + str(invoice.json()["invoice"]["id"])
+    assert client.post(path + "/approve", headers=finance).status_code == 200
+    assert client.post(path + "/issue", headers=finance).status_code == 200
+    _revoke(client, rid)
+    customer = _login(client, email)
+    assert client.post(f"/api/v3/orders/{order['id']}/refund", json={}, headers=customer).status_code == 200
+    s = client.get(statement_url, headers=finance).json()["settlement"]
+    assert (s["invoice_issued_amount"], s["invoice_net_issued_amount"], s["invoice_available_amount"],
+            s["invoice_excess_amount"]) == (90, 90, 0, 90)
+    report = _run_recon(client, finance, 15)
+    assert any(d["discrepancy_type"] == "invoice_over_settlement" and d["actual_amount"] == 90
+               for d in report["discrepancies"])
+    body = {"amount": 40, "reference": "CN-1"}
+    assert client.post(path + "/credits", json=body, headers=customer).status_code == 403
+    for _ in range(2):
+        assert client.post(path + "/credits", json=body, headers=finance).status_code == 200
+    assert client.post(path + "/credits", json={"amount": 41, "reference": "CN-1"}, headers=finance).status_code == 409
+    assert client.post(path + "/credits", json={"amount": 51, "reference": "CN-2"}, headers=finance).status_code == 409
+    s = client.get(statement_url, headers=finance).json()["settlement"]
+    assert (s["invoice_issued_amount"], s["invoice_credited_amount"], s["invoice_net_issued_amount"],
+            s["invoice_excess_amount"], s["invoice_available_amount"]) == (90, 40, 50, 50, 0)
+    assert client.post(path + "/credits", json={"amount": 50, "reference": "CN-2"}, headers=finance).status_code == 200
+    rep = _run_recon(client, finance, 15)
+    assert rep["status"] == "resolved" and rep["financials"]["invoice_excess_amount"] == 0
+    i = client.get(path, headers=finance).json()["invoice"]
+    assert i["amount"] == 90 and i["credited_amount"] == 90 and len(i["credits"]) == 2
+
+
+def test_simultaneous_credits_cannot_exceed_invoice(client):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+
+    finance = _finance_headers(client)
+    _redeem_package(client, "credit-race@example.com", 8, price=100)
+    sid = _generate(client, finance, 8).json()["settlement"]["id"]
+    response = client.post("/api/v3/admin/invoices", headers=finance,
+                           json={"shop_id": 8, "settlement_id": sid, "amount": 90, "title": "Race"})
+    assert response.status_code == 201, response.text
+    path = f"/api/v3/admin/invoices/{response.json()['invoice']['id']}"
+    assert client.post(path + "/approve", headers=finance).status_code == 200
+    assert client.post(path + "/issue", headers=finance).status_code == 200
+    barrier = Barrier(2)
+
+    def credit(reference):
+        with TestClient(app) as local:
+            barrier.wait(timeout=10)
+            return local.post(path + "/credits", headers=finance, json={"amount": 60, "reference": reference})
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(credit, ["credit-a", "credit-b"]))
+    assert sorted(r.status_code for r in results) == [200, 409]
+    inv = client.get(path, headers=finance).json()["invoice"]
+    assert inv["credited_amount"] == 60 and len(inv["credits"]) == 1
+
+
+def test_pending_invoice_reservation_after_redemption_reversal(client):
+    finance = _finance_headers(client)
+    rid, _ = _redeem_package(client, "invoice-reservation@example.com", 17, price=100)
+    statement = _generate(client, finance, 17).json()["settlement"]
+    url = "/api/v3/admin/invoices"
+    ids = []
+    for amount in (40, 50):
+        response = client.post(url, headers=finance, json={
+            "shop_id": 17, "settlement_id": statement["id"], "amount": amount, "title": "Test"})
+        assert response.status_code == 201, response.text
+        ids.append(response.json()["invoice"]["id"])
+    assert client.post(f"{url}/{ids[0]}/approve", headers=finance).status_code == 200
+    assert client.post(f"{url}/{ids[0]}/issue", headers=finance).status_code == 200
+    _revoke(client, rid)
+    summary = client.get(f"/api/v3/admin/settlements/{statement['id']}", headers=finance).json()["settlement"]
+    assert (summary["invoice_net_issued_amount"], summary["invoice_reserved_amount"],
+            summary["invoice_available_amount"], summary["invoice_excess_amount"]) == (40, 50, 0, 40)
+    assert client.post(f"{url}/{ids[1]}/approve", headers=finance).status_code == 409
+    assert client.post(f"{url}/{ids[1]}/reject", headers=finance,
+                       json={"reason": "Settlement changed"}).status_code == 200
+    summary = client.get(f"/api/v3/admin/settlements/{statement['id']}", headers=finance).json()["settlement"]
+    assert summary["invoice_reserved_amount"] == 0 and summary["invoice_excess_amount"] == 40
+
+
+def test_concurrent_invoice_issue_and_reject_are_serialized(client):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+
+    finance = _finance_headers(client)
+    _redeem_package(client, "invoice-issue-reject@example.com", 18, price=100)
+    sid = _generate(client, finance, 18).json()["settlement"]["id"]
+    response = client.post("/api/v3/admin/invoices", headers=finance, json={
+        "shop_id": 18, "settlement_id": sid, "amount": 90, "title": "Concurrent test"})
+    assert response.status_code == 201, response.text
+    path = f"/api/v3/admin/invoices/{response.json()['invoice']['id']}"
+    assert client.post(path + "/approve", headers=finance).status_code == 200
+    barrier = Barrier(2)
+
+    def run(action):
+        with TestClient(app) as local:
+            barrier.wait(timeout=10)
+            return local.post(path + "/" + action, headers=finance,
+                              json={"reason": "Review"} if action == "reject" else None)
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        issue, reject = pool.map(run, ["issue", "reject"])
+    assert sorted([issue.status_code, reject.status_code]) == [200, 400]
+    invoice = client.get(path, headers=finance).json()["invoice"]
+    assert invoice["status"] == ("issued" if issue.status_code == 200 else "rejected")

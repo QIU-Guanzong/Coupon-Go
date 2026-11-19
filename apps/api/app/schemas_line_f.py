@@ -46,10 +46,15 @@ class DiscrepancyResolveIn(BaseModel):
 class InvoiceCreateIn(BaseModel):
     shop_id: int
     settlement_id: Optional[int] = None
-    amount: float = Field(gt=0)
+    amount: Decimal = Field(gt=0, max_digits=12, decimal_places=2)
     title: str = Field(min_length=1, max_length=160)
     tax_id: str = Field(default="", max_length=60)
     invoice_type: str = Field(default="receipt", max_length=20)
+
+
+class InvoiceCreditIn(BaseModel):
+    amount: Decimal = Field(gt=0, max_digits=12, decimal_places=2)
+    reference: str = Field(min_length=1, max_length=120)
 
 
 class InvoiceRejectIn(BaseModel):
