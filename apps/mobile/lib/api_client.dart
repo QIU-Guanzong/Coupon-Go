@@ -153,7 +153,7 @@ class ApiClient extends ChangeNotifier {
           as List<dynamic>;
 
   // ---- wallet / points ----
-  Future<void> claimCoupon(int couponId) =>
+  Future<Map<String, dynamic>> claimCoupon(int couponId) =>
       post('/new-favorite-coupon', query: {'coupon_id': '$couponId'});
   Future<Map<String, dynamic>> wallet({int? status, int page = 1}) async =>
       get('/get-favorite-coupons-list', query: {

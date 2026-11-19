@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 
 from .. import models
 from ..database import get_db
-from ..deps import get_current_user
+from ..deps import get_current_user, get_optional_user
 from ..serializers import coupon_out, shop_out
 
 router = APIRouter()
@@ -216,12 +216,15 @@ def get_branches(shop_id: int, db: Session = Depends(get_db)):
 
 
 @router.get("/coupon-details-new")
-def coupon_details(coupon_id: int, db: Session = Depends(get_db)):
+def coupon_details(coupon_id: int, db: Session = Depends(get_db),
+                   user: models.User | None = Depends(get_optional_user)):
     c = db.query(models.Coupon).filter(models.Coupon.id == coupon_id).first()
     if c is None:
         raise HTTPException(status_code=404, detail="找不到此優惠券")
     shop = db.query(models.Shop).filter(models.Shop.id == c.shop_id).first()
-    return {"coupon": coupon_out(db, c),
+    claimed = user is not None and db.query(models.WalletItem.id).filter_by(
+        user_id=user.id, coupon_id=c.id).first() is not None
+    return {"is_claimed": claimed, "coupon": coupon_out(db, c),
             "shop": shop_out(db, shop) if shop else None}
 
 

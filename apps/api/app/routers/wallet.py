@@ -27,8 +27,7 @@ def get_wallet(page: int = Query(1, ge=1), status: int = Query(None),
     if status in (1, 2, 3):
         items = [i for i in items if i.status == status]
     items.sort(key=lambda i: (
-        db.query(models.Coupon).filter(models.Coupon.id == i.coupon_id).first().valid_to
-        if sortby == "expiry" else i.claimed_at
+        i.coupon.valid_to if sortby == "expiry" else i.claimed_at, i.id
     ))
     per_page = 20
     total = len(items)
@@ -39,6 +38,15 @@ def get_wallet(page: int = Query(1, ge=1), status: int = Query(None),
         "total": total,
         "items": [wallet_out(db, i) for i in page_items],
     }
+
+
+@router.get("/wallet/items/{item_id}/status")
+def wallet_item_status(item_id: int, user: models.User = Depends(get_current_user),
+                       db: Session = Depends(get_db)):
+    item = db.query(models.WalletItem).filter_by(id=item_id, user_id=user.id).first()
+    if item is None:
+        raise HTTPException(status_code=404, detail="找不到此優惠券")
+    return {"id": item.id, "status": _refresh_expiry(db, item).status}
 
 
 @router.get("/get-user-record-list")

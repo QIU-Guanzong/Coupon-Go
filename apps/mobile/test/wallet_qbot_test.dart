@@ -1,0 +1,66 @@
+import 'dart:async';
+
+import 'package:coupon_go/api_client.dart';
+import 'package:coupon_go/language.dart';
+import 'package:coupon_go/screens/account.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter_test/flutter_test.dart';
+
+class JourneyApi extends ApiClient {
+  final reply = Completer<Map<String, dynamic>>();
+
+  @override
+  Future<Map<String, dynamic>> post(String path,
+          {Map<String, dynamic>? body, Map<String, String>? query}) =>
+      reply.future;
+
+  @override
+  Future<Map<String, dynamic>> get(String path,
+      {Map<String, String>? query}) async {
+    if (path == '/get-favorite-coupons-list') {
+      return {
+        'items': [
+          {'id': 8, 'coupon_name': 'Coffee coupon', 'status': 1}
+        ],
+        'total_pages': 1
+      };
+    }
+    throw ApiException(503, 'Offline');
+  }
+}
+
+void main() {
+  testWidgets('cleared conversation ignores a pending reply', (tester) async {
+    final api = JourneyApi();
+    await tester.pumpWidget(LanguageScope(
+        language: AppLanguage(),
+        child: MaterialApp(home: QBotScreen(api: api))));
+    await tester.enterText(find.byType(TextField), '找咖啡券');
+    await tester.tap(find.byTooltip('送出'));
+    await tester.pump();
+    expect(find.text('Q仔正在回覆…'), findsOneWidget);
+    await tester.tap(find.byTooltip('清除對話'));
+    api.reply.complete({'answer': 'late reply'});
+    await tester.pumpAndSettle();
+    expect(find.text('late reply'), findsNothing);
+    expect(find.text('找咖啡券'), findsNothing);
+  });
+
+  testWidgets('wallet can present a coupon when balances are unavailable',
+      (tester) async {
+    int? presented;
+    await tester.pumpWidget(MaterialApp(
+        home: Scaffold(
+            body: WalletScreen(
+      api: JourneyApi(),
+      onShowQr: (item) async {
+        presented = item.id;
+      },
+    ))));
+    await tester.pumpAndSettle();
+    expect(find.text('Coffee coupon'), findsOneWidget);
+    await tester.tap(find.text('出示'));
+    await tester.pumpAndSettle();
+    expect(presented, 8);
+  });
+}

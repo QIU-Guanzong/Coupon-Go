@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -297,6 +298,7 @@ class _ScanScreenState extends State<ScanScreen> {
   // Line A two-step redemption: prepare (read-only check) -> confirm consume.
   Map<String, dynamic>? _prepared;
   String? _pendingCode;
+  String? _attemptKey;
   int? _lastRedemptionId;
   bool _revoking = false;
   // UI_SPEC §8: full-screen success / failure result pages.
@@ -334,8 +336,14 @@ class _ScanScreenState extends State<ScanScreen> {
   }
 
   Future<void> _prepare(String code) async {
-    if (_handled) return;
-    _handled = true;
+    if (_handled || _prepared != null || _errorReason != null || _successCouponName != null) return;
+    code = code.trim();
+    if (!RegExp(r'^[0-9]{6}$').hasMatch(code)) {
+      setState(() => _errorReason = '請輸入券上的六位兌換碼');
+      return;
+    }
+    FocusManager.instance.primaryFocus?.unfocus();
+    setState(() => _handled = true);
     try {
       final res = await widget.api.prepareScan(code);
       if (!mounted) return;
@@ -343,6 +351,8 @@ class _ScanScreenState extends State<ScanScreen> {
         if (res['can_redeem'] == true) {
           _prepared = res;
           _pendingCode = code;
+          final random = Random.secure();
+          _attemptKey = List.generate(16, (_) => random.nextInt(256).toRadixString(16).padLeft(2, '0')).join();
           _errorReason = null;
         } else {
           // Invalid / already used / other-shop code: full-screen red page.
@@ -354,27 +364,28 @@ class _ScanScreenState extends State<ScanScreen> {
       });
     } on ApiException catch (e) {
       if (mounted) setState(() => _errorReason = e.message);
-    }
-    Future.delayed(const Duration(seconds: 2), () {
+    } catch (_) {
+      if (mounted) setState(() => _errorReason = '未能連線，請重試');
+    } finally {
       if (mounted) setState(() => _handled = false);
-    });
+    }
   }
 
   Future<void> _confirmConsume() async {
     final code = _pendingCode;
     final token = _prepared?['prepare_token'] as String?;
-    if (code == null || token == null) return;
+    if (_handled || code == null || token == null || _attemptKey == null) return;
     setState(() => _handled = true);
     try {
       final res = await widget.api.scanCoupon(code,
           prepareToken: token,
-          idempotencyKey: 'scan-${DateTime.now().millisecondsSinceEpoch}');
+          idempotencyKey: _attemptKey!);
       if (!mounted) return;
       setState(() {
         _successCouponName =
             res['coupon_name'] as String? ?? _prepared?['coupon_name'] as String? ?? '';
         _lastRedemptionId = res['redemption_id'] as int?;
-        _redeemedAt = DateTime.now();
+        _redeemedAt = DateTime.tryParse(res['scanned_at'] as String? ?? '') ?? DateTime.now();
         _prepared = null;
         _pendingCode = null;
         _errorReason = null;
@@ -394,13 +405,17 @@ class _ScanScreenState extends State<ScanScreen> {
         setState(() {});
       });
     } on ApiException catch (e) {
-      if (mounted) {
+      if (mounted && e.status >= 500) {
+        showCgToast(context, '未能確認結果，請再次確認核銷');
+      } else if (mounted) {
         setState(() {
           _errorReason = e.message;
           _prepared = null;
           _pendingCode = null;
         });
       }
+    } catch (_) {
+      if (mounted) showCgToast(context, '未能確認結果，請再次確認核銷');
     } finally {
       if (mounted) setState(() => _handled = false);
     }
@@ -412,15 +427,15 @@ class _ScanScreenState extends State<ScanScreen> {
     final ok = await showDialog<bool>(
       context: context,
       builder: (c) => AlertDialog(
-        title: const Text('撤销核銷'),
-        content: const Text('撤销後優惠券退回未使用，確定撤销嗎？'),
+        title: const Text('撤銷核銷'),
+        content: const Text('撤銷後優惠券退回未使用，確定撤銷嗎？'),
         actions: [
           TextButton(
               onPressed: () => Navigator.pop(c, false),
               child: const Text('取消')),
           TextButton(
               onPressed: () => Navigator.pop(c, true),
-              child: const Text('確認撤销')),
+              child: const Text('確認撤銷')),
         ],
       ),
     );
@@ -429,7 +444,7 @@ class _ScanScreenState extends State<ScanScreen> {
     try {
       await widget.api.revokeRedemption(rid);
       if (!mounted) return;
-      showCgToast(context, '核銷已撤销，優惠券已退回未使用');
+      showCgToast(context, '核銷已撤銷，優惠券已退回未使用');
       _resetScan();
     } on ApiException catch (e) {
       if (mounted) showCgToast(context, e.message);
@@ -484,8 +499,8 @@ class _ScanScreenState extends State<ScanScreen> {
               child: OutlinedButton(
                 onPressed: _revoking ? null : _revoke,
                 child: Text(_revoking
-                    ? '撤销中…'
-                    : '撤销核銷（剩餘 ${formatCountdown(Duration(seconds: left))}）'),
+                    ? '撤銷中…'
+                    : '撤銷核銷（剩餘 ${formatCountdown(Duration(seconds: left))}）'),
               ),
             ),
           const SizedBox(height: 8),
@@ -546,12 +561,18 @@ class _ScanScreenState extends State<ScanScreen> {
           ? _errorPage()
           : _successCouponName != null
               ? _successPage()
-              : Column(
+              : ListView(
                   children: [
-                    Expanded(
+                    if (_prepared == null) SizedBox(
+                      height: MediaQuery.sizeOf(context).height * .48,
                       child: Stack(
                         children: [
                           MobileScanner(
+                            errorBuilder: (_, __, ___) => const ColoredBox(
+                              color: Colors.black,
+                              child: Center(child: Text('相機未能使用，請手動輸入兌換碼',
+                                style: TextStyle(color: Colors.white))),
+                            ),
                             onDetect: (capture) {
                               final value =
                                   capture.barcodes.firstOrNull?.rawValue;
@@ -581,7 +602,7 @@ class _ScanScreenState extends State<ScanScreen> {
                         ],
                       ),
                     ),
-                    const Padding(
+                    if (_prepared == null) const Padding(
                       padding: EdgeInsets.all(8),
                       child: Text('請將 QR 碼放入方框中並進行掃描\n先預核銷確認券面與門店，再按確認核銷'),
                     ),
@@ -620,13 +641,13 @@ class _ScanScreenState extends State<ScanScreen> {
                                   children: [
                                     Expanded(
                                       child: ElevatedButton(
-                                        onPressed: _confirmConsume,
-                                        child: const Text('確認核銷'),
+                                        onPressed: _handled ? null : _confirmConsume,
+                                        child: Text(_handled ? '核銷中…' : '確認核銷'),
                                       ),
                                     ),
                                     const SizedBox(width: 8),
                                     TextButton(
-                                      onPressed: () => setState(() {
+                                      onPressed: _handled ? null : () => setState(() {
                                         _prepared = null;
                                         _pendingCode = null;
                                       }),
@@ -639,13 +660,15 @@ class _ScanScreenState extends State<ScanScreen> {
                           ),
                         ),
                       ),
-                    Padding(
+                    if (_prepared == null) Padding(
                       padding: const EdgeInsets.all(16),
                       child: Row(
                         children: [
                           Expanded(
                             child: TextField(
                               controller: _code,
+                              inputFormatters: [FilteringTextInputFormatter.digitsOnly, LengthLimitingTextInputFormatter(6)],
+                              onSubmitted: _prepare,
                               keyboardType: TextInputType.number,
                               decoration: const InputDecoration(
                                   hintText: '或手動輸入兌換碼'),
@@ -653,7 +676,8 @@ class _ScanScreenState extends State<ScanScreen> {
                           ),
                           const SizedBox(width: 8),
                           ElevatedButton(
-                            onPressed: () {
+                            style: ElevatedButton.styleFrom(minimumSize: const Size(88, 56)),
+                            onPressed: _handled ? null : () {
                               if (_code.text.isNotEmpty) {
                                 _prepare(_code.text);
                               }
@@ -874,7 +898,7 @@ class _RedemptionRecordsScreenState extends State<RedemptionRecordsScreen> {
                                     subtitle: Text(
                                         '${r['shop_name'] ?? ''} · ${r['scanned_at'] ?? ''}'),
                                     trailing: Text(
-                                        revoked ? '已撤销' : '已核銷',
+                                        revoked ? '已撤銷' : '已核銷',
                                         style: TextStyle(
                                             color: revoked
                                                 ? CgColors.textSecondary

@@ -820,6 +820,27 @@ class CouponDetailScreen extends StatefulWidget {
 
 class _CouponDetailScreenState extends State<CouponDetailScreen> {
   bool _claimed = false;
+  bool _claiming = false;
+  int? _remaining;
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.api.isLoggedIn) _readClaim();
+  }
+
+  Future<void> _readClaim() async {
+    try {
+      final detail = await widget.api.couponDetails(widget.coupon.id);
+      if (!mounted || _claiming || _claimed) return;
+      setState(() {
+        _claimed = detail['is_claimed'] == true;
+        _remaining = detail['coupon']?['remaining'] as int?;
+      });
+    } catch (_) {
+      // The claim operation can still confirm ownership if this read failed.
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -862,7 +883,7 @@ class _CouponDetailScreenState extends State<CouponDetailScreen> {
           ),
           const SizedBox(height: 12),
           Text('有效日期：至 ${c.validTo?.toLocal().toString().split(' ').first ?? ''}'),
-          Text('剩餘數量：${c.remaining} / ${c.total}'),
+          Text('剩餘數量：${_remaining ?? c.remaining} / ${c.total}'),
           if (c.minSpend > 0) Text('於本店惠顧滿 \$${c.minSpend.toStringAsFixed(0)}'),
           const SizedBox(height: 16),
           const Text('條款和條件', style: TextStyle(fontWeight: FontWeight.bold)),
@@ -872,26 +893,37 @@ class _CouponDetailScreenState extends State<CouponDetailScreen> {
       bottomNavigationBar: Padding(
         padding: const EdgeInsets.all(16),
         child: ElevatedButton(
-          onPressed: _claimed
+          onPressed: _claimed || _claiming
               ? null
               : () async {
+                  if (_claiming) return;
+                  setState(() => _claiming = true);
                   try {
                     if (!widget.api.isLoggedIn) {
                       if (!await guestLoginPrompt(context) || !context.mounted) return;
                       await Navigator.of(context).pushNamed('/login');
                       if (!widget.api.isLoggedIn || !mounted) return;
                     }
-                    await widget.api.claimCoupon(c.id);
+                    final result = await widget.api.claimCoupon(c.id);
                     if (!mounted) return;
-                    setState(() => _claimed = true);
+                    setState(() {
+                      _claimed = true;
+                      _remaining = result['coupon']?['remaining'] as int?;
+                    });
                     if (context.mounted) {
                       showCgToast(context, '已存入 Q Wallet（+10 分）');
                     }
                   } on ApiException catch (e) {
-                    if (context.mounted) showCgToast(context, e.message);
+                    if (!context.mounted) return;
+                    if (e.status == 409) setState(() => _claimed = true);
+                    showCgToast(context, e.message);
+                  } catch (_) {
+                    if (context.mounted) showCgToast(context, '未能確認領券結果，請重試');
+                  } finally {
+                    if (mounted) setState(() => _claiming = false);
                   }
                 },
-          child: Text(_claimed ? '已領取' : '立即領取'),
+          child: Text(_claimed ? '已領取' : _claiming ? '領取中…' : '立即領取'),
         ),
       ),
     );

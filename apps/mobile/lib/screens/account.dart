@@ -5,6 +5,7 @@ import 'package:qr_flutter/qr_flutter.dart';
 
 import '../api_client.dart';
 import '../language.dart';
+export 'qbot.dart' show QBotScreen;
 export 'guest_auth.dart' show AuthScreen;
 import '../models.dart';
 import '../theme.dart';
@@ -15,10 +16,11 @@ import 'reviews_admin.dart';
 /// Q Wallet: points balance, three status tabs (1 unused / 2 used / 3 expired),
 /// points-exchange zone (9-point coupon), records.
 class WalletScreen extends StatefulWidget {
-  const WalletScreen({super.key, required this.api, required this.onShowQr});
+  const WalletScreen({super.key, required this.api, this.active = true, required this.onShowQr});
 
   final ApiClient api;
-  final void Function(WalletItem) onShowQr;
+  final bool active;
+  final Future<void> Function(WalletItem) onShowQr;
 
   @override
   State<WalletScreen> createState() => _WalletScreenState();
@@ -27,11 +29,13 @@ class WalletScreen extends StatefulWidget {
 class _WalletScreenState extends State<WalletScreen>
     with SingleTickerProviderStateMixin {
   late final TabController _tab = TabController(length: 3, vsync: this);
-  int _balance = 0;
-  double _cashbackWithdrawable = 0;
-  double _cashbackPending = 0;
+  int? _balance;
+  double? _cashbackWithdrawable;
+  double? _cashbackPending;
   List<WalletItem> _items = [];
   bool _loading = false;
+  int _request = 0, _page = 1, _pages = 1;
+  bool _moreBusy = false;
   String? _error;
 
   @override
@@ -44,39 +48,87 @@ class _WalletScreenState extends State<WalletScreen>
   }
 
   @override
+  void didUpdateWidget(WalletScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.active && !oldWidget.active) _load();
+  }
+
+  @override
   void dispose() {
     _tab.dispose();
     super.dispose();
   }
 
   Future<void> _load() async {
+    final request = ++_request;
+    final status = _tab.index + 1;
     setState(() {
       _loading = true;
       _error = null;
+      _moreBusy = false;
     });
     try {
-      final points = await widget.api.points();
-      final wallet = await widget.api.wallet(status: _tab.index + 1);
-      final cashback = await widget.api.cashback();
-      if (!mounted) return;
+      unawaited(_loadBalances(request));
+      final wallet = await widget.api.wallet(status: status);
+      if (!mounted || request != _request) return;
       setState(() {
-        _balance = points['balance'] as int? ?? 0;
-        _cashbackWithdrawable =
-            (cashback['withdrawable_balance'] as num?)?.toDouble() ?? 0;
-        _cashbackPending =
-            (cashback['pending_balance'] as num?)?.toDouble() ?? 0;
+        _page = 1;
+        _pages = wallet['total_pages'] as int? ?? 1;
         _items = (wallet['items'] as List)
             .map((e) => WalletItem.fromJson(e))
             .toList();
         _loading = false;
       });
-    } on ApiException catch (_) {
-      if (mounted) {
+    } catch (_) {
+      if (mounted && request == _request) {
         setState(() {
           _error = '网络不稳定，请重试';
           _loading = false;
         });
       }
+    }
+  }
+
+  Future<void> _loadBalances(int request) async {
+    await Future.wait([
+      widget.api.points().then((data) {
+        if (mounted && request == _request) setState(() => _balance = data['balance'] as int?);
+      }).catchError((Object _) {
+        if (mounted && request == _request) setState(() => _balance = null);
+      }),
+      widget.api.cashback().then((data) {
+        if (!mounted || request != _request) return;
+        setState(() {
+          _cashbackPending = (data['pending_balance'] as num?)?.toDouble();
+          _cashbackWithdrawable = (data['withdrawable_balance'] as num?)?.toDouble();
+        });
+      }).catchError((Object _) {
+        if (mounted && request == _request) {
+          setState(() {
+            _cashbackPending = null;
+            _cashbackWithdrawable = null;
+          });
+        }
+      }),
+    ]);
+  }
+
+  Future<void> _more() async {
+    if (_moreBusy) return;
+    final request = _request;
+    setState(() => _moreBusy = true);
+    try {
+      final wallet = await widget.api.wallet(status: _tab.index+1,page:_page+1);
+      if (!mounted || request != _request) return;
+      final known = _items.map((item) => item.id).toSet();
+      setState(() {
+        _items.addAll((wallet['items'] as List).map((e)=>WalletItem.fromJson(e)).where((item)=>known.add(item.id)));
+        _page++; _pages=wallet['total_pages'] as int;
+      });
+    } catch (_) {
+      if (mounted && request == _request) showCgToast(context,'未能載入下一頁，請重試');
+    } finally {
+      if (mounted && request == _request) setState(()=>_moreBusy=false);
     }
   }
 
@@ -93,7 +145,7 @@ class _WalletScreenState extends State<WalletScreen>
             children: [
               const Text('Q Wallet 積分',
                   style: TextStyle(color: Colors.white70)),
-              Text('$_balance 分',
+              Text("${_balance ?? '—'} 分",
                   style: const TextStyle(
                       color: Colors.white,
                       fontSize: 36,
@@ -119,7 +171,7 @@ class _WalletScreenState extends State<WalletScreen>
                         children: [
                           const Text('返現（可提現）',
                               style: TextStyle(color: Colors.white70)),
-                          Text(formatHkd(_cashbackWithdrawable),
+                          Text(_cashbackWithdrawable == null ? '—' : formatHkd(_cashbackWithdrawable!),
                               style: const TextStyle(
                                   color: Colors.white,
                                   fontSize: 22,
@@ -128,7 +180,7 @@ class _WalletScreenState extends State<WalletScreen>
                                     FontFeature.tabularFigures()
                                   ])),
                           Text(
-                              '待確認 ${formatHkd(_cashbackPending)}',
+                              '待確認 ${_cashbackPending == null ? '—' : formatHkd(_cashbackPending!)}',
                               style: const TextStyle(
                                   color: Colors.white70,
                                   fontSize: 12,
@@ -210,8 +262,9 @@ class _WalletScreenState extends State<WalletScreen>
                               ],
                             )
                           : ListView.builder(
-                              itemCount: _items.length,
+                              itemCount: _items.length + (_page < _pages ? 1 : 0),
                               itemBuilder: (_, i) {
+                                if (i == _items.length) return TextButton(onPressed:_moreBusy ? null : _more, child:const Text("載入更多"));
                                 final item = _items[i];
                                 return Stack(
                                   children: [
@@ -254,8 +307,7 @@ class _WalletScreenState extends State<WalletScreen>
                                                       child: const Text('退款'),
                                                     ),
                                                   ElevatedButton(
-                                                    onPressed: () => widget
-                                                        .onShowQr(item),
+                                                    onPressed: () async { await widget.onShowQr(item); if (mounted) await _load(); },
                                                     style: ElevatedButton
                                                         .styleFrom(
                                                       minimumSize:
@@ -342,6 +394,8 @@ class _QrShowScreenState extends State<QrShowScreen> {
   Timer? _pollTimer;
   bool _justRefreshed = false;
   bool _redeemed = false;
+  bool _generating = false, _polling = false, _expired = false;
+  String? _qrError;
 
   @override
   void initState() {
@@ -350,13 +404,18 @@ class _QrShowScreenState extends State<QrShowScreen> {
     // UI_SPEC §8: poll until the voucher is redeemed, then close this
     // page and open the redemption-success page.
     _pollTimer = Timer.periodic(const Duration(seconds: 5), (_) async {
-      if (_redeemed || !mounted) return;
+      if (_redeemed || _polling || !mounted) return;
+      _polling = true;
       try {
-        final wallet = await widget.api.wallet(status: 2);
-        final items = (wallet['items'] as List?) ?? [];
-        final hit = items.any((e) =>
-            (e as Map<String, dynamic>)['id'] == widget.item.id);
-        if (hit && mounted) {
+        final result = await widget.api.get('/wallet/items/${widget.item.id}/status');
+        if (!mounted) return;
+        if (result['status'] == 3) {
+          _timer?.cancel();
+          _pollTimer?.cancel();
+          setState(() { _expired = true; _payload = null; _code = null; _secondsLeft = 0; _qrError = '此優惠券已到期'; });
+          return;
+        }
+        if (result['status'] == 2 && mounted && ModalRoute.of(context)?.isCurrent == true) {
           _redeemed = true;
           _timer?.cancel();
           _pollTimer?.cancel();
@@ -365,7 +424,9 @@ class _QrShowScreenState extends State<QrShowScreen> {
                   api: widget.api, item: widget.item)));
         }
       } catch (_) {
-        // Poll failure is not an error state; the next tick retries.
+        // Retry the authoritative status on the next tick.
+      } finally {
+        _polling = false;
       }
     });
   }
@@ -383,9 +444,12 @@ class _QrShowScreenState extends State<QrShowScreen> {
   }
 
   Future<void> _generate({bool auto = false}) async {
+    if (_generating || _redeemed || _expired) return;
+    _timer?.cancel();
+    setState(() { _generating = true; _qrError = null; _payload = null; _code = null; _secondsLeft = 0; });
     try {
       final data = await widget.api.generateQr(widget.item.id);
-      if (!mounted) return;
+      if (!mounted || _expired || _redeemed) return;
       setState(() {
         _code = data['code'] as String?;
         _payload = data['qr_payload'] as String?;
@@ -399,16 +463,20 @@ class _QrShowScreenState extends State<QrShowScreen> {
         });
       }
       _timer?.cancel();
+      final deadline = DateTime.now().add(Duration(seconds:_secondsLeft));
       _timer = Timer.periodic(const Duration(seconds: 1), (t) {
-        if (_secondsLeft <= 1) {
+        final remaining = (deadline.difference(DateTime.now()).inMilliseconds / 1000).ceil();
+        if (remaining <= 0) {
           t.cancel();
           _generate(auto: true); // expired: rotate a fresh code
           return;
         }
-        if (mounted) setState(() => _secondsLeft--);
+        if (mounted) setState(() => _secondsLeft = remaining);
       });
-    } on ApiException catch (e) {
-      if (mounted) showCgToast(context, e.message);
+    } catch (e) {
+      if (mounted) setState(() => _qrError = e is ApiException ? e.message : '無法取得兌換碼，請重試');
+    } finally {
+      if (mounted) setState(() => _generating = false);
     }
   }
 
@@ -464,16 +532,9 @@ class _QrShowScreenState extends State<QrShowScreen> {
                           const TextStyle(color: CgColors.textSecondary)),
                   const SizedBox(height: 16),
                   if (_payload != null)
-                    Stack(
-                      alignment: Alignment.center,
-                      children: [
-                        QrImageView(data: _payload!, size: 220),
-                        Image.asset('assets/images/ic_qr_cat.png',
-                            width: 48,
-                            errorBuilder: (_, __, ___) =>
-                                const SizedBox()),
-                      ],
-                    )
+                    QrImageView(data: _payload!, size: 220,backgroundColor: Colors.white)
+                  else if (_qrError != null)
+                    Text(_qrError!,textAlign:TextAlign.center)
                   else
                     const SkeletonBox(height: 220, width: 220),
                   const SizedBox(height: 12),
@@ -513,7 +574,7 @@ class _QrShowScreenState extends State<QrShowScreen> {
                     ),
                   ),
                   const SizedBox(height: 12),
-                  const Text('使用前出示 QR 碼\n請將 QR 碼呈現給店員掃描以進行支付',
+                  const Text('使用前出示 QR 碼\n請讓店員掃描兌換碼以核銷優惠券',
                       textAlign: TextAlign.center,
                       style: TextStyle(color: CgColors.textSecondary)),
                   const SizedBox(height: 12),
@@ -530,7 +591,7 @@ class _QrShowScreenState extends State<QrShowScreen> {
                   ),
                   const SizedBox(height: 8),
                   TextButton(
-                    onPressed: () => _generate(),
+                    onPressed: _generating || _expired ? null : () => _generate(),
                     child: const Text('重新產生新碼'),
                   ),
                 ],
@@ -576,11 +637,6 @@ class RedemptionSuccessScreen extends StatelessWidget {
               Text(item.shopName,
                   style: const TextStyle(color: CgColors.textSecondary)),
               const SizedBox(height: 16),
-              // The per-redemption cashback amount is not returned by
-              // any endpoint yet; show the pending state, not a number.
-              const Text('本次消費的返現待確認，可在返現頁查看。',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(color: CgColors.textSecondary)),
               const SizedBox(height: 24),
               if (!item.reviewed)
                 SizedBox(
@@ -833,116 +889,6 @@ class GuideScreen extends StatelessWidget {
                 title: Text(f.$1),
                 children: [ListTile(title: Text(f.$2))],
               )),
-        ],
-      ),
-    );
-  }
-}
-
-/// Q仔 — local demo assistant (no backend model configured online;
-/// answers from local rules, same as the MVP).
-class QBotScreen extends StatefulWidget {
-  const QBotScreen({super.key, required this.api});
-
-  final ApiClient api;
-
-  @override
-  State<QBotScreen> createState() => _QBotScreenState();
-}
-
-class _QBotScreenState extends State<QBotScreen> {
-  final _ctrl = TextEditingController();
-  final _messages = <Map<String, String>>[
-    {'role': 'bot', 'text': '你好，我係 Q仔！想搵咩優惠券？可以問我限時搶購、積分或者點用券。'},
-  ];
-
-  Future<void> _ask(String q) async {
-    setState(() {
-      _messages.add({'role': 'user', 'text': q});
-      _ctrl.clear();
-    });
-    String answer;
-    if (q.contains('限時')) {
-      answer = '限時搶購有 13 張券，去「限時」頁睇下啦！';
-    } else if (q.contains('積分')) {
-      try {
-        final p = await widget.api.points();
-        answer = '你而家有 ${p['balance']} 分。領券 +10、核銷 +20、評價 +15，9 分可以換 9 分分券。';
-      } on ApiException catch (_) {
-        answer = '領券 +10、核銷 +20、評價 +15；9 分可以兌換 9 分分券。登錄後可以睇到你嘅積分。';
-      }
-    } else if (q.contains('點用') || q.contains('QR')) {
-      answer = '去 Q Wallet 點「出示」，把 QR 碼畀店員掃，15 分鐘內有效。';
-    } else {
-      answer = '我可以幫你搵優惠券、睇積分、講解點用券。試下問「限時搶購有咩」或者「我有幾多分」。';
-    }
-    setState(() => _messages.add({'role': 'bot', 'text': answer}));
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Q仔'),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.delete_outline),
-            onPressed: () => setState(() {
-              _messages.removeRange(1, _messages.length);
-              _messages.add({'role': 'bot', 'text': '對話已清除，有咩可以幫你？'});
-            }),
-          ),
-        ],
-      ),
-      body: Column(
-        children: [
-          Expanded(
-            child: ListView.builder(
-              padding: const EdgeInsets.all(12),
-              itemCount: _messages.length,
-              itemBuilder: (_, i) {
-                final m = _messages[i];
-                final isBot = m['role'] == 'bot';
-                return Align(
-                  alignment: isBot ? Alignment.centerLeft : Alignment.centerRight,
-                  child: Container(
-                    margin: const EdgeInsets.symmetric(vertical: 4),
-                    padding: const EdgeInsets.all(12),
-                    constraints: BoxConstraints(
-                        maxWidth: MediaQuery.of(context).size.width * 0.75),
-                    decoration: BoxDecoration(
-                      color: isBot ? Colors.white : CgColors.primary,
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: Text(m['text']!,
-                        style: TextStyle(
-                            color: isBot ? CgColors.textPrimary : Colors.white)),
-                  ),
-                );
-              },
-            ),
-          ),
-          Padding(
-            padding: const EdgeInsets.all(12),
-            child: Row(
-              children: [
-                Expanded(
-                  child: TextField(
-                    controller: _ctrl,
-                    decoration: const InputDecoration(hintText: '問 Q仔…'),
-                    onSubmitted: _ask,
-                  ),
-                ),
-                const SizedBox(width: 8),
-                IconButton(
-                  icon: const Icon(Icons.send, color: CgColors.primary),
-                  onPressed: () {
-                    if (_ctrl.text.isNotEmpty) _ask(_ctrl.text);
-                  },
-                ),
-              ],
-            ),
-          ),
         ],
       ),
     );

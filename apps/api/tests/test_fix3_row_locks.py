@@ -744,3 +744,19 @@ def test_concurrent_scan_same_code_only_one_succeeds__row_lock(
             f"[{BACKEND}] used_count={coupon.used_count}"
     finally:
         db.close()
+
+
+def test_two_customers_claim_last_coupon(client):
+    customers = [_register_and_login(client, f"last-stock-{i}@example.com") for i in range(2)]
+    with TestingSession() as db:
+        coupon = db.get(models.Coupon, 2)
+        coupon.remaining = 1
+        previous_downloads = coupon.downloads
+        db.commit()
+    responses = _run_two(lambda i, tc: tc.post(
+        "/api/v3/new-favorite-coupon", params={"coupon_id": 2}, headers=customers[i]))
+    assert sorted(r.status_code for r in responses) == [200, 400]
+    with TestingSession() as db:
+        coupon = db.get(models.Coupon, 2)
+        assert coupon.remaining == 0 and coupon.downloads == previous_downloads + 1
+    assert sorted(client.get("/api/v3/points", headers=h).json()["balance"] for h in customers) == [0, 10]

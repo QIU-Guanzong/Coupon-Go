@@ -30,7 +30,7 @@ from .. import config, models, prepare_token
 from ..cashback_service import void_for_revocation
 from ..database import get_db
 from ..deps import add_points, require_role
-from .coupons import _refresh_expiry
+from .coupons import _refresh_expiry, ensure_redeemable, presented_item
 from .reviews import hide_reviews_for_revoked_redemption
 
 router = APIRouter()
@@ -60,6 +60,10 @@ def _check_item(db: Session, item: models.WalletItem, vendor: models.User):
         return coupon, "QR 碼已過期，請重新出示"
     if coupon is None or coupon.shop_id not in _vendor_shop_ids(db, vendor):
         return coupon, "無效的 QR 碼！此碼屬於其他商店。"
+    try:
+        ensure_redeemable(coupon)
+    except HTTPException as exc:
+        return coupon, exc.detail
     return coupon, None
 
 
@@ -78,8 +82,7 @@ def prepare_scan(body: dict,
                  vendor: models.User = Depends(require_role("vendor", "admin")),
                  db: Session = Depends(get_db)):
     code = (body or {}).get("code", "")
-    item = db.query(models.WalletItem).filter(
-        models.WalletItem.code == code).first()
+    item = presented_item(db, code)
     if item is None:
         return {"can_redeem": False, "reason": "無效的 QR 碼！",
                 "prepare_token": None, "wallet_item_id": None}
@@ -89,7 +92,7 @@ def prepare_scan(body: dict,
                 "prepare_token": None, "wallet_item_id": item.id,
                 "coupon_name": coupon.coupon_name if coupon else "",
                 "shop_id": coupon.shop_id if coupon else None}
-    token, _issued = prepare_token.issue_prepare_token(item.id)
+    token, _issued = prepare_token.issue_prepare_token(item.id, binding=f"{vendor.id}:{code}")
     shop = db.query(models.Shop).filter(
         models.Shop.id == coupon.shop_id).first()
     # Gap 5: customer phone last-4 (User.phone, via the wallet owner)

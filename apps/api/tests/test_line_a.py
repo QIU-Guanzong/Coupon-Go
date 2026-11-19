@@ -106,6 +106,9 @@ def test_prepare_consume_idempotent_chain(client):
     assert body["wallet_item_id"] == wid
     assert body["prepare_token"]
 
+    assert client.get(f"/api/v3/wallet/items/{wid}/status", headers=h).json()["status"] == 1
+    assert client.get(f"/api/v3/wallet/items/{wid}/status", headers=vh).status_code == 404
+    assert client.get("/api/v3/coupon-details-new", headers=h, params={"coupon_id": 2}).json()["is_claimed"]
     # Consume with prepare token + idempotency key.
     r = client.post("/api/v3/new-scan-coupon", json={
         "code": code, "prepare_token": body["prepare_token"],
@@ -114,6 +117,8 @@ def test_prepare_consume_idempotent_chain(client):
     assert r.json()["duplicate"] is False
     rid = r.json()["redemption_id"]
     assert _points(client, h) == 30
+
+    assert client.get(f"/api/v3/wallet/items/{wid}/status", headers=h).json()["status"] == 2
 
     # The presented code is dead after consume (screenshot reuse blocked).
     r = client.post("/api/v3/new-scan-coupon", json={"code": code}, headers=vh)
@@ -307,3 +312,47 @@ def test_shop_map_links(client):
     assert "google.com/maps" in body["google_maps_url"]
     assert "/dir/" in body["directions_url"]
     assert client.get("/api/v3/shops/99999/map").status_code == 404
+
+
+def test_qbot_public_offers_and_private_points(client, monkeypatch):
+    import json
+    import httpx
+    from app.routers import qbot
+    h = _register_and_login(client, "qbot-user@example.com")
+    _claim_and_qr(client, h, 2)
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-fixture")
+    calls = []
+
+    def provider(url, **kwargs):
+        content = json.loads(kwargs["json"]["messages"][1]["content"])
+        assert content["public_offers"]
+        assert "qbot-user" not in str(content) and "points_balance" not in content
+        calls.append(content)
+        return httpx.Response(200, request=httpx.Request("POST", url),
+                              json={"choices": [{"message": {"content": "打開 Q Wallet。"}}]})
+
+    monkeypatch.setattr(qbot.httpx, "post", provider)
+    body = {"message": "我有幾多積分？"}
+    result = client.post("/api/v3/qbot/chat", headers=h, json=body)
+    assert result.status_code == 200
+    assert result.json() == {"answer": "打開 Q Wallet。", "points_balance": 10}
+    assert client.post("/api/v3/qbot/chat", json=body).json()["points_balance"] is None
+    assert len(calls) == 2
+    monkeypatch.delenv("DEEPSEEK_API_KEY")
+    assert client.post("/api/v3/qbot/chat", json=body).status_code == 503
+
+
+def test_refresh_requires_new_merchant_confirmation(client):
+    h = _register_and_login(client, "refresh-confirm@example.com")
+    vh = _vendor_headers(client)
+    wid, initial = _claim_and_qr(client, h, 2)
+    old = client.post("/api/v3/new-scan-coupon/prepare", headers=vh, json={"code": initial}).json()
+    code = client.post("/api/v3/store-scaned-qr-values", headers=h,
+                       params={"wallet_item_id": wid}).json()["code"]
+    assert code != initial
+    assert not client.post("/api/v3/new-scan-coupon/prepare", headers=vh, json={"code": initial}).json()["can_redeem"]
+    stale = client.post("/api/v3/new-scan-coupon", headers=vh,
+                        json={"code": code, "prepare_token": old["prepare_token"]})
+    assert stale.status_code == 400 and _points(client, h) == 10
+    current = client.post("/api/v3/new-scan-coupon/prepare", headers=vh, json={"code": code}).json()
+    assert current["can_redeem"] and current["prepare_token"] != old["prepare_token"]

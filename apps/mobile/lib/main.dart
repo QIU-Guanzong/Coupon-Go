@@ -341,6 +341,7 @@ class _HomeShellState extends State<HomeShell> {
       LimitedTimeScreen(api: widget.api, onOpenCoupon: _openCoupon),
       widget.api.isLoggedIn
           ? WalletScreen(
+              active: _index == 4,
               api: widget.api,
               onShowQr: (item) => Navigator.of(context).push(MaterialPageRoute(
                   builder: (_) =>
