@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 
 import '../api_client.dart';
+import '../feature_flags.dart';
 import '../language.dart';
 export 'qbot.dart' show QBotScreen;
 export 'guest_auth.dart' show AuthScreen;
@@ -119,7 +120,7 @@ class _WalletScreenState extends State<WalletScreen>
       }).catchError((Object _) {
         if (mounted && request == _request) setState(() => _balance = null);
       }),
-      widget.api.cashback().then((data) {
+      if (cashbackEnabled) widget.api.cashback().then((data) {
         if (!mounted || request != _request) return;
         setState(() {
           _cashbackPending = (data['pending_balance'] as num?)?.toDouble();
@@ -177,13 +178,14 @@ class _WalletScreenState extends State<WalletScreen>
               const SizedBox(height: 8),
               const Text('領券 +10　核銷 +20　評價 +15',
                   style: TextStyle(color: Colors.white70, fontSize: 12)),
-              const SizedBox(height: 12),
-              // Line D: cashback balance sits next to points, separate ledger.
-              InkWell(
+              if (cashbackEnabled) ...[
+                const SizedBox(height: 12),
+                // Cashback and points remain separate ledgers.
+                InkWell(
                 onTap: () async {
                   await Navigator.of(context).push(MaterialPageRoute(
                       builder: (_) => CashbackScreen(api: widget.api)));
-                  _load();
+                  if (mounted) _load();
                 },
                 child: Row(
                   children: [
@@ -215,7 +217,9 @@ class _WalletScreenState extends State<WalletScreen>
                     const Icon(Icons.chevron_right, color: Colors.white70),
                   ],
                 ),
-              ),            ],
+                ),
+              ],
+            ],
           ),
         ),
         TabBar(

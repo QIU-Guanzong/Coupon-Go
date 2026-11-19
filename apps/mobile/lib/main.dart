@@ -4,9 +4,9 @@ import 'package:flutter/services.dart' show rootBundle;
 import 'package:flutter_localizations/flutter_localizations.dart';
 
 import 'api_client.dart';
+import 'feature_flags.dart';
 import 'language.dart';
 import 'screens/guest_auth.dart' show guestLoginPrompt;
-import 'package:share_plus/share_plus.dart';
 import 'models.dart';
 import 'screens/account.dart';
 import 'screens/admin_v2.dart';
@@ -131,6 +131,7 @@ class _CouponGoAppState extends State<CouponGoApp> {
           case '/qbot':
             return MaterialPageRoute(builder: (_) => QBotScreen(api: _api));
           case '/cashback':
+            if (!cashbackEnabled) return null;
             return MaterialPageRoute(
                 builder: (_) => CashbackScreen(api: _api));
           case '/category':
@@ -241,12 +242,46 @@ class HomeShell extends StatefulWidget {
 }
 
 class _HomeShellState extends State<HomeShell> {
-  int _index = 0;
+  int _index = 0, _vendorIndex = 0, _roleRequest = 0;
+  String? _role;
   final _visited = <int>{0};
+
+  @override
+  void initState() {
+    super.initState();
+    widget.api.addListener(_readRole);
+    _readRole();
+  }
+
+  Future<void> _readRole() async {
+    final request = ++_roleRequest;
+    setState(() => _role = null);
+    if (!widget.api.isLoggedIn) return;
+    try {
+      final role = (await widget.api.get('/me'))['role'];
+      if (mounted && request == _roleRequest) {
+        setState(() => _role = role is String ? role : null);
+      }
+    } catch (_) {
+      // Leave privileged navigation hidden when role verification fails.
+    }
+  }
+
+  @override
+  void dispose() {
+    widget.api.removeListener(_readRole);
+    super.dispose();
+  }
 
   @override
   void didUpdateWidget(HomeShell oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (oldWidget.api != widget.api) {
+      oldWidget.api.removeListener(_readRole);
+      widget.api.addListener(_readRole);
+      _readRole();
+    }
+    if (!widget.vendorMode) _vendorIndex = 0;
     if (oldWidget.authed && !widget.authed) {
       _index = 0;
       _visited.clear();
@@ -373,29 +408,28 @@ class _HomeShellState extends State<HomeShell> {
   }
 
   Widget _vendorShell() {
+    String tr(String zh, String en) => context.tr(zh, en);
     return Scaffold(
       drawer: _drawer(),
-      body: VendorHomeScreen(api: widget.api),
+      body: switch (_vendorIndex) {
+        1 => ScanScreen(api: widget.api),
+        2 => UsageScreen(api: widget.api),
+        3 => VendorAccountScreen(api: widget.api),
+        _ => VendorHomeScreen(api: widget.api, showAdmin: _role == 'admin'),
+      },
       bottomNavigationBar: BottomNavigationBar(
+        currentIndex: _vendorIndex,
         type: BottomNavigationBarType.fixed,
         selectedItemColor: CgColors.amber,
-        onTap: (i) {
-          switch (i) {
-            case 1:
-              Navigator.of(context).pushNamed('/vendor/scan');
-            case 2:
-              Navigator.of(context).pushNamed('/vendor/usage');
-            case 3:
-              Navigator.of(context).pushNamed('/vendor/plans');
-          }
-        },
-        items: const [
-          BottomNavigationBarItem(icon: Icon(Icons.home), label: '首頁'),
+        onTap: (i) => setState(() => _vendorIndex = i),
+        items: [
+          BottomNavigationBarItem(icon: const Icon(Icons.home), label: tr('首頁', 'Home')),
           BottomNavigationBarItem(
-              icon: Icon(Icons.qr_code_scanner), label: '掃碼'),
+              icon: const Icon(Icons.qr_code_scanner), label: tr('掃碼', 'Scan')),
           BottomNavigationBarItem(
-              icon: Icon(Icons.bar_chart), label: '數據'),
-          BottomNavigationBarItem(icon: Icon(Icons.person), label: '我的'),
+              icon: const Icon(Icons.bar_chart), label: tr('數據', 'Analytics')),
+          BottomNavigationBarItem(
+              icon: const Icon(Icons.person), label: tr('我的', 'Account')),
         ],
       ),
     );
@@ -434,23 +468,25 @@ class _HomeShellState extends State<HomeShell> {
               }
             },
           ),
-          ListTile(
-            leading: const Icon(Icons.content_cut, color: CgColors.primary),
-            title: Text(context.tr('砍價','Bargains')),
-            onTap: () {
-              Navigator.of(context).pop();
-              Navigator.of(context).pushNamed('/bargain');
-            },
-          ),
-          ListTile(
-            leading: const Icon(Icons.restaurant_menu,
-                color: CgColors.primary),
-            title: Text(context.tr('套餐','Packages')),
-            onTap: () {
-              Navigator.of(context).pop();
-              Navigator.of(context).pushNamed('/packages');
-            },
-          ),
+          if (!widget.vendorMode) ...[
+            ListTile(
+              leading: const Icon(Icons.content_cut, color: CgColors.primary),
+              title: Text(context.tr('砍價','Bargains')),
+              onTap: () {
+                Navigator.of(context).pop();
+                Navigator.of(context).pushNamed('/bargain');
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.restaurant_menu,
+                  color: CgColors.primary),
+              title: Text(context.tr('套餐','Packages')),
+              onTap: () {
+                Navigator.of(context).pop();
+                Navigator.of(context).pushNamed('/packages');
+              },
+            ),
+          ],
           if (widget.authed)
             ListTile(
               leading:
@@ -460,23 +496,7 @@ class _HomeShellState extends State<HomeShell> {
                 Navigator.of(context).pop();
                 Navigator.of(context).pushNamed('/orders');
               },
-            ),          ListTile(
-            leading: const Icon(Icons.card_giftcard, color: CgColors.primary),
-            title: Text(context.tr('邀請好友','Invite Friends')),
-            onTap: () async {
-              Navigator.of(context).pop();
-              final box = context.findRenderObject() as RenderBox?;
-              try {
-                await SharePlus.instance.share(ShareParams(
-                  text: "${context.tr('邀請您一齊加入 Coupon GO！', 'Join me on Coupon GO!')} "
-                      'https://play.google.com/store/apps/details?id=com.techmatch.coupongonew',
-                  sharePositionOrigin: box == null ? null : box.localToGlobal(Offset.zero) & box.size,
-                ));
-              } catch (_) {
-                if (mounted) showCgToast(context, context.tr('未能開啟分享', 'Sharing is unavailable'));
-              }
-            },
-          ),
+            ),
           ListTile(
             leading: const Icon(Icons.settings, color: CgColors.primary),
             title: Text(context.tr('設置','Settings')),
@@ -502,15 +522,16 @@ class _HomeShellState extends State<HomeShell> {
               Navigator.of(context).pushNamed('/admin/apply');
             },
           ),
-          ListTile(
-            leading: const Icon(Icons.admin_panel_settings,
-                color: CgColors.primary),
-            title: Text(context.tr('管理後台','Administration')),
-            onTap: () {
-              Navigator.of(context).pop();
-              Navigator.of(context).pushNamed('/admin');
-            },
-          ),
+          if (_role == 'admin')
+            ListTile(
+              leading: const Icon(Icons.admin_panel_settings,
+                  color: CgColors.primary),
+              title: Text(context.tr('管理後台','Administration')),
+              onTap: () {
+                Navigator.of(context).pop();
+                Navigator.of(context).pushNamed('/admin');
+              },
+            ),
           ListTile(leading: const Icon(Icons.chat_outlined), title: const Text('Q仔'),
             onTap: () { Navigator.of(context).pop(); Navigator.of(context).pushNamed('/qbot'); }),
           ListTile(

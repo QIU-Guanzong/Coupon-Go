@@ -474,8 +474,9 @@ class _BargainHomeCard extends StatelessWidget {
               ),
               Padding(
                 padding: const EdgeInsets.fromLTRB(8, 2, 8, 0),
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.end,
+                child: Wrap(
+                  spacing: 4,
+                  crossAxisAlignment: WrapCrossAlignment.center,
                   children: [
                     Text(
                       formatHkd(campaign.originalPrice),
@@ -485,15 +486,13 @@ class _BargainHomeCard extends StatelessWidget {
                           fontSize: 16,
                           fontFeatures: [FontFeature.tabularFigures()]),
                     ),
-                    const SizedBox(width: 4),
-                    Flexible(
-                      child: Text(
-                        '底价 ${formatHkd(campaign.floorPrice)}',
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                            color: CgColors.textSecondary, fontSize: 11),
-                      ),
+                    Text(
+                      context.tr('底價 ${formatHkd(campaign.floorPrice)}',
+                          'Floor ${formatHkd(campaign.floorPrice)}'),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                          color: CgColors.textSecondary, fontSize: 11),
                     ),
                   ],
                 ),
@@ -502,8 +501,10 @@ class _BargainHomeCard extends StatelessWidget {
                 padding: const EdgeInsets.fromLTRB(8, 2, 8, 0),
                 child: Text(
                   timeLeft == null
-                      ? '已有 ${campaign.helperCount} 人在砍'
-                      : '剩 ${formatCountdown(timeLeft)}',
+                      ? context.tr('已有 ${campaign.helperCount} 人在砍',
+                          '${campaign.helperCount} joining in')
+                      : context.tr('剩 ${formatCountdown(timeLeft)}',
+                          '${formatCountdown(timeLeft)} left'),
                   style: const TextStyle(
                       color: CgColors.textSecondary, fontSize: 11),
                 ),
@@ -519,7 +520,11 @@ class _BargainHomeCard extends StatelessWidget {
                       backgroundColor: CgColors.orange,
                       foregroundColor: Colors.white,
                       padding: EdgeInsets.zero,
-                      textStyle: const TextStyle(fontSize: 14),
+                      textStyle: const TextStyle(
+                        fontFamily: 'Roboto',
+                        fontFamilyFallback: ['Coupon UI Fallback', 'Coupon UI Supplemental'],
+                        fontSize: 14,
+                      ),
                     ),
                     onPressed: onTap,
                     child: Text(context.tr('去砍價','Bargain')),
@@ -1033,11 +1038,89 @@ class LimitedTimeScreen extends StatelessWidget {
     return Scaffold(
       appBar: AppBar(title: Text(context.tr('限時','Limited Time'))),
       body: Column(children: [
+        _LimitedBargainPreview(api: api),
         _LimitedNotification(key: ValueKey(api.isLoggedIn), api: api),
         Expanded(child: CouponResults(api: api, load: api.limitedTime, onOpenCoupon: onOpenCoupon)),
       ]),
     );
   }
+}
+
+class _LimitedBargainPreview extends StatefulWidget {
+  const _LimitedBargainPreview({required this.api});
+
+  final ApiClient api;
+
+  @override
+  State<_LimitedBargainPreview> createState() => _LimitedBargainPreviewState();
+}
+
+class _LimitedBargainPreviewState extends State<_LimitedBargainPreview> {
+  late Future<List<BargainCampaign>> _campaigns = _load();
+
+  Future<List<BargainCampaign>> _load() async =>
+      (await widget.api.bargainCampaigns())
+          .map((row) => BargainCampaign.fromJson(row))
+          .where((c) => c.status == 'active' && !c.isSoldOut &&
+              (c.expiresAt?.isAfter(DateTime.now()) ?? true))
+          .take(6)
+          .toList();
+
+  void _refresh() {
+    final result = _load();
+    setState(() { _campaigns = result; });
+  }
+
+  Future<void> _open(Widget screen) async {
+    await Navigator.of(context).push(MaterialPageRoute(builder: (_) => screen));
+    if (mounted) _refresh();
+  }
+
+  @override
+  Widget build(BuildContext context) => FutureBuilder<List<BargainCampaign>>(
+        future: _campaigns,
+        builder: (context, snap) {
+          if (snap.connectionState != ConnectionState.done) {
+            return const Padding(
+              padding: EdgeInsets.all(12),
+              child: SkeletonBox(height: 64),
+            );
+          }
+          if (snap.hasError) {
+            return ListTile(
+              title: Text(context.tr('未能載入砍價活動', 'Could not load bargains')),
+              trailing: TextButton(
+                onPressed: _refresh, child: Text(context.tr('重試', 'Retry')),
+              ),
+            );
+          }
+          final campaigns = snap.data!;
+          if (campaigns.isEmpty) return const SizedBox.shrink();
+          return Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              SectionHeader(
+                title: context.tr('限時砍價', 'Flash bargains'),
+                onViewAll: () => _open(BargainListScreen(api: widget.api)),
+              ),
+              SizedBox(
+                height: 200,
+                child: ListView.separated(
+                  scrollDirection: Axis.horizontal,
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                  itemCount: campaigns.length,
+                  separatorBuilder: (_, __) => const SizedBox(width: 8),
+                  itemBuilder: (_, i) => _BargainHomeCard(
+                    campaign: campaigns[i],
+                    onTap: () => _open(BargainCampaignScreen(
+                        api: widget.api, campaign: campaigns[i])),
+                  ),
+                ),
+              ),
+            ],
+          );
+        },
+      );
 }
 
 class _LimitedNotification extends StatefulWidget {

@@ -155,10 +155,11 @@ class SectionHeader extends StatelessWidget {
           if (onViewAll != null)
             GestureDetector(
               onTap: onViewAll,
-              child: const Row(
+              child: Row(
                 children: [
-                  Text('睇全部', style: TextStyle(color: CgColors.primary)),
-                  Icon(Icons.chevron_right, size: 18, color: CgColors.primary),
+                  Text(context.tr('查看全部', 'See all'),
+                      style: const TextStyle(color: CgColors.primary)),
+                  const Icon(Icons.chevron_right, size: 18, color: CgColors.primary),
                 ],
               ),
             ),

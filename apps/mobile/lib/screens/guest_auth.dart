@@ -238,12 +238,6 @@ class _AuthScreenState extends State<AuthScreen> {
                       style: Theme.of(context).textTheme.titleLarge)),
               const SizedBox(height: 24),
               if (step == _Step.chooser) ...[
-                for (final provider in ['Google', 'Facebook'])
-                  OutlinedButton(
-                      onPressed: null,
-                      child: Text(
-                          t('使用 $provider 帳戶繼續', 'Continue with $provider'))),
-                const SizedBox(height: 12),
                 FilledButton(
                     onPressed: () => go(_Step.login),
                     child:

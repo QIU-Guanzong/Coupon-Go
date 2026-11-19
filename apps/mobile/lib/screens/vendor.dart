@@ -7,15 +7,17 @@ import 'package:mobile_scanner/mobile_scanner.dart';
 
 import '../api_client.dart';
 import '../models.dart';
+import '../language.dart';
 import '../theme.dart';
 import '../widgets/widgets.dart';
 import 'reviews_admin.dart';
 
 /// Vendor home: gold theme, usage summary, issue-coupon entry.
 class VendorHomeScreen extends StatefulWidget {
-  const VendorHomeScreen({super.key, required this.api});
+  const VendorHomeScreen({super.key, required this.api, this.showAdmin = false});
 
   final ApiClient api;
+  final bool showAdmin;
 
   @override
   State<VendorHomeScreen> createState() => _VendorHomeScreenState();
@@ -97,11 +99,12 @@ class _VendorHomeScreenState extends State<VendorHomeScreen> {
               child: const Text('評價回覆（差評）'),
             ),
             const SizedBox(height: 8),
-            OutlinedButton(
-              onPressed: () =>
-                  Navigator.of(context).pushNamed('/admin'),
-              child: const Text('管理後台（結算 / 對賬 / 發票 / 內容 / 角色）'),
-            ),
+            if (widget.showAdmin)
+              OutlinedButton(
+                onPressed: () =>
+                    Navigator.of(context).pushNamed('/admin'),
+                child: const Text('管理後台（結算 / 對賬 / 發票 / 內容 / 角色）'),
+              ),
             const SizedBox(height: 16),
             OutlinedButton(onPressed: () => Navigator.of(context).pushNamed('/vendor/settlements'),
                 child: const Text('商家結算單')),
@@ -136,6 +139,73 @@ class _VendorHomeScreenState extends State<VendorHomeScreen> {
             Text(label, style: const TextStyle(color: CgColors.textSecondary)),
           ],
         ),
+      ),
+    );
+  }
+}
+
+class VendorAccountScreen extends StatefulWidget {
+  const VendorAccountScreen({super.key, required this.api});
+
+  final ApiClient api;
+
+  @override
+  State<VendorAccountScreen> createState() => _VendorAccountScreenState();
+}
+
+class _VendorAccountScreenState extends State<VendorAccountScreen> {
+  late Future<Map<String, dynamic>> _profile = widget.api.get('/me');
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        backgroundColor: CgColors.vendorGold,
+        foregroundColor: CgColors.textPrimary,
+        title: Text(context.tr('商戶帳戶', 'Merchant account')),
+      ),
+      body: ListView(
+        children: [
+          FutureBuilder<Map<String, dynamic>>(
+            future: _profile,
+            builder: (context, snapshot) {
+              if (snapshot.connectionState != ConnectionState.done) {
+                return const Padding(
+                  padding: EdgeInsets.all(16),
+                  child: SkeletonBox(height: 64),
+                );
+              }
+              if (snapshot.hasError) {
+                return ListTile(
+                  title: Text(context.tr('未能載入帳戶', 'Could not load the account')),
+                  trailing: TextButton(
+                    onPressed: () {
+                      final result = widget.api.get('/me');
+                      setState(() { _profile = result; });
+                    },
+                    child: Text(context.tr('重試', 'Retry')),
+                  ),
+                );
+              }
+              final name = snapshot.data?['name'] as String? ?? '';
+              final email = snapshot.data?['email'] as String? ?? '';
+              if (name.isEmpty && email.isEmpty) {
+                return ListTile(title: Text(context.tr('未有帳戶資料', 'No account details')));
+              }
+              return ListTile(
+                leading: const Icon(Icons.storefront),
+                title: Text(name.isEmpty ? email : name),
+                subtitle: name.isNotEmpty && email.isNotEmpty ? Text(email) : null,
+              );
+            },
+          ),
+          ListTile(
+            leading: const Icon(Icons.credit_card),
+            title: Text(context.tr('訂閱方案', 'Subscription plans')),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => Navigator.of(context).pushNamed('/vendor/plans'),
+          ),
+        ],
       ),
     );
   }
