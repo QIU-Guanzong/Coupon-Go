@@ -256,6 +256,29 @@ def test_demo_catalogue_repeat_preserves_stock(client):
         assert db.get(models.Package, pkg.id).stock_left == remaining
         assert db.query(models.Coupon).filter_by(package_id=pkg.id).count() == 1
 
+        from app.demo_covers import OFFER_COVERS, SHOP_COVERS, BARGAIN_COVERS, cover_path
+        from app.models_bargain import BargainCampaign
+        from app.routers.bargain import campaign_out
+        from app.seed_bargain import seed_bargain_campaigns
+        from app.serializers_packages import package_out
+        seed_bargain_campaigns(db)
+        covers = [s.image for s in db.query(models.Shop).all()]
+        for (merchant, name), slug in OFFER_COVERS.items():
+            offer = db.query(models.Coupon).join(models.Shop).filter(
+                models.Shop.name_en == merchant, models.Coupon.coupon_name == name).one()
+            assert offer.image == cover_path(slug)
+            covers.append(offer.image)
+        for package in db.query(models.Package):
+            assert package_out(db, package)["images"][0].startswith("assets/images/mvp-set-")
+        covers.extend(campaign_out(db, c)["image"] for c in db.query(BargainCampaign))
+        assert len(SHOP_COVERS) == 20 and len(BARGAIN_COVERS) == 2
+        assert len(covers) == len(set(covers)) == 79
+        photo = db.query(models.Coupon).filter_by(package_id=pkg.id).one()
+        photo.image = "https://merchant.example/custom-cover.jpg"
+        db.commit()
+        seed_showcase(db)
+        assert photo.image == "https://merchant.example/custom-cover.jpg"
+
 
 def test_failed_hold_after_earning_revoked_offsets_clawback(client):
     h = _register_and_login(client, "revoked-hold@example.com")

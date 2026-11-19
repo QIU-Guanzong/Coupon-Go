@@ -460,7 +460,7 @@ class _BargainHomeCard extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Expanded(child: SizedBox(width: double.infinity, child: _HomeImage(url: campaign.image))),
+              Expanded(child: SizedBox(width: double.infinity, child: CatalogPhoto(url: campaign.image))),
               Padding(
                 padding: const EdgeInsets.fromLTRB(8, 6, 8, 0),
                 child: Text(
@@ -551,7 +551,7 @@ class _PackageHomeCard extends StatelessWidget {
           children: [
             AspectRatio(
               aspectRatio: 16 / 9,
-              child: _HomeImage(url: package.image),
+              child: CatalogPhoto(url: package.image),
             ),
             Padding(
               padding: const EdgeInsets.fromLTRB(10, 8, 10, 0),
@@ -642,7 +642,7 @@ class _NearbyCouponRow extends StatelessWidget {
                 child: SizedBox(
                   width: 88,
                   height: 88,
-                  child: _HomeImage(url: coupon.image),
+                  child: CatalogPhoto(url: coupon.image),
                 ),
               ),
               const SizedBox(width: 12),
@@ -717,33 +717,7 @@ class _NearbyCouponRow extends StatelessWidget {
   }
 }
 
-/// 图片：服务端 http(s) 地址用网络图，其余用本地占位图。
-class _HomeImage extends StatelessWidget {
-  const _HomeImage({required this.url});
 
-  final String url;
-
-  @override
-  Widget build(BuildContext context) {
-    if (url.startsWith('http://') || url.startsWith('https://')) {
-      return Image.network(
-        url,
-        fit: BoxFit.cover,
-        width: double.infinity,
-        height: double.infinity,
-        errorBuilder: (_, __, ___) =>
-            Container(color: CgColors.pageBg),
-      );
-    }
-    return Image.asset(
-      url.startsWith('assets/images/') ? url : 'assets/images/dummy_image_1.png',
-      fit: BoxFit.cover,
-      width: double.infinity,
-      height: double.infinity,
-      errorBuilder: (_, __, ___) => Container(color: CgColors.pageBg),
-    );
-  }
-}
 
 /// Search page: live suggestions (three branches), recent + hot searches.
 class SearchScreen extends StatefulWidget {
@@ -862,10 +836,7 @@ class _CouponDetailScreenState extends State<CouponDetailScreen> {
         children: [
           ClipRRect(
             borderRadius: BorderRadius.circular(12),
-            child: Image.asset(c.image.startsWith('assets/images/') ? c.image : 'assets/images/dummy_image_1.png',
-                height: 200, fit: BoxFit.cover,
-                errorBuilder: (_, __, ___) => Container(
-                    height: 200, color: CgColors.pageBg)),
+            child: CatalogPhoto(url: c.image, height: 200),
           ),
           const SizedBox(height: 16),
           Text(c.name,
@@ -972,10 +943,7 @@ class ShopDetailScreen extends StatelessWidget {
             children: [
               ClipRRect(
                 borderRadius: BorderRadius.circular(12),
-                child: Image.asset(shop.image.startsWith('assets/images/') ? shop.image : 'assets/images/dummy_image_1.png',
-                    height: 200, fit: BoxFit.cover,
-                    errorBuilder: (_, __, ___) => Container(
-                        height: 200, color: CgColors.pageBg)),
+                child: CatalogPhoto(url: shop.image, height: 200),
               ),
               const SizedBox(height: 12),
               Text(shop.name,

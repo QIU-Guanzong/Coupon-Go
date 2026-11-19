@@ -100,7 +100,7 @@ class _PackageListScreenState extends State<PackageListScreen> {
                             child: ListTile(
                               leading: p.images.isEmpty ? const Icon(Icons.restaurant_menu, color: CgColors.primary)
                                   : SizedBox(width: 64, height: 56, child: ClipRRect(
-                                      borderRadius: BorderRadius.circular(6), child: _PkgImage(url: p.images.first))),
+                                      borderRadius: BorderRadius.circular(6), child: CatalogPhoto(url: p.images.first))),
                               title: Text(p.name),
                               subtitle: Text(
                                   '${p.shopName} · ${p.personCount} 人用 · 已售 ${p.soldCount}'),
@@ -282,16 +282,13 @@ class _PackageDetailScreenState extends State<PackageDetailScreen> {
             child: SizedBox(
               height: 220,
               child: images.isEmpty
-                  ? Image.asset('assets/images/dummy_image_1.png',
-                      fit: BoxFit.cover,
-                      errorBuilder: (_, __, ___) =>
-                          Container(color: CgColors.pageBg))
+                  ? const CatalogPhoto(url: '')
                   : Stack(
                       children: [
                         PageView.builder(
                           itemCount: images.length,
                           onPageChanged: (i) => setState(() => _page = i),
-                          itemBuilder: (_, i) => _PkgImage(url: images[i]),
+                          itemBuilder: (_, i) => CatalogPhoto(url: images[i]),
                         ),
                         if (images.length > 1)
                           Positioned(
@@ -692,7 +689,7 @@ class _PackageCheckoutScreenState extends State<PackageCheckoutScreen> {
                     child: SizedBox(
                       width: 72,
                       height: 72,
-                      child: _PkgImage(url: p.image),
+                      child: CatalogPhoto(url: p.image),
                     ),
                   ),
                   const SizedBox(width: 12),
@@ -913,32 +910,7 @@ class PackageTermsScreen extends StatelessWidget {
   }
 }
 
-/// 图片：服务端 http(s) 地址用网络图，其余用本地占位图。
-class _PkgImage extends StatelessWidget {
-  const _PkgImage({required this.url});
 
-  final String url;
-
-  @override
-  Widget build(BuildContext context) {
-    if (url.startsWith('http://') || url.startsWith('https://')) {
-      return Image.network(
-        url,
-        fit: BoxFit.cover,
-        width: double.infinity,
-        height: double.infinity,
-        errorBuilder: (_, __, ___) => Container(color: CgColors.pageBg),
-      );
-    }
-    return Image.asset(
-      url.startsWith('assets/images/') ? url : 'assets/images/dummy_image_1.png',
-      fit: BoxFit.cover,
-      width: double.infinity,
-      height: double.infinity,
-      errorBuilder: (_, __, ___) => Container(color: CgColors.pageBg),
-    );
-  }
-}
 
 /// My orders (UI_SPEC §3.4): tabs 全部 / 待支付 / 已支付 / 已退款；
 /// tap a card for the order detail (number, method, times, refund).

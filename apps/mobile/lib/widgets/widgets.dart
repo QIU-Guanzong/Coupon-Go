@@ -3,6 +3,29 @@ import 'package:flutter/material.dart';
 import '../models.dart';
 import '../theme.dart';
 
+/// The same catalogue item retains its cover across browsing and checkout.
+class CatalogPhoto extends StatelessWidget {
+  const CatalogPhoto({super.key, required this.url, this.height = double.infinity});
+  final String url;
+  final double height;
+
+  @override
+  Widget build(BuildContext context) {
+    final empty = SizedBox(width: double.infinity, height: height,
+      child: const ColoredBox(color: CgColors.pageBg, child: Center(
+        child: Icon(Icons.image_outlined, color: CgColors.textSecondary))));
+    if (url.startsWith('assets/images/')) {
+      return Image.asset(url, width: double.infinity, height: height, fit: BoxFit.cover,
+        errorBuilder: (_, __, ___) => empty);
+    }
+    if (url.startsWith('http://') || url.startsWith('https://')) {
+      return Image.network(url, width: double.infinity, height: height, fit: BoxFit.cover,
+        errorBuilder: (_, __, ___) => empty);
+    }
+    return empty;
+  }
+}
+
 /// Two-column coupon card (home grid / lists). Photo on top, name, price row
 /// (discount large, original struck through), orange CTA, heart top-right.
 class CouponCard extends StatelessWidget {
@@ -25,11 +48,7 @@ class CouponCard extends StatelessWidget {
               children: [
                 AspectRatio(
                   aspectRatio: 16 / 9,
-                  child: Image.asset(
-                    coupon.image.startsWith('assets/images/') ? coupon.image : 'assets/images/dummy_image_1.png',
-                    fit: BoxFit.cover,
-                    errorBuilder: (_, __, ___) => Container(color: CgColors.pageBg),
-                  ),
+                  child: CatalogPhoto(url: coupon.image),
                 ),
                 Positioned(
                   right: 6,

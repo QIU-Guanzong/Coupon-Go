@@ -238,7 +238,7 @@ class _BargainCard extends StatelessWidget {
           children: [
             AspectRatio(
               aspectRatio: 16 / 9,
-              child: _BargainImage(url: campaign.image),
+              child: CatalogPhoto(url: campaign.image),
             ),
             Padding(
               padding: const EdgeInsets.fromLTRB(10, 8, 10, 0),
@@ -375,7 +375,7 @@ class _BargainCampaignScreenState extends State<BargainCampaignScreen> {
             child: SizedBox(
               height: 220,
               width: double.infinity,
-              child: _BargainImage(url: c.image),
+              child: CatalogPhoto(url: c.image),
             ),
           ),
           const SizedBox(height: 16),
@@ -980,32 +980,7 @@ class _Avatar extends StatelessWidget {
   }
 }
 
-/// 图片：服务端 http(s) 地址用网络图，其余用本地占位图。
-class _BargainImage extends StatelessWidget {
-  const _BargainImage({required this.url});
 
-  final String url;
-
-  @override
-  Widget build(BuildContext context) {
-    if (url.startsWith('http://') || url.startsWith('https://')) {
-      return Image.network(
-        url,
-        fit: BoxFit.cover,
-        width: double.infinity,
-        height: double.infinity,
-        errorBuilder: (_, __, ___) => Container(color: CgColors.pageBg),
-      );
-    }
-    return Image.asset(
-      'assets/images/dummy_image_1.png',
-      fit: BoxFit.cover,
-      width: double.infinity,
-      height: double.infinity,
-      errorBuilder: (_, __, ___) => Container(color: CgColors.pageBg),
-    );
-  }
-}
 
 /// Group-formed result page: package coupon issued + price-cut refund.
 class BargainResultScreen extends StatelessWidget {

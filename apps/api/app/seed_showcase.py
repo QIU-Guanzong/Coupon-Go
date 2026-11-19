@@ -3,6 +3,7 @@ from datetime import datetime, timedelta, timezone
 
 from . import config, models
 from .cashback_service import lock_account
+from .demo_covers import SHOP_COVERS, OFFER_COVERS, cover_path
 from .routers.packages import store_package
 from .schemas_packages import PackageCreateIn
 
@@ -74,4 +75,18 @@ def seed_showcase(db):
                     "weekday_only": slot.startswith("星期一至五") or slot.startswith("星期二至五"),
                     "stackable": False, "includes": [includes], "excludes": [excludes]}))
             coupon.image = shop.image
+    # Upgrade existing demo previews as well as fresh installations.
+    # Only replace the known starter artwork; respect vendor-edited media.
+    db.flush()
+    placeholders = {None, "", "assets/images/dummy_image_1.png"}
+    for shop in db.query(models.Shop).filter_by(vendor_id=vendor.id):
+        slug = SHOP_COVERS.get(shop.name_en)
+        if slug and shop.image in placeholders:
+            shop.image = cover_path(slug)
+        for coupon in shop.coupons:
+            offer = OFFER_COVERS.get((shop.name_en, coupon.coupon_name))
+            old_cover = cover_path(shop.name_en.lower().replace(" ", "-"))
+            if offer and (coupon.image in placeholders or
+                          (coupon.kind == "package" and coupon.image == old_cover)):
+                coupon.image = cover_path(offer)
     db.commit()

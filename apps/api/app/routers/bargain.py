@@ -55,6 +55,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from .. import models
+from ..demo_covers import BARGAIN_COVERS, cover_path
 from ..database import get_db
 from ..deps import get_current_user, get_optional_user, require_role
 from ..models_bargain import (
@@ -132,6 +133,11 @@ def campaign_out(db: Session, c: BargainCampaign) -> dict:
             image = coupon.image
     if not image and shop is not None:
         image = shop.image or ""
+        if image.startswith("assets/images/mvp-shop-"):
+            shop_slug = image.removeprefix("assets/images/mvp-").removesuffix(".jpg")
+            demo_cover = BARGAIN_COVERS.get((shop_slug, c.name))
+            if demo_cover:
+                image = cover_path(demo_cover)
     # Gap 10 — helper_count: distinct people who have helped any
     # session of this campaign (BargainHelp rows, not sessions).
     helper_count = (db.query(BargainHelp.helper_user_id)

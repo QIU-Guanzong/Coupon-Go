@@ -604,7 +604,8 @@ class Package {
         refundPolicy = j['refund_policy'] as String? ?? 'anytime',
         refundPolicyText = j['refund_policy_text'] as String? ?? '',
         status = j['status'] as String? ?? '',
-        image = j['image'] as String? ?? j['image_url'] as String? ?? '',
+        image = j['image'] as String? ?? j['image_url'] as String? ??
+            (j['images'] as List?)?.firstOrNull?.toString() ?? '',
         images = ((j['images'] as List?) ??
                 (j['photos'] as List?) ??
                 (j['image_urls'] as List?) ??

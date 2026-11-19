@@ -354,3 +354,7 @@ cd apps/api
 ### 网页版
 
 在 `apps/mobile` 运行 `flutter build web --release --no-web-resources-cdn --dart-define=API_BASE_URL=`。构建使用浏览器当前站点的 API，可在桌面或手机浏览器打开。沿用现有 API 启动方式，并将服务端环境变量 `COUPON_WEB_DIR` 指向构建好的 `build/web` 绝对路径。网站首页、静态资源和 `/api/v3` 共用一个地址。外接独立 API 的构建仍可用 `--dart-define=API_BASE_URL=https://你的接口域名` 指定地址。
+
+### MVP 目錄配圖
+
+開發環境為 26 家示範商戶、14 款套餐、36 張一般優惠券、1 張積分券及 2 個砍價活動各配一張原創生成的示意封面。封面依商戶及商品名稱配對；同一商品在不同頁面沿用同一張封面，套餐圖集可另展示所屬店舖。重開開發環境會替換舊版內置佔位圖，保留商戶自行上載的圖片。
