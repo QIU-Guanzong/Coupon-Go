@@ -126,4 +126,22 @@ void main() {
     await tester.pump();
     expect(tester.takeException(), isNull);
   });
+  testWidgets('nearby cards render packaged shop photographs', (tester) async {
+    final api = await open(tester);
+    api.requests[0].complete({
+      'shops': [
+        {
+          'shop_id': 1,
+          'shop_name': '附近商戶',
+          'distance_km': 0.5,
+          'image': 'assets/images/mvp-shop-sushi-bar.jpg',
+        },
+      ],
+    });
+    await tester.pump();
+    final photo = tester.widget<CatalogPhoto>(find.byType(CatalogPhoto));
+    expect(photo.url, 'assets/images/mvp-shop-sushi-bar.jpg');
+    expect(tester.widget<Image>(find.byType(Image)).image, isA<AssetImage>());
+  });
+
 }
