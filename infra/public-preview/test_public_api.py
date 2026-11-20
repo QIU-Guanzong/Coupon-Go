@@ -104,7 +104,6 @@ class PublicPreviewTest(unittest.TestCase):
         payload = {"message": "找一張餐飲券", "language": "zh-Hant", "history": []}
         os.environ.update(PUBLIC_QBOT_ENABLED="1", PUBLIC_QBOT_QUOTA_DB=str(quota),
                           DEEPSEEK_API_KEY="synthetic-test-key")
-        qbot._counts.clear()
         class ProviderResponse:
             def raise_for_status(self):
                 pass
@@ -119,7 +118,7 @@ class PublicPreviewTest(unittest.TestCase):
             result = self.client.post("/api/v3/qbot/chat", json=payload,
                                       headers={"Authorization": "Bearer fake", "Cookie": "session=fake"})
             self.assertEqual(result.status_code, 200, result.text)
-            self.assertEqual(result.json(), {"answer": "這是示例優惠。", "points_balance": None})
+            self.assertEqual(result.json(), {"answer": "這是示例優惠。", "points_balance": None, "offers": []})
             self.assertEqual(send.call_count, 1)
             self.assertEqual(self.client.post("/api/v3/qbot/chat", json={"message": "x" * 1201}).status_code, 422)
             self.assertEqual(self.client.post("/api/v3/qbot/chat", content=b"x" * 40001,
