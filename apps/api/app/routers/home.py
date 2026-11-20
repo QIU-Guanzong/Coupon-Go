@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
-from .. import models
+from .. import config, models
 from ..database import get_db
 from ..deps import get_current_user, get_optional_user
 from ..serializers import coupon_out, shop_out
@@ -294,3 +294,15 @@ def get_plans(db: Session = Depends(get_db)):
         {"id": p.id, "name": p.name, "monthly_fee": float(p.monthly_fee),
          "coupon_limit": p.coupon_limit, "description": p.description or ""}
         for p in plans]}
+
+
+@router.get("/app-config")
+def app_config():
+    """Public display rules only; never serialize the config module or env."""
+    return {
+        "points_claim": config.POINTS_CLAIM,
+        "points_redeem": config.POINTS_REDEEM,
+        "points_review": config.POINTS_REVIEW,
+        "qr_ttl_seconds": config.QR_TTL_SECONDS,
+        "cashback_unlock_days": config.CASHBACK_DINEIN_UNLOCK_DAYS,
+    }
