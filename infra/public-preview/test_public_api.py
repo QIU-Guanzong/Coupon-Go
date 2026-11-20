@@ -57,7 +57,7 @@ class PublicPreviewTest(unittest.TestCase):
         temp.cleanup()
 
     def test_catalogue_routes_and_search(self):
-        for path in ("/api/v3/home", "/api/v3/packages",
+        for path in ("/api/v3/home", "/api/v3/app-config", "/api/v3/packages",
                      "/api/v3/package-details?package_id=1",
                      "/api/v3/shop-details?shop_id=1",
                      "/api/v3/coupon-details-new?coupon_id=1",
@@ -74,6 +74,9 @@ class PublicPreviewTest(unittest.TestCase):
             "/api/v3/auto-suggestion-new", params={"keyword": "壽司"}).status_code, 200)
         self.assertEqual(self.client.post(
             "/api/v3/auto-suggestion-new", params={"keyword": "x" * 101}).status_code, 403)
+        config = self.client.get("/api/v3/app-config").json()
+        self.assertEqual(set(config), {"points_claim", "points_redeem", "points_review",
+                                       "qr_ttl_seconds", "cashback_unlock_days"})
 
     def test_sensitive_and_mutating_routes_are_denied(self):
         cases = (("POST", "/api/v3/login"), ("POST", "/api/v3/new-register"),

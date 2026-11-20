@@ -31,6 +31,7 @@ def _read_only(connection, _record):
 
 PUBLIC_GET = frozenset({
     "/api/v3/home",
+    "/api/v3/app-config",
     "/api/v3/advertisement-banners",
     "/api/v3/get-classification-coupons",
     "/api/v3/get-limited-time-coupons",
@@ -189,7 +190,7 @@ class PreviewGateway:
             keyword = request.query_params.get("keyword", "")
             allowed = len(keyword) <= 100
         if not allowed:
-            await JSONResponse({"detail": "演示網站只供瀏覽"}, status_code=403)(scope, receive, send)
+            await JSONResponse({"detail": "此網站只供瀏覽"}, status_code=403)(scope, receive, send)
             return
         # No logged-in context is ever attached to public catalogue requests.
         scope = dict(scope)
