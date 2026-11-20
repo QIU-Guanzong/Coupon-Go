@@ -166,7 +166,7 @@ void main() {
     expect(api.posts, ['/qbot/chat']);
   });
 
-  testWidgets('demo offer detail actions do not open login or send transactions',
+  testWidgets('browse-only offer detail actions do not open login or send transactions',
       (tester) async {
     final api = _BotApi()..offers = [
       _offer('coupon', 11, 'Tea coupon'),
@@ -175,9 +175,9 @@ void main() {
     ];
     await _ask(tester, api);
     for (final item in [
-      ('coupon', 11, 'Claiming unavailable in demo'),
-      ('package', 42, 'Purchases unavailable in demo'),
-      ('bargain', 69, 'Bargaining unavailable in demo'),
+      ('coupon', 11, 'Browse only'),
+      ('package', 42, 'Browse only'),
+      ('bargain', 69, 'Browse only'),
     ]) {
       await tester.ensureVisible(_tile(item.$1, item.$2));
       await tester.tap(_tile(item.$1, item.$2));
@@ -224,8 +224,8 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.byType(QBotScreen), findsOneWidget);
     if (const bool.fromEnvironment('PUBLIC_DEMO')) {
-      expect(find.textContaining('Shops and offers are examples.'), findsOneWidget);
-      expect(find.textContaining('Use Q仔 without signing in'), findsOneWidget);
+      expect(find.text('Ask Q仔 about offers without signing in.'), findsOneWidget);
+      expect(find.textContaining('Shops and offers are examples.'), findsNothing);
     }
     await tester.enterText(find.byType(TextField), 'What can I browse?');
     await tester.tap(find.byTooltip('Send'));

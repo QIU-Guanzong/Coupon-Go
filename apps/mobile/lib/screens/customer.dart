@@ -280,7 +280,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   const Icon(Icons.info_outline, size: 18, color: Color(0xFF785324)),
                   const SizedBox(width: 8),
                   Expanded(child: Text(
-                    context.tr('商戶及優惠為示例。毋須登入，可瀏覽優惠及使用 Q仔；領券及付款暫未開放。', 'Shops and offers are examples. Browse offers and use Q仔 without signing in; claiming and payments are unavailable.'),
+                    context.tr('毋須登入，即可瀏覽優惠及使用 Q仔。', 'Browse offers and use Q仔 without signing in.'),
                     style: const TextStyle(color: Color(0xFF604317), fontSize: 13),
                   )),
                 ]),
@@ -1058,7 +1058,7 @@ class _CouponDetailScreenState extends State<CouponDetailScreen> {
                   }
                 },
           child: Text(const bool.fromEnvironment('PUBLIC_DEMO')
-              ? context.tr('示範版暫未開放領券', 'Claiming unavailable in demo')
+              ? context.tr('只供瀏覽', 'Browse only')
               : _claimed
               ? context.tr('已領取', 'Claimed')
               : _claiming

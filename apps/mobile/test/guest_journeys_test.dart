@@ -74,7 +74,7 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
     expect(tester.widget<BottomNavigationBar>(find.byType(BottomNavigationBar)).items.length, 5);
-    expect(find.text('商戶及優惠為示例。毋須登入，可瀏覽優惠及使用 Q仔；領券及付款暫未開放。'),
+    expect(find.text('毋須登入，即可瀏覽優惠及使用 Q仔。'),
         const bool.fromEnvironment('PUBLIC_DEMO') ? findsOneWidget : findsNothing);
 
     await tester.tap(find.text('收藏'));
@@ -87,12 +87,12 @@ void main() {
     await tester.tap(find.text('Q Wallet'));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
-    expect(find.text(const bool.fromEnvironment('PUBLIC_DEMO') ? '暫時沒有個人優惠券。' : '登入後可在這裏查看已領取的優惠券。'), findsOneWidget);
+    expect(find.text(const bool.fromEnvironment('PUBLIC_DEMO') ? '暫時沒有個人優惠券，可以先逛逛套餐。' : '登入後可在這裏查看已領取的優惠券。'), findsOneWidget);
     expect(tester.widget<BottomNavigationBar>(find.byType(BottomNavigationBar)).currentIndex, 4);
     await tester.tap(find.text('已失效'));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
-    expect(find.text(const bool.fromEnvironment('PUBLIC_DEMO') ? '暫時沒有個人優惠券。' : '登入後可在這裏查看已領取的優惠券。'), findsOneWidget);
+    expect(find.text(const bool.fromEnvironment('PUBLIC_DEMO') ? '暫時沒有個人優惠券，可以先逛逛套餐。' : '登入後可在這裏查看已領取的優惠券。'), findsOneWidget);
     expect(api.calls, isNot(contains('/favorite-coupon-list')));
     expect(api.calls, isNot(contains('/get-favorite-coupons-list')));
     expect(api.calls, isNot(contains('/wallet/revision')));

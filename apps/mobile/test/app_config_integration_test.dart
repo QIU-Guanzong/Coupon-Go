@@ -144,7 +144,7 @@ void main() {
       )));
       await tester.pumpAndSettle();
       if (const bool.fromEnvironment('PUBLIC_DEMO')) {
-        final button = find.widgetWithText(ElevatedButton, 'Claiming unavailable in demo');
+        final button = find.widgetWithText(ElevatedButton, 'Browse only');
         expect(button, findsOneWidget);
         expect(tester.widget<ElevatedButton>(button).onPressed, isNull);
         expect(api.claimCalls, 0);

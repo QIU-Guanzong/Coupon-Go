@@ -201,7 +201,7 @@ class PreviewGateway:
             keyword = request.query_params.get("keyword", "")
             allowed = len(keyword) <= 100
         if not allowed:
-            await JSONResponse({"detail": "演示網站只供瀏覽"}, status_code=403)(scope, receive, send)
+            await JSONResponse({"detail": "此網站只供瀏覽"}, status_code=403)(scope, receive, send)
             return
         # No logged-in context is ever attached to public catalogue requests.
         scope = dict(scope)

@@ -554,7 +554,7 @@ class _PackageDetailScreenState extends State<PackageDetailScreen> {
                   child: ElevatedButton(
                     onPressed: const bool.fromEnvironment('PUBLIC_DEMO') || soldOut ? null : _buy,
                     child: Text(const bool.fromEnvironment('PUBLIC_DEMO')
-                        ? context.tr('示範版暫未開放購買', 'Purchases unavailable in demo')
+                        ? context.tr('只供瀏覽', 'Browse only')
                         : soldOut ? context.tr('已售罄', 'Sold out') : context.tr('立即搶購', 'Buy now')),
                   ),
                 ),

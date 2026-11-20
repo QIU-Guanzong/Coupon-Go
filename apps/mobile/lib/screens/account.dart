@@ -290,7 +290,7 @@ class _WalletScreenState extends State<WalletScreen>
                                       const SizedBox(height: 12),
                                       Text(widget.guest
                                           ? (const bool.fromEnvironment('PUBLIC_DEMO')
-                                              ? context.tr('暫時沒有個人優惠券。', 'No personal coupons yet.')
+                                              ? context.tr('暫時沒有個人優惠券，可以先逛逛套餐。', 'No personal coupons yet. Browse packages for offers.')
                                               : context.tr('登入後可在這裏查看已領取的優惠券。', 'Sign in to view your coupons.'))
                                           : context.tr('暫時沒有優惠券，去看看套餐吧！', 'No coupons yet. Browse packages for more offers.')),
                                       const SizedBox(height: 12),
