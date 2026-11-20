@@ -4,6 +4,24 @@ import '../api_client.dart';
 import '../language.dart';
 import '../theme.dart';
 
+/// Present simple model formatting without modifying the stored chat history.
+/// Unmatched markup is kept as ordinary text; no HTML or links are executed.
+TextSpan formatQBotAnswer(String raw) {
+  final text = raw.replaceAllMapped(
+    RegExp(r'^([ \t]*)[-*] (?=\S)', multiLine: true),
+    (match) => '${match[1]}• ',
+  );
+  final spans = <InlineSpan>[];
+  var offset = 0;
+  for (final match in RegExp(r'\*\*([^\n]+?)\*\*').allMatches(text)) {
+    if (match.start > offset) spans.add(TextSpan(text: text.substring(offset, match.start)));
+    spans.add(TextSpan(text: match[1], style: const TextStyle(fontWeight: FontWeight.bold)));
+    offset = match.end;
+  }
+  if (offset < text.length) spans.add(TextSpan(text: text.substring(offset)));
+  return TextSpan(children: spans);
+}
+
 /// Q仔 uses the Coupon GO server for catalog-grounded answers.
 class QBotScreen extends StatefulWidget {
   const QBotScreen({super.key, required this.api});
@@ -207,11 +225,11 @@ class _QBotScreenState extends State<QBotScreen> {
                       child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Text(m['text']!,
-                                style: TextStyle(
-                                    color: m['role'] == 'user'
-                                        ? Colors.white
-                                        : CgColors.textPrimary)),
+                            if (m['role'] == 'user')
+                              SelectableText(m['text']!, style: const TextStyle(color: Colors.white))
+                            else
+                              SelectableText.rich(formatQBotAnswer(m['text']!),
+                                  style: const TextStyle(color: CgColors.textPrimary)),
                             if (m['balance'] != null)
                               Text(t("你的積分：${m['balance']}",
                                   "Your points: ${m['balance']}")),

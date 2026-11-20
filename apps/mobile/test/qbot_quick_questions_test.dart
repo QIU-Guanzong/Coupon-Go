@@ -9,6 +9,7 @@ class _QbotApi extends ApiClient {
   final sent = <Map<String, dynamic>>[];
   int? nextError;
   bool loggedIn = false;
+  String answer = 'Test reply';
 
   @override
   bool get isLoggedIn => loggedIn;
@@ -24,7 +25,7 @@ class _QbotApi extends ApiClient {
     final status = nextError;
     nextError = null;
     if (status != null) throw ApiException(status, 'Test error');
-    return {'answer': 'Test reply'};
+    return {'answer': answer};
   }
 }
 
@@ -116,5 +117,39 @@ void main() {
     await tester.pumpAndSettle();
     expect(api.sent.last['history'], isEmpty);
     expect(find.text('Test reply'), findsOneWidget);
+  });
+
+  test('formats common bullets and bold without losing plain or unfinished text', () {
+    const raw = '一般文字\n- **商戶**：咖啡店\n* 另一項\n1. 有序項目\n未完 **標記';
+    final result = formatQBotAnswer(raw);
+    expect(result.toPlainText(), '一般文字\n• 商戶：咖啡店\n• 另一項\n1. 有序項目\n未完 **標記');
+    expect(result.children!.whereType<TextSpan>()
+        .singleWhere((span) => span.text == '商戶').style!.fontWeight, FontWeight.bold);
+    expect(formatQBotAnswer('普通文字 * 與 **未完').toPlainText(), '普通文字 * 與 **未完');
+  });
+
+  testWidgets('formatted answer is selectable while history retains original Markdown', (tester) async {
+    final semantics = tester.ensureSemantics();
+    final api = await open(tester);
+    api.answer = '- **商戶**：咖啡店';
+    await tester.enterText(find.byType(TextField), '推薦');
+    await tester.tap(find.byTooltip('送出'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('同意並送出'));
+    await tester.pumpAndSettle();
+    final answerFinder = find.byWidgetPredicate((widget) =>
+        widget is SelectableText && widget.textSpan?.toPlainText() == '• 商戶：咖啡店');
+    final answer = tester.widget<SelectableText>(answerFinder);
+    expect(answer.textSpan!.toPlainText(), '• 商戶：咖啡店');
+    final semanticData = tester.getSemantics(answerFinder).getSemanticsData();
+    expect('${semanticData.label}${semanticData.value}', contains('商戶'));
+    await tester.enterText(find.byType(TextField), '更多');
+    await tester.tap(find.byTooltip('送出'));
+    await tester.pumpAndSettle();
+    expect(api.sent.last['history'], [
+      {'role': 'user', 'text': '推薦'},
+      {'role': 'assistant', 'text': '- **商戶**：咖啡店'},
+    ]);
+    semantics.dispose();
   });
 }
