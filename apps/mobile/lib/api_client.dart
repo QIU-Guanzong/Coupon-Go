@@ -12,11 +12,13 @@ import 'package:shared_preferences/shared_preferences.dart';
 /// attached automatically when present.
 class ApiClient extends ChangeNotifier {
   ApiClient({String? baseUrl})
-      : baseUrl = baseUrl ?? _configuredBase;
+      : baseUrl = baseUrl ?? configuredBase;
 
-  static String get _configuredBase {
+  static String get configuredBase {
     const url = String.fromEnvironment('API_BASE_URL', defaultValue: 'http://localhost:8000');
-    return url.isEmpty ? Uri.base.origin : url;
+    return url.isEmpty
+        ? Uri.base.resolve('.').toString().replaceFirst(RegExp(r'/$'), '')
+        : url;
   }
 
   final String baseUrl;

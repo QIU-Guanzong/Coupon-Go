@@ -5,6 +5,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../api_client.dart';
+import '../language.dart';
 import '../models.dart';
 import '../theme.dart';
 import '../widgets/widgets.dart';
@@ -914,9 +915,10 @@ class PackageTermsScreen extends StatelessWidget {
 /// My orders (UI_SPEC §3.4): tabs 全部 / 待支付 / 已支付 / 已退款；
 /// tap a card for the order detail (number, method, times, refund).
 class OrdersScreen extends StatefulWidget {
-  const OrdersScreen({super.key, required this.api});
+  const OrdersScreen({super.key, required this.api, this.guest = false});
 
   final ApiClient api;
+  final bool guest;
 
   @override
   State<OrdersScreen> createState() => _OrdersScreenState();
@@ -934,12 +936,19 @@ class _OrdersScreenState extends State<OrdersScreen> with WalletUpdates<OrdersSc
   }
 
   @override
+  bool get walletPageActive => !widget.guest;
+
+  @override
   Future<void> syncWallet() => refreshOnReceiptChange(widget.api, () async {
         await _load(quiet: true);
         return mounted && !_error;
       });
 
   Future<void> _load({bool quiet = false}) async {
+    if (widget.guest) {
+      if (mounted) setState(() { _orders = []; _loading = false; _error = false; });
+      return;
+    }
     if (mounted && !quiet) setState(() => _loading = true);
     try {
       final list = await widget.api.orders();
@@ -1041,6 +1050,7 @@ class _OrdersScreenState extends State<OrdersScreen> with WalletUpdates<OrdersSc
   }
 
   String _emptyMessage(int tab) {
+    if (widget.guest) return context.tr('登入後可查看你的訂單。', 'Sign in to view your orders.');
     switch (tab) {
       case 1:
         return '暫時沒有待支付訂單。';

@@ -206,6 +206,22 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
             ),
           ),
+          if (const bool.fromEnvironment('PUBLIC_DEMO'))
+            SliverToBoxAdapter(
+              child: Container(
+                width: double.infinity,
+                color: const Color(0xFFFFF5E8),
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                child: Row(children: [
+                  const Icon(Icons.info_outline, size: 18, color: Color(0xFF785324)),
+                  const SizedBox(width: 8),
+                  Expanded(child: Text(
+                    context.tr('示範內容，商戶及優惠為示例', 'Demo content. Shops and offers are examples.'),
+                    style: const TextStyle(color: Color(0xFF604317), fontSize: 13),
+                  )),
+                ]),
+              ),
+            ),
           if (_loading)
             const SliverToBoxAdapter(
               child: Padding(
@@ -269,47 +285,79 @@ class _HomeScreenState extends State<HomeScreen> {
                       }).toList(),
                     ),
                   ),
-                  // 分类横滑（沿用现有数据）
-                  SizedBox(
-                    height: 92,
-                    child: ListView.builder(
-                      scrollDirection: Axis.horizontal,
-                      padding: const EdgeInsets.symmetric(horizontal: 12),
-                      itemCount: categories.length,
-                      itemBuilder: (_, i) {
-                        final cat = categories[i] as Map;
-                        return Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 10),
-                          child: Semantics(
-                            button: true,
-                            label: cat['name'] as String,
-                            child: GestureDetector(
-                              onTap: () => Navigator.of(context).pushNamed(
-                                  '/category',
-                                  arguments: cat['id'] as int),
-                              child: Column(
-                                children: [
-                                  CircleAvatar(
-                                    radius: 26,
-                                    backgroundColor: Colors.white,
-                                    child: Text(
-                                      (cat['name'] as String).characters.first,
-                                      style: const TextStyle(
-                                          color: CgColors.primary,
-                                          fontWeight: FontWeight.bold),
-                                    ),
+                  // Category labels come from the catalogue. Each remains a
+                  // direct link to the existing category screen.
+                  if (categories.isNotEmpty)
+                    LayoutBuilder(builder: (context, constraints) {
+                      final tileWidth = ((constraints.maxWidth - 40) / 4)
+                          .clamp(78.0, 144.0);
+                      final textGrowth = (MediaQuery.textScalerOf(context)
+                                  .scale(13) - 13)
+                              .clamp(0, 24) *
+                          2;
+                      return SizedBox(
+                        height: 120.0 + textGrowth.toDouble(),
+                        child: ListView.separated(
+                          scrollDirection: Axis.horizontal,
+                          padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+                          itemCount: categories.length,
+                          separatorBuilder: (_, __) => const SizedBox(width: 8),
+                          itemBuilder: (context, index) {
+                            final category = categories[index] as Map;
+                            final name = category['name'] as String? ?? '';
+                            final english = category['name_en'] as String? ?? name;
+                            final label = context.tr(name, english);
+                            final image = switch (english.toLowerCase()) {
+                              'food & drink' => 'assets/images/mvp-offer-dim-sum-platter.jpg',
+                              'retail' => 'assets/images/mvp-offer-produce-basket.jpg',
+                              'services' => 'assets/images/mvp-offer-hot-stone-spa.jpg',
+                              _ => null,
+                            };
+                            return SizedBox(
+                              width: tileWidth,
+                              child: Material(
+                                color: Colors.white,
+                                borderRadius: BorderRadius.circular(14),
+                                clipBehavior: Clip.antiAlias,
+                                child: InkWell(
+                                  onTap: () => Navigator.of(context).pushNamed(
+                                    '/category',
+                                    arguments: category['id'] as int,
                                   ),
-                                  const SizedBox(height: 4),
-                                  Text(cat['name'] as String,
-                                      style: const TextStyle(fontSize: 12)),
-                                ],
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                                    children: [
+                                      Expanded(
+                                        child: image == null
+                                            ? const ColoredBox(
+                                                color: Color(0xFFFCEBEA),
+                                                child: Icon(Icons.grid_view_rounded,
+                                                  color: CgColors.primary, size: 30),
+                                              )
+                                            : CatalogPhoto(url: image),
+                                      ),
+                                      Padding(
+                                        padding: const EdgeInsets.symmetric(
+                                            horizontal: 6, vertical: 7),
+                                        child: Text(label,
+                                          maxLines: 2,
+                                          overflow: TextOverflow.ellipsis,
+                                          textAlign: TextAlign.center,
+                                          style: const TextStyle(
+                                            fontSize: 13,
+                                            fontWeight: FontWeight.w600,
+                                            color: CgColors.textPrimary,
+                                          )),
+                                      ),
+                                    ],
+                                  ),
+                                ),
                               ),
-                            ),
-                          ),
-                        );
-                      },
-                    ),
-                  ),
+                            );
+                          },
+                        ),
+                      );
+                    }),
                   // 附近商户入口（按距離排序）
                   Padding(
                     padding: const EdgeInsets.fromLTRB(16, 4, 16, 0),
@@ -379,23 +427,27 @@ class _HomeScreenState extends State<HomeScreen> {
                           style: const TextStyle(color: CgColors.textSecondary)),
                     )
                   else
-                    GridView.builder(
-                      shrinkWrap: true,
-                      physics: const NeverScrollableScrollPhysics(),
-                      padding: const EdgeInsets.symmetric(horizontal: 12),
-                      gridDelegate:
-                          const SliverGridDelegateWithFixedCrossAxisCount(
-                        crossAxisCount: 2,
-                        childAspectRatio: 0.62,
-                        crossAxisSpacing: 8,
-                        mainAxisSpacing: 8,
-                      ),
-                      itemCount: _packages.length,
-                      itemBuilder: (_, i) => _PackageHomeCard(
-                        package: _packages[i],
-                        onTap: () => _openPackage(_packages[i]),
-                      ),
-                    ),
+                    LayoutBuilder(builder: (context, constraints) {
+                      final columns = (constraints.maxWidth / 260).floor().clamp(2, 5);
+                      final itemWidth = (constraints.maxWidth - 24 - (columns - 1) * 8) / columns;
+                      final textGrowth = (MediaQuery.textScalerOf(context).scale(16) - 16).clamp(0, 32);
+                      return GridView.builder(
+                        shrinkWrap: true,
+                        physics: const NeverScrollableScrollPhysics(),
+                        padding: const EdgeInsets.symmetric(horizontal: 12),
+                        gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                          crossAxisCount: columns,
+                          mainAxisExtent: itemWidth * 9 / 16 + 166 + textGrowth * 4,
+                          crossAxisSpacing: 8,
+                          mainAxisSpacing: 8,
+                        ),
+                        itemCount: _packages.length,
+                        itemBuilder: (_, i) => _PackageHomeCard(
+                          package: _packages[i],
+                          onTap: () => _openPackage(_packages[i]),
+                        ),
+                      );
+                    }),
                   // 附近优惠：纵向列表（沿用领券卡片，右下加距离）
                   SectionHeader(title: context.tr('附近優惠','Nearby offers')),
                   if (nearby.isEmpty)

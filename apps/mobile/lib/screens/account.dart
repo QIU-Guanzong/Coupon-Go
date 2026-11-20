@@ -17,10 +17,11 @@ import 'reviews_admin.dart';
 /// Q Wallet: points balance, three status tabs (1 unused / 2 used / 3 expired),
 /// points-exchange zone (9-point coupon), records.
 class WalletScreen extends StatefulWidget {
-  const WalletScreen({super.key, required this.api, this.active = true, required this.onShowQr});
+  const WalletScreen({super.key, required this.api, this.active = true, this.guest = false, required this.onShowQr});
 
   final ApiClient api;
   final bool active;
+  final bool guest;
   final Future<void> Function(WalletItem) onShowQr;
 
   @override
@@ -51,7 +52,7 @@ class _WalletScreenState extends State<WalletScreen>
   @override
   void didUpdateWidget(WalletScreen oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (widget.active && !oldWidget.active) _load();
+    if ((widget.active && !oldWidget.active) || widget.guest != oldWidget.guest) _load();
   }
 
   @override
@@ -61,7 +62,7 @@ class _WalletScreenState extends State<WalletScreen>
   }
 
   @override
-  bool get walletPageActive => widget.active;
+  bool get walletPageActive => widget.active && !widget.guest;
 
   @override
   Future<void> syncWallet() async {
@@ -74,6 +75,16 @@ class _WalletScreenState extends State<WalletScreen>
 
   Future<void> _load({bool quiet = false}) async {
     final request = ++_request;
+    if (widget.guest) {
+      setState(() {
+        _items = [];
+        _balance = null;
+        _cashbackPending = _cashbackWithdrawable = null;
+        _loading = false;
+        _error = null;
+      });
+      return;
+    }
     final status = _tab.index + 1;
     setState(() {
       if (!quiet) _loading = true;
@@ -181,7 +192,7 @@ class _WalletScreenState extends State<WalletScreen>
               const SizedBox(height: 12),
               // Line D: cashback balance sits next to points, separate ledger.
               InkWell(
-                onTap: () async {
+                onTap: widget.guest ? null : () async {
                   await Navigator.of(context).push(MaterialPageRoute(
                       builder: (_) => CashbackScreen(api: widget.api)));
                   _load();
@@ -272,7 +283,7 @@ class _WalletScreenState extends State<WalletScreen>
                                                     CgColors.textSecondary),
                                       ),
                                       const SizedBox(height: 12),
-                                      const Text('暫時沒有優惠券，去首頁看看吧！'),
+                                      Text(widget.guest ? context.tr('登入後可在這裏查看已領取的優惠券。', 'Sign in to view your coupons.') : context.tr('暫時沒有優惠券，去首頁看看吧！', 'No coupons yet.')),
                                       const SizedBox(height: 12),
                                       ElevatedButton(
                                         onPressed: () => Navigator.of(context)
@@ -715,9 +726,10 @@ class _ReceiptState extends State<RedemptionSuccessScreen> with WalletUpdates<Re
 
 /// Notifications: unread badge, mark-all-read, clear.
 class NotificationsScreen extends StatefulWidget {
-  const NotificationsScreen({super.key, required this.api});
+  const NotificationsScreen({super.key, required this.api, this.guest = false});
 
   final ApiClient api;
+  final bool guest;
 
   @override
   State<NotificationsScreen> createState() => _NotificationsScreenState();
@@ -733,6 +745,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
   }
 
   Future<void> _load() async {
+    if (widget.guest) return;
     try {
       final data = await widget.api.notifications();
       if (!mounted) return;
@@ -750,7 +763,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
       appBar: AppBar(
         title: const Text('通知'),
         actions: [
-          TextButton(
+          if (!widget.guest) TextButton(
             onPressed: () async {
               await widget.api.markAllNotificationsRead();
               _load();
@@ -772,7 +785,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                           size: 64,
                           color: CgColors.textSecondary)),
                   const SizedBox(height: 12),
-                  const Text('沒有新通知。'),
+                  Text(widget.guest ? context.tr('登入後可查看你的通知。', 'Sign in to view your notifications.') : context.tr('沒有新通知。', 'No new notifications.')),
                 ],
               ),
             )
@@ -834,7 +847,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
             subtitle: Text((draft ?? language.english) ? 'English' : '繁體中文'),
             trailing: const Icon(Icons.chevron_right),
             onTap: () => setState(() => language.draft = language.english)),
-          if (widget.api.isLoggedIn) ...[
           ListTile(
             title: const Text('新手指南 / 常見問題'),
             trailing: const Icon(Icons.chevron_right),
@@ -843,8 +855,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ListTile(
             title: const Text('關於 Coupon GO!'),
             subtitle: const Text('版本 v0.1.0'),
-            onTap: () {},
+            onTap: () => showAboutDialog(context: context,
+                applicationName: 'Coupon GO!', applicationVersion: 'v0.1.0'),
           ),
+          if (widget.api.isLoggedIn) ...[
           const Divider(),
           ListTile(
             title: const Text('登出', style: TextStyle(color: CgColors.primary)),

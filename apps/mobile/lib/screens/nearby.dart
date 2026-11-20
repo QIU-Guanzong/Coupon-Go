@@ -171,6 +171,10 @@ class _NearbyScreenState extends State<NearbyScreen> {
   }
 
   Future<void> _navigate(Shop shop) async {
+    if (const bool.fromEnvironment('PUBLIC_DEMO')) {
+      showCgToast(context, '示範商戶，未提供導航');
+      return;
+    }
     final url = 'https://www.google.com/maps/dir/?api=1'
         '&destination=${shop.latitude},${shop.longitude}';
     final uri = Uri.parse(url);
@@ -190,16 +194,12 @@ class _NearbyScreenState extends State<NearbyScreen> {
                 builder: (_) => CouponDetailScreen(api: widget.api, coupon: c))))));
   }
 
-  Widget _shopImage(Shop s, {double? height}) {
-    if (s.image.startsWith('http')) {
-      return Image.network(s.image,
-          height: height,
-          width: height == null ? null : height * 1.2,
-          fit: BoxFit.cover,
-          errorBuilder: (_, __, ___) => const Icon(Icons.store,
-              color: CgColors.primary, size: 40));
-    }
-    return const Icon(Icons.store, color: CgColors.primary, size: 40);
+  Widget _shopImage(Shop shop, {double? height}) {
+    return CatalogPhoto(
+      url: shop.image,
+      height: height ?? double.infinity,
+      apiBaseUrl: widget.api.baseUrl,
+    );
   }
 
   Widget _ratingText(Shop s) {

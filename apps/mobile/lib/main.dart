@@ -1,11 +1,10 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/foundation.dart' show LicenseRegistry, LicenseEntryWithLineBreaks;
-import 'package:flutter/services.dart' show rootBundle;
+import 'package:flutter/foundation.dart' show kIsWeb, LicenseRegistry, LicenseEntryWithLineBreaks;
+import 'package:flutter/services.dart' show Clipboard, ClipboardData, rootBundle;
 import 'package:flutter_localizations/flutter_localizations.dart';
 
 import 'api_client.dart';
 import 'language.dart';
-import 'screens/guest_auth.dart' show guestLoginPrompt;
 import 'package:share_plus/share_plus.dart';
 import 'models.dart';
 import 'screens/account.dart';
@@ -91,7 +90,7 @@ class _CouponGoAppState extends State<CouponGoApp> {
         switch (settings.name) {
           case '/notifications':
             return MaterialPageRoute(
-                builder: (_) => NotificationsScreen(api: _api));
+                builder: (_) => NotificationsScreen(api: _api, guest: !_authed));
           case '/settings':
             return MaterialPageRoute(
                 builder: (_) => SettingsScreen(
@@ -122,7 +121,7 @@ class _CouponGoAppState extends State<CouponGoApp> {
                 builder: (_) => PackageListScreen(api: _api));
           case '/orders':
             return MaterialPageRoute(
-                builder: (_) => OrdersScreen(api: _api));
+                builder: (_) => OrdersScreen(api: _api, guest: !_authed));
           case '/package-details':
             return MaterialPageRoute(
                 builder: (_) => PackageDetailScreen(
@@ -280,12 +279,6 @@ class _HomeShellState extends State<HomeShell> {
     )) ?? false;
   }
 
-  Future<bool> _allowMember() async {
-    if (widget.api.isLoggedIn) return true;
-    if (!await guestLoginPrompt(context) || !mounted) return false;
-    return _authenticate();
-  }
-
   Future<void> _openCorporate() async {
     if (!widget.vendorMode) {
       if (widget.api.isLoggedIn) {
@@ -304,6 +297,63 @@ class _HomeShellState extends State<HomeShell> {
     if (mounted) widget.onToggleMode();
   }
 
+  Future<void> _inviteFriends() async {
+    // The website shares its own public address. Native builds can supply
+    // PUBLIC_WEB_URL when their companion website is available.
+    const configured = String.fromEnvironment('PUBLIC_WEB_URL');
+    final link = kIsWeb
+        ? Uri.base.replace(query: null, fragment: null).toString().split('#').first.split('?').first
+        : configured;
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(context.tr('邀請好友', 'Invite friends')),
+        content: SelectableText(link.isEmpty
+            ? context.tr('分享連結尚未設定。', 'The sharing link is not available yet.')
+            : link),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: Text(context.tr('關閉', 'Close')),
+          ),
+          if (link.isNotEmpty)
+            TextButton(
+              onPressed: () async {
+                try {
+                  await Clipboard.setData(ClipboardData(text: link));
+                  if (dialogContext.mounted) {
+                    showCgToast(dialogContext, dialogContext.tr('連結已複製', 'Link copied'));
+                  }
+                } catch (_) {
+                  if (dialogContext.mounted) {
+                    showCgToast(dialogContext, dialogContext.tr('未能複製，請手動選取連結', 'Select the link to copy it'));
+                  }
+                }
+              },
+              child: Text(context.tr('複製連結', 'Copy link')),
+            ),
+          if (link.isNotEmpty)
+            TextButton(
+              onPressed: () async {
+                final box = dialogContext.findRenderObject() as RenderBox?;
+                try {
+                  await SharePlus.instance.share(ShareParams(
+                    text: link,
+                    sharePositionOrigin: box == null ? null : box.localToGlobal(Offset.zero) & box.size,
+                  ));
+                } catch (_) {
+                  if (dialogContext.mounted) {
+                    showCgToast(dialogContext, dialogContext.tr('請複製連結分享', 'Copy the link to share'));
+                  }
+                }
+              },
+              child: Text(context.tr('分享', 'Share')),
+            ),
+        ],
+      ),
+    );
+  }
+
   void _openDiscovery() {
     Navigator.of(context).push(MaterialPageRoute(builder: (_) => DiscoveryScreen(
       api: widget.api, onOpenSearch: _openSearch, onOpenCoupon: _openCoupon,
@@ -319,25 +369,21 @@ class _HomeShellState extends State<HomeShell> {
         onOpenCoupon: _openCoupon,
         onOpenShop: _openShop,
         onOpenSearch: _openSearch,
-        onNotifications: () async {
-          if (await _allowMember() && context.mounted) Navigator.of(context).pushNamed('/notifications');
-        },
+        onNotifications: () => Navigator.of(context).pushNamed('/notifications'),
         onOpenLimited: () => Navigator.of(context).push(MaterialPageRoute(
             builder: (_) => LimitedTimeScreen(
                 api: widget.api, onOpenCoupon: _openCoupon))),
       ),
-      widget.api.isLoggedIn ? FavoritesScreen(api: widget.api, onOpenCoupon: _openCoupon) : const SizedBox.shrink(),
+      FavoritesScreen(api: widget.api, onOpenCoupon: _openCoupon, guest: !widget.authed),
       const SizedBox(), // Let's Go! — handled by onTap below
       LimitedTimeScreen(api: widget.api, onOpenCoupon: _openCoupon),
-      widget.api.isLoggedIn
-          ? WalletScreen(
-              active: _index == 4,
-              api: widget.api,
-              onShowQr: (item) => Navigator.of(context).push(MaterialPageRoute(
-                  builder: (_) =>
-                      QrShowScreen(api: widget.api, item: item))),
-            )
-          : const SizedBox.shrink(),
+      WalletScreen(
+        active: _index == 4,
+        guest: !widget.authed,
+        api: widget.api,
+        onShowQr: (item) => Navigator.of(context).push(MaterialPageRoute(
+            builder: (_) => QrShowScreen(api: widget.api, item: item))),
+      ),
     ];
     return Scaffold(
       drawer: _drawer(),
@@ -351,7 +397,6 @@ class _HomeShellState extends State<HomeShell> {
             _openDiscovery();
             return;
           }
-          if ((i == 1 || i == 4) && !await _allowMember()) return;
           if (mounted) setState(() { _visited.add(i); _index = i; });
         },
         items: [
@@ -451,30 +496,20 @@ class _HomeShellState extends State<HomeShell> {
               Navigator.of(context).pushNamed('/packages');
             },
           ),
-          if (widget.authed)
-            ListTile(
-              leading:
-                  const Icon(Icons.receipt_long, color: CgColors.primary),
-              title: const Text('我的訂單'),
-              onTap: () {
-                Navigator.of(context).pop();
-                Navigator.of(context).pushNamed('/orders');
-              },
-            ),          ListTile(
+          ListTile(
+            leading: const Icon(Icons.receipt_long, color: CgColors.primary),
+            title: Text(context.tr('我的訂單', 'My orders')),
+            onTap: () {
+              Navigator.of(context).pop();
+              Navigator.of(context).pushNamed('/orders');
+            },
+          ),
+          ListTile(
             leading: const Icon(Icons.card_giftcard, color: CgColors.primary),
             title: Text(context.tr('邀請好友','Invite Friends')),
-            onTap: () async {
+            onTap: () {
               Navigator.of(context).pop();
-              final box = context.findRenderObject() as RenderBox?;
-              try {
-                await SharePlus.instance.share(ShareParams(
-                  text: "${context.tr('邀請您一齊加入 Coupon GO！', 'Join me on Coupon GO!')} "
-                      'https://play.google.com/store/apps/details?id=com.techmatch.coupongonew',
-                  sharePositionOrigin: box == null ? null : box.localToGlobal(Offset.zero) & box.size,
-                ));
-              } catch (_) {
-                if (mounted) showCgToast(context, context.tr('未能開啟分享', 'Sharing is unavailable'));
-              }
+              _inviteFriends();
             },
           ),
           ListTile(
@@ -529,10 +564,11 @@ class _HomeShellState extends State<HomeShell> {
 
 /// Favorites tab: favorite coupons + shops.
 class FavoritesScreen extends StatefulWidget {
-  const FavoritesScreen({super.key, required this.api, required this.onOpenCoupon});
+  const FavoritesScreen({super.key, required this.api, required this.onOpenCoupon, this.guest = false});
 
   final ApiClient api;
   final void Function(Coupon) onOpenCoupon;
+  final bool guest;
 
   @override
   State<FavoritesScreen> createState() => _FavoritesScreenState();
@@ -541,6 +577,7 @@ class FavoritesScreen extends StatefulWidget {
 class _FavoritesScreenState extends State<FavoritesScreen> {
   List<Coupon> _coupons = [];
   List<Shop> _shops = [];
+  int _request = 0;
 
   @override
   void initState() {
@@ -548,18 +585,29 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
     _load();
   }
 
+  @override
+  void didUpdateWidget(FavoritesScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.guest != widget.guest) _load();
+  }
+
   Future<void> _load() async {
+    final request = ++_request;
+    if (widget.guest) {
+      if (mounted) setState(() { _coupons = []; _shops = []; });
+      return;
+    }
     try {
       final c = await widget.api.get('/favorite-coupon-list');
       final s = await widget.api.get('/get-collection-shops');
-      if (!mounted) return;
+      if (!mounted || widget.guest || request != _request) return;
       setState(() {
         _coupons =
             (c['coupons'] as List).map((e) => Coupon.fromJson(e)).toList();
         _shops = (s['shops'] as List).map((e) => Shop.fromJson(e)).toList();
       });
     } on ApiException catch (e) {
-      if (mounted) showCgToast(context, e.message);
+      if (mounted && !widget.guest && request == _request) showCgToast(context, e.message);
     }
   }
 
@@ -573,7 +621,7 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
           padding: const EdgeInsets.all(12),
           children: [
             const Text('收藏優惠券', style: TextStyle(fontWeight: FontWeight.bold)),
-            if (_coupons.isEmpty) const Text('暫時沒有收藏的優惠券。'),
+            if (_coupons.isEmpty) Text(widget.guest ? context.tr('登入後可查看收藏的優惠券。', 'Sign in to view saved coupons.') : context.tr('暫時沒有收藏的優惠券。', 'No saved coupons yet.')),
             ..._coupons.map((c) => Card(
                   margin: const EdgeInsets.only(top: 8),
                   child: ListTile(
@@ -586,7 +634,7 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
                 )),
             const SizedBox(height: 16),
             const Text('收藏商店', style: TextStyle(fontWeight: FontWeight.bold)),
-            if (_shops.isEmpty) const Text('暫時沒有收藏的商店。'),
+            if (_shops.isEmpty) Text(widget.guest ? context.tr('登入後可查看收藏的商店。', 'Sign in to view saved shops.') : context.tr('暫時沒有收藏的商店。', 'No saved shops yet.')),
             ..._shops.map((s) => Card(
                   margin: const EdgeInsets.only(top: 8),
                   child: ListTile(

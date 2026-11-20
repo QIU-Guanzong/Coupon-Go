@@ -1,13 +1,15 @@
 import 'package:flutter/material.dart';
 
+import '../api_client.dart';
 import '../models.dart';
 import '../theme.dart';
 
 /// The same catalogue item retains its cover across browsing and checkout.
 class CatalogPhoto extends StatelessWidget {
-  const CatalogPhoto({super.key, required this.url, this.height = double.infinity});
+  const CatalogPhoto({super.key, required this.url, this.height = double.infinity, this.apiBaseUrl});
   final String url;
   final double height;
+  final String? apiBaseUrl;
 
   @override
   Widget build(BuildContext context) {
@@ -18,8 +20,11 @@ class CatalogPhoto extends StatelessWidget {
       return Image.asset(url, width: double.infinity, height: height, fit: BoxFit.cover,
         errorBuilder: (_, __, ___) => empty);
     }
-    if (url.startsWith('http://') || url.startsWith('https://')) {
-      return Image.network(url, width: double.infinity, height: height, fit: BoxFit.cover,
+    if (url.startsWith('http://') || url.startsWith('https://') || url.startsWith('/uploads/')) {
+      final imageUrl = url.startsWith('/uploads/')
+          ? '${(apiBaseUrl ?? ApiClient.configuredBase).replaceFirst(RegExp(r'/$'), '')}$url'
+          : url;
+      return Image.network(imageUrl, width: double.infinity, height: height, fit: BoxFit.cover,
         errorBuilder: (_, __, ___) => empty);
     }
     return empty;

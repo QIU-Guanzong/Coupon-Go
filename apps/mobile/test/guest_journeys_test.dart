@@ -3,6 +3,7 @@ import 'package:coupon_go/language.dart';
 import 'package:coupon_go/main.dart';
 import 'package:coupon_go/screens/account.dart';
 import 'package:coupon_go/screens/customer.dart';
+import 'package:coupon_go/screens/packages.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -48,54 +49,82 @@ class GuestApi extends ApiClient {
 }
 
 void main() {
-  testWidgets('guest gates preserve the tab and never fetch private lists',
+  testWidgets('guests can browse collection and wallet without private requests',
       (tester) async {
     final api = GuestApi();
-    await tester.pumpWidget(MaterialApp(
-        home: HomeShell(
+    await tester.pumpWidget(LanguageScope(
+        language: AppLanguage(),
+        child: MaterialApp(
+          home: HomeShell(
             api: api,
             authed: false,
             vendorMode: false,
             onAuthed: () {},
             onLogout: () {},
-            onToggleMode: () {})));
+            onToggleMode: () {}),
+          onGenerateRoute: (settings) => MaterialPageRoute(builder: (_) {
+            switch (settings.name) {
+              case '/notifications': return NotificationsScreen(api: api, guest: true);
+              case '/orders': return OrdersScreen(api: api, guest: true);
+              case '/settings': return SettingsScreen(api: api, onLogout: () {});
+              default: return const SizedBox();
+            }
+          }),
+        )));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
-    expect(
-        tester
-            .widget<BottomNavigationBar>(find.byType(BottomNavigationBar))
-            .items
-            .length,
-        5);
-    for (final label in ['收藏', 'Q Wallet']) {
-      await tester.tap(find.text(label));
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 400));
-      expect(find.text('請登錄以繼續'), findsOneWidget);
-      await tester.tap(find.text('取消'));
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 400));
-      expect(
-          tester
-              .widget<BottomNavigationBar>(find.byType(BottomNavigationBar))
-              .currentIndex,
-          0);
-    }
+    expect(tester.widget<BottomNavigationBar>(find.byType(BottomNavigationBar)).items.length, 5);
+
+    await tester.tap(find.text('收藏'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(find.text('登入後可查看收藏的優惠券。'), findsOneWidget);
+    expect(tester.widget<BottomNavigationBar>(find.byType(BottomNavigationBar)).currentIndex, 1);
+
+    await tester.tap(find.text('Q Wallet'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(find.text('登入後可在這裏查看已領取的優惠券。'), findsOneWidget);
+    expect(tester.widget<BottomNavigationBar>(find.byType(BottomNavigationBar)).currentIndex, 4);
+    await tester.tap(find.text('已失效'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(find.text('登入後可在這裏查看已領取的優惠券。'), findsOneWidget);
+    expect(api.calls, isNot(contains('/favorite-coupon-list')));
+    expect(api.calls, isNot(contains('/get-favorite-coupons-list')));
+    expect(api.calls, isNot(contains('/wallet/revision')));
+
+    await tester.tap(find.text('主頁'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
     await tester.tap(find.byTooltip('通知'));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
-    await tester.tap(find.text('登錄'));
+    expect(find.text('登入後可查看你的通知。'), findsOneWidget);
+    await tester.pageBack();
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
-    expect(find.text('使用電子郵件帳戶繼續'), findsOneWidget);
-    await tester.tap(find.text('使用電子郵件帳戶繼續'));
+
+    tester.state<ScaffoldState>(find.byType(Scaffold).first).openDrawer();
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
-    await tester.tap(find.text('忘記密碼？'));
+    await tester.tap(find.text('我的訂單'));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
-    expect(find.text('繼續'), findsOneWidget);
-    expect(api.calls, isNot(contains('/favorite-coupon-list')));
+    expect(find.text('登入後可查看你的訂單。'), findsOneWidget);
+    await tester.pageBack();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+
+    tester.state<ScaffoldState>(find.byType(Scaffold).first).openDrawer();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.tap(find.text('設置'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(find.text('語言'), findsOneWidget);
+    expect(api.calls, isNot(contains('/notifications')));
+    expect(api.calls, isNot(contains('/orders')));
   });
 
   testWidgets('filters recover and cancellation keeps the applied query',
