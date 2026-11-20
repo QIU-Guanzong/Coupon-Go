@@ -29,9 +29,9 @@ engine = create_engine(f"sqlite:///{TEST_DB}", connect_args={"check_same_thread"
 TestingSession = sessionmaker(bind=engine)
 
 PERIOD = datetime.now(timezone.utc).strftime("%Y-%m")
-# Seed cash coupons (id -> (shop_id, cash_amount)); one shop per test so
+# Settlement fixtures (id -> (shop_id, discount_price)); one shop per test so
 # the per-(shop, period) settlement uniqueness never collides.
-CASH = {2: (1, 30), 5: (3, 100), 8: (4, 15), 17: (9, 150), 22: (11, 10),
+PRICED = {2: (1, 30), 5: (3, 100), 8: (4, 15), 17: (9, 150), 22: (11, 10),
         24: (12, 20)}
 
 
@@ -42,6 +42,14 @@ def client():
     Base.metadata.create_all(bind=engine)
     db = TestingSession()
     seed(db)
+    # These tests exercise a nonzero payable settlement; cash vouchers
+    # are zero-valued for settlement under M8.
+    for coupon_id, (_, amount) in PRICED.items():
+        coupon = db.get(models.Coupon, coupon_id)
+        coupon.coupon_type = "Price"
+        coupon.discount_price = amount
+        coupon.cash_amount = None
+    db.commit()
     db.close()
 
     def _get_db():
@@ -127,7 +135,7 @@ def _generate(client, headers, shop_id, rate=0.10):
 
 # ---------- settlements ----------
 def test_settlement_generate_approve_pay_chain(client):
-    shop_id, face = CASH[2]
+    shop_id, face = PRICED[2]
     _redeem(client, "f-settle@example.com", 2)
     fh = _finance_headers(client)
     s = _generate(client, fh, shop_id)
@@ -161,7 +169,7 @@ def test_settlement_generate_approve_pay_chain(client):
 
 
 def test_settlement_permissions_and_dispute_resolve(client):
-    shop_id, face = CASH[5]
+    shop_id, face = PRICED[5]
     _redeem(client, "f-dispute@example.com", 5)
     cust = _register_and_login(client, "f-cust@example.com")
     vendor = _vendor_headers(client)
@@ -211,7 +219,7 @@ def test_merchant_settlement_read(client):
 
 # ---------- reconciliation ----------
 def test_reconciliation_run_and_resolve(client):
-    shop_id, face = CASH[8]
+    shop_id, face = PRICED[8]
     _redeem(client, "f-recon-a@example.com", 8)
     _redeem(client, "f-recon-b@example.com", 8)
     fh = _finance_headers(client)
@@ -268,7 +276,7 @@ def test_reconciliation_run_and_resolve(client):
 
 # ---------- invoices ----------
 def test_invoice_chain_and_cap(client):
-    shop_id, face = CASH[17]
+    shop_id, face = PRICED[17]
     _redeem(client, "f-inv@example.com", 17)
     fh = _finance_headers(client)
     s = _generate(client, fh, shop_id)
@@ -357,7 +365,7 @@ def test_role_change_and_permission_matrix(client):
 
 # ---------- review dispute resolution ----------
 def test_review_dispute_resolve(client):
-    shop_id, face = CASH[22]
+    shop_id, face = PRICED[22]
     h, wid, rid = _redeem(client, "f-review@example.com", 22)
     # counted review (no points): enters the aggregate
     r = client.post("/api/v3/reviews", json={

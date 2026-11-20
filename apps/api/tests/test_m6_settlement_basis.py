@@ -3,14 +3,14 @@ revoked redemptions and refunded orders never settle, and the F6
 face-value snapshot uses the same basis.
 
 Run:  cd apps/api && ../../.venv/bin/python -m pytest tests/test_m6_settlement_basis.py -v
-Own throwaway SQLite file; never touches production data.
+Own throwaway SQLite file or a dedicated M8_TEST_POSTGRES_URL; never uses DATABASE_URL.
 
 Basis (single shared function, used by scan snapshot, settlement
 generation and reconciliation expected amounts):
 - package redemption (wallet item has order_id) -> Order.paid_amount;
   refund_status == "refunded" -> excluded from settlement entirely.
 - price coupon -> discount_price.
-- cash coupon -> cash_amount.
+- cash coupon -> 0, also when an old positive snapshot exists (M8).
 - free / gift / percentage-only / pure-threshold coupon -> 0
   (regular_price is NEVER a settlement basis any more: a free coupon
   settling at regular_price was the platform paying the merchant).
@@ -41,13 +41,20 @@ os.environ["SEED_ON_STARTUP"] = "0"
 from app import models  # noqa: E402
 from app.database import Base, get_db  # noqa: E402
 from app.main import app  # noqa: E402
-from app.models_line_f import Settlement, SettlementItem  # noqa: E402
+from app.models_line_f import Settlement, SettlementItem, SettlementTransfer  # noqa: E402
 from app.models_packages import Order  # noqa: E402
 from app.seed import seed  # noqa: E402
 
-TEST_DB = "/tmp/coupon_go_test_m6.db"
-
-engine = create_engine(f"sqlite:///{TEST_DB}", connect_args={"check_same_thread": False})
+TEST_DB = os.getenv("M6_TEST_DB", "/tmp/coupon_go_test_m6.db")
+PG_URL = os.getenv("M8_TEST_POSTGRES_URL")
+if PG_URL:
+    from sqlalchemy.engine import make_url
+    parts = make_url(PG_URL)
+    assert parts.database == "m8_cash" and not parts.host
+    assert str(parts.query.get("host", "")).startswith("/")
+    engine = create_engine(PG_URL)
+else:
+    engine = create_engine(f"sqlite:///{TEST_DB}", connect_args={"check_same_thread": False})
 TestingSession = sessionmaker(bind=engine)
 
 PERIOD = datetime.now(timezone.utc).strftime("%Y-%m")
@@ -65,7 +72,9 @@ PERIOD_END = datetime(YEAR + 1, 1, 1) if MONTH == 12 else datetime(YEAR, MONTH +
 
 @pytest.fixture(scope="module")
 def client():
-    if os.path.exists(TEST_DB):
+    if PG_URL:
+        Base.metadata.drop_all(bind=engine)
+    elif os.path.exists(TEST_DB):
         os.remove(TEST_DB)
     Base.metadata.create_all(bind=engine)
     db = TestingSession()
@@ -262,7 +271,7 @@ def _run_backfill():
 def test_m6_revoked_redemption_excluded_from_settlement(client):
     fh = _finance_headers(client)
     rid = _redeem(client, "m6-a@example.com", coupon_id=5)  # shop 3, Cash $100
-    assert float(_redemption_snapshot(rid)) == 100
+    assert float(_redemption_snapshot(rid)) == 0
     _revoke(client, rid)
     r = _generate(client, fh, 3)
     assert r.status_code == 201, r.text
@@ -312,7 +321,8 @@ def test_m6_refunded_package_order_excluded_from_settlement(client):
 
 def test_m6_revoked_after_settlement_keeps_sale_and_credit_note(client):
     fh = _finance_headers(client)
-    rid = _redeem(client, "m6-e@example.com", coupon_id=8)  # shop 4, Cash $15
+    _set_coupon_fields(8, coupon_type="Price", cash_amount=None, discount_price=15)
+    rid = _redeem(client, "m6-e@example.com", coupon_id=8)  # shop 4, Price $15
     r = _generate(client, fh, 4)
     assert r.status_code == 201, r.text
     assert r.json()["settlement"]["gross_amount"] == 15, r.text
@@ -391,7 +401,66 @@ def test_m6_backfill_fills_legacy_null_snapshot(client):
     assert float(_redemption_snapshot(rid)) == 150, "回填後 NULL 快照按新口徑補值"
     r = _generate(client, fh, 9)
     assert r.status_code == 201, r.text
-    assert r.json()["settlement"]["gross_amount"] == 150, r.text
+    assert r.json()["settlement"]["gross_amount"] == 0, r.text
+
+
+def test_m8_cash_voucher_snapshot_and_legacy_positive_value_never_payable(client):
+    fh = _finance_headers(client)
+    rid = _redeem(client, "m8-cash@example.com", coupon_id=36)  # shop 20
+    assert float(_redemption_snapshot(rid)) == 0
+    # Historic snapshots are kept for audit but not treated as actual cash.
+    _set_snapshot(rid, 50)
+    paid = _generate(client, fh, 20)
+    assert paid.status_code == 201, paid.text
+    statement = paid.json()["settlement"]
+    assert statement["gross_amount"] == statement["commission"] == statement["net_amount"] == 0
+    assert any(i["redemption_id"] == rid and i["amount"] == 0 for i in statement["items"])
+    assert float(_redemption_snapshot(rid)) == 50
+    # Simulate an issued pre-M8 line. Reconciliation flags it, never rewrites it.
+    with TestingSession() as db:
+        line = db.query(SettlementItem).filter_by(redemption_id=rid).one()
+        line.amount, line.commission = 50, 5
+        legacy = db.get(Settlement, statement["id"])
+        legacy.gross_amount, legacy.commission, legacy.net_amount = 50, 5, 45
+        db.commit()
+    ws = _run_recon(client, fh, 20)
+    assert any(d["redemption_id"] == rid and d["discrepancy_type"] == "amount_mismatch"
+               and d["expected_amount"] == 0 and d["actual_amount"] == 50
+               for d in ws["discrepancies"]), ws
+    url = f"/api/v3/admin/settlements/{statement['id']}"
+    assert client.post(url + "/approve", headers=fh).status_code == 200
+    blocked = client.post(url + "/pay", headers=fh)
+    assert blocked.status_code == 409, blocked.text
+    with TestingSession() as db:
+        old = db.get(Settlement, statement["id"])
+        assert old.status == "approved" and old.paid_at is None
+        assert (old.gross_amount, old.commission, old.net_amount) == (50, 5, 45)
+        assert db.query(SettlementItem).filter_by(redemption_id=rid).one().amount == 50
+        assert not db.query(SettlementTransfer).filter_by(settlement_id=old.id).count()
+        # Record an already-paid historic test fixture, never a gateway call.
+        old.status, old.gross_amount, old.commission, old.net_amount = "paid", 50, 5, 45
+        db.add(SettlementTransfer(settlement_id=old.id, amount=45, kind="payment",
+                                  reference="historic-fixture"))
+        db.commit()
+    replay = client.post(url + "/pay", headers=fh,
+                         json={"amount": 45, "reference": "historic-fixture"})
+    assert replay.status_code == 200, replay.text
+    with TestingSession() as db:
+        assert db.query(SettlementTransfer).filter_by(settlement_id=statement["id"]).count() == 1
+
+
+def test_m8_price_coupon_nonzero_statement_can_be_marked_paid(client):
+    fh = _finance_headers(client)
+    _set_coupon_fields(33, coupon_type="Price", discount_price=25, cash_amount=None)
+    _redeem(client, "m8-price@example.com", coupon_id=33)  # shop 19
+    result = _generate(client, fh, 19)
+    assert result.status_code == 201, result.text
+    s = result.json()["settlement"]
+    assert s["gross_amount"] == 25 and s["net_amount"] == 22.5
+    path = f"/api/v3/admin/settlements/{s['id']}"
+    assert client.post(path + "/approve", headers=fh).status_code == 200
+    pay = client.post(path + "/pay", headers=fh)
+    assert pay.status_code == 200 and pay.json()["settlement"]["status"] == "paid", pay.text
 
 
 def test_m6_settled_period_amount_unchanged_and_flagged(client):
@@ -575,9 +644,15 @@ def test_simultaneous_credits_cannot_exceed_invoice(client):
     barrier = Barrier(2)
 
     def credit(reference):
-        with TestClient(app) as local:
+        # The fixture owns app lifespan; concurrent clients only send requests.
+        # Starting lifespan per worker races on the shared scheduler shutdown.
+        local = TestClient(app)
+        try:
             barrier.wait(timeout=10)
-            return local.post(path + "/credits", headers=finance, json={"amount": 60, "reference": reference})
+            return local.post(
+                path + "/credits", headers=finance, json={"amount": 60, "reference": reference})
+        finally:
+            local.close()
 
     with ThreadPoolExecutor(max_workers=2) as pool:
         results = list(pool.map(credit, ["credit-a", "credit-b"]))
@@ -625,10 +700,14 @@ def test_concurrent_invoice_issue_and_reject_are_serialized(client):
     barrier = Barrier(2)
 
     def run(action):
-        with TestClient(app) as local:
+        # Match the credit concurrency test: the outer fixture owns lifespan.
+        local = TestClient(app)
+        try:
             barrier.wait(timeout=10)
             return local.post(path + "/" + action, headers=finance,
                               json={"reason": "Review"} if action == "reject" else None)
+        finally:
+            local.close()
 
     with ThreadPoolExecutor(max_workers=2) as pool:
         issue, reject = pool.map(run, ["issue", "reject"])

@@ -37,7 +37,7 @@ TestingSession = sessionmaker(bind=engine)
 PERIOD = datetime.now(timezone.utc).strftime("%Y-%m")
 # coupon id -> (shop_id, cash face value); one shop per test so the
 # per-(shop, period) settlement uniqueness never collides.
-CASH = {2: (1, 30), 5: (3, 100), 8: (4, 15), 17: (9, 150), 22: (11, 10),
+PRICED = {2: (1, 30), 5: (3, 100), 8: (4, 15), 17: (9, 150), 22: (11, 10),
         24: (12, 20)}
 
 
@@ -48,6 +48,12 @@ def client():
     Base.metadata.create_all(bind=engine)
     db = TestingSession()
     seed(db)
+    for coupon_id, (_, amount) in PRICED.items():
+        coupon = db.get(models.Coupon, coupon_id)
+        coupon.coupon_type = "Price"
+        coupon.discount_price = amount
+        coupon.cash_amount = None
+    db.commit()
     db.close()
 
     def _get_db():
@@ -145,7 +151,7 @@ def _generate_log_for_shop(client, shop_id):
 
 # ---------- default rate when unconfigured ----------
 def test_default_rate_when_unconfigured_and_audit_note(client):
-    shop_id, face = CASH[2]
+    shop_id, face = PRICED[2]
     _redeem(client, "f5-default@example.com", 2)
     fh = _finance_headers(client)
     # no commission_rate passed at all: default 10% applies
@@ -161,7 +167,7 @@ def test_default_rate_when_unconfigured_and_audit_note(client):
 
 
 def test_explicit_default_rate_on_unconfigured_shop_passes(client):
-    shop_id, face = CASH[22]
+    shop_id, face = PRICED[22]
     _redeem(client, "f5-default-explicit@example.com", 22)
     fh = _finance_headers(client)
     r = _generate(client, fh, shop_id, {"commission_rate": 0.10})
@@ -171,7 +177,7 @@ def test_explicit_default_rate_on_unconfigured_shop_passes(client):
 
 # ---------- configured rate ----------
 def test_configured_rate_is_used(client):
-    shop_id, face = CASH[5]
+    shop_id, face = PRICED[5]
     fh = _finance_headers(client)
     r = _set_rate(client, fh, shop_id, 0.08)
     assert r.status_code in (200, 201), r.text
@@ -190,7 +196,7 @@ def test_configured_rate_is_used(client):
 
 
 def test_explicit_mismatched_rate_rejected(client):
-    shop_id, face = CASH[8]
+    shop_id, face = PRICED[8]
     fh = _finance_headers(client)
     r = _set_rate(client, fh, shop_id, 0.08)
     assert r.status_code in (200, 201), r.text
@@ -208,7 +214,7 @@ def test_explicit_mismatched_rate_rejected(client):
 
 
 def test_explicit_matching_rate_accepted(client):
-    shop_id, face = CASH[17]
+    shop_id, face = PRICED[17]
     fh = _finance_headers(client)
     r = _set_rate(client, fh, shop_id, 0.08)
     assert r.status_code in (200, 201), r.text
@@ -222,7 +228,7 @@ def test_explicit_matching_rate_accepted(client):
 
 # ---------- permissions ----------
 def test_auditor_cannot_set_rate_but_can_read(client):
-    shop_id, _face = CASH[24]
+    shop_id, _face = PRICED[24]
     ah = _auditor_headers(client)
     r = _set_rate(client, ah, shop_id, 0.08)
     assert r.status_code == 403, r.text
@@ -244,7 +250,7 @@ def test_auditor_cannot_set_rate_but_can_read(client):
 
 
 def test_rate_list_and_update(client):
-    shop_id, _face = CASH[24]
+    shop_id, _face = PRICED[24]
     fh = _finance_headers(client)
     r = client.get("/api/v3/admin/commission-rates",
                    params={"shop_id": shop_id}, headers=fh)
