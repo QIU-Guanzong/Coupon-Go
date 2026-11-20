@@ -6,7 +6,12 @@ from pydantic import BaseModel, EmailStr, Field
 
 
 # ---------- auth ----------
-class RegisterIn(BaseModel):
+class LegalVersionsIn(BaseModel):
+    accepted_terms_version: Optional[str] = Field(default=None, max_length=64)
+    accepted_privacy_version: Optional[str] = Field(default=None, max_length=64)
+
+
+class RegisterIn(LegalVersionsIn):
     email: EmailStr
     password: str = Field(min_length=6)
     name: str = ""
@@ -19,7 +24,7 @@ class LoginIn(BaseModel):
     password: str
 
 
-class OtpVerifyIn(BaseModel):
+class OtpVerifyIn(LegalVersionsIn):
     email: EmailStr
     code: str
     purpose: str = "register"  # register | forgot

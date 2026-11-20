@@ -27,7 +27,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 os.environ["COUPON_GO_ENV"] = "dev"
 os.environ["SEED_ON_STARTUP"] = "0"
 
-from app import config, models  # noqa: E402
+from app import config, legal, models  # noqa: E402
 from app.database import Base, get_db  # noqa: E402
 from app.main import app  # noqa: E402
 from app.models_packages import Payment  # noqa: E402
@@ -40,6 +40,23 @@ TestingSession = sessionmaker(bind=engine)
 
 FAKE_KEY = "sk_test_fix1_placeholder_not_a_real_key"
 FAKE_WEBHOOK_SECRET = "whsec_fix1_placeholder_not_a_real_secret"
+
+
+# Supply approved-document metadata without publishing or visiting real URLs.
+# Registration and session gating still use the real consent ledger.
+LEGAL_DOCS = {
+    "terms": {"version": "test-v1", "url": "https://legal.example.test/terms"},
+    "privacy": {"version": "test-v1", "url": "https://legal.example.test/privacy"},
+}
+LEGAL_VERSIONS = {
+    "accepted_terms_version": "test-v1",
+    "accepted_privacy_version": "test-v1",
+}
+
+
+@pytest.fixture(autouse=True)
+def configure_legal_documents(monkeypatch):
+    monkeypatch.setattr(legal, "documents", lambda: LEGAL_DOCS)
 
 
 @pytest.fixture(scope="module")
@@ -65,7 +82,7 @@ def client():
 def _register_and_login(client, email):
     assert client.post("/api/v3/new-register", json={
         "email": email, "password": "Demo123!", "name": "Test",
-        "role": "customer"}).status_code == 200
+        "role": "customer", **LEGAL_VERSIONS}).status_code == 200
     code = client.get("/api/v3/_dev/otp", params={"email": email}).json()["code"]
     r = client.post("/api/v3/new-verify-otp", json={
         "email": email, "code": code, "purpose": "register"})
@@ -77,7 +94,12 @@ def _vendor_headers(client):
     r = client.post("/api/v3/login", json={
         "email": "vendor@coupon-go.example", "password": "Demo123!"})
     assert r.status_code == 200, r.text
-    return {"Authorization": f"Bearer {r.json()['access_token']}"}
+    headers = {"Authorization": f"Bearer {r.json()['access_token']}"}
+    if r.json()["consent_required"]:
+        accepted = client.post("/api/v3/legal/accept", headers=headers, json=LEGAL_VERSIONS)
+        assert accepted.status_code == 200, accepted.text
+        headers = {"Authorization": f"Bearer {accepted.json()['access_token']}"}
+    return headers
 
 
 def _create_package(client, name, stock=5):

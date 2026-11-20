@@ -10,7 +10,7 @@ Coupon types: Cash / Discount / Gift / Price.
 from datetime import datetime, timezone
 
 from sqlalchemy import (
-    Boolean, Column, DateTime, ForeignKey, Integer, Numeric, String, Text,
+    Boolean, Column, DateTime, ForeignKey, Integer, Numeric, String, Text, UniqueConstraint,
 )
 from sqlalchemy.orm import relationship
 
@@ -38,6 +38,19 @@ class User(Base):
     shops = relationship("Shop", back_populates="vendor")
     wallet_items = relationship("WalletItem", back_populates="user")
     points = relationship("PointTransaction", back_populates="user")
+
+
+class LegalAcceptance(Base):
+    __tablename__ = "legal_acceptances"
+    __table_args__ = (UniqueConstraint("user_id", "terms_version", "privacy_version",
+                                       name="uq_legal_acceptance_versions"),)
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    terms_version = Column(String(64), nullable=False)
+    privacy_version = Column(String(64), nullable=False)
+    terms_url = Column(String(1024), nullable=False)
+    privacy_url = Column(String(1024), nullable=False)
+    accepted_at = Column(DateTime, default=_now, nullable=False)
 
 
 class OtpCode(Base):

@@ -12,9 +12,9 @@ from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from .. import config, models, schemas, security
+from .. import config, legal, models, schemas, security
 from ..database import get_db
-from ..deps import get_current_user
+from ..deps import get_current_user, get_identity_user, get_session_identity
 
 router = APIRouter()
 
@@ -50,9 +50,14 @@ def _check_otp(db: Session, email: str, code: str, purpose: str) -> models.OtpCo
     return otp
 
 
-def _token_for(user: models.User):
+def _token_for(user: models.User, db: Session, docs=None):
+    if docs is None:
+        docs = legal.documents()
+    status = legal.status(db, user.id, docs)
     return {
-        "access_token": security.create_access_token(str(user.id), user.role),
+        **status,
+        "access_token": security.create_access_token(str(user.id), user.role,
+                                                     consent_only=status["consent_required"]),
         "token_type": "Bearer",
         "user_id": user.id,
         "role": user.role,
@@ -64,6 +69,8 @@ def _token_for(user: models.User):
 def register(body: schemas.RegisterIn, db: Session = Depends(get_db)):
     if body.role not in ("customer", "vendor"):
         raise HTTPException(status_code=400, detail="role 必須是 customer 或 vendor")
+    docs = legal.documents()
+    legal.require_versions(body, docs)
     if db.query(models.User).filter(models.User.email == body.email).first():
         raise HTTPException(status_code=400, detail="此電郵已註冊")
     user = models.User(
@@ -71,7 +78,8 @@ def register(body: schemas.RegisterIn, db: Session = Depends(get_db)):
         name=body.name, phone=body.phone, role=body.role, is_active=False,
     )
     db.add(user)
-    db.commit()
+    db.flush()
+    legal.accept(db, user.id, body, docs)
     _issue_otp(db, body.email, "register", body.role)
     # 完成註冊後，經審核可使用。(vendor onboarding is approval-gated)
     return {"message": "請輸入 6 位數驗證碼。", "email": body.email}
@@ -89,13 +97,16 @@ def verify_otp(body: schemas.OtpVerifyIn, db: Session = Depends(get_db)):
     user = db.query(models.User).filter(models.User.email == body.email).first()
     if user is None:
         raise HTTPException(status_code=404, detail="帳戶不存在")
-    otp.used = True
+    docs = legal.documents()
     if body.purpose == "register":
+        if not legal.has_accepted(db, user.id, docs):
+            legal.accept(db, user.id, body, docs, mismatch_status=409)
         user.is_active = True
+    otp.used = True
     if body.purpose == "forgot" and body.new_password:
         user.password_hash = security.hash_password(body.new_password)
     db.commit()
-    return _token_for(user)
+    return _token_for(user, db, docs)
 
 
 @router.post("/password/verify-otp")
@@ -121,16 +132,19 @@ def login(body: schemas.LoginIn, db: Session = Depends(get_db)):
         raise HTTPException(status_code=401, detail="電郵或密碼錯誤")
     if not user.is_active:
         raise HTTPException(status_code=403, detail="請先完成驗證碼驗證")
-    return _token_for(user)
+    return _token_for(user, db)
 
 
 @router.post("/logout")
-def logout(user: models.User = Depends(get_current_user)):
+def logout(user: models.User = Depends(get_identity_user)):
     return {"message": "已登出"}
 
 
 @router.post("/social-login")
 def social_login(body: schemas.SocialLoginIn, db: Session = Depends(get_db)):
+    if config.APP_ENV != "dev":
+        raise HTTPException(status_code=403, detail="不支援的登錄方式")
+    legal.documents()
     # TODO(launch): verify `token` server-side with the provider
     # (Google tokeninfo / Facebook debug_token) using the OAuth client IDs
     # in config before trusting it. Dev stub: token is treated as an opaque
@@ -148,7 +162,7 @@ def social_login(body: schemas.SocialLoginIn, db: Session = Depends(get_db)):
         db.add(user)
         db.commit()
         db.refresh(user)
-    return _token_for(user)
+    return _token_for(user, db)
 
 
 @router.post("/password/forgot")
@@ -176,7 +190,7 @@ def get_profile(user: models.User = Depends(get_current_user)):
 
 
 @router.get("/me")
-def get_me(user: models.User = Depends(get_current_user)):
+def get_me(identity=Depends(get_session_identity), db: Session = Depends(get_db)):
     """Current user: role + the name given at registration.
 
     The registration name is already stored by /new-register into
@@ -186,7 +200,14 @@ def get_me(user: models.User = Depends(get_current_user)):
     /update-customer-profile, this follows the current name; freezing
     the registration-time value would need a separate column.)
     """
+    user, consent_only = identity
+    status = legal.status(db, user.id, legal.documents())
+    if consent_only:
+        status["consent_required"] = True
+    if status["consent_required"]:
+        return {"id": user.id, "role": user.role, **status}
     return {
+        **status,
         "id": user.id,
         "email": user.email,
         "name": user.name or "",
@@ -210,7 +231,7 @@ def update_profile(body: schemas.ProfileUpdateIn, user: models.User = Depends(ge
 
 
 @router.post("/delete-account")
-def delete_account(body: schemas.DeleteAccountIn, user: models.User = Depends(get_current_user),
+def delete_account(body: schemas.DeleteAccountIn, user: models.User = Depends(get_identity_user),
                    db: Session = Depends(get_db)):
     # Reason is recorded in the notification log for audit; account is deactivated.
     db.add(models.Notification(
@@ -220,6 +241,23 @@ def delete_account(body: schemas.DeleteAccountIn, user: models.User = Depends(ge
     user.is_active = False
     db.commit()
     return {"message": "帳戶已刪除"}
+
+
+@router.get("/legal/current")
+def legal_current():
+    docs = legal.documents()
+    return {"required": bool(docs), "documents": docs}
+
+
+@router.post("/legal/accept")
+def legal_accept(body: schemas.LegalVersionsIn, user: models.User = Depends(get_identity_user),
+                 db: Session = Depends(get_db)):
+    docs = legal.documents()
+    if not docs:
+        raise HTTPException(503, detail={"code": "legal_documents_unavailable"})
+    legal.accept(db, user.id, body, docs)
+    db.commit()
+    return _token_for(user, db, docs)
 
 
 @router.get("/_dev/otp")
