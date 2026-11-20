@@ -1,5 +1,8 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../api_client.dart';
@@ -42,11 +45,46 @@ class _HomeScreenState extends State<HomeScreen> {
   String _area = '全部地區';
   bool _loading = true;
   bool _error = false;
+  static const _qbotHintSeen = 'home_qbot_hint_seen_v1';
+  final _qbotHint = GlobalKey<TooltipState>();
+  Timer? _qbotHintTimer;
 
   @override
   void initState() {
     super.initState();
     _load();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _showQbotHint());
+  }
+
+  Future<void> _showQbotHint() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      if (!mounted || ModalRoute.of(context)?.isCurrent != true ||
+          prefs.getBool(_qbotHintSeen) == true) {
+        return;
+      }
+      if (_qbotHint.currentState?.ensureTooltipVisible() != true) return;
+      _qbotHintTimer = Timer(const Duration(seconds: 4), () {
+        if (mounted && ModalRoute.of(context)?.isCurrent == true) {
+          Tooltip.dismissAllToolTips();
+        }
+      });
+      await prefs.setBool(_qbotHintSeen, true);
+    } catch (_) {
+      // The hint is optional when preferences are unavailable.
+    }
+  }
+
+  void _openQbot() {
+    _qbotHintTimer?.cancel();
+    Tooltip.dismissAllToolTips();
+    Navigator.of(context).pushNamed('/qbot');
+  }
+
+  @override
+  void dispose() {
+    _qbotHintTimer?.cancel();
+    super.dispose();
   }
 
   Future<void> _load() async {
@@ -165,13 +203,35 @@ class _HomeScreenState extends State<HomeScreen> {
                 Image.asset('assets/images/img_logo.png', height: 32,
                     errorBuilder: (_, __, ___) => const SizedBox()),
                 const SizedBox(width: 8),
-                const Text('COUPON GO!',
-                    style: TextStyle(fontWeight: FontWeight.bold)),
+                const Flexible(
+                  child: Text('COUPON GO!',
+                      maxLines: 1, overflow: TextOverflow.ellipsis,
+                      style: TextStyle(fontWeight: FontWeight.bold)),
+                ),
               ],
             ),
             actions: [
-              IconButton(tooltip: 'Q仔', icon: Image.asset('assets/images/img_logo_cropped.png', width: 30),
-                onPressed: () => Navigator.of(context).pushNamed('/qbot')),
+              Tooltip(
+                key: _qbotHint,
+                message: context.tr('找優惠、查積分，問 Q仔。', 'Ask Q仔 for offers or points.'),
+                triggerMode: TooltipTriggerMode.manual,
+                preferBelow: true,
+                excludeFromSemantics: true,
+                child: TextButton(
+                  onPressed: _openQbot,
+                  style: TextButton.styleFrom(
+                    foregroundColor: Theme.of(context)
+                        .colorScheme.onPrimary,
+                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                  ),
+                  child: Row(mainAxisSize: MainAxisSize.min, children: [
+                    Image.asset('assets/images/img_logo_cropped.png',
+                        width: 24, excludeFromSemantics: true),
+                    const SizedBox(width: 4),
+                    const Text('Q仔', maxLines: 1, softWrap: false),
+                  ]),
+                ),
+              ),
               IconButton(
                 icon: const Icon(Icons.notifications_outlined),
                 tooltip: context.tr('通知','Notifications'),
