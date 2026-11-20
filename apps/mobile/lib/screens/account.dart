@@ -164,7 +164,8 @@ class _WalletScreenState extends State<WalletScreen>
         Container(
           width: double.infinity,
           color: CgColors.primary,
-          padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+          padding: EdgeInsets.fromLTRB(
+              16, 12 + MediaQuery.paddingOf(context).top, 16, 16),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [

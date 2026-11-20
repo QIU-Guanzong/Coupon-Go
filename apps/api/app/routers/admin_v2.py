@@ -38,7 +38,7 @@ from ..database import get_db
 from ..deps import get_current_user, require_role
 from ..models_line_b import AdminAuditLog, Review
 from ..models_line_f import (
-    CmsAnnouncement, CmsBanner, Invoice, MerchantCommissionRate,
+    CmsAnnouncement, CmsBanner, Invoice, InvoiceCredit, MerchantCommissionRate,
     ReconciliationDiscrepancy, ReconciliationReport, Settlement,
     SettlementItem, ShopMember,
 )
@@ -98,10 +98,30 @@ def _period_bounds(period: str):
     return start, end
 
 
+def _invoice_totals(db: Session, settlement: Settlement) -> dict:
+    invoices = db.query(Invoice).filter_by(settlement_id=settlement.id).all()
+    issued = sum((i.amount for i in invoices if i.status == "issued"), Decimal("0"))
+    reserved = sum((i.amount for i in invoices if i.status in ("pending", "approved")), Decimal("0"))
+    credited = db.query(func.coalesce(func.sum(InvoiceCredit.amount), 0)).join(
+        Invoice, Invoice.id == InvoiceCredit.invoice_id).filter(
+        Invoice.settlement_id == settlement.id, Invoice.status == "issued").scalar()
+    credited = Decimal(str(credited))
+    net_issued = issued - credited
+    return {
+        "invoice_issued_amount": _money(issued),
+        "invoice_credited_amount": _money(credited),
+        "invoice_net_issued_amount": _money(net_issued),
+        "invoice_reserved_amount": _money(reserved),
+        "invoice_available_amount": _money(max(Decimal("0"), settlement.net_amount - net_issued - reserved)),
+        "invoice_excess_amount": _money(max(Decimal("0"), net_issued - settlement.net_amount)),
+    }
+
+
 def _settlement_out(db: Session, s: Settlement) -> dict:
     shop = db.query(models.Shop).filter(models.Shop.id == s.shop_id).first()
     paid, balance = cash_totals(db, s)
     return {
+        **_invoice_totals(db, s),
         "id": s.id, "shop_id": s.shop_id,
         "shop_name": shop.name if shop else "",
         "transferred_net": _money(paid), "outstanding_net": _money(balance),
@@ -120,7 +140,13 @@ def _settlement_out(db: Session, s: Settlement) -> dict:
 def _invoice_out(db: Session, inv: Invoice) -> dict:
     shop = db.query(models.Shop).filter(models.Shop.id == inv.shop_id).first()
     user = db.query(models.User).filter(models.User.id == inv.user_id).first()
+    credits = db.query(InvoiceCredit).filter_by(invoice_id=inv.id).order_by(InvoiceCredit.id).all()
+    credited = sum((c.amount for c in credits), Decimal("0"))
     return {
+        "credited_amount": _money(credited),
+        "net_issued_amount": _money(inv.amount - credited) if inv.status == "issued" else 0,
+        "credits": [{"id": c.id, "amount": _money(c.amount), "reference": c.reference,
+                     "actor_id": c.actor_id, "created_at": c.created_at} for c in credits],
         "id": inv.id, "shop_id": inv.shop_id,
         "shop_name": shop.name if shop else "",
         "settlement_id": inv.settlement_id,
@@ -468,6 +494,8 @@ def get_settlement(settlement_id: int,
                              "commission": _money(item.commission), "created_at": item.created_at,
                              "reversal": {"amount": _money(reversal.amount), "commission": _money(reversal.commission),
                                           "reason": reversal.reason, "created_at": reversal.created_at} if reversal else None})
+    out["invoices"] = [_invoice_out(db, invoice) for invoice in
+                       db.query(Invoice).filter_by(settlement_id=s.id).order_by(Invoice.id)]
     out["transfers"] = [{"kind": t.kind, "reference": t.reference, "amount": _money(t.amount),
                          "created_at": t.created_at} for t in db.query(SettlementTransfer).filter_by(
                              settlement_id=s.id).order_by(SettlementTransfer.id)]
@@ -750,10 +778,10 @@ def run_reconciliation(body: schemas_line_f.ReconciliationRunIn,
         expected_payments = int(settlement.status == "paid")
         if payments != expected_payments:
             found.append(("payment_entry_count", None, None, expected_payments, payments))
-        issued = db.query(func.coalesce(func.sum(Invoice.amount), 0)).filter_by(
-            settlement_id=settlement.id, status="issued").scalar()
-        if issued > settlement.net_amount:
-            found.append(("invoice_over_settlement", None, None, settlement.net_amount, issued))
+        invoice_totals = _invoice_totals(db, settlement)
+        issued_net = Decimal(str(invoice_totals["invoice_net_issued_amount"]))
+        if issued_net > settlement.net_amount:
+            found.append(("invoice_over_settlement", None, None, settlement.net_amount, issued_net))
         for label, expected, actual in (("count", len(items) - len(reversals), settlement.redemption_count),
                                         ("gross", gross, settlement.gross_amount),
                                         ("commission", fee, settlement.commission),
@@ -780,7 +808,7 @@ def run_reconciliation(body: schemas_line_f.ReconciliationRunIn,
     resolved_keys = {(d.discrepancy_type, d.redemption_id,
                       d.settlement_item_id, d.expected_amount, d.actual_amount) for d in resolved_rows}
     new_found = [f for f in found
-                 if f not in resolved_keys]
+                 if f[0] == "invoice_over_settlement" or f not in resolved_keys]
     total_discrepancies = len(resolved_rows) + len(new_found)
     report.settlement_id = settlement.id if settlement else None
     report.redemption_count = sum(r.revoked_at is None and settlement_basis(db, redemption=r) is not None for r in redemptions)
@@ -789,7 +817,7 @@ def run_reconciliation(body: schemas_line_f.ReconciliationRunIn,
         transferred, balance = cash_totals(db, settlement)
         report.financial_snapshot = json.dumps({"gross_amount": float(gross), "commission": float(fee),
             "net_amount": float(gross - fee), "transferred_net": float(transferred),
-            "outstanding_net": float(balance), "reversal_count": len(reversals)})
+            "outstanding_net": float(balance), "reversal_count": len(reversals), **invoice_totals})
     report.discrepancy_count = total_discrepancies
     report.status = ("no_settlement" if settlement is None else
                      "resolved" if not new_found else "open")
@@ -909,14 +937,9 @@ def create_invoice(body: schemas_line_f.InvoiceCreateIn,
             raise HTTPException(status_code=404, detail="找不到此結算單")
         if settlement.shop_id != shop.id:
             raise HTTPException(status_code=400, detail="結算單不屬於此商户")
-        already = db.query(func.coalesce(func.sum(Invoice.amount), 0)).filter(
-            Invoice.settlement_id == settlement.id,
-            Invoice.status != "rejected").scalar()
-        if Decimal(str(already or 0)) + Decimal(str(body.amount)) > \
-                Decimal(str(settlement.net_amount)):
-            raise HTTPException(
-                status_code=400,
-                detail="開票金額超過結算單可開票餘額（淨額 %s）" % settlement.net_amount)
+        totals = _invoice_totals(db, settlement)
+        if body.amount > Decimal(str(totals["invoice_available_amount"])):
+            raise HTTPException(status_code=400, detail="開票金額超過結算單可開票餘額")
     inv = Invoice(
         shop_id=shop.id, settlement_id=body.settlement_id,
         user_id=user.id, amount=Decimal(str(body.amount)),
@@ -945,7 +968,7 @@ def list_invoices(shop_id: int = Query(None), status: str = Query(None),
     out = _page([_invoice_out(db, i) for i in q.all()], page)
     return {"current_page": out["current_page"],
             "total_pages": out["total_pages"], "total": out["total"],
-            "invoices": out["items"]}
+            "invoices": out["items"], "can_write": has_perm(user, "invoices.write")}
 
 
 @router.get("/admin/invoices/{invoice_id}")
@@ -962,11 +985,24 @@ def _check_invoice_limit(db, inv):
     if inv.settlement_id is None:
         return
     statement = lock_statement(db, inv.settlement_id)
-    committed = db.query(func.coalesce(func.sum(Invoice.amount), 0)).filter(
+    totals = _invoice_totals(db, statement)
+    # Pending applications reserve capacity for creation, while approval
+    # compares only other approved requests and issued net invoices.
+    approved = db.query(func.coalesce(func.sum(Invoice.amount), 0)).filter(
         Invoice.settlement_id == statement.id, Invoice.id != inv.id,
-        Invoice.status.in_(("issued", "approved"))).scalar()
-    if committed + inv.amount > statement.net_amount:
+        Invoice.status == "approved").scalar()
+    if Decimal(str(totals["invoice_net_issued_amount"])) + approved + inv.amount > statement.net_amount:
         raise HTTPException(409, "結算金額已調整，請核對發票金額")
+
+
+
+def _lock_invoice(db, invoice_id):
+    # SQLite ignores FOR UPDATE. A no-op write must precede the status read.
+    if db.get_bind().dialect.name == "sqlite":
+        db.query(Invoice).filter_by(id=invoice_id).update(
+            {"status": Invoice.status, "updated_at": Invoice.updated_at},
+            synchronize_session=False)
+    return db.query(Invoice).filter_by(id=invoice_id).with_for_update().populate_existing().first()
 
 
 @router.post("/admin/invoices/{invoice_id}/approve")
@@ -974,7 +1010,7 @@ def approve_invoice(invoice_id: int,
                     user: models.User = Depends(
                         require_perm("invoices.write")),
                     db: Session = Depends(get_db)):
-    inv = db.query(Invoice).filter_by(id=invoice_id).with_for_update().first()
+    inv = _lock_invoice(db, invoice_id)
     if inv is None:
         raise HTTPException(status_code=404, detail="找不到此發票申請")
     if inv.status != "pending":
@@ -995,7 +1031,7 @@ def reject_invoice(invoice_id: int,
                    user: models.User = Depends(
                        require_perm("invoices.write")),
                    db: Session = Depends(get_db)):
-    inv = db.query(Invoice).filter_by(id=invoice_id).with_for_update().first()
+    inv = _lock_invoice(db, invoice_id)
     if inv is None:
         raise HTTPException(status_code=404, detail="找不到此發票申請")
     if inv.status not in ("pending", "approved"):
@@ -1015,7 +1051,7 @@ def issue_invoice(invoice_id: int,
                   user: models.User = Depends(
                       require_perm("invoices.write")),
                   db: Session = Depends(get_db)):
-    inv = db.query(Invoice).filter_by(id=invoice_id).with_for_update().first()
+    inv = _lock_invoice(db, invoice_id)
     if inv is None:
         raise HTTPException(status_code=404, detail="找不到此發票申請")
     if inv.status != "approved":
@@ -1027,6 +1063,34 @@ def issue_invoice(invoice_id: int,
          f"amount={inv.amount}")
     db.commit()
     return {"message": "發票已開具", "invoice": _invoice_out(db, inv)}
+
+
+@router.post("/admin/invoices/{invoice_id}/credits")
+def record_invoice_credit(invoice_id: int, body: schemas_line_f.InvoiceCreditIn,
+                          user: models.User = Depends(require_perm("invoices.write")),
+                          db: Session = Depends(get_db)):
+    inv = _lock_invoice(db, invoice_id)
+    if inv is None:
+        raise HTTPException(404, "找不到此發票")
+    if inv.settlement_id is not None:
+        lock_statement(db, inv.settlement_id)
+    reference = body.reference.strip()
+    if not reference:
+        raise HTTPException(400, "請填寫沖紅憑證編號")
+    previous = db.query(InvoiceCredit).filter_by(invoice_id=inv.id, reference=reference).first()
+    if previous:
+        if previous.amount != body.amount:
+            raise HTTPException(409, "憑證編號已用於其他金額")
+        return {"message": "已登記", "invoice": _invoice_out(db, inv)}
+    if inv.status != "issued":
+        raise HTTPException(400, "只有已開具的發票可以登記沖紅")
+    credited = db.query(func.coalesce(func.sum(InvoiceCredit.amount), 0)).filter_by(invoice_id=inv.id).scalar()
+    if credited + body.amount > inv.amount:
+        raise HTTPException(409, "沖紅金額超過原發票未沖紅金額")
+    db.add(InvoiceCredit(invoice_id=inv.id, amount=body.amount, reference=reference, actor_id=user.id))
+    _log(db, user.id, "invoice.credit", "invoice", inv.id, f"amount={body.amount}; reference={reference}")
+    db.commit()
+    return {"message": "沖紅已登記", "invoice": _invoice_out(db, inv)}
 
 
 @router.get("/merchant/shops/{shop_id}/invoices")

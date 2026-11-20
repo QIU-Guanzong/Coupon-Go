@@ -35,7 +35,7 @@ from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from .. import config, models
+from .. import cashback_service, config, models
 from ..settlement_ledger import reverse_sale
 from ..database import get_db
 from ..deps import get_current_user, get_optional_user, require_role
@@ -293,8 +293,15 @@ def _resume_refund(db, order_id):
     status = result["status"]
     if status == "succeeded":
         order.refund_status = refund.status = "refunded"
-        # Older releases could leave a settlement line on a previously revoked voucher.
-        for red in db.query(models.Redemption).join(models.WalletItem).filter(models.WalletItem.order_id == order.id):
+        # Reconcile older revoked vouchers whose settlement or cashback
+        # reversal may not have been recorded by their original app version.
+        redemptions = (db.query(models.Redemption).join(models.WalletItem)
+                       .filter(models.WalletItem.order_id == order.id).all())
+        if any(red.revoked_at is not None for red in redemptions):
+            cashback_service.lock_account(db, order.user_id)
+        for red in redemptions:
+            if red.revoked_at is not None:
+                cashback_service.void_for_revocation(db, red)
             reverse_sale(db, red, "refunded")
         attempt.status = "refunded"
         order.settlement_status = "void"

@@ -280,3 +280,15 @@ class SettlementTransfer(Base):
     actor_id = Column(Integer, ForeignKey("users.id"))
     created_at = Column(DateTime, default=_now, nullable=False)
     __table_args__ = (UniqueConstraint("settlement_id", "reference", name="uq_settlement_transfer_reference"),)
+
+
+class InvoiceCredit(Base):
+    """Confirmed external credit note, linked to the original issued invoice."""
+    __tablename__ = "invoice_credits"
+    id = Column(Integer, primary_key=True)
+    invoice_id = Column(Integer, ForeignKey("invoices.id"), nullable=False, index=True)
+    amount = Column(Numeric(12, 2), nullable=False)
+    reference = Column(String(120), nullable=False)
+    actor_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    created_at = Column(DateTime, default=_now, nullable=False)
+    __table_args__ = (UniqueConstraint("invoice_id", "reference", name="uq_invoice_credit_reference"),)

@@ -69,8 +69,9 @@ docker compose -f infra/docker-compose.yml up --build
 
 # 方式 B：本地 venv + SQLite
 cd apps/api
-python3 -m venv../../.venv &&../../.venv/bin/pip install -r requirements.txt
-SEED_ON_STARTUP=1../../.venv/bin/uvicorn app.main:app --reload
+python3 -m venv ../../.venv && ../../.venv/bin/pip install -r requirements.txt
+# 未設置環境變量時按生產環境處理（缺支付密鑰會拒絕啟動），本地開發須顯式指定 dev
+APP_ENV=dev SEED_ON_STARTUP=1 ../../.venv/bin/uvicorn app.main:app --reload
 ```
 
 API 文檔：http://localhost:8000/docs ；健康檢查：`/health`。
@@ -344,12 +345,12 @@ cd apps/api
 通過，6 個併發場景逐一通過——同額提現僅 1 路成功、同一訂單退款僅 1 筆
 網關退款、搶最後 1 個庫存僅 1 單成功、同一結算單付款僅 1 次、併發開票
 總額不超過淨額、同一核銷撤销僅 1 次（另有砍價搶最後 1 件 1 單成功）。
-完整輸出見工作區 `fix3-postgres-run.log` / `f3-postgres-run.log`。
+完整輸出見 `docs/evidence/fix3-postgres-run.log` / `docs/evidence/f3-postgres-run.log`。
 
 已驗證（2026-11-17，M2，真 Postgres 16.15，本地 apt 安裝）：FIX-3 全 16 個
 通過（新增 2 個併發用例：兩人同時助力同一砍價不超底價、同一券碼同時掃
 兩次僅 1 次核銷成功）、F3 全 8 個通過；`BACKEND` 兩文件皆為 `postgres`。
-完整輸出見工作區 `fix3-postgres-run.log` / `f3-postgres-run.log`（本次已更新）。
+完整輸出見 `docs/evidence/fix3-postgres-run.log` / `docs/evidence/f3-postgres-run.log`（本次已更新）。
 
 ### 网页版
 

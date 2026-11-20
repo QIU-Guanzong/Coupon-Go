@@ -1188,9 +1188,11 @@ class _OrdersScreenState extends State<OrdersScreen> with WalletUpdates<OrdersSc
 String _statusLabel(BuildContext context, PackageOrder o) =>
     o.refundStatus != 'none'
         ? context.tr(o.refundStatusText, o.refundStatusEnglishText)
-        : o.paymentStatus == 'timeout'
-            ? context.tr('訂單已關閉', 'Order closed')
-            : context.tr(o.paymentStatusText, o.paymentStatusEnglishText);
+        : o.walletStatus == 3
+            ? context.tr('券已失效', 'Voucher expired')
+            : o.paymentStatus == 'timeout'
+                ? context.tr('訂單已關閉', 'Order closed')
+                : context.tr(o.paymentStatusText, o.paymentStatusEnglishText);
 
 /// Order detail (UI_SPEC §3.4): order number, payment method/time,
 /// refund status + amount, expected arrival; refund button only when
@@ -1327,6 +1329,12 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> with WalletUpdate
               value: context.tr(o.paymentStatusText, o.paymentStatusEnglishText)),
           _DetailRow(label: context.tr('退款狀態', 'Refund status'),
               value: context.tr(o.refundStatusText, o.refundStatusEnglishText)),
+          if (o.voucherStatusText.isNotEmpty)
+            _DetailRow(label: context.tr('套餐券', 'Package voucher'),
+                value: context.tr(o.voucherStatusText, o.voucherStatusEnglishText)),
+          if (o.latestRefundReason.isNotEmpty)
+            _DetailRow(label: context.tr('退款原因', 'Refund reason'),
+                value: o.latestRefundReason),
           if (o.refundAmount > 0)
             _DetailRow(label: '退款金額', value: formatHkd(o.refundAmount)),
           if (showRefundEta)

@@ -186,6 +186,8 @@ def order_out(db: Session, o: Order) -> dict:
                        .filter(models.WalletItem.order_id == o.id)
                        .first())
     wallet_item_id = wallet_item.id if wallet_item else None
+    latest_refund = (db.query(Refund).filter(Refund.order_id == o.id)
+                     .order_by(Refund.id.desc()).first())
     payments = (db.query(Payment).filter(Payment.order_id == o.id)
                 .order_by(Payment.id).all())
     # Gap 10 — order_no: there is no stored order-number column; the
@@ -254,6 +256,8 @@ def order_out(db: Session, o: Order) -> dict:
         "payment_method": o.payment_method or "",
         "payment_status": o.payment_status,
         "refund_status": o.refund_status,
+        "latest_refund_reason": latest_refund.reason if latest_refund else "",
+        "wallet_status": wallet_item.status if wallet_item else None,
         "refund_amount": refund_amount,
         "refundable": refundable,
         "voucher_redeemed": voucher_redeemed,

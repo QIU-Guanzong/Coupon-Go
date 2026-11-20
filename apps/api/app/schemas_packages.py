@@ -129,6 +129,8 @@ class OrderOut(BaseModel):
     refund_amount: float = 0
     refundable: bool = False
     voucher_redeemed: bool = False
+    wallet_status: Optional[int] = None
+    latest_refund_reason: str = ""
 
     class Config:
         from_attributes = True

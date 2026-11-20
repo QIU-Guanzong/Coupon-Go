@@ -510,12 +510,20 @@ def test_postgres_advisory_lock_branch():
         def __init__(self):
             self.calls = []
 
+        def execution_options(self, **kwargs):
+            return self
+
         def execute(self, stmt, params=None):
             sql = str(stmt)
             self.calls.append(sql)
             if "pg_try_advisory_lock" in sql:
                 return _Result(True)
+            if "pg_advisory_unlock" in sql:
+                return _Result(True)
             return _Result(None)
+
+        def close(self):
+            pass
 
     class _Dialect:
         name = "postgresql"
@@ -523,13 +531,19 @@ def test_postgres_advisory_lock_branch():
     class _Bind:
         dialect = _Dialect()
 
+        def __init__(self, conn):
+            self.conn = conn
+
+        def connect(self):
+            return self.conn
+
     class _StubSession:
         def __init__(self):
-            self.bind = _Bind()
             self.conn = _Conn()
+            self.bind = _Bind(self.conn)
 
-        def connection(self):
-            return self.conn
+        def get_bind(self):
+            return self.bind
 
         def execute(self, stmt, params=None):
             return self.conn.execute(stmt, params)
@@ -545,3 +559,244 @@ def test_postgres_advisory_lock_branch():
         assert acquired is True
     assert any("pg_try_advisory_lock" in c for c in stub.conn.calls)
     assert any("pg_advisory_unlock" in c for c in stub.conn.calls)
+
+
+def test_run_once_reports_item_failure_to_supervisor(monkeypatch, capsys):
+    from app import scheduler
+
+    class FakeSession:
+        def close(self):
+            pass
+
+    monkeypatch.setattr(scheduler, "SessionLocal", FakeSession)
+    monkeypatch.setitem(scheduler.JOB_RUNNERS, "expired-packages", lambda db: {"failed": 1, "refunded": 2})
+    assert scheduler.main(["run-once", "--job", "expired-packages"]) == 1
+    assert json.loads(capsys.readouterr().out)["expired-packages"]["failed"] == 1
+    monkeypatch.setitem(scheduler.JOB_RUNNERS, "expired-packages",
+                        lambda db: {"skipped": True, "reason": "locked_by_another_instance"})
+    assert scheduler.main(["run-once", "--job", "expired-packages"]) == 0
+
+
+def test_expired_lease_owner_cannot_release_successor(client):
+    from app.models_scheduler import SchedulerLock
+    from app.scheduler import _owner, _release_row_claim, _try_row_claim
+
+    first, second = _owner(), _owner()
+    assert first != second
+    with TestingSession() as one, TestingSession() as two:
+        assert _try_row_claim(one, "expired-packages", first, 600)
+        row = one.query(SchedulerLock).filter_by(name="expired-packages").one()
+        row.acquired_at = _now() - timedelta(seconds=601)
+        one.commit()
+        assert _try_row_claim(two, "expired-packages", second, 600)
+        _release_row_claim(one, "expired-packages", first)
+        assert two.query(SchedulerLock).filter_by(name="expired-packages", owner=second).count() == 1
+        _release_row_claim(two, "expired-packages", second)
+
+
+@pytest.mark.skipif(not os.environ.get("M1_POSTGRES_URL"), reason="set M1_POSTGRES_URL for PostgreSQL lock tests")
+def test_postgres_job_lock_survives_commits_and_releases_after_failure():
+    from sqlalchemy import text
+    from app.scheduler import acquire_job_lock
+
+    pg_engine = create_engine(os.environ["M1_POSTGRES_URL"], pool_size=3, max_overflow=0)
+    sessions = sessionmaker(bind=pg_engine)
+    try:
+        with sessions() as job, sessions() as competitor:
+            with acquire_job_lock(job, "expired-packages") as acquired:
+                assert acquired
+                for _ in range(2):
+                    job.execute(text("SELECT 1"))
+                    job.commit()
+                    with acquire_job_lock(competitor, "expired-packages") as other:
+                        assert not other
+                with pytest.raises(RuntimeError):
+                    with acquire_job_lock(competitor, "payment-timeouts") as other:
+                        assert other
+                        raise RuntimeError("simulated job failure")
+            with acquire_job_lock(competitor, "expired-packages") as acquired:
+                assert acquired
+            with acquire_job_lock(job, "payment-timeouts") as acquired:
+                assert acquired
+    finally:
+        pg_engine.dispose()
+
+
+def test_expired_refund_retries_after_local_failure_without_duplicating_gateway(client, monkeypatch):
+    from app.routers import packages as service
+    from app.scheduler import run_expired_packages
+
+    h = _register_and_login(client, "m1-refund-retry@example.com")
+    pkg = _create_package(client, name="M1 退款重試", stock=2)
+    paid = _buy_paid(client, h, pkg["id"])
+    _expire_package_coupon(pkg["id"])
+    revision_before = client.get("/api/v3/wallet/revision", headers=h).json()["revision"]
+    send = service.refund_payment
+    release = service._release_stock
+    calls = []
+    fail = [True]
+
+    def gateway(ref, amount, *, request_key):
+        result = send(ref, amount, request_key=request_key)
+        calls.append((request_key, result["gateway_ref"]))
+        return result
+
+    def fail_after_gateway(db, order):
+        if order.id == paid["id"] and fail[0]:
+            fail[0] = False
+            raise RuntimeError("lost local commit after gateway success")
+        return release(db, order)
+
+    monkeypatch.setattr(service, "refund_payment", gateway)
+    monkeypatch.setattr(service, "_release_stock", fail_after_gateway)
+    with TestingSession() as db:
+        first = run_expired_packages(db)
+    assert first["failed"] == 1
+    revision_pending = client.get("/api/v3/wallet/revision", headers=h).json()["revision"]
+    assert revision_pending != revision_before
+    with TestingSession() as db:
+        order = db.get(Order, paid["id"])
+        voucher = db.query(models.WalletItem).filter_by(order_id=order.id).one()
+        assert order.refund_status == "requested" and voucher.status == 3
+        assert db.get(models.Package, pkg["id"]).stock_left == 1
+        assert db.query(Refund).filter_by(order_id=order.id).count() == 1
+    with TestingSession() as db:
+        second = run_expired_packages(db)
+    assert second["refunded"] == 1
+    with TestingSession() as db:
+        order = db.get(Order, paid["id"])
+        assert order.refund_status == "refunded" and order.net_amount == 0
+        assert db.get(models.Package, pkg["id"]).stock_left == 2
+        assert db.query(Refund).filter_by(order_id=order.id, status="refunded").count() == 1
+    assert len(calls) == 2 and calls[0] == calls[1]
+    revision_done = client.get("/api/v3/wallet/revision", headers=h).json()["revision"]
+    assert revision_done != revision_pending
+    with TestingSession() as db:
+        assert run_expired_packages(db)["refunded"] == 0
+
+
+def test_old_unknown_gateway_result_is_not_resent(client, monkeypatch):
+    from app.routers import packages as service
+    from app.scheduler import run_expired_packages
+
+    h = _register_and_login(client, "m1-refund-age@example.com")
+    pkg = _create_package(client, name="M1 未知退款", stock=1)
+    paid = _buy_paid(client, h, pkg["id"])
+    _expire_package_coupon(pkg["id"])
+    monkeypatch.setattr(service, "refund_payment",
+                        lambda *args, **kwargs: (_ for _ in ()).throw(service.GatewayError("timeout")))
+    with TestingSession() as db:
+        assert run_expired_packages(db)["failed"] == 1
+    with TestingSession() as db:
+        refund = db.query(Refund).filter_by(order_id=paid["id"]).one()
+        refund.created_at = _now() - timedelta(hours=24)
+        db.commit()
+    def unexpected(*args, **kwargs):
+        raise AssertionError("old request must not be submitted again")
+    monkeypatch.setattr(service, "refund_payment", unexpected)
+    with TestingSession() as db:
+        assert run_expired_packages(db)["failed"] >= 1
+        assert db.get(Order, paid["id"]).refund_status == "requested"
+        assert db.get(models.Package, pkg["id"]).stock_left == 0
+        assert db.query(Refund).filter_by(order_id=paid["id"]).count() == 1
+
+
+@pytest.mark.skipif(not os.environ.get("M1_POSTGRES_URL"), reason="set M1_POSTGRES_URL for PostgreSQL lock tests")
+def test_postgres_release_failure_discards_locked_backend(caplog):
+    from sqlalchemy import event
+    from app.scheduler import acquire_job_lock
+
+    pg_engine = create_engine(os.environ["M1_POSTGRES_URL"], pool_size=2, max_overflow=0)
+    sessions = sessionmaker(bind=pg_engine)
+    calls = []
+    def fail_unlock(conn, cursor, statement, parameters, context, executemany):
+        if "pg_advisory_unlock" in statement and not calls:
+            calls.append(statement)
+            raise RuntimeError("injected lost lock connection")
+    event.listen(pg_engine, "before_cursor_execute", fail_unlock)
+    try:
+        with sessions() as job:
+            with acquire_job_lock(job, "expired-packages") as acquired:
+                assert acquired
+        assert calls
+        with sessions() as subsequent:
+            with acquire_job_lock(subsequent, "expired-packages") as acquired:
+                assert acquired
+    finally:
+        event.remove(pg_engine, "before_cursor_execute", fail_unlock)
+        pg_engine.dispose()
+
+
+def test_expiry_retry_reconciles_legacy_revocation_cashback_and_settlement(client, monkeypatch):
+    from app.models_cashback import CashbackTransaction
+    from app.models_line_f import Settlement, SettlementItem, SettlementReversal
+    from app.routers import packages as service
+    from app.scheduler import run_expired_packages
+
+    user = _register_and_login(client, "m1-legacy-settle@example.com")
+    vendor = _vendor_headers(client)
+    finance = _login(client, "finance@coupon-go.example")
+    pkg = _create_package(client, name="M1 舊版撤銷", stock=2)
+    paid = _buy_paid(client, user, pkg["id"])
+    qr = client.post("/api/v3/store-scaned-qr-values",
+                     params={"wallet_item_id": paid["wallet_item_id"]}, headers=user).json()
+    scan = client.post("/api/v3/new-scan-coupon", json={"code": qr["code"]}, headers=vendor)
+    assert scan.status_code == 200, scan.text
+    rid = scan.json()["redemption_id"]
+    generated = client.post("/api/v3/admin/settlements/generate", headers=finance, json={
+        "shop_id": 1, "period": _now().strftime("%Y-%m")})
+    assert generated.status_code == 201, generated.text
+    snapshot = generated.json()["settlement"]
+    sid = snapshot["id"]
+    assert client.post(f"/api/v3/redemptions/{rid}/revoke", headers=vendor).status_code == 200
+
+    # Emulate historical versions that recorded the revoke without reversing
+    # either its pending cashback or its already-generated settlement line.
+    with TestingSession() as db:
+        line = db.query(SettlementItem).filter_by(redemption_id=rid).one()
+        statement = db.get(Settlement, sid)
+        statement.gross_amount += line.amount
+        statement.commission += line.commission
+        statement.net_amount += line.amount - line.commission
+        statement.redemption_count += 1
+        db.delete(db.get(SettlementReversal, line.id))
+        earned = db.query(CashbackTransaction).filter_by(redemption_id=rid).one()
+        earned.status, earned.void_reason = "pending", None
+        db.commit()
+    _expire_package_coupon(pkg["id"])
+    send = service.refund_payment
+    keys = []
+    def lost(ref, amount, *, request_key):
+        result = send(ref, amount, request_key=request_key)
+        keys.append((request_key, result["gateway_ref"]))
+        if len(keys) == 1:
+            raise service.GatewayError("gateway response lost")
+        return result
+    monkeypatch.setattr(service, "refund_payment", lost)
+    with TestingSession() as db:
+        assert run_expired_packages(db)["failed"] >= 1
+    with TestingSession() as db:
+        assert db.get(Order, paid["id"]).refund_status == "requested"
+        assert db.query(CashbackTransaction).filter_by(redemption_id=rid).one().status == "pending"
+        assert float(db.get(Settlement, sid).gross_amount) == snapshot["gross_amount"]
+        assert db.get(models.Package, pkg["id"]).stock_left == 1
+    with TestingSession() as db:
+        assert run_expired_packages(db)["refunded"] >= 1
+    with TestingSession() as db:
+        order = db.get(Order, paid["id"])
+        line = db.query(SettlementItem).filter_by(redemption_id=rid).one()
+        statement = db.get(Settlement, sid)
+        earning = db.query(CashbackTransaction).filter_by(redemption_id=rid).one()
+        assert order.refund_status == "refunded"
+        assert db.get(models.WalletItem, paid["wallet_item_id"]).status == 3
+        assert db.get(models.Package, pkg["id"]).stock_left == 2
+        assert (earning.status, earning.void_reason) == ("void", "revoked")
+        assert float(statement.gross_amount) == snapshot["gross_amount"] - 150
+        assert float(statement.commission) == snapshot["commission"] - 15
+        assert float(statement.net_amount) == snapshot["net_amount"] - 135
+        assert db.get(SettlementReversal, line.id).amount == -150
+        assert db.query(Refund).filter_by(order_id=order.id).count() == 1
+    assert len(keys) == 2 and keys[0] == keys[1]
+    with TestingSession() as db:
+        assert run_expired_packages(db)["refunded"] == 0
+        assert db.query(Refund).filter_by(order_id=paid["id"]).count() == 1

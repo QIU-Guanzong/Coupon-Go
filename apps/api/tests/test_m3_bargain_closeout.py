@@ -18,7 +18,7 @@ from datetime import timedelta
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -35,6 +35,26 @@ from app.seed_bargain import seed_bargain_campaigns  # noqa: E402
 PG_URL = os.environ.get(
     "M3_POSTGRES_URL",
     "postgresql+psycopg2://coupon_go:coupon_go@localhost:5432/coupon_go_test_m3")
+
+def _pg_reachable():
+    try:
+        probe = create_engine(PG_URL, connect_args={"connect_timeout": 2})
+        with probe.connect() as conn:
+            conn.execute(text("SELECT 1"))
+        probe.dispose()
+        return True
+    except Exception:
+        return False
+
+
+# Row locks only exist on Postgres, so these tests prove nothing on
+# SQLite. Without a reachable Postgres the module is skipped (with the
+# reason printed by pytest -rs) instead of erroring on every test.
+if not _pg_reachable():
+    pytest.skip(
+        f"M3 需要真實 Postgres（未能連接 {PG_URL.split('@')[-1]}）；"
+        "設置 M3_POSTGRES_URL 或啟動本地 Postgres 後重跑",
+        allow_module_level=True)
 
 engine = create_engine(PG_URL, pool_size=5, max_overflow=5)
 TestingSession = sessionmaker(bind=engine)
