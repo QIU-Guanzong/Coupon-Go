@@ -579,7 +579,7 @@ class _OrdersAdminScreenState extends State<OrdersAdminScreen> {
   String _refundText(PackageOrder o) => switch (o.refundStatus) {
         'requested' => '退款處理中',
         'refunded' => '已退款',
-        'rejected' => '退款被拒',
+        'rejected' => '退款未成功',
         _ => '未退款',
       };
 
@@ -620,6 +620,10 @@ class _OrdersAdminScreenState extends State<OrdersAdminScreen> {
             _timelineRow('支付方式', o.paymentMethodText),
             _timelineRow('支付狀態', o.paymentStatusText),
             _timelineRow('退款狀態', _refundText(o)),
+            if (o.voucherStatusText.isNotEmpty)
+              _timelineRow('套餐券', o.voucherStatusText),
+            if (o.latestRefundReason.isNotEmpty)
+              _timelineRow('退款原因', o.latestRefundReason),
             _timelineRow('下單時間', _timeText(o.createdAt)),
             _timelineRow('支付時間', _timeText(o.paidAt)),
             if (o.refundStatus == 'refunded' && !o.demoPayment)

@@ -1184,6 +1184,7 @@ class _OrdersScreenState extends State<OrdersScreen> with WalletUpdates<OrdersSc
 /// 逾時订单服务端已关闭，列表上直接显示「訂單已關閉」。
 String _statusLabel(PackageOrder o) =>
     o.refundStatus != 'none' ? o.refundStatusText :
+    o.walletStatus == 3 ? '券已失效' :
     o.paymentStatus == 'timeout' ? '訂單已關閉' : o.paymentStatusText;
 
 /// Order detail (UI_SPEC §3.4): order number, payment method/time,
@@ -1319,6 +1320,10 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> with WalletUpdate
               valueBold: true),
           _DetailRow(label: '支付狀態', value: o.paymentStatusText),
           _DetailRow(label: '退款狀態', value: o.refundStatusText),
+          if (o.voucherStatusText.isNotEmpty)
+            _DetailRow(label: '套餐券', value: o.voucherStatusText),
+          if (o.latestRefundReason.isNotEmpty)
+            _DetailRow(label: '退款原因', value: o.latestRefundReason),
           if (o.refundAmount > 0)
             _DetailRow(label: '退款金額', value: formatHkd(o.refundAmount)),
           if (showRefundEta)

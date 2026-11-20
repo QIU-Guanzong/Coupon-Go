@@ -160,11 +160,14 @@ class WalletItem {
 
   String get statusText =>
       refundStatus == 'refunded' ? '已退款' : refundStatus == 'requested' ? '退款處理中' :
-      status == 1 ? '未使用' : status == 2 ? '已使用' : '已失效';
+      status == 2 ? '已使用' :
+      refundStatus == 'rejected' ? (status == 1 ? '未使用 · 退款未成功' : '已失效 · 退款未成功') :
+      status == 1 ? '未使用' : '已失效';
 
   /// Refundable from the wallet: an unused, purchased, refundable voucher.
   bool get canRefund =>
-      status == 1 && isPackage && orderId != null && refundPolicy == 'anytime';
+      status == 1 && isPackage && orderId != null && refundPolicy == 'anytime' &&
+      (refundStatus == 'none' || refundStatus == 'rejected');
 }
 
 class AppNotification {
@@ -764,7 +767,9 @@ class PackageOrder {
         refundable = j['refundable'] as bool? ?? j['can_refund'] as bool?,
         voucherRedeemed =
             j['voucher_redeemed'] as bool? ?? j['redeemed'] as bool? ?? false,
-        voucherStatus = j['voucher_status'] as String? ?? '';
+        voucherStatus = j['voucher_status'] as String? ?? '',
+        walletStatus = j['wallet_status'] as int?,
+        latestRefundReason = j['latest_refund_reason'] as String? ?? '';
 
   final int id;
   final int? packageId;
@@ -792,15 +797,24 @@ class PackageOrder {
   final bool? refundable; // 服务端是否可退（未返回时用本地规则兜底）
   final bool voucherRedeemed; // 券是否已核销
   final String voucherStatus;
+  final int? walletStatus;
+  final String latestRefundReason;
 
   /// 展示用订单号。
   String get orderNoText => orderNo.isNotEmpty ? orderNo : '#$id';
 
   String get refundStatusText => switch (refundStatus) {
         'refunded' => '已退款',
-        'requested' => '退款处理中',
-        'rejected' => '退款被拒绝',
+        'requested' => '退款處理中',
+        'rejected' => '退款未成功',
         _ => '未退款',
+      };
+
+  String get voucherStatusText => switch (walletStatus) {
+        1 => '未使用',
+        2 => '已使用',
+        3 => '已失效',
+        _ => '',
       };
 
   String get paymentStatusText => switch (paymentStatus) {
@@ -821,10 +835,10 @@ class PackageOrder {
   /// 申请退款仅在券未核销且在可退条件内显示；服务端 refundable 字段
   /// 优先，未返回时用（已支付、未退款、未核销）兜底。
   bool get canRefund {
-    if (refundable != null) return refundable! && !voucherRedeemed;
+    if (refundable != null) return refundable! && !voucherRedeemed && walletStatus != 3;
     return paymentStatus == 'paid' &&
         refundStatus == 'none' &&
-        !voucherRedeemed;
+        !voucherRedeemed && walletStatus != 3;
   }
 }
 

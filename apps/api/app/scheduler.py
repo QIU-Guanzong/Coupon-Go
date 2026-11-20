@@ -40,6 +40,7 @@ import socket
 import sys
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
+from uuid import uuid4
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.interval import IntervalTrigger
@@ -69,27 +70,29 @@ def _now():
 
 
 def _owner():
-    return f"{socket.gethostname()}:{os.getpid()}"
+    return f"{socket.gethostname()[:70]}:{os.getpid()}:{uuid4().hex}"
 
 
 def _try_postgres_advisory_lock(db, key):
-    """True/False when the session is Postgres, else None (caller falls
-    through to the row-claim lock). Pins the session's connection
-    (db.connection()) so the session-level lock stays on the same
-    connection while the sweep commits per item."""
-    bind = getattr(db, "bind", None)
-    dialect_name = getattr(getattr(bind, "dialect", None), "name", None)
-    if dialect_name != "postgresql":
-        return None
-    conn = db.connection()
-    locked = conn.execute(
-        text("SELECT pg_try_advisory_lock(:key)"), {"key": key}).scalar()
-    return bool(locked)
+    """Use a dedicated physical connection until the job has finished.
 
-
-def _release_postgres_advisory_lock(db, key):
-    conn = db.connection()
-    conn.execute(text("SELECT pg_advisory_unlock(:key)"), {"key": key})
+    A Session commit returns its connection to the pool, while a Postgres
+    session advisory lock survives that commit. Holding an independent
+    connection avoids both early reuse and unlocking a different backend.
+    """
+    bind = db.get_bind()
+    if bind.dialect.name != "postgresql":
+        return None, None
+    engine = bind.engine if hasattr(bind, "engine") else bind
+    conn = engine.connect().execution_options(isolation_level="AUTOCOMMIT")
+    try:
+        locked = bool(conn.execute(
+            text("SELECT pg_try_advisory_lock(:key)"), {"key": key}).scalar())
+        return locked, conn
+    except Exception:
+        conn.invalidate()
+        conn.close()
+        raise
 
 
 def _try_row_claim(db, job_name, owner, lease_seconds):
@@ -136,8 +139,9 @@ def acquire_job_lock(db, job_name, owner=None, lease_seconds=None):
              else config.SCHEDULER_LOCK_LEASE_SECONDS)
     acquired = False
     mode = None
+    lock_conn = None
     try:
-        pg = _try_postgres_advisory_lock(db, ADVISORY_LOCK_KEYS[job_name])
+        pg, lock_conn = _try_postgres_advisory_lock(db, ADVISORY_LOCK_KEYS[job_name])
         if pg is not None:
             mode = "advisory"
             acquired = pg
@@ -149,17 +153,24 @@ def acquire_job_lock(db, job_name, owner=None, lease_seconds=None):
         if acquired:
             try:
                 if mode == "advisory":
-                    _release_postgres_advisory_lock(
-                        db, ADVISORY_LOCK_KEYS[job_name])
+                    released = lock_conn.execute(
+                        text("SELECT pg_advisory_unlock(:key)"),
+                        {"key": ADVISORY_LOCK_KEYS[job_name]}).scalar()
+                    if not released:
+                        raise RuntimeError("PostgreSQL scheduler lock was not held")
                 else:
                     _release_row_claim(db, job_name, owner)
             except Exception:
                 logger.exception("scheduler lock release failed job=%s",
                                  job_name)
-                try:
+                if lock_conn is not None:
+                    # Never put a connection with a possibly-held session
+                    # lock back into the pool.
+                    lock_conn.invalidate()
+                else:
                     db.rollback()
-                except Exception:
-                    pass
+        if lock_conn is not None:
+            lock_conn.close()
 
 
 def _run_job(db, job_name, sweep_fn, **kwargs):
@@ -346,7 +357,9 @@ def main(argv=None):
             finally:
                 db.close()
         print(json.dumps(results, ensure_ascii=False))
-        return 0
+        # Per-item failures are reported as a count and job-level failures
+        # as True. Either must be visible to cron or another supervisor.
+        return int(any(result.get("failed", 0) for result in results.values()))
     # run: foreground scheduler. A disabled config is a loud failure,
     # not a silent no-op.
     sched = start_scheduler()
