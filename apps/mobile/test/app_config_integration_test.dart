@@ -27,6 +27,7 @@ class _ConfigApi extends ApiClient {
 }
 
 class _ClaimApi extends ApiClient {
+  int claimCalls = 0;
   @override
   bool get isLoggedIn => true;
   @override
@@ -34,10 +35,13 @@ class _ClaimApi extends ApiClient {
         'coupon': {'id': id, 'remaining': 3}
       };
   @override
-  Future<Map<String, dynamic>> claimCoupon(int id) async => {
-        'coupon': {'id': id, 'remaining': 2},
-        'wallet_item_id': 21
-      };
+  Future<Map<String, dynamic>> claimCoupon(int id) async {
+    claimCalls++;
+    return {
+      'coupon': {'id': id, 'remaining': 2},
+      'wallet_item_id': 21
+    };
+  }
 }
 
 void main() {
@@ -139,14 +143,23 @@ void main() {
         coupon: Coupon.fromJson({'id': 7, 'name': 'Example coupon'}),
       )));
       await tester.pumpAndSettle();
-      await tester.tap(find.text('Claim now'));
-      await tester.pumpAndSettle();
-      expect(
-          find.text(points == null
-              ? 'Saved to Q Wallet'
-              : 'Saved to Q Wallet, +27 points'),
-          findsOneWidget);
-      if (points == null) expect(find.textContaining('+10'), findsNothing);
+      if (const bool.fromEnvironment('PUBLIC_DEMO')) {
+        final button = find.widgetWithText(ElevatedButton, 'Claiming unavailable in demo');
+        expect(button, findsOneWidget);
+        expect(tester.widget<ElevatedButton>(button).onPressed, isNull);
+        expect(api.claimCalls, 0);
+        expect(find.textContaining('Saved to Q Wallet'), findsNothing);
+      } else {
+        await tester.tap(find.text('Claim now'));
+        await tester.pumpAndSettle();
+        expect(api.claimCalls, 1);
+        expect(
+            find.text(points == null
+                ? 'Saved to Q Wallet'
+                : 'Saved to Q Wallet, +27 points'),
+            findsOneWidget);
+        if (points == null) expect(find.textContaining('+10'), findsNothing);
+      }
       await tester.pumpWidget(const SizedBox());
       api.dispose();
     }
