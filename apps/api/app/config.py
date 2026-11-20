@@ -6,7 +6,12 @@ deliberately insecure and must be overridden before any real deployment.
 """
 import os
 
-ENV = os.environ.get("APP_ENV") or os.environ.get("COUPON_GO_ENV", "dev")
+# M9-1: fail closed. An unset environment is production, so a deploy that
+# forgets the variable still enforces the payment / secret startup gates,
+# refuses demo payments and unsigned webhooks, and does not open CORS.
+# Local development must set APP_ENV=dev (or COUPON_GO_ENV=dev) explicitly.
+ENV = (os.environ.get("APP_ENV") or os.environ.get("COUPON_GO_ENV")
+       or "production").strip().lower()
 # APP_ENV is the canonical name (FIX-1); ENV is the legacy alias.
 APP_ENV = ENV
 # The shipped dev default. It must never run outside dev (see
