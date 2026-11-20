@@ -19,6 +19,7 @@ from app.database import engine, SessionLocal
 from app.main import app as backend
 from app.models_bargain import BargainCampaign
 from app.routers.bargain import campaign_out
+from app.routers.home import app_config
 from app.routers.qbot import Question
 
 # This attaches to every newly opened SQLite connection. The public service
@@ -57,6 +58,11 @@ PUBLIC_GET = frozenset({
 PUBLIC_SHOP = re.compile(r"^/api/v3/shops/[1-9][0-9]{0,9}/(?:map|reviews|rating)$")
 SEARCH = "/api/v3/auto-suggestion-new"
 CAMPAIGNS = "/api/v3/bargain-campaigns"
+APP_CONFIG = "/api/v3/app-config"
+APP_CONFIG_FIELDS = (
+    "points_claim", "points_redeem", "points_review", "qr_ttl_seconds",
+    "cashback_unlock_days",
+)
 QBOT = "/api/v3/qbot/chat"
 QBOT_MAX_BODY = 40000
 _qbot_slots = BoundedSemaphore(3)
@@ -177,6 +183,12 @@ class PreviewGateway:
             return
         if method == "POST" and path == QBOT:
             await _qbot(scope, receive, send)
+            return
+        if method == "GET" and path == APP_CONFIG and not scope.get("query_string", b""):
+            # Explicitly project the display contract so that future private
+            # additions to the underlying endpoint cannot leak to the demo.
+            values = await run_in_threadpool(app_config)
+            await JSONResponse({key: values[key] for key in APP_CONFIG_FIELDS})(scope, receive, send)
             return
         request = Request(scope, receive)
         if method == "GET" and path == CAMPAIGNS:

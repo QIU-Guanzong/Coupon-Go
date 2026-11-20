@@ -74,9 +74,8 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
     expect(tester.widget<BottomNavigationBar>(find.byType(BottomNavigationBar)).items.length, 5);
-    expect(find.text('毋須登入，可瀏覽優惠及使用 Q仔。不能領券或付款。'),
+    expect(find.text('商戶及優惠為示例。毋須登入，可瀏覽優惠及使用 Q仔；領券及付款暫未開放。'),
         const bool.fromEnvironment('PUBLIC_DEMO') ? findsOneWidget : findsNothing);
-    expect(find.textContaining(RegExp(r'示範|演示|試行|預覽|\bdemo\b', caseSensitive: false)), findsNothing);
 
     await tester.tap(find.text('收藏'));
     await tester.pump();

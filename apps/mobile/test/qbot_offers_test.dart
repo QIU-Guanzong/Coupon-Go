@@ -195,6 +195,10 @@ void main() {
     await tester.tap(find.text('Q仔'));
     await tester.pumpAndSettle();
     expect(find.byType(QBotScreen), findsOneWidget);
+    if (const bool.fromEnvironment('PUBLIC_DEMO')) {
+      expect(find.textContaining('Shops and offers are examples.'), findsOneWidget);
+      expect(find.textContaining('Use Q仔 without signing in'), findsOneWidget);
+    }
     await tester.enterText(find.byType(TextField), 'What can I browse?');
     await tester.tap(find.byTooltip('Send'));
     await tester.pumpAndSettle();
