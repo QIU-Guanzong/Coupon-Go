@@ -119,10 +119,10 @@ v1 **沒有**的接口（F 線再做）：訂單管理（等套餐線的 `orders
 
 | 方法 | 路徑 | 說明 |
 |---|---|---|
-| POST | `/admin/merchant-applications` | 提交入駐申請（登錄即可）。Body：`{shop_name*, contact_name, phone, address, business_license, id_card, shop_photos[]（門店照片連結，v1 預留）, industry_license}`；同一用戶已有 `pending` 申請時 400。201 返回 `{message, application}` |
+| POST | `/admin/merchant-applications` | 提交入駐申請（登錄即可；用戶端「商户加盟」入口與商户註冊共用此接口）。P1-D 香港口徑 Body：`{shop_name*, contact_name（聯絡人）, phone, address, br_number（8 位數字）, br_file_id, ci_file_id, director_id_file_id, shop_photo_file_ids[]}`；舊內地口徑字段 `business_license / id_card / industry_license / shop_photos[]` 仍可提交、仍存庫，僅追溯用。文件先調 `POST /merchant-files` 上傳再認領。同一用戶已有 `pending` 申請時 400。201 返回 `{message, application}`。詳見 `docs/P1D_API.md` |
 | GET | `/admin/merchant-applications?status=&page=` | 入駐申請列表（admin；`status=pending/approved/rejected` 篩選） |
 | GET | `/admin/merchant-applications/{id}` | 入駐申請詳情（admin） |
-| POST | `/admin/merchant-applications/{id}/review` | 審核（admin）。Body `{approve: bool, reject_reason}`；拒絕時 `reject_reason` 必填；已審核的重審 400。通過時申請人 `role` 由 `customer` 升為 `vendor`。被拒絕後可重新提交**新**申請。返回 `{message, application}` |
+| POST | `/admin/merchant-applications/{id}/review` | 審核（admin）。Body `{approve: bool, reject_reason}`；拒絕時 `reject_reason` 必填；已審核的重審 400。**批准門禁（P1-D）**：須已簽當前版本合約且已完成 Stripe 開戶（`stripe_account_id` 非空 + `charges/payouts` 均啟用），否則 400；拒絕不受門禁影響。通過時申請人 `role` 由 `customer` 升為 `vendor`。被拒絕後可重新提交**新**申請。返回 `{message, application}`。開戶狀態由 P1-B 寫入，或 admin 經 `POST /admin/merchant-applications/{id}/stripe-onboarding` 登記。詳見 `docs/P1D_API.md` |
 | GET | `/admin/dashboard` | 看板總覽（admin，隻讀）：`{total_users, total_shops, total_coupons, coupons_by_status, wallet_by_status{1/2/3}, total_redemptions, total_reviews, rated_reviews, pending_applications, pending_coupons}` |
 | GET | `/admin/shops?page=` | 商户列表（admin，隻讀）：`shop_out` + `vendor_email, coupon_count, redemption_count, rating_overall, review_count` |
 | GET | `/admin/coupons?status=&shop_id=&page=` | 券列表（admin，隻讀） |
@@ -133,7 +133,7 @@ v1 **沒有**的接口（F 線再做）：訂單管理（等套餐線的 `orders
 入駐申請對象：`{id, user_id, applicant_email, shop_name, contact_name,
 phone, address, business_license, id_card, shop_photos[],
 industry_license, status（pending/approved/rejected）, reject_reason,
-reviewed_by, reviewed_at, created_at}`。
+reviewed_by, reviewed_at, created_at}`。P1-D 新增：`br_number, documents{br, ci, director_id}（文件元數據，無公開 URL）, shop_photo_files[], stripe_account_id, stripe_charges_enabled, stripe_payouts_enabled, contract{version, signed_at, signed_ip, pdf_file_id}`。P1-D 新接口（文件上傳/簽名下載/合約/簽署/我的申請）見 `docs/P1D_API.md`。
 ## 返現（線 D）
 
 返現與積分分開記賬（`cashback_transactions`，絕不混用 `point_transactions`）。
@@ -274,10 +274,10 @@ v1 角色：**只有 `admin` 單一角色**（`require_role("admin")`；入駐�
 
 | 方法 | 路徑 | 說明 |
 |---|---|---|
-| POST | `/admin/merchant-applications` | 提交入駐申請（登錄即可）。Body：`{shop_name*, contact_name, phone, address, business_license, id_card, shop_photos[]（門店照片連結，v1 預留）, industry_license}`；同一用戶已有 `pending` 申請時 400。201 返回 `{message, application}` |
+| POST | `/admin/merchant-applications` | 提交入駐申請（登錄即可；用戶端「商户加盟」入口與商户註冊共用此接口）。P1-D 香港口徑 Body：`{shop_name*, contact_name（聯絡人）, phone, address, br_number（8 位數字）, br_file_id, ci_file_id, director_id_file_id, shop_photo_file_ids[]}`；舊內地口徑字段 `business_license / id_card / industry_license / shop_photos[]` 仍可提交、仍存庫，僅追溯用。文件先調 `POST /merchant-files` 上傳再認領。同一用戶已有 `pending` 申請時 400。201 返回 `{message, application}`。詳見 `docs/P1D_API.md` |
 | GET | `/admin/merchant-applications?status=&page=` | 入駐申請列表（admin；`status=pending/approved/rejected` 篩選） |
 | GET | `/admin/merchant-applications/{id}` | 入駐申請詳情（admin） |
-| POST | `/admin/merchant-applications/{id}/review` | 審核（admin）。Body `{approve: bool, reject_reason}`；拒絕時 `reject_reason` 必填；已審核的重審 400。通過時申請人 `role` 由 `customer` 升為 `vendor`。被拒絕後可重新提交**新**申請。返回 `{message, application}` |
+| POST | `/admin/merchant-applications/{id}/review` | 審核（admin）。Body `{approve: bool, reject_reason}`；拒絕時 `reject_reason` 必填；已審核的重審 400。**批准門禁（P1-D）**：須已簽當前版本合約且已完成 Stripe 開戶（`stripe_account_id` 非空 + `charges/payouts` 均啟用），否則 400；拒絕不受門禁影響。通過時申請人 `role` 由 `customer` 升為 `vendor`。被拒絕後可重新提交**新**申請。返回 `{message, application}`。開戶狀態由 P1-B 寫入，或 admin 經 `POST /admin/merchant-applications/{id}/stripe-onboarding` 登記。詳見 `docs/P1D_API.md` |
 | GET | `/admin/dashboard` | 看板總覽（admin，隻讀）：`{total_users, total_shops, total_coupons, coupons_by_status, wallet_by_status{1/2/3}, total_redemptions, total_reviews, rated_reviews, pending_applications, pending_coupons}` |
 | GET | `/admin/shops?page=` | 商户列表（admin，隻讀）：`shop_out` + `vendor_email, coupon_count, redemption_count, rating_overall, review_count` |
 | GET | `/admin/coupons?status=&shop_id=&page=` | 券列表（admin，隻讀） |
@@ -288,7 +288,7 @@ v1 角色：**只有 `admin` 單一角色**（`require_role("admin")`；入駐�
 入駐申請對象：`{id, user_id, applicant_email, shop_name, contact_name,
 phone, address, business_license, id_card, shop_photos[],
 industry_license, status（pending/approved/rejected）, reject_reason,
-reviewed_by, reviewed_at, created_at}`。
+reviewed_by, reviewed_at, created_at}`。P1-D 新增：`br_number, documents{br, ci, director_id}（文件元數據，無公開 URL）, shop_photo_files[], stripe_account_id, stripe_charges_enabled, stripe_payouts_enabled, contract{version, signed_at, signed_ip, pdf_file_id}`。P1-D 新接口（文件上傳/簽名下載/合約/簽署/我的申請）見 `docs/P1D_API.md`。
 
 ## 後台 v2（F4 v2，線 F，`/api/v3/admin` 前綴）
 

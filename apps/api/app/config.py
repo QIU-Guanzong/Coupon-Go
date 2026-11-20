@@ -48,6 +48,22 @@ SCAN_DAILY_LIMIT = int(os.environ.get("SCAN_DAILY_LIMIT", "200"))
 UPLOAD_DIR = os.environ.get("UPLOAD_DIR", os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "uploads"))
 UPLOAD_MAX_BYTES = int(os.environ.get("UPLOAD_MAX_BYTES", str(5 * 1024 * 1024)))
+
+# P1-D: merchant onboarding files (BR / CI / director ID / shop photos /
+# signed-contract PDFs). PRIVATE storage: this directory is NOT served by
+# the /uploads StaticFiles mount; files are only reachable through the
+# signed-download endpoints (see app/routers/merchant_onboarding.py).
+# Local disk is a placeholder like review-images: swap in object storage
+# (S3 / GCS private bucket) before launch, see docs/P1D_API.md §4.
+MERCHANT_FILE_DIR = os.environ.get("MERCHANT_FILE_DIR", os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    "merchant-files-private"))
+# Signed merchant-file download links live this long (seconds).
+MERCHANT_DOWNLOAD_LINK_TTL_SECONDS = int(
+    os.environ.get("MERCHANT_DOWNLOAD_LINK_TTL_SECONDS", "900"))
+# Optional path to a CJK TrueType collection for contract PDFs
+# (reportlab). Defaults to the system Noto Sans CJK TC.
+MERCHANT_CONTRACT_FONT = os.environ.get("MERCHANT_CONTRACT_FONT", "")
 OTP_TTL_SECONDS = int(os.environ.get("OTP_TTL_SECONDS", "600"))
 OTP_LENGTH = 6
 
