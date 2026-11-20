@@ -446,8 +446,10 @@ class _BargainCampaignScreenState extends State<BargainCampaignScreen> {
                 backgroundColor: CgColors.orange,
                 foregroundColor: Colors.white,
               ),
-              onPressed: (_busy || c.isSoldOut) ? null : _start,
-              child: Text(_busy
+              onPressed: (const bool.fromEnvironment('PUBLIC_DEMO') || _busy || c.isSoldOut) ? null : _start,
+              child: Text(const bool.fromEnvironment('PUBLIC_DEMO')
+                  ? context.tr('示範版暫未開放砍價', 'Bargaining unavailable in demo')
+                  : _busy
                   ? context.tr('處理中…', 'Processing…')
                   : c.isSoldOut
                       ? context.tr('已售罄', 'Sold out')

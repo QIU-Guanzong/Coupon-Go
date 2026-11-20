@@ -1023,7 +1023,7 @@ class _CouponDetailScreenState extends State<CouponDetailScreen> {
       bottomNavigationBar: Padding(
         padding: const EdgeInsets.all(16),
         child: ElevatedButton(
-          onPressed: _claimed || _claiming
+          onPressed: const bool.fromEnvironment('PUBLIC_DEMO') || _claimed || _claiming
               ? null
               : () async {
                   if (_claiming) return;
@@ -1057,7 +1057,9 @@ class _CouponDetailScreenState extends State<CouponDetailScreen> {
                     if (mounted) setState(() => _claiming = false);
                   }
                 },
-          child: Text(_claimed
+          child: Text(const bool.fromEnvironment('PUBLIC_DEMO')
+              ? context.tr('示範版暫未開放領券', 'Claiming unavailable in demo')
+              : _claimed
               ? context.tr('已領取', 'Claimed')
               : _claiming
                   ? context.tr('領取中…', 'Claiming…')

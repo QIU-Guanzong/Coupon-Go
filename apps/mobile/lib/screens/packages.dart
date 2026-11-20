@@ -552,8 +552,10 @@ class _PackageDetailScreenState extends State<PackageDetailScreen> {
                 child: SizedBox(
                   height: 48,
                   child: ElevatedButton(
-                    onPressed: soldOut ? null : _buy,
-                    child: Text(soldOut ? '已售罄' : '立即搶購'),
+                    onPressed: const bool.fromEnvironment('PUBLIC_DEMO') || soldOut ? null : _buy,
+                    child: Text(const bool.fromEnvironment('PUBLIC_DEMO')
+                        ? context.tr('示範版暫未開放購買', 'Purchases unavailable in demo')
+                        : soldOut ? context.tr('已售罄', 'Sold out') : context.tr('立即搶購', 'Buy now')),
                   ),
                 ),
               ),

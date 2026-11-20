@@ -166,6 +166,34 @@ void main() {
     expect(api.posts, ['/qbot/chat']);
   });
 
+  testWidgets('demo offer detail actions do not open login or send transactions',
+      (tester) async {
+    final api = _BotApi()..offers = [
+      _offer('coupon', 11, 'Tea coupon'),
+      _offer('package', 42, 'Lunch package'),
+      _offer('bargain', 69, 'Same title'),
+    ];
+    await _ask(tester, api);
+    for (final item in [
+      ('coupon', 11, 'Claiming unavailable in demo'),
+      ('package', 42, 'Purchases unavailable in demo'),
+      ('bargain', 69, 'Bargaining unavailable in demo'),
+    ]) {
+      await tester.ensureVisible(_tile(item.$1, item.$2));
+      await tester.tap(_tile(item.$1, item.$2));
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(find.text(item.$3, skipOffstage: false));
+      await tester.pumpAndSettle();
+      final button = find.widgetWithText(ElevatedButton, item.$3);
+      expect(button, findsOneWidget);
+      expect(tester.widget<ElevatedButton>(button).onPressed, isNull);
+      expect(api.isLoggedIn, isFalse);
+      expect(api.posts, ['/qbot/chat']);
+      tester.state<NavigatorState>(find.byType(Navigator)).pop();
+      await tester.pumpAndSettle();
+    }
+  }, skip: !const bool.fromEnvironment('PUBLIC_DEMO'));
+
   testWidgets('guest home opens Q仔 and reads an offer without a login wall',
       (tester) async {
     SharedPreferences.setMockInitialValues({'home_qbot_hint_seen_v1': true});
