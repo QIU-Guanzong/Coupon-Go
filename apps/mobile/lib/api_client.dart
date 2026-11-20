@@ -16,9 +16,14 @@ class ApiClient extends ChangeNotifier {
 
   static String get configuredBase {
     const url = String.fromEnvironment('API_BASE_URL', defaultValue: 'http://localhost:8000');
-    return url.isEmpty
-        ? Uri.base.resolve('.').toString().replaceFirst(RegExp(r'/$'), '')
-        : url;
+    return resolveBaseUrl(url, Uri.base);
+  }
+
+  /// A web deployment may live below a domain prefix such as /coupongo/.
+  static String resolveBaseUrl(String configured, Uri location) {
+    return configured.isEmpty
+        ? location.resolve('.').toString().replaceFirst(RegExp(r'/$'), '')
+        : configured;
   }
 
   final String baseUrl;
@@ -289,10 +294,12 @@ class ApiClient extends ChangeNotifier {
       });
 
   // ---- favourites / notifications / records ----
-  Future<void> toggleFavoriteCoupon(int id) =>
-      post('/favorite-coupon-all', query: {'coupon_id': '$id'});
-  Future<void> toggleFavoriteShop(int id) =>
-      post('/favorite-shop', query: {'shop_id': '$id'});
+  Future<bool> toggleFavoriteCoupon(int id) async =>
+      (await post('/favorite-coupon-all', query: {'coupon_id': '$id'}))
+          ['is_coupon_favorite'] as bool;
+  Future<bool> toggleFavoriteShop(int id) async =>
+      (await post('/favorite-shop', query: {'shop_id': '$id'}))
+          ['is_shop_favorite'] as bool;
   Future<Map<String, dynamic>> notifications() async =>
       get('/get-notification-list');
   Future<void> markNotificationRead(int id) =>

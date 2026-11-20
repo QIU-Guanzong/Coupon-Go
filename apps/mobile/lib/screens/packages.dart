@@ -197,6 +197,10 @@ class _PackageDetailScreenState extends State<PackageDetailScreen> {
   }
 
   Future<void> _openMap(Map<String, dynamic> branch) async {
+    if (const bool.fromEnvironment('PUBLIC_DEMO')) {
+      showCgToast(context, '示範商戶，未提供導航');
+      return;
+    }
     final lat = branch['latitude'] ?? branch['lat'];
     final lng = branch['longitude'] ?? branch['lng'];
     final name = (branch['branch_name'] ?? branch['name'] ?? '') as String;
@@ -209,7 +213,7 @@ class _PackageDetailScreenState extends State<PackageDetailScreen> {
     if (await canLaunchUrl(uri)) {
       await launchUrl(uri, mode: LaunchMode.externalApplication);
     } else if (mounted) {
-      showCgToast(context, '无法打开地图');
+      showCgToast(context, '未能開啟地圖');
     }
   }
 
@@ -252,7 +256,7 @@ class _PackageDetailScreenState extends State<PackageDetailScreen> {
                 const Icon(Icons.remove_circle_outline,
                     size: 64, color: CgColors.textSecondary),
                 const SizedBox(height: 16),
-                const Text('该套餐已下架',
+                const Text('該套餐已下架',
                     style:
                         TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
                 const SizedBox(height: 8),
@@ -369,12 +373,12 @@ class _PackageDetailScreenState extends State<PackageDetailScreen> {
                   : const Color(0xFFFFF3CD),
               borderRadius: BorderRadius.circular(8),
             ),
-            child: Text('退款规则：${p.refundRuleText}',
+            child: Text('退款規則：${p.refundRuleText}',
                 style: const TextStyle(fontWeight: FontWeight.bold)),
           ),
           const SizedBox(height: 16),
           // 套餐内容
-          const Text('套餐内容', style: TextStyle(fontWeight: FontWeight.bold)),
+          const Text('套餐內容', style: TextStyle(fontWeight: FontWeight.bold)),
           const SizedBox(height: 4),
           if (p.itemLines.isNotEmpty)
             ...p.itemLines.map((line) {
@@ -411,7 +415,7 @@ class _PackageDetailScreenState extends State<PackageDetailScreen> {
           const Divider(height: 24),
           Row(
             children: [
-              const Text('合计', style: TextStyle(fontWeight: FontWeight.bold)),
+              const Text('合計', style: TextStyle(fontWeight: FontWeight.bold)),
               const Spacer(),
               Text(formatHkd(p.packagePrice),
                   style: const TextStyle(
@@ -421,7 +425,7 @@ class _PackageDetailScreenState extends State<PackageDetailScreen> {
           ),
           const SizedBox(height: 16),
           // 使用规则
-          const Text('使用规则', style: TextStyle(fontWeight: FontWeight.bold)),
+          const Text('使用規則', style: TextStyle(fontWeight: FontWeight.bold)),
           const SizedBox(height: 4),
           _RuleRow(
               label: '有效期',
@@ -433,22 +437,22 @@ class _PackageDetailScreenState extends State<PackageDetailScreen> {
           if (p.includes.isNotEmpty) _RuleRow(label: '已包括', value: p.includes.join('、')),
           if (p.excludes.isNotEmpty) _RuleRow(label: '另收費', value: p.excludes.join('、')),
           if (p.timeSlots.isNotEmpty)
-            _RuleRow(label: '可用时段', value: p.timeSlots.join('、')),
-          _RuleRow(label: '是否需预约', value: p.needBooking ? '需提前预约' : '无需预约'),
+            _RuleRow(label: '可用時段', value: p.timeSlots.join('、')),
+          _RuleRow(label: '是否需預約', value: p.needBooking ? '需提前預約' : '無需預約'),
           if (p.perUserLimit != null)
-            _RuleRow(label: '每人限购', value: '每人限购 ${p.perUserLimit} 份'),
+            _RuleRow(label: '每人限購', value: '每人限購 ${p.perUserLimit} 份'),
           if (p.stackable != null)
             _RuleRow(
-                label: '是否可叠加',
-                value: p.stackable! ? '可与其他优惠叠加' : '不可与其他优惠叠加'),
-          const Text('· 到店出示 QR 码核销，整张一次核销，不可拆分',
+                label: '是否可疊加',
+                value: p.stackable! ? '可與其他優惠疊加' : '不可與其他優惠疊加'),
+          const Text('· 到店出示 QR 碼核銷，整張一次核銷，不可拆分',
               style: TextStyle(color: CgColors.textSecondary)),
           const SizedBox(height: 16),
           // 适用门店
           if (p.branches.isNotEmpty) ...[
             ExpansionTile(
               tilePadding: EdgeInsets.zero,
-              title: Text('适用门店（${p.branches.length} 家）',
+              title: Text('適用門店（${p.branches.length} 家）',
                   style: const TextStyle(fontWeight: FontWeight.bold)),
               children: p.branches.map((b) {
                 final name =
@@ -465,7 +469,7 @@ class _PackageDetailScreenState extends State<PackageDetailScreen> {
                     child: TextButton.icon(
                       onPressed: () => _openMap(b),
                       icon: const Icon(Icons.map, size: 18),
-                      label: const Text('地图'),
+                      label: const Text('地圖'),
                     ),
                   ),
                 );
@@ -477,16 +481,16 @@ class _PackageDetailScreenState extends State<PackageDetailScreen> {
           ListTile(
             contentPadding: EdgeInsets.zero,
             leading: const Icon(Icons.star, color: CgColors.amber),
-            title: const Text('评价',
+            title: const Text('評價',
                 style: TextStyle(fontWeight: FontWeight.bold)),
             subtitle: p.rating == null
-                ? const Text('暂无评分')
+                ? Text(context.tr('暫無評分', 'No ratings yet'))
                 : Text(
-                    '总分 ${p.rating!.overall?.toStringAsFixed(1) ?? '-'} · '
+                    '總分 ${p.rating!.overall?.toStringAsFixed(1) ?? '-'} · '
                     '口味 ${p.rating!.taste?.toStringAsFixed(1) ?? '-'} · '
-                    '环境 ${p.rating!.ambience?.toStringAsFixed(1) ?? '-'} · '
-                    '服务 ${p.rating!.service?.toStringAsFixed(1) ?? '-'} '
-                    '（${p.rating!.reviewCount} 条）'),
+                    '環境 ${p.rating!.ambience?.toStringAsFixed(1) ?? '-'} · '
+                    '服務 ${p.rating!.service?.toStringAsFixed(1) ?? '-'} '
+                    '（${p.rating!.reviewCount} 條）'),
             trailing: const Icon(Icons.chevron_right),
             onTap: _openReviews,
           ),
@@ -498,7 +502,7 @@ class _PackageDetailScreenState extends State<PackageDetailScreen> {
                     children: [
                       Row(
                         children: [
-                          Text(r.userName.isEmpty ? '用户' : r.userName,
+                          Text(r.userName.isEmpty ? '用戶' : r.userName,
                               style: const TextStyle(
                                   fontWeight: FontWeight.w600)),
                           const SizedBox(width: 8),
@@ -544,7 +548,7 @@ class _PackageDetailScreenState extends State<PackageDetailScreen> {
                   height: 48,
                   child: ElevatedButton(
                     onPressed: soldOut ? null : _buy,
-                    child: Text(soldOut ? '已售罄' : '立即抢购'),
+                    child: Text(soldOut ? '已售罄' : '立即搶購'),
                   ),
                 ),
               ),
@@ -590,7 +594,7 @@ class _Stars extends StatelessWidget {
   Widget build(BuildContext context) {
     final filled = value.round().clamp(0, 5);
     return Semantics(
-      label: '评分 ${value.toStringAsFixed(1)} 分',
+      label: '評分 ${value.toStringAsFixed(1)} 分',
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: List.generate(
@@ -678,7 +682,7 @@ class _PackageCheckoutScreenState extends State<PackageCheckoutScreen> {
     final p = widget.package;
     final soldOut = _maxQty <= 0;
     return Scaffold(
-      appBar: AppBar(title: const Text('确认订单')),
+      appBar: AppBar(title: Text(context.tr('確認訂單', 'Review order'))),
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
@@ -723,7 +727,7 @@ class _PackageCheckoutScreenState extends State<PackageCheckoutScreen> {
                     children: [
                       IconButton(
                         icon: const Icon(Icons.remove_circle_outline),
-                        tooltip: '减少数量',
+                        tooltip: '減少數量',
                         onPressed: _qty > 1
                             ? () => setState(() => _qty--)
                             : null,
@@ -735,7 +739,7 @@ class _PackageCheckoutScreenState extends State<PackageCheckoutScreen> {
                               fontFeatures: [FontFeature.tabularFigures()])),
                       IconButton(
                         icon: const Icon(Icons.add_circle_outline),
-                        tooltip: '增加数量',
+                        tooltip: '增加數量',
                         onPressed: _qty < _maxQty
                             ? () => setState(() => _qty++)
                             : null,
@@ -750,13 +754,13 @@ class _PackageCheckoutScreenState extends State<PackageCheckoutScreen> {
             Padding(
               padding: const EdgeInsets.only(top: 8),
               child: Text(
-                  '每单最多购买 $_maxQty 份（限购余量与库存取较小值）',
+                  '每單最多購買 $_maxQty 份（限購餘量與庫存取較小值）',
                   style: const TextStyle(color: CgColors.textSecondary)),
             ),
           if (soldOut)
             const Padding(
               padding: EdgeInsets.only(top: 8),
-              child: Text('该套餐已售罄。',
+              child: Text('該套餐已售罄。',
                   style: TextStyle(color: CgColors.primary)),
             ),
           const SizedBox(height: 16),
@@ -780,11 +784,11 @@ class _PackageCheckoutScreenState extends State<PackageCheckoutScreen> {
           ),
           const SizedBox(height: 8),
           // 金额明细
-          const Text('金额明细', style: TextStyle(fontWeight: FontWeight.bold)),
+          const Text('金額明細', style: TextStyle(fontWeight: FontWeight.bold)),
           const SizedBox(height: 4),
           Row(
             children: [
-              Text('套餐价 ${formatHkd(p.packagePrice)} × $_qty'),
+              Text('套餐價 ${formatHkd(p.packagePrice)} × $_qty'),
               const Spacer(),
               Text(formatHkd(_displayTotal),
                   style: const TextStyle(
@@ -794,7 +798,7 @@ class _PackageCheckoutScreenState extends State<PackageCheckoutScreen> {
           const Divider(height: 24),
           Row(
             children: [
-              const Text('合计', style: TextStyle(fontWeight: FontWeight.bold)),
+              const Text('合計', style: TextStyle(fontWeight: FontWeight.bold)),
               const Spacer(),
               Text(formatHkd(_displayTotal),
                   style: const TextStyle(
@@ -806,7 +810,7 @@ class _PackageCheckoutScreenState extends State<PackageCheckoutScreen> {
           ),
           const Padding(
             padding: EdgeInsets.only(top: 4),
-            child: Text('实际支付金额以服务端订单为准。',
+            child: Text('實際支付金額以服務端訂單為準。',
                 style:
                     TextStyle(color: CgColors.textSecondary, fontSize: 12)),
           ),
@@ -819,8 +823,9 @@ class _PackageCheckoutScreenState extends State<PackageCheckoutScreen> {
                 color: const Color(0xFFFDECEA),
                 borderRadius: BorderRadius.circular(8),
               ),
-              child: const Text('注意：该套餐售出后不可退，请确认后再购买。',
-                  style: TextStyle(fontWeight: FontWeight.bold)),
+              child: Text(context.tr('該套餐售出後不可退款，請確認後再購買。',
+                  'This package is non-refundable. Check your order before buying.'),
+                  style: const TextStyle(fontWeight: FontWeight.bold)),
             ),
           if (p.isNonRefundable) const SizedBox(height: 16),
           // 购买须知勾选
@@ -832,13 +837,13 @@ class _PackageCheckoutScreenState extends State<PackageCheckoutScreen> {
                   onChanged: (v) => setState(() => _agreed = v ?? false),
                   controlAffinity: ListTileControlAffinity.leading,
                   contentPadding: EdgeInsets.zero,
-                  title: const Text('我已阅读并同意购买须知'),
+                  title: Text(context.tr('我已閱讀並同意購買須知', 'I agree to the purchase terms')),
                 ),
               ),
               TextButton(
                 onPressed: () => Navigator.of(context).push(MaterialPageRoute(
                     builder: (_) => PackageTermsScreen(package: p))),
-                child: const Text('查看购买须知'),
+                child: Text(context.tr('查看購買須知', 'View purchase terms')),
               ),
             ],
           ),
@@ -851,7 +856,8 @@ class _PackageCheckoutScreenState extends State<PackageCheckoutScreen> {
             style: ElevatedButton.styleFrom(
                 minimumSize: const Size(double.infinity, 48)),
             onPressed: (_agreed && !_busy && !soldOut) ? _confirmPay : null,
-            child: Text(_busy ? '处理中…' : '确认支付 ${formatHkd(_displayTotal)}'),
+            child: Text(_busy ? context.tr('處理中…', 'Processing…') :
+                context.tr('確認支付 ${formatHkd(_displayTotal)}', 'Confirm payment ${formatHkd(_displayTotal)}')),
           ),
         ),
       ),
@@ -869,7 +875,7 @@ class PackageTermsScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     final p = package;
     return Scaffold(
-      appBar: AppBar(title: const Text('购买须知')),
+      appBar: AppBar(title: const Text('購買須知')),
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
@@ -881,27 +887,27 @@ class PackageTermsScreen extends StatelessWidget {
                   : const Color(0xFFFFF3CD),
               borderRadius: BorderRadius.circular(8),
             ),
-            child: Text('退款规则：${p.refundRuleText}',
+            child: Text('退款規則：${p.refundRuleText}',
                 style: const TextStyle(fontWeight: FontWeight.bold)),
           ),
           if (!p.isNonRefundable)
             const Padding(
               padding: EdgeInsets.only(top: 8),
-              child: Text('退款将在 1–3 个工作日原路退回。'),
+              child: Text('退款將在 1–3 個工作日原路退回。'),
             ),
           const SizedBox(height: 16),
-          const Text('使用规则', style: TextStyle(fontWeight: FontWeight.bold)),
+          const Text('使用規則', style: TextStyle(fontWeight: FontWeight.bold)),
           const SizedBox(height: 4),
           if (p.validTo != null)
             Text('有效期：${p.validFrom == null ? '' : '${formatDateYmd(p.validFrom)} 至 '}${formatDateYmd(p.validTo)}'),
-          if (p.timeSlots.isNotEmpty) Text('可用时段：${p.timeSlots.join('、')}'),
-          Text(p.needBooking ? '需提前预约。' : '无需预约。'),
-          if (p.perUserLimit != null) Text('每人限购 ${p.perUserLimit} 份。'),
+          if (p.timeSlots.isNotEmpty) Text('可用時段：${p.timeSlots.join('、')}'),
+          Text(p.needBooking ? '需提前預約。' : '無需預約。'),
+          if (p.perUserLimit != null) Text('每人限購 ${p.perUserLimit} 份。'),
           if (p.stackable != null)
-            Text(p.stackable! ? '可与其他优惠叠加。' : '不可与其他优惠叠加。'),
-          const Text('到店出示 QR 码核销，整张一次核销，不可拆分。'),
+            Text(p.stackable! ? '可與其他優惠疊加。' : '不可與其他優惠疊加。'),
+          const Text('到店出示 QR 碼核銷，整張一次核銷，不可拆分。'),
           const SizedBox(height: 16),
-          const Text('套餐内容', style: TextStyle(fontWeight: FontWeight.bold)),
+          const Text('套餐內容', style: TextStyle(fontWeight: FontWeight.bold)),
           const SizedBox(height: 4),
           ...p.items.map((i) => Text('· $i')),
         ],
@@ -1069,7 +1075,7 @@ class _OrdersScreenState extends State<OrdersScreen> with WalletUpdates<OrdersSc
       length: 4,
       child: Scaffold(
         appBar: AppBar(
-          title: const Text('我的訂單'),
+          title: Text(context.tr('我的訂單', 'My orders')),
           bottom: const TabBar(
             tabs: [
               Tab(text: '全部'),
@@ -1125,14 +1131,14 @@ class _OrdersScreenState extends State<OrdersScreen> with WalletUpdates<OrdersSc
                                                     fontWeight:
                                                         FontWeight.bold)),
                                           ),
-                                          Chip(label: Text(_statusLabel(o))),
+                                          Chip(label: Text(_statusLabel(context, o))),
                                         ],
                                       ),
                                       Text(
                                           '${o.shopName} · ${o.paymentMethodText} · ${formatHkd(o.amount)}'),
                                       if (o.refundStatus != 'none')
                                         Text(
-                                            '退款狀態：${o.refundStatusText}'
+                                            '${context.tr('退款狀態：${o.refundStatusText}', 'Refund: ${o.refundStatusEnglishText}')}'
                                             '${o.refundAmount > 0 ? ' · ${formatHkd(o.refundAmount)}' : ''}',
                                             style: const TextStyle(
                                                 color: CgColors.primary)),
@@ -1192,10 +1198,14 @@ class _OrdersScreenState extends State<OrdersScreen> with WalletUpdates<OrdersSc
 }
 
 /// 逾時订单服务端已关闭，列表上直接显示「訂單已關閉」。
-String _statusLabel(PackageOrder o) =>
-    o.refundStatus != 'none' ? o.refundStatusText :
-    o.walletStatus == 3 ? '券已失效' :
-    o.paymentStatus == 'timeout' ? '訂單已關閉' : o.paymentStatusText;
+String _statusLabel(BuildContext context, PackageOrder o) =>
+    o.refundStatus != 'none'
+        ? context.tr(o.refundStatusText, o.refundStatusEnglishText)
+        : o.walletStatus == 3
+            ? context.tr('券已失效', 'Voucher expired')
+            : o.paymentStatus == 'timeout'
+                ? context.tr('訂單已關閉', 'Order closed')
+                : context.tr(o.paymentStatusText, o.paymentStatusEnglishText);
 
 /// Order detail (UI_SPEC §3.4): order number, payment method/time,
 /// refund status + amount, expected arrival; refund button only when
@@ -1328,12 +1338,16 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> with WalletUpdate
               label: '金額',
               value: formatHkd(o.amount),
               valueBold: true),
-          _DetailRow(label: '支付狀態', value: o.paymentStatusText),
-          _DetailRow(label: '退款狀態', value: o.refundStatusText),
+          _DetailRow(label: context.tr('支付狀態', 'Payment status'),
+              value: context.tr(o.paymentStatusText, o.paymentStatusEnglishText)),
+          _DetailRow(label: context.tr('退款狀態', 'Refund status'),
+              value: context.tr(o.refundStatusText, o.refundStatusEnglishText)),
           if (o.voucherStatusText.isNotEmpty)
-            _DetailRow(label: '套餐券', value: o.voucherStatusText),
+            _DetailRow(label: context.tr('套餐券', 'Package voucher'),
+                value: context.tr(o.voucherStatusText, o.voucherStatusEnglishText)),
           if (o.latestRefundReason.isNotEmpty)
-            _DetailRow(label: '退款原因', value: o.latestRefundReason),
+            _DetailRow(label: context.tr('退款原因', 'Refund reason'),
+                value: o.latestRefundReason),
           if (o.refundAmount > 0)
             _DetailRow(label: '退款金額', value: formatHkd(o.refundAmount)),
           if (showRefundEta)
@@ -1349,7 +1363,8 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> with WalletUpdate
               height: 48,
               child: OutlinedButton(
                 onPressed: _busy ? null : _refund,
-                child: Text(_busy ? '处理中…' : '申請退款'),
+                child: Text(_busy ? context.tr('處理中…', 'Processing…') :
+                    context.tr('申請退款', 'Request a refund')),
               ),
             ),
           ],

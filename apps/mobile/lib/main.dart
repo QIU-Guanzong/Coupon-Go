@@ -4,6 +4,7 @@ import 'package:flutter/services.dart' show Clipboard, ClipboardData, rootBundle
 import 'package:flutter_localizations/flutter_localizations.dart';
 
 import 'api_client.dart';
+import 'feature_flags.dart';
 import 'language.dart';
 import 'package:share_plus/share_plus.dart';
 import 'models.dart';
@@ -130,6 +131,7 @@ class _CouponGoAppState extends State<CouponGoApp> {
           case '/qbot':
             return MaterialPageRoute(builder: (_) => QBotScreen(api: _api));
           case '/cashback':
+            if (!cashbackEnabled) return null;
             return MaterialPageRoute(
                 builder: (_) => CashbackScreen(api: _api));
           case '/category':
@@ -240,12 +242,46 @@ class HomeShell extends StatefulWidget {
 }
 
 class _HomeShellState extends State<HomeShell> {
-  int _index = 0;
+  int _index = 0, _vendorIndex = 0, _roleRequest = 0;
+  String? _role;
   final _visited = <int>{0};
+
+  @override
+  void initState() {
+    super.initState();
+    widget.api.addListener(_readRole);
+    _readRole();
+  }
+
+  Future<void> _readRole() async {
+    final request = ++_roleRequest;
+    setState(() => _role = null);
+    if (!widget.api.isLoggedIn) return;
+    try {
+      final role = (await widget.api.get('/me'))['role'];
+      if (mounted && request == _roleRequest) {
+        setState(() => _role = role is String ? role : null);
+      }
+    } catch (_) {
+      // Leave privileged navigation hidden when role verification fails.
+    }
+  }
+
+  @override
+  void dispose() {
+    widget.api.removeListener(_readRole);
+    super.dispose();
+  }
 
   @override
   void didUpdateWidget(HomeShell oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (oldWidget.api != widget.api) {
+      oldWidget.api.removeListener(_readRole);
+      widget.api.addListener(_readRole);
+      _readRole();
+    }
+    if (!widget.vendorMode) _vendorIndex = 0;
     if (oldWidget.authed && !widget.authed) {
       _index = 0;
       _visited.clear();
@@ -253,13 +289,13 @@ class _HomeShellState extends State<HomeShell> {
     }
   }
 
-  void _openCoupon(Coupon c) {
-    Navigator.of(context).push(MaterialPageRoute(
+  Future<void> _openCoupon(Coupon c) async {
+    await Navigator.of(context).push(MaterialPageRoute(
         builder: (_) => CouponDetailScreen(api: widget.api, coupon: c)));
   }
 
-  void _openShop(Shop s) {
-    Navigator.of(context).push(MaterialPageRoute(
+  Future<void> _openShop(Shop s) async {
+    await Navigator.of(context).push(MaterialPageRoute(
         builder: (_) => ShopDetailScreen(
             api: widget.api, shop: s, onOpenCoupon: _openCoupon)));
   }
@@ -374,7 +410,9 @@ class _HomeShellState extends State<HomeShell> {
             builder: (_) => LimitedTimeScreen(
                 api: widget.api, onOpenCoupon: _openCoupon))),
       ),
-      FavoritesScreen(api: widget.api, onOpenCoupon: _openCoupon, guest: !widget.authed),
+      FavoritesScreen(
+        api: widget.api, onOpenCoupon: _openCoupon, onOpenShop: _openShop,
+        active: _index == 1, guest: !widget.authed),
       const SizedBox(), // Let's Go! — handled by onTap below
       LimitedTimeScreen(api: widget.api, onOpenCoupon: _openCoupon),
       WalletScreen(
@@ -418,29 +456,28 @@ class _HomeShellState extends State<HomeShell> {
   }
 
   Widget _vendorShell() {
+    String tr(String zh, String en) => context.tr(zh, en);
     return Scaffold(
       drawer: _drawer(),
-      body: VendorHomeScreen(api: widget.api),
+      body: switch (_vendorIndex) {
+        1 => ScanScreen(api: widget.api),
+        2 => UsageScreen(api: widget.api),
+        3 => VendorAccountScreen(api: widget.api),
+        _ => VendorHomeScreen(api: widget.api, showAdmin: _role == 'admin'),
+      },
       bottomNavigationBar: BottomNavigationBar(
+        currentIndex: _vendorIndex,
         type: BottomNavigationBarType.fixed,
         selectedItemColor: CgColors.amber,
-        onTap: (i) {
-          switch (i) {
-            case 1:
-              Navigator.of(context).pushNamed('/vendor/scan');
-            case 2:
-              Navigator.of(context).pushNamed('/vendor/usage');
-            case 3:
-              Navigator.of(context).pushNamed('/vendor/plans');
-          }
-        },
-        items: const [
-          BottomNavigationBarItem(icon: Icon(Icons.home), label: '首頁'),
+        onTap: (i) => setState(() => _vendorIndex = i),
+        items: [
+          BottomNavigationBarItem(icon: const Icon(Icons.home), label: tr('首頁', 'Home')),
           BottomNavigationBarItem(
-              icon: Icon(Icons.qr_code_scanner), label: '掃碼'),
+              icon: const Icon(Icons.qr_code_scanner), label: tr('掃碼', 'Scan')),
           BottomNavigationBarItem(
-              icon: Icon(Icons.bar_chart), label: '數據'),
-          BottomNavigationBarItem(icon: Icon(Icons.person), label: '我的'),
+              icon: const Icon(Icons.bar_chart), label: tr('數據', 'Analytics')),
+          BottomNavigationBarItem(
+              icon: const Icon(Icons.person), label: tr('我的', 'Account')),
         ],
       ),
     );
@@ -479,23 +516,24 @@ class _HomeShellState extends State<HomeShell> {
               }
             },
           ),
-          ListTile(
-            leading: const Icon(Icons.content_cut, color: CgColors.primary),
-            title: Text(context.tr('砍價','Bargains')),
-            onTap: () {
-              Navigator.of(context).pop();
-              Navigator.of(context).pushNamed('/bargain');
-            },
-          ),
-          ListTile(
-            leading: const Icon(Icons.restaurant_menu,
-                color: CgColors.primary),
-            title: Text(context.tr('套餐','Packages')),
-            onTap: () {
-              Navigator.of(context).pop();
-              Navigator.of(context).pushNamed('/packages');
-            },
-          ),
+          if (!widget.vendorMode) ...[
+            ListTile(
+              leading: const Icon(Icons.content_cut, color: CgColors.primary),
+              title: Text(context.tr('砍價', 'Bargains')),
+              onTap: () {
+                Navigator.of(context).pop();
+                Navigator.of(context).pushNamed('/bargain');
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.restaurant_menu, color: CgColors.primary),
+              title: Text(context.tr('套餐', 'Packages')),
+              onTap: () {
+                Navigator.of(context).pop();
+                Navigator.of(context).pushNamed('/packages');
+              },
+            ),
+          ],
           ListTile(
             leading: const Icon(Icons.receipt_long, color: CgColors.primary),
             title: Text(context.tr('我的訂單', 'My orders')),
@@ -506,7 +544,7 @@ class _HomeShellState extends State<HomeShell> {
           ),
           ListTile(
             leading: const Icon(Icons.card_giftcard, color: CgColors.primary),
-            title: Text(context.tr('邀請好友','Invite Friends')),
+            title: Text(context.tr('邀請好友', 'Invite friends')),
             onTap: () {
               Navigator.of(context).pop();
               _inviteFriends();
@@ -537,15 +575,16 @@ class _HomeShellState extends State<HomeShell> {
               Navigator.of(context).pushNamed('/admin/apply');
             },
           ),
-          ListTile(
-            leading: const Icon(Icons.admin_panel_settings,
-                color: CgColors.primary),
-            title: Text(context.tr('管理後台','Administration')),
-            onTap: () {
-              Navigator.of(context).pop();
-              Navigator.of(context).pushNamed('/admin');
-            },
-          ),
+          if (_role == 'admin')
+            ListTile(
+              leading: const Icon(Icons.admin_panel_settings,
+                  color: CgColors.primary),
+              title: Text(context.tr('管理後台','Administration')),
+              onTap: () {
+                Navigator.of(context).pop();
+                Navigator.of(context).pushNamed('/admin');
+              },
+            ),
           ListTile(leading: const Icon(Icons.chat_outlined), title: const Text('Q仔'),
             onTap: () { Navigator.of(context).pop(); Navigator.of(context).pushNamed('/qbot'); }),
           ListTile(
@@ -564,10 +603,15 @@ class _HomeShellState extends State<HomeShell> {
 
 /// Favorites tab: favorite coupons + shops.
 class FavoritesScreen extends StatefulWidget {
-  const FavoritesScreen({super.key, required this.api, required this.onOpenCoupon, this.guest = false});
+  const FavoritesScreen({
+    super.key, required this.api, required this.onOpenCoupon,
+    required this.onOpenShop, this.active = true, this.guest = false,
+  });
 
   final ApiClient api;
-  final void Function(Coupon) onOpenCoupon;
+  final Future<void> Function(Coupon) onOpenCoupon;
+  final Future<void> Function(Shop) onOpenShop;
+  final bool active;
   final bool guest;
 
   @override
@@ -577,6 +621,8 @@ class FavoritesScreen extends StatefulWidget {
 class _FavoritesScreenState extends State<FavoritesScreen> {
   List<Coupon> _coupons = [];
   List<Shop> _shops = [];
+  bool _loading = true;
+  bool _hasError = false;
   int _request = 0;
 
   @override
@@ -588,40 +634,72 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
   @override
   void didUpdateWidget(FavoritesScreen oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.guest != widget.guest) _load();
+    if ((widget.active && !oldWidget.active) || widget.guest != oldWidget.guest) {
+      _load();
+    }
   }
 
   Future<void> _load() async {
     final request = ++_request;
     if (widget.guest) {
-      if (mounted) setState(() { _coupons = []; _shops = []; });
+      if (mounted) {
+        setState(() {
+          _coupons = [];
+          _shops = [];
+          _loading = false;
+          _hasError = false;
+        });
+      }
       return;
     }
+    setState(() {
+      _loading = true;
+      _hasError = false;
+    });
     try {
-      final c = await widget.api.get('/favorite-coupon-list');
-      final s = await widget.api.get('/get-collection-shops');
+      final rows = await Future.wait([
+        widget.api.get('/favorite-coupon-list'),
+        widget.api.get('/get-collection-shops'),
+      ]);
       if (!mounted || widget.guest || request != _request) return;
       setState(() {
-        _coupons =
-            (c['coupons'] as List).map((e) => Coupon.fromJson(e)).toList();
-        _shops = (s['shops'] as List).map((e) => Shop.fromJson(e)).toList();
+        _coupons = (rows[0]['coupons'] as List)
+            .map((e) => Coupon.fromJson(e))
+            .toList();
+        _shops = (rows[1]['shops'] as List)
+            .map((e) => Shop.fromJson(e))
+            .toList();
+        _loading = false;
       });
-    } on ApiException catch (e) {
-      if (mounted && !widget.guest && request == _request) showCgToast(context, e.message);
+    } catch (_) {
+      if (!mounted || request != _request) return;
+      setState(() {
+        _hasError = true;
+        _loading = false;
+      });
     }
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('收藏')),
+      appBar: AppBar(title: Text(context.tr('收藏', 'Favorites'))),
       body: RefreshIndicator(
         onRefresh: _load,
         child: ListView(
+          physics: const AlwaysScrollableScrollPhysics(),
           padding: const EdgeInsets.all(12),
           children: [
-            const Text('收藏優惠券', style: TextStyle(fontWeight: FontWeight.bold)),
-            if (_coupons.isEmpty) Text(widget.guest ? context.tr('登入後可查看收藏的優惠券。', 'Sign in to view saved coupons.') : context.tr('暫時沒有收藏的優惠券。', 'No saved coupons yet.')),
+            if (_hasError) ListTile(
+              title: Text(context.tr('未能載入收藏', 'Could not load favorites')),
+              trailing: TextButton(onPressed: _load, child: Text(context.tr('重試', 'Retry'))),
+            ),
+            if (_loading && _coupons.isEmpty && _shops.isEmpty)
+              const SkeletonBox(height: 72),
+            Text(context.tr('收藏優惠券', 'Saved coupons'), style: const TextStyle(fontWeight: FontWeight.bold)),
+            if (!_loading && !_hasError && _coupons.isEmpty) Text(widget.guest
+                ? context.tr('登入後可查看收藏的優惠券。', 'Sign in to view saved coupons.')
+                : context.tr('暫時沒有收藏的優惠券。', 'No saved coupons yet.')),
             ..._coupons.map((c) => Card(
                   margin: const EdgeInsets.only(top: 8),
                   child: ListTile(
@@ -629,12 +707,17 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
                         color: CgColors.primary),
                     title: Text(c.name),
                     subtitle: Text(c.shopName),
-                    onTap: () => widget.onOpenCoupon(c),
+                    onTap: () async {
+                      await widget.onOpenCoupon(c);
+                      if (mounted) await _load();
+                    },
                   ),
                 )),
             const SizedBox(height: 16),
-            const Text('收藏商店', style: TextStyle(fontWeight: FontWeight.bold)),
-            if (_shops.isEmpty) Text(widget.guest ? context.tr('登入後可查看收藏的商店。', 'Sign in to view saved shops.') : context.tr('暫時沒有收藏的商店。', 'No saved shops yet.')),
+            Text(context.tr('收藏商店', 'Saved stores'), style: const TextStyle(fontWeight: FontWeight.bold)),
+            if (!_loading && !_hasError && _shops.isEmpty) Text(widget.guest
+                ? context.tr('登入後可查看收藏的商店。', 'Sign in to view saved shops.')
+                : context.tr('暫時沒有收藏的商店。', 'No saved stores yet.')),
             ..._shops.map((s) => Card(
                   margin: const EdgeInsets.only(top: 8),
                   child: ListTile(
@@ -642,6 +725,11 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
                         const Icon(Icons.store, color: CgColors.primary),
                     title: Text(s.name),
                     subtitle: Text(s.address),
+                    trailing: const Icon(Icons.chevron_right),
+                    onTap: () async {
+                      await widget.onOpenShop(s);
+                      if (mounted) await _load();
+                    },
                   ),
                 )),
           ],

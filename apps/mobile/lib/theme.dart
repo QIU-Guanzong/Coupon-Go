@@ -43,11 +43,11 @@ String formatHkd(double amount) {
 
 /// UI_SPEC §0 — countdowns: >= 24h as "2天 3小时", under 24h as "03:12:45".
 String formatCountdown(Duration d) {
-  if (d.isNegative || d.inSeconds <= 0) return '已结束';
+  if (d.isNegative || d.inSeconds <= 0) return '已結束';
   if (d.inHours >= 24) {
     final days = d.inDays;
     final hours = d.inHours % 24;
-    return '$days天 $hours小时';
+    return '$days天 $hours小時';
   }
   final h = d.inHours.toString().padLeft(2, '0');
   final m = (d.inMinutes % 60).toString().padLeft(2, '0');

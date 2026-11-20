@@ -169,7 +169,7 @@ class _OnboardingReviewScreenState extends State<OnboardingReviewScreen> {
     } on ApiException catch (_) {
       if (mounted) {
         setState(() {
-          _error = '网络不稳定，请重试';
+          _error = '網絡不穩定，請重試';
           _loading = false;
         });
       }
@@ -393,7 +393,7 @@ class _OnboardingReviewScreenState extends State<OnboardingReviewScreen> {
                         child: Column(
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: [
-                            const Text('网络不稳定，请重试'),
+                            const Text('網絡不穩定，請重試'),
                             const SizedBox(height: 12),
                             ElevatedButton(
                                 onPressed: _load, child: const Text('重試')),
@@ -487,7 +487,7 @@ class _OrdersAdminScreenState extends State<OrdersAdminScreen> {
     } on ApiException catch (_) {
       if (mounted) {
         setState(() {
-          _error = '网络不稳定，请重试';
+          _error = '網絡不穩定，請重試';
           _loading = false;
         });
       }
@@ -702,7 +702,7 @@ class _OrdersAdminScreenState extends State<OrdersAdminScreen> {
                         child: Column(
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: [
-                            const Text('网络不稳定，请重试'),
+                            const Text('網絡不穩定，請重試'),
                             const SizedBox(height: 12),
                             ElevatedButton(
                                 onPressed: _load, child: const Text('重試')),
@@ -1095,7 +1095,7 @@ class _SettlementsScreenState extends State<SettlementsScreen> {
             TextField(
               controller: _shopCtrl,
               keyboardType: TextInputType.number,
-              decoration: const InputDecoration(labelText: '商户 ID'),
+              decoration: const InputDecoration(labelText: '商戶 ID'),
             ),
             TextField(
               controller: _periodCtrl,
@@ -1106,7 +1106,7 @@ class _SettlementsScreenState extends State<SettlementsScreen> {
               onPressed: () async {
                 final shopId = int.tryParse(_shopCtrl.text.trim());
                 if (shopId == null) {
-                  showCgToast(context, '請填寫正確的商户 ID');
+                  showCgToast(context, '請填寫正確的商戶 ID');
                   return;
                 }
                 await _act(() => widget.api.generateSettlement(
@@ -1273,7 +1273,7 @@ class _ReconciliationScreenState extends State<ReconciliationScreen> {
             TextField(
               controller: _shopCtrl,
               keyboardType: TextInputType.number,
-              decoration: const InputDecoration(labelText: '商户 ID'),
+              decoration: const InputDecoration(labelText: '商戶 ID'),
             ),
             TextField(
               controller: _periodCtrl,
@@ -1284,7 +1284,7 @@ class _ReconciliationScreenState extends State<ReconciliationScreen> {
               onPressed: () async {
                 final shopId = int.tryParse(_shopCtrl.text.trim());
                 if (shopId == null) {
-                  showCgToast(context, '請填寫正確的商户 ID');
+                  showCgToast(context, '請填寫正確的商戶 ID');
                   return;
                 }
                 try {

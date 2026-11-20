@@ -19,6 +19,8 @@ class _QBotScreenState extends State<QBotScreen> {
   final _messages = <Map<String, String>>[];
   bool _sending = false;
   bool _failed = false;
+  bool _askingPermission = false;
+  bool _allowedForThisVisit = false;
   int _conversation = 0;
 
   @override
@@ -36,9 +38,40 @@ class _QBotScreenState extends State<QBotScreen> {
     });
   }
 
+  Future<bool> _confirmSharing() async {
+    if (_allowedForThisVisit) return true;
+    if (_askingPermission) return false;
+    _askingPermission = true;
+    final accepted = await showDialog<bool>(
+      context: context,
+      builder: (dialog) => AlertDialog(
+        title: Text(dialog.tr('使用 Q仔', 'Use Q仔')),
+        content: Text(dialog.tr(
+          '你的問題及近期對話會傳送給 DeepSeek 以產生回覆。請勿輸入密碼、兌換碼或其他個人資料。',
+          'Your question and recent chat messages are sent to DeepSeek to generate replies. Do not enter passwords, redemption codes or other personal information.',
+        )),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialog, false),
+            child: Text(dialog.tr('取消', 'Cancel')),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialog, true),
+            child: Text(dialog.tr('同意並送出', 'Agree and send')),
+          ),
+        ],
+      ),
+    );
+    _askingPermission = false;
+    if (!mounted || accepted != true) return false;
+    _allowedForThisVisit = true;
+    return true;
+  }
+
   Future<void> _ask(String input, {bool retry = false}) async {
     final q = input.trim();
-    if (_sending || q.isEmpty) return;
+    if (_sending || q.isEmpty || !await _confirmSharing()) return;
+    if (!mounted || _sending) return;
     final id = _conversation;
     final history = _messages.take(_messages.length - (retry ? 1 : 0)).toList();
     final previous = history.skip(history.length > 6 ? history.length - 6 : 0);
@@ -110,6 +143,24 @@ class _QBotScreenState extends State<QBotScreen> {
                   t('由 DeepSeek AI 回答。請勿輸入密碼或兌換碼。',
                       'Answered by DeepSeek AI. Keep passwords and redemption codes private.'),
                   style: Theme.of(context).textTheme.bodySmall),
+              if (_messages.isEmpty) ...[
+                const SizedBox(height: 12),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    for (final question in [
+                      t('附近有咩優惠', 'What offers are nearby?'),
+                      t('我有幾多積分', 'How many points do I have?'),
+                      t('點樣用券', 'How do I use a coupon?'),
+                    ])
+                      ActionChip(
+                        label: Text(question),
+                        onPressed: () => _ask(question),
+                      ),
+                  ],
+                ),
+              ],
               for (final m in _messages)
                 Align(
                     alignment: m['role'] == 'user'

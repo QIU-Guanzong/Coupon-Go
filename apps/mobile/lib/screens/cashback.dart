@@ -7,26 +7,27 @@ import 'package:image_picker/image_picker.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../api_client.dart';
+import '../language.dart';
 import '../models.dart';
 import '../theme.dart';
 import '../widgets/widgets.dart';
 import '../widgets/wallet_updates.dart';
 
-/// UI_SPEC §5 — 返现：余额、明细、提现、提现记录、漏记申诉。
+/// UI_SPEC §5 — 返現：餘額、明細、提現、提現記錄、漏記申訴。
 ///
-/// 后端缺口已补（Gap 3 / 4 / 6）：
-/// * GET /cashback 返回提现门槛 / 每日上限（min_withdraw_hkd /
-///   daily_withdraw_limit_hkd）；下方具名常量只作接口缺失时的兜底。
-/// * 提现失败有原因字段：失败行显示服务端的 failure_reason；成功路径不动。
-/// * GET /cashback/missing 返回本人申诉列表；本机 SharedPreferences
-///   只作兜底（接口失败或无数据时不丢已存的本地记录）。
-/// * 注册姓名无接口可取（登录接口只返回 token / user_id / role /
-///   email）：提现只校验姓名必填；注册姓名可传入时才比对一致性。
-/// 用户端不调用已删除的记返现接口（FIX-2）；返现只由核销产生。
-/// 核销成功页不编返现金额：/new-scan-coupon 不返回返现金额字段，
-/// account.dart 的核销成功页已只写「本次消费的返现待确认」，保持不变。
+/// 後端缺口已補（Gap 3 / 4 / 6）：
+/// * GET /cashback 返回提現門檻 / 每日上限（min_withdraw_hkd /
+///   daily_withdraw_limit_hkd）；下方具名常量只作接口缺失時的兜底。
+/// * 提現失敗有原因字段：失敗行顯示服務端的 failure_reason；成功路徑不動。
+/// * GET /cashback/missing 返回本人申訴列表；本機 SharedPreferences
+///   只作兜底（接口失敗或無數據時不丟已存的本地記錄）。
+/// * 註冊姓名無接口可取（登錄接口只返回 token / user_id / role /
+///   email）：提現只校驗姓名必填；註冊姓名可傳入時才比對一致性。
+/// 用戶端不調用已刪除的記返現接口（FIX-2）；返現只由核銷產生。
+/// 核銷成功頁不編返現金額：/new-scan-coupon 不返回返現金額字段，
+/// account.dart 的核銷成功頁已只寫「本次消費的返現待確認」，保持不變。
 class CashbackLimits {
-  /// 兜底默认值（与后端 config 一致）；接口返回字段时以接口值为准。
+  /// 兜底默認值（與後端 config 一致）；接口返回字段時以接口值為準。
   static const double minWithdrawHkd = 50;
   static const double dailyWithdrawLimitHkd = 1500;
   static const int dineinUnlockDays = 90;
@@ -38,7 +39,7 @@ String _dateYmd(DateTime d) => '${d.year}年${d.month}月${d.day}日';
 
 String _monthDay(DateTime d) => '${d.month}月${d.day}日';
 
-/// 线下 pending 剩余天数（向上取整；当天到期为 0）。
+/// 線下 pending 剩餘天數（向上取整；當天到期為 0）。
 int _daysLeft(DateTime expiresAt) {
   final hours = expiresAt.difference(DateTime.now()).inHours;
   if (hours <= 0) return 0;
@@ -60,7 +61,7 @@ Color _voidColor(BuildContext context) =>
         ? CgColors.moneyVoidDark
         : CgColors.moneyVoid;
 
-/// 状态胶囊（UI_SPEC §5.1 / §5.2 的状态文案）。
+/// 狀態膠囊（UI_SPEC §5.1 / §5.2 的狀態文案）。
 class _StatusCapsule extends StatelessWidget {
   const _StatusCapsule({required this.label, required this.color});
 
@@ -70,7 +71,7 @@ class _StatusCapsule extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Semantics(
-      label: '状态：$label',
+      label: '狀態：$label',
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
         decoration: BoxDecoration(
@@ -85,33 +86,33 @@ class _StatusCapsule extends StatelessWidget {
   }
 }
 
-/// 提现状态胶囊颜色：处理中取待确认色，已到账取可提现色，失败取错误色。
+/// 提現狀態膠囊顏色：處理中取待確認色，已到帳取可提現色，失敗取錯誤色。
 Color _withdrawalColor(BuildContext context, String status) {
   if (status == 'paid') return _positiveColor(context);
   if (status == 'failed') return Theme.of(context).colorScheme.error;
   return _pendingColor(context);
 }
 
-/// void_reason 映射（UI_SPEC §5.1）；未知值原样显示。
+/// void_reason 映射（UI_SPEC §5.1）；未知值原樣顯示。
 String? _voidReasonText(String? reason) {
   switch (reason) {
     case null:
     case '':
       return null;
     case 'expired_90d':
-      return '90 天内未再次消费';
+      return '90 天內未再次消費';
     case 'cancelled':
-      return '订单已取消';
+      return '訂單已取消';
     case 'revoked':
       return '商家已撤銷核銷';
     case 'returned':
-      return '订单已退货';
+      return '訂單已退貨';
     default:
       return reason;
   }
 }
 
-/// 列表四态共用的错误视图：一句话 + 重试（401 时多一个去登录）。
+/// 列表四態共用的錯誤視圖：一句話 + 重試（401 時多一個去登錄）。
 class _ErrorView extends StatelessWidget {
   const _ErrorView({required this.onRetry, this.needsLogin = false});
 
@@ -124,7 +125,7 @@ class _ErrorView extends StatelessWidget {
       padding: const EdgeInsets.symmetric(vertical: 48, horizontal: 24),
       child: Column(
         children: [
-          Text(needsLogin ? '请先登录查看返现' : '网络不稳定，请重试',
+          Text(needsLogin ? '請先登錄查看返現' : '網絡不穩定，請重試',
               textAlign: TextAlign.center,
               style: const TextStyle(color: CgColors.textSecondary)),
           const SizedBox(height: 16),
@@ -133,7 +134,7 @@ class _ErrorView extends StatelessWidget {
               width: double.infinity,
               child: ElevatedButton(
                 onPressed: () => Navigator.of(context).pushNamed('/login'),
-                child: const Text('去登录'),
+                child: Text(context.tr('去登錄', 'Sign in')),
               ),
             ),
           if (needsLogin) const SizedBox(height: 8),
@@ -141,7 +142,7 @@ class _ErrorView extends StatelessWidget {
             width: double.infinity,
             child: OutlinedButton(
               onPressed: onRetry,
-              child: const Text('重试'),
+              child: Text(context.tr('重試', 'Retry')),
             ),
           ),
         ],
@@ -150,7 +151,7 @@ class _ErrorView extends StatelessWidget {
   }
 }
 
-/// 列表四态共用的空状态：一句话 + 一个动作按钮。
+/// 列表四態共用的空狀態：一句話 + 一個動作按鈕。
 class _EmptyView extends StatelessWidget {
   const _EmptyView(
       {required this.message,
@@ -184,7 +185,7 @@ class _EmptyView extends StatelessWidget {
   }
 }
 
-/// 加载骨架屏（UI_SPEC §0：加载中用骨架屏，不用转圈）。
+/// 載入骨架屏（UI_SPEC §0：載入中用骨架屏，不用轉圈）。
 class _ListSkeleton extends StatelessWidget {
   const _ListSkeleton();
 
@@ -205,7 +206,7 @@ class _ListSkeleton extends StatelessWidget {
   }
 }
 
-/// 返现首页（UI_SPEC §5.1）。
+/// 返現首頁（UI_SPEC §5.1）。
 class CashbackScreen extends StatefulWidget {
   const CashbackScreen({super.key, required this.api});
 
@@ -226,7 +227,7 @@ class _CashbackScreenState extends State<CashbackScreen> with WalletUpdates<Cash
   double _totalEarned = 0;
   double _adjustment = 0;
   // Gap 4: 取自 GET /cashback 的 min_withdraw_hkd /
-  // daily_withdraw_limit_hkd；接口缺失时用 CashbackLimits 兜底值。
+  // daily_withdraw_limit_hkd；接口缺失時用 CashbackLimits 兜底值。
   double _minWithdraw = CashbackLimits.minWithdrawHkd;
   double _dailyLimit = CashbackLimits.dailyWithdrawLimitHkd;
   List<CashbackTransaction> _txns = [];
@@ -341,7 +342,7 @@ class _CashbackScreenState extends State<CashbackScreen> with WalletUpdates<Cash
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('返现'),
+        title: Text(context.tr('返現', 'Cashback')),
         actions: [
           TextButton(
             onPressed: _openMissing,
@@ -349,7 +350,7 @@ class _CashbackScreenState extends State<CashbackScreen> with WalletUpdates<Cash
               foregroundColor: Colors.white,
               minimumSize: const Size(44, 44),
             ),
-            child: const Text('没收到返现？'),
+            child: Text(context.tr('沒收到返現？', 'Missing cashback?')),
           ),
         ],
       ),
@@ -371,7 +372,7 @@ class _CashbackScreenState extends State<CashbackScreen> with WalletUpdates<Cash
               const SizedBox(height: 8),
               Text('提現處理中 ${formatHkd(_held)}　已付款 ${formatHkd(_paid)}'),
               if (_unreconciled > 0) Text('舊提現待核對 ${formatHkd(_unreconciled)}'),
-              Text('累计已赚 ${formatHkd(_totalEarned)}',
+              Text('累計已賺 ${formatHkd(_totalEarned)}',
                   style: const TextStyle(
                       color: CgColors.textSecondary, fontSize: 12)),
               const SizedBox(height: 12),
@@ -379,12 +380,12 @@ class _CashbackScreenState extends State<CashbackScreen> with WalletUpdates<Cash
                 width: double.infinity,
                 child: ElevatedButton(
                   onPressed: _canWithdraw ? _openWithdraw : null,
-                  child: const Text('提现'),
+                  child: Text(context.tr('提現', 'Withdraw')),
                 ),
               ),
               const SizedBox(height: 8),
               Text(
-                  '满 HK\$${_minWithdraw.toStringAsFixed(0)} 可提现',
+                  '滿 HK\$${_minWithdraw.toStringAsFixed(0)} 可提現',
                   textAlign: TextAlign.center,
                   style: const TextStyle(
                       color: CgColors.textSecondary, fontSize: 12)),
@@ -398,7 +399,7 @@ class _CashbackScreenState extends State<CashbackScreen> with WalletUpdates<Cash
                             WithdrawalHistoryScreen(api: widget.api)));
                   },
                   style: TextButton.styleFrom(minimumSize: const Size(44, 44)),
-                  child: const Text('查看提现记录'),
+                  child: Text(context.tr('查看提現記錄', 'Withdrawal history')),
                 ),
               ),
               if (_hasDineinPending && !_ruleDismissed)
@@ -408,8 +409,8 @@ class _CashbackScreenState extends State<CashbackScreen> with WalletUpdates<Cash
               const SizedBox(height: 8),
               if (_shown.isEmpty)
                 _EmptyView(
-                  message: _filter == 'all' ? '暂时没有返现记录' : '这一分类下暂时没有返现记录',
-                  actionLabel: '浏览附近商户',
+                  message: _filter == 'all' ? '暫時沒有返現記錄' : '這一分類下暫時沒有返現記錄',
+                  actionLabel: '瀏覽附近商戶',
                   onAction: () => Navigator.of(context).pushNamed('/nearby'),
                 )
               else
@@ -437,7 +438,7 @@ class _CashbackScreenState extends State<CashbackScreen> with WalletUpdates<Cash
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Text('可提现',
+                  const Text('可提現',
                       style: TextStyle(color: CgColors.textSecondary)),
                   const SizedBox(height: 4),
                   Text(formatHkd(_withdrawable),
@@ -453,7 +454,7 @@ class _CashbackScreenState extends State<CashbackScreen> with WalletUpdates<Cash
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Text('待确认',
+                  const Text('待確認',
                       style: TextStyle(color: CgColors.textSecondary)),
                   const SizedBox(height: 4),
                   Text(formatHkd(_pending),
@@ -482,12 +483,12 @@ class _CashbackScreenState extends State<CashbackScreen> with WalletUpdates<Cash
           const Expanded(
             child: Padding(
               padding: EdgeInsets.only(top: 10, bottom: 10),
-              child: Text('90 天内在同一商户再次消费，上一笔返现即到账',
+              child: Text('90 天內在同一商戶再次消費，上一筆返現即到帳',
                   style: TextStyle(fontSize: 13)),
             ),
           ),
           Semantics(
-            label: '关闭提示',
+            label: '關閉提示',
             button: true,
             child: IconButton(
               icon: const Icon(Icons.close, size: 20),
@@ -502,8 +503,8 @@ class _CashbackScreenState extends State<CashbackScreen> with WalletUpdates<Cash
   Widget _buildFilters() {
     const filters = [
       ('all', '全部'),
-      ('pending', '待确认'),
-      ('withdrawable', '可提现'),
+      ('pending', '待確認'),
+      ('withdrawable', '可提現'),
       ('withdrawn', '已撥作提現'),
       ('void', '已失效'),
     ];
@@ -526,7 +527,7 @@ class _CashbackScreenState extends State<CashbackScreen> with WalletUpdates<Cash
   }
 }
 
-/// 返现明细行（UI_SPEC §5.1）：商户名、消费日期、返现金额、状态胶囊。
+/// 返現明細行（UI_SPEC §5.1）：商戶名、消費日期、返現金額、狀態膠囊。
 class _TxnCard extends StatelessWidget {
   const _TxnCard({required this.txn});
 
@@ -536,16 +537,16 @@ class _TxnCard extends StatelessWidget {
     switch (txn.status) {
       case 'pending':
       case 'tracked':
-        return txn.channel == 'dinein' ? '再来一次即可到账' : '待确认';
+        return txn.channel == 'dinein' ? '再來一次即可到帳' : '待確認';
       case 'confirmed':
       case 'withdrawable':
-        return '可提现';
+        return '可提現';
       case 'withdrawn':
         return '已撥作提現';
       case 'void':
         return '已失效';
       default:
-        return txn.statusText.isEmpty ? '待确认' : txn.statusText;
+        return txn.statusText.isEmpty ? '待確認' : txn.statusText;
     }
   }
 
@@ -563,17 +564,17 @@ class _TxnCard extends StatelessWidget {
     }
   }
 
-  /// 状态补充行：线下 pending 倒计时 / 线上 pending 预计到账日 / 失效原因。
+  /// 狀態補充行：線下 pending 倒計時 / 線上 pending 預計到帳日 / 失效原因。
   String? get _detailLine {
     if ((txn.status == 'pending' || txn.status == 'tracked')) {
       if (txn.channel == 'dinein') {
         final exp = txn.expiresAt;
-        if (exp == null) return '90 天内再次消费即可到账';
+        if (exp == null) return '90 天內再次消費即可到帳';
         final days = _daysLeft(exp);
-        return days <= 0 ? '今天到期' : '还剩 $days 天';
+        return days <= 0 ? '今天到期' : '還剩 $days 天';
       }
       final exp = txn.expectedConfirmAt;
-      if (exp != null) return '预计 ${_monthDay(exp)} 到账';
+      if (exp != null) return '預計 ${_monthDay(exp)} 到帳';
       return null;
     }
     if (txn.status == 'void') return _voidReasonText(txn.voidReason);
@@ -594,7 +595,7 @@ class _TxnCard extends StatelessWidget {
             Row(
               children: [
                 Expanded(
-                  child: Text(txn.shopName.isEmpty ? '商户' : txn.shopName,
+                  child: Text(txn.shopName.isEmpty ? '商戶' : txn.shopName,
                       style: const TextStyle(fontWeight: FontWeight.w600)),
                 ),
                 Text(formatHkd(txn.amount),
@@ -634,8 +635,8 @@ class _TxnCard extends StatelessWidget {
   }
 }
 
-/// 提现页（UI_SPEC §5.2）：默认全部可提现、门槛与每日上限、FPS / 银行转账、
-/// 收款姓名与注册姓名一致（内联报错，不弹窗）。提交后跳提现记录页。
+/// 提現頁（UI_SPEC §5.2）：默認全部可提現、門檻與每日上限、FPS / 銀行轉帳、
+/// 收款姓名與註冊姓名一致（內聯報錯，不彈窗）。提交後跳提現記錄頁。
 class WithdrawScreen extends StatefulWidget {
   const WithdrawScreen(
       {super.key,
@@ -647,13 +648,13 @@ class WithdrawScreen extends StatefulWidget {
 
   final ApiClient api;
 
-  /// 已知的可提现余额；不传时页面自行拉取 GET /cashback。
+  /// 已知的可提現餘額；不傳時頁面自行拉取 GET /cashback。
   final double? balance;
 
-  /// 注册姓名。无接口可取时为 null，此时只校验姓名必填（见文件头注释）。
+  /// 註冊姓名。無接口可取時為 null，此時只校驗姓名必填（見文件頭注釋）。
   final String? registeredName;
 
-  /// Gap 4：提现门槛 / 每日上限，取自 GET /cashback；未传时用兜底常量。
+  /// Gap 4：提現門檻 / 每日上限，取自 GET /cashback；未傳時用兜底常量。
   final double minWithdrawHkd;
   final double dailyWithdrawLimitHkd;
 
@@ -669,8 +670,8 @@ class _WithdrawScreenState extends State<WithdrawScreen> {
   String? _requestKey, _requestBody;
   bool _loadingBalance = false;
   double? _balance;
-  // Gap 4：页面内的门槛 / 上限以构造参数为准；自行拉取余额时如接口
-  // 返回了字段则更新（接口缺失时保持构造参数的兜底值）。
+  // Gap 4：頁面內的門檻 / 上限以構造參數為準；自行拉取餘額時如接口
+  // 返回了字段則更新（接口缺失時保持構造參數的兜底值）。
   late double _minWithdraw;
   late double _dailyLimit;
   bool _submitting = false;
@@ -737,18 +738,18 @@ class _WithdrawScreenState extends State<WithdrawScreen> {
       if (!mounted) return;
       setState(() {
         _loadingBalance = false;
-        _formError = '网络不稳定，请重试';
+        _formError = '網絡不穩定，請重試';
       });
     }
   }
 
   String? _amountError() {
     final value = double.tryParse(_amount.text.trim());
-    if (value == null || value <= 0) return '请输入提现金额';
+    if (value == null || value <= 0) return '請輸入提現金額';
     if (value < _minWithdraw) {
-      return '未满 HK\$${_minWithdraw.toStringAsFixed(0)} 提现门槛';
+      return '未滿 HK\$${_minWithdraw.toStringAsFixed(0)} 提現門檻';
     }
-    if (_balance != null && value > _balance!) return '超出可提现余额';
+    if (_balance != null && value > _balance!) return '超出可提現餘額';
     if (value > _dailyLimit) {
       return '超出每日上限 HK\$${_dailyLimit.toStringAsFixed(0)}';
     }
@@ -757,10 +758,10 @@ class _WithdrawScreenState extends State<WithdrawScreen> {
 
   String? _nameError() {
     final name = _name.text.trim();
-    if (name.isEmpty) return '请填写收款姓名';
+    if (name.isEmpty) return '請填寫收款姓名';
     final registered = widget.registeredName?.trim();
     if (registered != null && registered.isNotEmpty && name != registered) {
-      return '收款姓名须与注册姓名一致';
+      return '收款姓名須與註冊姓名一致';
     }
     return null;
   }
@@ -806,7 +807,7 @@ class _WithdrawScreenState extends State<WithdrawScreen> {
       if (!mounted) return;
       setState(() {
         _submitting = false;
-        _formError = '网络不稳定，请重试';
+        _formError = '網絡不穩定，請重試';
       });
     }
   }
@@ -816,19 +817,19 @@ class _WithdrawScreenState extends State<WithdrawScreen> {
     final amountError = _showAmountError ? _amountError() : null;
     final nameError = _showNameError ? _nameError() : null;
     return Scaffold(
-      appBar: AppBar(title: const Text('提现返现')),
+      appBar: AppBar(title: Text(context.tr('提現返現', 'Withdraw cashback'))),
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
           if (_loadingBalance)
             const SkeletonBox(height: 24)
           else
-            Text('可提现余额 ${formatHkd(_balance ?? 0)}',
+            Text('可提現餘額 ${formatHkd(_balance ?? 0)}',
                 style:
                     const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
           const SizedBox(height: 4),
           Text(
-              '满 HK\$${_minWithdraw.toStringAsFixed(0)} 可提现；每日上限 HK\$${_dailyLimit.toStringAsFixed(0)}',
+              '滿 HK\$${_minWithdraw.toStringAsFixed(0)} 可提現；每日上限 HK\$${_dailyLimit.toStringAsFixed(0)}',
               style:
                   const TextStyle(color: CgColors.textSecondary, fontSize: 12)),
           const SizedBox(height: 16),
@@ -836,7 +837,7 @@ class _WithdrawScreenState extends State<WithdrawScreen> {
             controller: _amount,
             keyboardType: const TextInputType.numberWithOptions(decimal: true),
             decoration: InputDecoration(
-              labelText: '提现金额 HK\$',
+              labelText: '提現金額 HK\$',
               errorText: amountError,
               suffixIcon: TextButton(
                 onPressed: _balance == null
@@ -845,7 +846,7 @@ class _WithdrawScreenState extends State<WithdrawScreen> {
                         _amount.text = _balance!.toStringAsFixed(2);
                       },
                 style: TextButton.styleFrom(minimumSize: const Size(44, 44)),
-                child: const Text('全部提现'),
+                child: const Text('全部提現'),
               ),
             ),
           ),
@@ -853,13 +854,13 @@ class _WithdrawScreenState extends State<WithdrawScreen> {
           Row(
             children: [
               ChoiceChip(
-                label: const Text('转数快 (FPS)'),
+                label: const Text('轉數快 (FPS)'),
                 selected: _method == 'fps',
                 onSelected: (_) => setState(() => _method = 'fps'),
               ),
               const SizedBox(width: 8),
               ChoiceChip(
-                label: const Text('银行转账'),
+                label: const Text('銀行轉帳'),
                 selected: _method == 'bank',
                 onSelected: (_) => setState(() => _method = 'bank'),
               ),
@@ -869,23 +870,23 @@ class _WithdrawScreenState extends State<WithdrawScreen> {
           TextField(
             controller: _name,
             decoration: InputDecoration(
-              labelText: '收款账户姓名',
+              labelText: '收款帳戶姓名',
               errorText: nameError,
             ),
           ),
           const Padding(
             padding: EdgeInsets.only(top: 6),
-            child: Text('收款姓名须与注册姓名一致',
+            child: Text('收款姓名須與註冊姓名一致',
                 style: TextStyle(color: CgColors.textSecondary, fontSize: 12)),
           ),
           const SizedBox(height: 12),
           TextField(
             controller: _ref,
             decoration: InputDecoration(
-                labelText: _method == 'fps' ? 'FPS ID / 手机号' : '银行账号'),
+                labelText: _method == 'fps' ? 'FPS ID / 手機號碼' : '銀行帳戶號碼'),
           ),
           const SizedBox(height: 8),
-          const Text('提交后请在提现记录查看处理进度。',
+          const Text('提交後請在提現記錄查看處理進度。',
               style: TextStyle(color: CgColors.textSecondary, fontSize: 12)),
           if (_formError != null) ...[
             const SizedBox(height: 12),
@@ -898,7 +899,7 @@ class _WithdrawScreenState extends State<WithdrawScreen> {
               width: double.infinity,
               child: OutlinedButton(
                 onPressed: () => Navigator.of(context).pushNamed('/login'),
-                child: const Text('去登录'),
+                child: Text(context.tr('去登錄', 'Sign in')),
               ),
             ),
           ],
@@ -907,7 +908,7 @@ class _WithdrawScreenState extends State<WithdrawScreen> {
             width: double.infinity,
             child: ElevatedButton(
               onPressed: _canSubmit ? _submit : null,
-              child: _submitting ? const Text('提交中…') : const Text('提交提现申请'),
+              child: _submitting ? const Text('提交中…') : const Text('提交提現申請'),
             ),
           ),
         ],
@@ -916,8 +917,8 @@ class _WithdrawScreenState extends State<WithdrawScreen> {
   }
 }
 
-/// 提现记录页（UI_SPEC §5.2）：处理中 / 已到账 / 失败；失败显示服务端
-/// 的 failure_reason（Gap 6），无原因时才显示通用文案；重试即重新提交一笔提现。
+/// 提現記錄頁（UI_SPEC §5.2）：處理中 / 已到帳 / 失敗；失敗顯示服務端
+/// 的 failure_reason（Gap 6），無原因時才顯示通用文案；重試即重新提交一筆提現。
 class WithdrawalHistoryScreen extends StatefulWidget {
   const WithdrawalHistoryScreen({super.key, required this.api});
 
@@ -993,7 +994,7 @@ class _WithdrawalHistoryScreenState extends State<WithdrawalHistoryScreen> with 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('提现记录')),
+      appBar: AppBar(title: const Text('提現記錄')),
       body: RefreshIndicator(
         onRefresh: _load,
         child: ListView(
@@ -1005,8 +1006,8 @@ class _WithdrawalHistoryScreenState extends State<WithdrawalHistoryScreen> with 
               _ErrorView(onRetry: _load, needsLogin: _needsLogin)
             else if (_items.isEmpty)
               _EmptyView(
-                message: '暂时没有提现记录',
-                actionLabel: '返回返现页',
+                message: '暫時沒有提現記錄',
+                actionLabel: '返回返現頁',
                 onAction: () => Navigator.of(context).pop(),
               )
             else
@@ -1077,8 +1078,8 @@ class _WithdrawalCard extends StatelessWidget {
               const SizedBox(height: 6),
               Text(
                   (w.failureReason ?? '').isNotEmpty
-                      ? '失败原因：${w.failureReason}'
-                      : '处理失败，请重试',
+                      ? '未能完成的原因：${w.failureReason}'
+                      : '處理失敗，請重試',
                   style:
                       const TextStyle(color: CgColors.textSecondary, fontSize: 12)),
               const SizedBox(height: 8),
@@ -1086,7 +1087,7 @@ class _WithdrawalCard extends StatelessWidget {
                 width: double.infinity,
                 child: OutlinedButton(
                   onPressed: onRetry,
-                  child: const Text('重新提交提现'),
+                  child: const Text('重新提交提現'),
                 ),
               ),
             ],
@@ -1097,9 +1098,9 @@ class _WithdrawalCard extends StatelessWidget {
   }
 }
 
-/// 本机保存的申诉记录。服务端已有 GET /cashback/missing（Gap 3），
-/// 列表优先取接口；本机记录只作兜底（接口失败或无数据时不丢已存记录）。
-/// 服务端返回的 id 是 int，本机存的是 String，fromJson 两边都兼容。
+/// 本機保存的申訴記錄。服務端已有 GET /cashback/missing（Gap 3），
+/// 列表優先取接口；本機記錄只作兜底（接口失敗或無數據時不丟已存記錄）。
+/// 服務端返回的 id 是 int，本機存的是 String，fromJson 兩邊都兼容。
 class LocalAppeal {
   LocalAppeal({
     required this.id,
@@ -1177,11 +1178,11 @@ Future<void> _saveLocalAppeal(LocalAppeal appeal) async {
 String _appealStatusText(String status) {
   switch (status) {
     case 'under_review':
-      return '审核中';
+      return '審核中';
     case 'resolved':
-      return '已通过';
+      return '已通過';
     case 'rejected':
-      return '未通过';
+      return '未通過';
     default:
       return '已提交';
   }
@@ -1200,8 +1201,8 @@ Color _appealStatusColor(BuildContext context, String status) {
   }
 }
 
-/// 漏记申诉表单（UI_SPEC §5.3）：商户、订单号、消费时间、金额、
-/// 凭证截图（≤3 张）、备注。消费时间用日期选择器，超过 30 天的日期禁用。
+/// 漏記申訴表單（UI_SPEC §5.3）：商戶、訂單號、消費時間、金額、
+/// 憑證截圖（≤3 張）、備注。消費時間用日期選擇器，超過 30 天的日期禁用。
 class MissingCashbackScreen extends StatefulWidget {
   const MissingCashbackScreen({super.key, required this.api});
 
@@ -1281,7 +1282,7 @@ class _MissingCashbackScreenState extends State<MissingCashbackScreen> {
       initialDate: _spentAt,
       firstDate: first,
       lastDate: last,
-      helpText: '选择消费日期',
+      helpText: '選擇消費日期',
     );
     if (picked != null && mounted) setState(() => _spentAt = picked);
   }
@@ -1306,7 +1307,7 @@ class _MissingCashbackScreenState extends State<MissingCashbackScreen> {
         _evidenceNames = [..._evidenceNames, ...names];
       });
     } catch (_) {
-      if (mounted) setState(() => _evidenceError = '未能打开相册，请重试');
+      if (mounted) setState(() => _evidenceError = '未能打開相冊，請重試');
     }
   }
 
@@ -1317,7 +1318,7 @@ class _MissingCashbackScreenState extends State<MissingCashbackScreen> {
       _formError = null;
     });
     final evidence =
-        _evidenceNames.isEmpty ? '' : '凭证图片：${_evidenceNames.join('、')}';
+        _evidenceNames.isEmpty ? '' : '憑證圖片：${_evidenceNames.join('、')}';
     try {
       final res = await widget.api.submitMissingCashback(
           _shopId!,
@@ -1353,7 +1354,7 @@ class _MissingCashbackScreenState extends State<MissingCashbackScreen> {
       if (!mounted) return;
       setState(() {
         _submitting = false;
-        _formError = '网络不稳定，请重试';
+        _formError = '網絡不穩定，請重試';
       });
     }
   }
@@ -1361,11 +1362,11 @@ class _MissingCashbackScreenState extends State<MissingCashbackScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('申诉返现')),
+      appBar: AppBar(title: Text(context.tr('申訴返現', 'Report missing cashback'))),
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
-          const Text('消费后 30 天内可申请；调查期最长 120 天。请提供订单号与凭证。',
+          const Text('消費後 30 天內可申請；調查期最長 120 天。請提供訂單號與憑證。',
               style: TextStyle(color: CgColors.textSecondary, fontSize: 12)),
           const SizedBox(height: 16),
           if (_shopsLoading)
@@ -1374,12 +1375,12 @@ class _MissingCashbackScreenState extends State<MissingCashbackScreen> {
             Row(
               children: [
                 const Expanded(
-                    child: Text('商户列表加载失败',
+                    child: Text('商戶名單載入失敗',
                         style: TextStyle(color: CgColors.textSecondary))),
                 TextButton(
                   onPressed: _loadShops,
                   style: TextButton.styleFrom(minimumSize: const Size(44, 44)),
-                  child: const Text('重试'),
+                  child: Text(context.tr('重試', 'Retry')),
                 ),
               ],
             )
@@ -1387,7 +1388,7 @@ class _MissingCashbackScreenState extends State<MissingCashbackScreen> {
             DropdownButton<int>(
               value: _shopId,
               isExpanded: true,
-              hint: const Text('选择商户'),
+              hint: Text(context.tr('選擇商戶', 'Choose a merchant')),
               items: _shops
                   .map(
                       (s) => DropdownMenuItem(value: s.id, child: Text(s.name)))
@@ -1400,7 +1401,7 @@ class _MissingCashbackScreenState extends State<MissingCashbackScreen> {
           const SizedBox(height: 12),
           TextField(
             controller: _orderNo,
-            decoration: const InputDecoration(labelText: '订单号 / 核销凭证号'),
+            decoration: const InputDecoration(labelText: '訂單號 / 核銷憑證號'),
             onChanged: (_) => setState(() {}),
           ),
           const SizedBox(height: 12),
@@ -1408,7 +1409,7 @@ class _MissingCashbackScreenState extends State<MissingCashbackScreen> {
             onTap: _pickDate,
             borderRadius: BorderRadius.circular(12),
             child: InputDecorator(
-              decoration: const InputDecoration(labelText: '消费时间'),
+              decoration: const InputDecoration(labelText: '消費時間'),
               child: Row(
                 children: [
                   Expanded(child: Text(_dateYmd(_spentAt))),
@@ -1419,18 +1420,18 @@ class _MissingCashbackScreenState extends State<MissingCashbackScreen> {
           ),
           const Padding(
             padding: EdgeInsets.only(top: 6),
-            child: Text('消费后 30 天内可申请',
+            child: Text('消費後 30 天內可申請',
                 style: TextStyle(color: CgColors.textSecondary, fontSize: 12)),
           ),
           const SizedBox(height: 12),
           TextField(
             controller: _amount,
             keyboardType: const TextInputType.numberWithOptions(decimal: true),
-            decoration: const InputDecoration(labelText: '消费金额 HK\$'),
+            decoration: const InputDecoration(labelText: '消費金額 HK\$'),
             onChanged: (_) => setState(() {}),
           ),
           const SizedBox(height: 16),
-          const Text('凭证截图（最多 3 张）',
+          const Text('憑證截圖（最多 3 張）',
               style: TextStyle(fontWeight: FontWeight.w600)),
           const SizedBox(height: 8),
           Wrap(
@@ -1449,7 +1450,7 @@ class _MissingCashbackScreenState extends State<MissingCashbackScreen> {
                       right: 0,
                       top: 0,
                       child: Semantics(
-                        label: '删除凭证 ${_evidenceNames[i]}',
+                        label: '刪除憑證 ${_evidenceNames[i]}',
                         button: true,
                         child: GestureDetector(
                           onTap: () => setState(() {
@@ -1477,7 +1478,7 @@ class _MissingCashbackScreenState extends State<MissingCashbackScreen> {
                 ),
               if (_evidenceBytes.length < CashbackLimits.maxEvidenceImages)
                 Semantics(
-                  label: '添加凭证截图',
+                  label: '添加憑證截圖',
                   button: true,
                   child: InkWell(
                     onTap: _pickImages,
@@ -1504,7 +1505,7 @@ class _MissingCashbackScreenState extends State<MissingCashbackScreen> {
           const SizedBox(height: 12),
           TextField(
             controller: _note,
-            decoration: const InputDecoration(labelText: '备注（可选）'),
+            decoration: const InputDecoration(labelText: '備注（可選）'),
             maxLines: 3,
           ),
           if (_formError != null) ...[
@@ -1517,7 +1518,7 @@ class _MissingCashbackScreenState extends State<MissingCashbackScreen> {
             width: double.infinity,
             child: ElevatedButton(
               onPressed: _canSubmit ? _submit : null,
-              child: _submitting ? const Text('提交中…') : const Text('提交申诉'),
+              child: _submitting ? const Text('提交中…') : const Text('提交申訴'),
             ),
           ),
         ],
@@ -1526,9 +1527,9 @@ class _MissingCashbackScreenState extends State<MissingCashbackScreen> {
   }
 }
 
-/// 申诉列表页（UI_SPEC §5.3）：已提交 / 审核中 / 已通过 / 未通过（含原因）。
-/// Gap 3：列表优先取 GET /cashback/missing；接口失败或返回空时用本机
-/// 保存的记录兜底，已提交但服务端暂无的本地记录会合并进列表展示。
+/// 申訴列表頁（UI_SPEC §5.3）：已提交 / 審核中 / 已通過 / 未通過（含原因）。
+/// Gap 3：列表優先取 GET /cashback/missing；接口失敗或返回空時用本機
+/// 保存的記錄兜底，已提交但服務端暫無的本地記錄會合併進列表展示。
 class MissingAppealsScreen extends StatefulWidget {
   const MissingAppealsScreen({super.key, required this.api});
 
@@ -1572,14 +1573,14 @@ class _MissingAppealsScreenState extends State<MissingAppealsScreen> {
           .map((e) => LocalAppeal.fromJson(e as Map<String, dynamic>))
           .toList();
       if (server.isEmpty) {
-        // 接口成功但无数据：不丢本地记录。
+        // 接口成功但無數據：不丟本地記錄。
         setState(() {
           _items = local;
           _loading = false;
         });
         return;
       }
-      // 服务端为准；本地有、服务端暂无的记录合并进来（按 id 去重）。
+      // 服務端為準；本地有、服務端暫無的記錄合併進來（按 id 去重）。
       final serverIds = server.map((a) => a.id).toSet();
       final extras = local.where((a) => !serverIds.contains(a.id)).toList();
       setState(() {
@@ -1587,7 +1588,7 @@ class _MissingAppealsScreenState extends State<MissingAppealsScreen> {
         _loading = false;
       });
     } catch (_) {
-      // 接口失败：兜底用本地记录。
+      // 接口失敗：兜底用本地記錄。
       if (!mounted) return;
       setState(() {
         _items = local;
@@ -1599,7 +1600,7 @@ class _MissingAppealsScreenState extends State<MissingAppealsScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('我的申诉')),
+      appBar: AppBar(title: const Text('我的申訴')),
       body: RefreshIndicator(
         onRefresh: _load,
         child: ListView(
@@ -1611,8 +1612,8 @@ class _MissingAppealsScreenState extends State<MissingAppealsScreen> {
               _ErrorView(onRetry: _load)
             else if (_items.isEmpty)
               _EmptyView(
-                message: '暂无申诉记录',
-                actionLabel: '提交申诉',
+                message: '暫無申訴記錄',
+                actionLabel: '提交申訴',
                 onAction: () {
                   Navigator.of(context).push(MaterialPageRoute(
                       builder: (_) => MissingCashbackScreen(api: widget.api)));
@@ -1631,7 +1632,7 @@ class _MissingAppealsScreenState extends State<MissingAppealsScreen> {
                             children: [
                               Expanded(
                                 child: Text(
-                                    a.shopName.isEmpty ? '商户' : a.shopName,
+                                    a.shopName.isEmpty ? '商戶' : a.shopName,
                                     style: const TextStyle(
                                         fontWeight: FontWeight.w600)),
                               ),
@@ -1643,14 +1644,14 @@ class _MissingAppealsScreenState extends State<MissingAppealsScreen> {
                           ),
                           const SizedBox(height: 8),
                           Text(
-                            '订单 ${a.orderNo} · ${_dateYmd(a.spentAt)} · ${formatHkd(a.amount)}',
+                            '訂單 ${a.orderNo} · ${_dateYmd(a.spentAt)} · ${formatHkd(a.amount)}',
                             style: const TextStyle(
                                 color: CgColors.textSecondary, fontSize: 12),
                           ),
                           if (a.status == 'rejected' &&
                               (a.reason ?? '').isNotEmpty) ...[
                             const SizedBox(height: 6),
-                            Text('未通过原因：${a.reason}',
+                            Text('未通過原因：${a.reason}',
                                 style: const TextStyle(
                                     color: CgColors.textSecondary,
                                     fontSize: 12)),
