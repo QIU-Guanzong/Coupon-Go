@@ -86,6 +86,52 @@ class PublicPreviewTest(unittest.TestCase):
             with self.subTest(method=method, path=path):
                 self.assertEqual(self.client.request(method, path).status_code, 403)
 
+    def test_public_app_config_only_exposes_five_display_fields(self):
+        from app.routers.home import app_config
+        actual = self.client.get("/api/v3/app-config")
+        self.assertEqual(actual.status_code, 200)
+        self.assertEqual(actual.json(), app_config())
+        self.assertEqual(set(actual.json()), {
+            "points_claim", "points_redeem", "points_review",
+            "qr_ttl_seconds", "cashback_unlock_days",
+        })
+        expected = {
+            "points_claim": 10, "points_redeem": 20, "points_review": 15,
+            "qr_ttl_seconds": 900, "cashback_unlock_days": 90,
+        }
+        # The public gateway must remain safe if the internal endpoint later
+        # acquires more fields; no credentials are sent to that endpoint.
+        with patch("public_api.app_config", return_value={**expected, "secret": "not-public"}):
+            response = self.client.get("/api/v3/app-config", headers={
+                "Authorization": "Bearer invalid", "Cookie": "session=invalid"})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), expected)
+
+        cases = (
+            ("GET", "/api/v3/app-config?private=1"),
+            ("POST", "/api/v3/app-config"),
+            ("PUT", "/api/v3/app-config"),
+            ("DELETE", "/api/v3/app-config"),
+            ("GET", "/api/v3/app-config/"),
+            ("GET", "/api/v3/app-config-extra"),
+            ("POST", "/api/v3/login"),
+            ("POST", "/api/v3/new-register"),
+            ("POST", "/api/v3/new-verify-otp"),
+            ("POST", "/api/v3/new-claim-coupon"),
+            ("POST", "/api/v3/orders"),
+            ("POST", "/api/v3/orders/1/demo-payment"),
+            ("POST", "/api/v3/orders/1/refund"),
+            ("GET", "/api/v3/orders"),
+            ("GET", "/api/v3/get-profile"),
+            ("GET", "/api/v3/admin/orders"),
+            ("POST", "/api/v3/admin/settlements/generate"),
+            ("GET", "/docs"),
+            ("GET", "/openapi.json"),
+        )
+        for method, path in cases:
+            with self.subTest(method=method, path=path):
+                self.assertEqual(self.client.request(method, path).status_code, 403)
+
     def test_expired_campaign_does_not_write(self):
         campaigns = self.client.get("/api/v3/bargain-campaigns").json()["campaigns"]
         self.assertEqual(next(c for c in campaigns if c["id"] == 1)["status"], "expired")

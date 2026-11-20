@@ -280,7 +280,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   const Icon(Icons.info_outline, size: 18, color: Color(0xFF785324)),
                   const SizedBox(width: 8),
                   Expanded(child: Text(
-                    context.tr('示範內容，商戶及優惠為示例。帳戶及交易暫未開放。', 'Demo content. Shops and offers are examples. Accounts and transactions are unavailable.'),
+                    context.tr('毋須登入，即可瀏覽優惠及使用 Q仔。', 'Browse offers and use Q仔 without signing in.'),
                     style: const TextStyle(color: Color(0xFF604317), fontSize: 13),
                   )),
                 ]),
@@ -1023,7 +1023,7 @@ class _CouponDetailScreenState extends State<CouponDetailScreen> {
       bottomNavigationBar: Padding(
         padding: const EdgeInsets.all(16),
         child: ElevatedButton(
-          onPressed: _claimed || _claiming
+          onPressed: const bool.fromEnvironment('PUBLIC_DEMO') || _claimed || _claiming
               ? null
               : () async {
                   if (_claiming) return;
@@ -1041,7 +1041,11 @@ class _CouponDetailScreenState extends State<CouponDetailScreen> {
                       _remaining = result['coupon']?['remaining'] as int?;
                     });
                     if (context.mounted) {
-                      showCgToast(context, context.tr('已存入 Q Wallet', 'Saved to Q Wallet'));
+                      final points = widget.api.appConfig.value.pointsClaim;
+                      showCgToast(context, points != null && points > 0
+                          ? context.tr('已存入 Q Wallet，+$points 積分',
+                              'Saved to Q Wallet, +$points points')
+                          : context.tr('已存入 Q Wallet', 'Saved to Q Wallet'));
                     }
                   } on ApiException catch (e) {
                     if (!context.mounted) return;
@@ -1053,7 +1057,9 @@ class _CouponDetailScreenState extends State<CouponDetailScreen> {
                     if (mounted) setState(() => _claiming = false);
                   }
                 },
-          child: Text(_claimed
+          child: Text(const bool.fromEnvironment('PUBLIC_DEMO')
+              ? context.tr('只供瀏覽', 'Browse only')
+              : _claimed
               ? context.tr('已領取', 'Claimed')
               : _claiming
                   ? context.tr('領取中…', 'Claiming…')
@@ -1088,8 +1094,8 @@ class _ShopDetailScreenState extends State<ShopDetailScreen> {
 
   Future<void> _launch(Uri uri) async {
     if (const bool.fromEnvironment('PUBLIC_DEMO')) {
-      showCgToast(context, context.tr('示範商戶，未提供聯絡及導航',
-          'Demo shop. Contact and directions are unavailable.'));
+      showCgToast(context, context.tr('此商戶未提供聯絡及導航資料。',
+          'Contact and directions are unavailable for this shop.'));
       return;
     }
     try {

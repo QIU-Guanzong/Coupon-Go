@@ -57,10 +57,14 @@ void main() {
     await tester.scrollUntilVisible(find.text('Address not listed'), 100);
     await tester.tap(find.text('Address not listed'));
     await tester.pumpAndSettle();
-    expect(uris, hasLength(2));
-    expect(uris.first, Uri.parse('tel:+85223456789'));
-    expect(uris.last.host, 'www.google.com');
-    expect(uris.last.queryParameters['query'], '皇后大道中 7 號');
+    if (const bool.fromEnvironment('PUBLIC_DEMO')) {
+      expect(uris, isEmpty);
+    } else {
+      expect(uris, hasLength(2));
+      expect(uris.first, Uri.parse('tel:+85223456789'));
+      expect(uris.last.host, 'www.google.com');
+      expect(uris.last.queryParameters['query'], '皇后大道中 7 號');
+    }
   });
 
   testWidgets('guest can open guide and about but cannot log out or delete',

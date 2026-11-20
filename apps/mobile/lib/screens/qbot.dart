@@ -2,6 +2,12 @@ import 'package:flutter/material.dart';
 
 import '../api_client.dart';
 import '../language.dart';
+import '../models.dart';
+import '../qbot_offers.dart';
+import '../widgets/widgets.dart';
+import 'bargain.dart';
+import 'customer.dart';
+import 'packages.dart';
 import '../theme.dart';
 
 /// Present simple model formatting without modifying the stored chat history.
@@ -34,7 +40,8 @@ class QBotScreen extends StatefulWidget {
 class _QBotScreenState extends State<QBotScreen> {
   final _ctrl = TextEditingController();
   final _scroll = ScrollController();
-  final _messages = <Map<String, String>>[];
+  final _messages = <(String, String, String?, List<QBotOffer>)>[];
+  QBotOffer? _openingOffer;
   bool _sending = false;
   bool _failed = false;
   bool _rateLimited = false;
@@ -97,7 +104,7 @@ class _QBotScreenState extends State<QBotScreen> {
     final previous = history.skip(history.length > 6 ? history.length - 6 : 0);
     final english = LanguageScope.of(context).english;
     setState(() {
-      if (!retry) _messages.add({'role': 'user', 'text': q});
+      if (!retry) _messages.add(('user', q, null, const []));
       _sending = true;
       _failed = false;
       _rateLimited = false;
@@ -112,18 +119,22 @@ class _QBotScreenState extends State<QBotScreen> {
         'history': [
           for (final m in previous)
             {
-              'role': m['role'],
-              'text': m['text']!.characters.take(1100).toString()
+              'role': m.$1,
+              'text': m.$2.characters.take(1100).toString()
             }
         ],
       }).timeout(const Duration(seconds: 35));
       if (!mounted || id != _conversation) return;
-      setState(() => _messages.add({
-            'role': 'assistant',
-            'text': data['answer'] as String,
-            if (data['points_balance'] != null)
-              'balance': "${data['points_balance']}"
-          }));
+      final answer = data['answer'];
+      if (answer is! String || answer.trim().isEmpty) {
+        throw const FormatException('missing answer');
+      }
+      setState(() => _messages.add((
+            'assistant',
+            answer,
+            data['points_balance'] is int ? '${data['points_balance']}' : null,
+            QBotOffer.parse(data['offers']),
+          )));
     } catch (error) {
       if (mounted && id == _conversation) {
         setState(() {
@@ -132,7 +143,7 @@ class _QBotScreenState extends State<QBotScreen> {
           _invalidInput = error is ApiException && error.status == 422;
           if (_invalidInput) {
             if (_ctrl.text.isEmpty) _ctrl.text = q;
-            if (_messages.isNotEmpty && _messages.last['role'] == 'user') {
+            if (_messages.isNotEmpty && _messages.last.$1 == 'user') {
               _messages.removeLast();
             }
           }
@@ -144,6 +155,72 @@ class _QBotScreenState extends State<QBotScreen> {
         _scrollDown();
       }
     }
+  }
+
+  Future<void> _openOffer(QBotOffer offer) async {
+    if (_openingOffer != null) return;
+    final generation = _conversation;
+    setState(() => _openingOffer = offer);
+    try {
+      final Widget page;
+      switch (offer.kind) {
+        case QBotOfferKind.coupon:
+          final data = await widget.api.couponDetails(offer.id);
+          final raw = data['coupon'];
+          if (raw is! Map<String, dynamic> || raw['id'] != offer.id) {
+            throw const FormatException('invalid coupon');
+          }
+          page = CouponDetailScreen(api: widget.api, coupon: Coupon.fromJson(raw));
+        case QBotOfferKind.package:
+          page = PackageDetailScreen(api: widget.api, packageId: offer.id);
+        case QBotOfferKind.bargain:
+          final rows = await widget.api.bargainCampaigns();
+          final raw = rows.whereType<Map<String, dynamic>>()
+              .where((row) => row['id'] == offer.id).firstOrNull;
+          if (raw == null || raw['status'] != 'active') {
+            throw const FormatException('unavailable campaign');
+          }
+          final campaign = BargainCampaign.fromJson(raw);
+          if (campaign.isSoldOut ||
+              !(campaign.expiresAt?.isAfter(DateTime.now()) ?? false)) {
+            throw const FormatException('unavailable campaign');
+          }
+          page = BargainCampaignScreen(api: widget.api, campaign: campaign);
+      }
+      if (!mounted || generation != _conversation) return;
+      await Navigator.of(context).push(MaterialPageRoute(builder: (_) => page));
+    } catch (_) {
+      if (mounted && generation == _conversation) {
+        showCgToast(context, context.tr('暫時未能開啟，請重試。',
+            'Could not open this offer. Try again.'));
+      }
+    } finally {
+      if (mounted && generation == _conversation) {
+        setState(() => _openingOffer = null);
+      }
+    }
+  }
+
+  Widget _offerTile(QBotOffer offer) {
+    final label = switch (offer.kind) {
+      QBotOfferKind.coupon => context.tr('優惠券', 'Coupon'),
+      QBotOfferKind.package => context.tr('套餐', 'Package'),
+      QBotOfferKind.bargain => context.tr('砍價', 'Bargain'),
+    };
+    return Card(
+      margin: const EdgeInsets.only(top: 8),
+      child: ListTile(
+        key: ValueKey('qbot-offer-${offer.kind.name}-${offer.id}'),
+        enabled: _openingOffer == null,
+        title: Text(offer.name),
+        subtitle: Text('$label · ${offer.shop}'),
+        trailing: identical(_openingOffer, offer)
+            ? const SizedBox.square(dimension: 18,
+                child: CircularProgressIndicator(strokeWidth: 2))
+            : const Icon(Icons.chevron_right),
+        onTap: () => _openOffer(offer),
+      ),
+    );
   }
 
   @override
@@ -159,6 +236,7 @@ class _QBotScreenState extends State<QBotScreen> {
                 : () => setState(() {
                       _conversation++;
                       _messages.clear();
+                      _openingOffer = null;
                       _sending = false;
                       _failed = false;
                       _rateLimited = false;
@@ -183,8 +261,8 @@ class _QBotScreenState extends State<QBotScreen> {
                       'Answered by DeepSeek AI. Answers may be inaccurate; check offer details. Do not enter personal information or redemption codes.'),
                   style: Theme.of(context).textTheme.bodySmall),
               if (const bool.fromEnvironment('PUBLIC_DEMO'))
-                Text(t('此版本的商戶和優惠均為示例，帳戶及交易暫未開放。',
-                    'Shops and offers in this demo are examples. Accounts and transactions are unavailable.'),
+                Text(t('毋須登入，即可向 Q仔查詢優惠。',
+                    'Ask Q仔 about offers without signing in.'),
                     style: Theme.of(context).textTheme.bodySmall),
               if (_messages.isEmpty) ...[
                 const SizedBox(height: 12),
@@ -209,7 +287,7 @@ class _QBotScreenState extends State<QBotScreen> {
               ],
               for (final m in _messages)
                 Align(
-                    alignment: m['role'] == 'user'
+                    alignment: m.$1 == 'user'
                         ? Alignment.centerRight
                         : Alignment.centerLeft,
                     child: Container(
@@ -218,21 +296,21 @@ class _QBotScreenState extends State<QBotScreen> {
                       constraints: BoxConstraints(
                           maxWidth: MediaQuery.sizeOf(context).width * .82),
                       decoration: BoxDecoration(
-                          color: m['role'] == 'user'
+                          color: m.$1 == 'user'
                               ? CgColors.primary
                               : Colors.white,
                           borderRadius: BorderRadius.circular(12)),
                       child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            if (m['role'] == 'user')
-                              SelectableText(m['text']!, style: const TextStyle(color: Colors.white))
+                            if (m.$1 == 'user')
+                              SelectableText(m.$2, style: const TextStyle(color: Colors.white))
                             else
-                              SelectableText.rich(formatQBotAnswer(m['text']!),
+                              SelectableText.rich(formatQBotAnswer(m.$2),
                                   style: const TextStyle(color: CgColors.textPrimary)),
-                            if (m['balance'] != null)
-                              Text(t("你的積分：${m['balance']}",
-                                  "Your points: ${m['balance']}")),
+                            if (m.$3 != null)
+                              Text(t('你的積分：${m.$3}', 'Your points: ${m.$3}')),
+                            for (final offer in m.$4) _offerTile(offer),
                           ]),
                     )),
               if (_sending)
@@ -252,7 +330,7 @@ class _QBotScreenState extends State<QBotScreen> {
                   if (!_invalidInput)
                     TextButton(
                         onPressed: () =>
-                            _ask(_messages.last['text']!, retry: true),
+                            _ask(_messages.last.$2, retry: true),
                         child: Text(t('重試', 'Retry'))),
                 ]),
             ])),

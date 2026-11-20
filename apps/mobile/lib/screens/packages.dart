@@ -170,12 +170,16 @@ class _PackageDetailScreenState extends State<PackageDetailScreen> {
     try {
       final data = await widget.api.packageDetails(widget.packageId);
       if (!mounted) return;
+      final pkg = Package.fromJson(data);
+      if (pkg.id != widget.packageId || pkg.id <= 0) {
+        throw const FormatException('invalid package');
+      }
       setState(() {
-        _pkg = Package.fromJson(data);
+        _pkg = pkg;
         _loading = false;
         _error = false;
       });
-    } on ApiException catch (_) {
+    } catch (_) {
       if (mounted) {
         setState(() {
           _loading = false;
@@ -198,7 +202,8 @@ class _PackageDetailScreenState extends State<PackageDetailScreen> {
 
   Future<void> _openMap(Map<String, dynamic> branch) async {
     if (const bool.fromEnvironment('PUBLIC_DEMO')) {
-      showCgToast(context, '示範商戶，未提供導航');
+      showCgToast(context, context.tr('此商戶未提供導航資料。',
+          'Directions are unavailable for this shop.'));
       return;
     }
     final lat = branch['latitude'] ?? branch['lat'];
@@ -547,8 +552,10 @@ class _PackageDetailScreenState extends State<PackageDetailScreen> {
                 child: SizedBox(
                   height: 48,
                   child: ElevatedButton(
-                    onPressed: soldOut ? null : _buy,
-                    child: Text(soldOut ? '已售罄' : '立即搶購'),
+                    onPressed: const bool.fromEnvironment('PUBLIC_DEMO') || soldOut ? null : _buy,
+                    child: Text(const bool.fromEnvironment('PUBLIC_DEMO')
+                        ? context.tr('只供瀏覽', 'Browse only')
+                        : soldOut ? context.tr('已售罄', 'Sold out') : context.tr('立即搶購', 'Buy now')),
                   ),
                 ),
               ),
@@ -1058,7 +1065,7 @@ class _OrdersScreenState extends State<OrdersScreen> with WalletUpdates<OrdersSc
   String _emptyMessage(int tab) {
     if (widget.guest) {
       return const bool.fromEnvironment('PUBLIC_DEMO')
-          ? context.tr('示範版暫無個人訂單。', 'No personal orders in this demo.')
+          ? context.tr('暫時沒有個人訂單。', 'No personal orders yet.')
           : context.tr('登入後可查看你的訂單。', 'Sign in to view your orders.');
     }
     switch (tab) {

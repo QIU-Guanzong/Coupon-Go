@@ -7,6 +7,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../api_client.dart';
+import '../app_config.dart';
 import '../language.dart';
 import '../models.dart';
 import '../theme.dart';
@@ -30,7 +31,6 @@ class CashbackLimits {
   /// 兜底默認值（與後端 config 一致）；接口返回字段時以接口值為準。
   static const double minWithdrawHkd = 50;
   static const double dailyWithdrawLimitHkd = 1500;
-  static const int dineinUnlockDays = 90;
   static const int missingWindowDays = 30;
   static const int maxEvidenceImages = 3;
 }
@@ -100,7 +100,7 @@ String? _voidReasonText(String? reason) {
     case '':
       return null;
     case 'expired_90d':
-      return '90 天內未再次消費';
+      return '未再次消費，返現已失效';
     case 'cancelled':
       return '訂單已取消';
     case 'revoked':
@@ -403,7 +403,12 @@ class _CashbackScreenState extends State<CashbackScreen> with WalletUpdates<Cash
                 ),
               ),
               if (_hasDineinPending && !_ruleDismissed)
-                _buildRuleBanner(context),
+                ValueListenableBuilder<AppConfig>(
+                  valueListenable: widget.api.appConfig,
+                  builder: (context, rules, _) => rules.cashbackUnlockDays == null
+                      ? const SizedBox.shrink()
+                      : _buildRuleBanner(context, rules.cashbackUnlockDays!),
+                ),
               const SizedBox(height: 8),
               _buildFilters(),
               const SizedBox(height: 8),
@@ -468,7 +473,7 @@ class _CashbackScreenState extends State<CashbackScreen> with WalletUpdates<Cash
     );
   }
 
-  Widget _buildRuleBanner(BuildContext context) {
+  Widget _buildRuleBanner(BuildContext context, int days) {
     return Container(
       margin: const EdgeInsets.only(top: 8),
       padding: const EdgeInsets.only(left: 12, top: 4, bottom: 4, right: 4),
@@ -480,11 +485,13 @@ class _CashbackScreenState extends State<CashbackScreen> with WalletUpdates<Cash
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Expanded(
+          Expanded(
             child: Padding(
-              padding: EdgeInsets.only(top: 10, bottom: 10),
-              child: Text('90 天內在同一商戶再次消費，上一筆返現即到帳',
-                  style: TextStyle(fontSize: 13)),
+              padding: const EdgeInsets.only(top: 10, bottom: 10),
+              child: Text(context.tr(
+                '$days 天內在同一商戶再次消費，上一筆返現即到帳。',
+                'Shop again at the same merchant within $days days to unlock the previous cashback.'),
+                  style: const TextStyle(fontSize: 13)),
             ),
           ),
           Semantics(
@@ -569,7 +576,7 @@ class _TxnCard extends StatelessWidget {
     if ((txn.status == 'pending' || txn.status == 'tracked')) {
       if (txn.channel == 'dinein') {
         final exp = txn.expiresAt;
-        if (exp == null) return '90 天內再次消費即可到帳';
+        if (exp == null) return null;
         final days = _daysLeft(exp);
         return days <= 0 ? '今天到期' : '還剩 $days 天';
       }

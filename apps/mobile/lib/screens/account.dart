@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 
 import '../api_client.dart';
+import '../app_config.dart';
 import '../feature_flags.dart';
 import '../language.dart';
 export 'qbot.dart' show QBotScreen;
@@ -16,7 +17,7 @@ import 'cashback.dart';
 import 'reviews_admin.dart';
 
 /// Q Wallet: points balance, three status tabs (1 unused / 2 used / 3 expired),
-/// points-exchange zone (9-point coupon), records.
+/// points-exchange zone and records.
 class WalletScreen extends StatefulWidget {
   const WalletScreen({super.key, required this.api, this.active = true, this.guest = false, required this.onShowQr});
 
@@ -289,9 +290,9 @@ class _WalletScreenState extends State<WalletScreen>
                                       const SizedBox(height: 12),
                                       Text(widget.guest
                                           ? (const bool.fromEnvironment('PUBLIC_DEMO')
-                                              ? context.tr('示範版暫無個人優惠券。', 'No personal coupons in this demo.')
+                                              ? context.tr('暫時沒有個人優惠券，可以先逛逛套餐。', 'No personal coupons yet. Browse packages for offers.')
                                               : context.tr('登入後可在這裏查看已領取的優惠券。', 'Sign in to view your coupons.'))
-                                          : context.tr('暫時沒有優惠券，去首頁看看吧！', 'No coupons yet. Explore offers on Home.')),
+                                          : context.tr('暫時沒有優惠券，去看看套餐吧！', 'No coupons yet. Browse packages for more offers.')),
                                       const SizedBox(height: 12),
                                       ElevatedButton(
                                         onPressed: () => Navigator.of(context)
@@ -428,7 +429,7 @@ class _WalletScreenState extends State<WalletScreen>
   }
 }
 
-/// QR show page: red screen, white card, QR + big code + 15:00 countdown.
+/// QR screen: QR code, manual code and countdown from the issued code.
 class QrShowScreen extends StatefulWidget {
   const QrShowScreen({super.key, required this.api, required this.item});
 
@@ -811,7 +812,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                   const SizedBox(height: 12),
                   Text(widget.guest
                       ? (const bool.fromEnvironment('PUBLIC_DEMO')
-                          ? context.tr('示範版暫無個人通知。', 'No personal notifications in this demo.')
+                          ? context.tr('暫時沒有個人通知。', 'No personal notifications yet.')
                           : context.tr('登入後可查看你的通知。', 'Sign in to view your notifications.'))
                       : context.tr('沒有新通知。', 'No new notifications.')),
                 ],
@@ -1085,7 +1086,15 @@ class CouponGoAboutScreen extends StatelessWidget {
 
 /// Guide + FAQ (local, behaviour-based).
 class GuideScreen extends StatelessWidget {
-  const GuideScreen({super.key});
+  const GuideScreen({super.key, this.api});
+
+  final ApiClient? api;
+
+  String _qrLifetime(BuildContext context, int seconds) => seconds % 60 == 0
+      ? context.tr('兌換碼最長有效期：${seconds ~/ 60} 分鐘。',
+          'Maximum code lifetime: ${seconds ~/ 60} min.')
+      : context.tr('兌換碼最長有效期：$seconds 秒。',
+          'Maximum code lifetime: $seconds sec.');
 
   static const _faqs = [
     (
@@ -1099,7 +1108,7 @@ class GuideScreen extends StatelessWidget {
       'Tap Show in Q Wallet and ask the staff to scan the QR code.',
     ),
     (
-      '積分有甚麼用？', 'What are points for?',
+      '積分可以怎樣用？', 'What are points for?',
       '在 Q Wallet 查看積分餘額及可兌換的優惠。',
       'Check Q Wallet for your points balance and available rewards.',
     ),
@@ -1121,7 +1130,16 @@ class GuideScreen extends StatelessWidget {
   ];
 
   @override
-  Widget build(BuildContext context) => Scaffold(
+  Widget build(BuildContext context) {
+    final config = api?.appConfig;
+    if (config == null) return _guide(context, const AppConfig());
+    return ValueListenableBuilder<AppConfig>(
+      valueListenable: config,
+      builder: (context, rules, _) => _guide(context, rules),
+    );
+  }
+
+  Widget _guide(BuildContext context, AppConfig rules) => Scaffold(
         appBar: AppBar(title: Text(context.tr('新手指南 / 常見問題', 'Guide and FAQs'))),
         body: ListView(
           padding: const EdgeInsets.all(16),
@@ -1146,7 +1164,19 @@ class GuideScreen extends StatelessWidget {
             for (final item in _faqs)
               ExpansionTile(
                 title: Text(context.tr(item.$1, item.$2)),
-                children: [ListTile(title: Text(context.tr(item.$3, item.$4)))],
+                children: [
+                  ListTile(title: Text(context.tr(item.$3, item.$4))),
+                  if (item == _faqs[2]) ...[
+                    if (rules.pointsClaim case final points?)
+                      ListTile(title: Text(context.tr('領券 +$points 積分', 'Claiming a coupon: +$points points'))),
+                    if (rules.pointsRedeem case final points?)
+                      ListTile(title: Text(context.tr('核銷 +$points 積分', 'Redeeming a coupon: +$points points'))),
+                    if (rules.pointsReview case final points?)
+                      ListTile(title: Text(context.tr('合資格評價 +$points 積分', 'Eligible review: +$points points'))),
+                  ],
+                  if (item == _faqs[3] && rules.qrTtlSeconds != null)
+                    ListTile(title: Text(_qrLifetime(context, rules.qrTtlSeconds!))),
+                ],
               ),
           ],
         ),
