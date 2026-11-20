@@ -96,4 +96,24 @@ void main() {
     await tester.pumpAndSettle();
     expect(presented, 8);
   });
+  testWidgets('wallet respects the status bar with or without an app bar',
+      (tester) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.padding = const FakeViewPadding(top: 30);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.view.resetPadding);
+
+    Widget wallet() => WalletScreen(api: JourneyApi(), onShowQr: (_) async {});
+    await tester.pumpWidget(MaterialApp(home: Scaffold(body: wallet())));
+    await tester.pumpAndSettle();
+    expect(tester.getTopLeft(find.text('Q Wallet 積分')).dy, 42);
+
+    await tester.pumpWidget(MaterialApp(
+        home: Scaffold(appBar: AppBar(title: const Text('我的券')), body: wallet())));
+    await tester.pumpAndSettle();
+    expect(tester.getTopLeft(find.text('Q Wallet 積分')).dy,
+        30 + kToolbarHeight + 12);
+    expect(tester.takeException(), isNull);
+  });
+
 }
