@@ -30,6 +30,7 @@ Endpoint 名稱沿用 Coupon GO! 1.2.6 APK 逆向出的原始名稱（含原始�
 | 方法 | 路徑 | 說明 |
 |---|---|---|
 | GET | `/home` | 七分區：popular/week/most-grab/recommended/limited/常用/新加入商户 |
+| GET | `/app-config` | [公開顯示規則](M9_APP_CONFIG_API.md)（遊客可調） |
 | GET | `/advertisement-banners` | 廣告橫幅（遊客可調） |
 | GET | `/get-classification-coupons` | 分類券（`category_id`、`area` 篩選） |
 | GET | `/get-limited-time-coupons` | 限時搶購 |
