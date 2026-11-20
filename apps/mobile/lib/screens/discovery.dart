@@ -3,6 +3,7 @@ import '../api_client.dart';
 import '../language.dart';
 import '../models.dart';
 import '../widgets/widgets.dart';
+import '../widgets/favorite_control.dart';
 
 /// Keeps one request alive across rebuilds. A changed filter supplies a new key.
 class RequestView<T> extends StatefulWidget {
@@ -130,12 +131,13 @@ class _DiscoveryScreenState extends State<DiscoveryScreen> {
                           category = draftCategory;
                           regionPanel = null;
                         }),
-                    child: Text(t('確定', 'Sure'))),
+                    child: Text(t('確定', 'Confirm'))),
               ])),
         ] else
           Expanded(
               child: CouponResults(
                   key: ValueKey((area, category)),
+                  api: widget.api,
                   load: () => widget.api
                       .classification(categoryId: category, area: area),
                   onOpenCoupon: widget.onOpenCoupon)),
@@ -146,7 +148,8 @@ class _DiscoveryScreenState extends State<DiscoveryScreen> {
 
 class CouponResults extends StatelessWidget {
   const CouponResults(
-      {super.key, required this.load, required this.onOpenCoupon});
+      {super.key, required this.api, required this.load, required this.onOpenCoupon});
+  final ApiClient api;
   final Future<List<dynamic>> Function() load;
   final ValueChanged<Coupon> onOpenCoupon;
   @override
@@ -167,8 +170,18 @@ class CouponResults extends StatelessWidget {
                 crossAxisSpacing: 8),
             itemBuilder: (c, i) {
               final coupon = Coupon.fromJson(rows[i]);
-              return CouponCard(
-                  coupon: coupon, onTap: () => onOpenCoupon(coupon));
+              return FavoriteControl(
+                key: ValueKey(coupon.id),
+                api: api,
+                id: coupon.id,
+                initial: coupon.isFavorite,
+                builder: (favorite, onFavorite) => CouponCard(
+                  coupon: coupon,
+                  isFavorite: favorite,
+                  onFavorite: onFavorite,
+                  onTap: () => onOpenCoupon(coupon),
+                ),
+              );
             });
       });
 }

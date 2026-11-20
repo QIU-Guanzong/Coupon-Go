@@ -287,10 +287,12 @@ class ApiClient extends ChangeNotifier {
       });
 
   // ---- favourites / notifications / records ----
-  Future<void> toggleFavoriteCoupon(int id) =>
-      post('/favorite-coupon-all', query: {'coupon_id': '$id'});
-  Future<void> toggleFavoriteShop(int id) =>
-      post('/favorite-shop', query: {'shop_id': '$id'});
+  Future<bool> toggleFavoriteCoupon(int id) async =>
+      (await post('/favorite-coupon-all', query: {'coupon_id': '$id'}))
+          ['is_coupon_favorite'] as bool;
+  Future<bool> toggleFavoriteShop(int id) async =>
+      (await post('/favorite-shop', query: {'shop_id': '$id'}))
+          ['is_shop_favorite'] as bool;
   Future<Map<String, dynamic>> notifications() async =>
       get('/get-notification-list');
   Future<void> markNotificationRead(int id) =>

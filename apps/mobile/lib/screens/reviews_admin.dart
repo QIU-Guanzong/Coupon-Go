@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 
 import '../api_client.dart';
+import '../language.dart';
 import '../models.dart';
 import '../theme.dart';
 import '../widgets/widgets.dart';
@@ -86,7 +87,7 @@ class _ReviewFormScreenState extends State<ReviewFormScreen> {
         _pickedNames.addAll(names);
       });
     } catch (_) {
-      if (mounted) showCgToast(context, '未能打开相册，请重试');
+      if (mounted) showCgToast(context, context.tr('未能打開相簿，請重試', 'Could not open your photos. Try again.'));
     }
   }
 
@@ -139,8 +140,8 @@ class _ReviewFormScreenState extends State<ReviewFormScreen> {
       // UI_SPEC §7: points are separate from stars. The server message
       // already states the points; show the earned-points line plainly.
       final pointsLine = _claimPoints
-          ? '已获得 15 积分'
-          : '評價已提交，已計入商户星級';
+          ? '已獲得 15 積分'
+          : '評價已提交，已計入商戶星級';
       await showDialog<void>(
         context: context,
         builder: (c) => AlertDialog(
@@ -242,9 +243,9 @@ class _ReviewFormScreenState extends State<ReviewFormScreen> {
           ],
           const SizedBox(height: 8),
           CheckboxListTile(
-            title: const Text('領取 +15 積分'),
-            subtitle: const Text(
-                '核銷撤銷後，這筆評價積分也會扣回。'),
+            title: Text(context.tr('領取評價積分', 'Earn review points')),
+            subtitle: Text(context.tr('核銷撤銷後，這筆評價積分也會扣回。',
+                'These points are removed if the redemption is reversed.')),
             value: _claimPoints,
             onChanged: (v) => setState(() => _claimPoints = v ?? true),
           ),
@@ -302,7 +303,7 @@ class _ShopReviewsScreenState extends State<ShopReviewsScreen> {
 
   Future<void> _vote(Review rev) async {
     if (!widget.api.isLoggedIn) {
-      showCgToast(context, '请先登录再投票');
+      showCgToast(context, context.tr('請先登入再投票', 'Sign in to vote.'));
       return;
     }
     final helpful = !_helpedByMe(rev);
@@ -353,7 +354,7 @@ class _ShopReviewsScreenState extends State<ShopReviewsScreen> {
     } on ApiException catch (_) {
       if (mounted) {
         setState(() {
-          _error = '网络不稳定，请重试';
+          _error = '網絡不穩定，請重試';
           _loading = false;
         });
       }
@@ -398,7 +399,7 @@ class _ShopReviewsScreenState extends State<ShopReviewsScreen> {
         color: const Color(0xFFF5F5F6),
         borderRadius: BorderRadius.circular(8),
       ),
-      child: Text('商户回覆：$reply',
+      child: Text('商戶回覆：$reply',
           style: const TextStyle(color: CgColors.textSecondary)),
     );
   }
@@ -437,7 +438,7 @@ class _ShopReviewsScreenState extends State<ShopReviewsScreen> {
                                 _distributionBar(
                                     s, dist[s] ?? 0, distTotal)),
                             const SizedBox(height: 4),
-                            const Text('只有已核销的用户可以写评价。',
+                            const Text('只有已核銷的用戶可以寫評價。',
                                 style: TextStyle(
                                     color: CgColors.textSecondary,
                                     fontSize: 12)),
@@ -496,7 +497,7 @@ class _ShopReviewsScreenState extends State<ShopReviewsScreen> {
                         child: Column(
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: [
-                            const Text('网络不稳定，请重试'),
+                            const Text('網絡不穩定，請重試'),
                             const SizedBox(height: 12),
                             ElevatedButton(
                                 onPressed: _load, child: const Text('重試')),
@@ -666,7 +667,7 @@ class _MerchantReviewReplyScreenState
     } on ApiException catch (_) {
       if (mounted) {
         setState(() {
-          _error = '网络不稳定，请重试';
+          _error = '網絡不穩定，請重試';
           _loading = false;
         });
       }
@@ -683,7 +684,7 @@ class _MerchantReviewReplyScreenState
           controller: ctrl,
           maxLines: 4,
           maxLength: 500,
-          decoration: const InputDecoration(hintText: '寫下商户回覆…'),
+          decoration: const InputDecoration(hintText: '寫下商戶回覆…'),
         ),
         actions: [
           TextButton(
@@ -709,7 +710,7 @@ class _MerchantReviewReplyScreenState
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-          title: Text('${widget.shopName ?? '商户'} · 差評回覆')),
+          title: Text('${widget.shopName ?? '商戶'} · 差評回覆')),
       body: _loading
           ? ListView(
               padding: const EdgeInsets.all(12),
@@ -724,7 +725,7 @@ class _MerchantReviewReplyScreenState
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      const Text('网络不稳定，请重试'),
+                      const Text('網絡不穩定，請重試'),
                       const SizedBox(height: 12),
                       ElevatedButton(
                           onPressed: _load, child: const Text('重試')),
@@ -1028,7 +1029,7 @@ class _AdminScreenState extends State<AdminScreen>
             childAspectRatio: 2.2,
             children: [
               _statCard('用戶', '${d['total_users'] ?? 0}'),
-              _statCard('商户', '${d['total_shops'] ?? 0}'),
+              _statCard('商戶', '${d['total_shops'] ?? 0}'),
               _statCard('優惠券', '${d['total_coupons'] ?? 0}'),
               _statCard('核銷', '${d['total_redemptions'] ?? 0}'),
               _statCard('評價', '${d['total_reviews'] ?? 0}'),
@@ -1110,7 +1111,7 @@ class _AdminScreenState extends State<AdminScreen>
           tabs: const [
             Tab(text: '概覽'),
             Tab(text: '入駐審核'),
-            Tab(text: '商户'),
+            Tab(text: '商戶'),
             Tab(text: '券'),
             Tab(text: '核銷'),
           ],
@@ -1123,7 +1124,7 @@ class _AdminScreenState extends State<AdminScreen>
           _applicationsTab(),
           _simpleListTab(_shops, (e) => '${e['shop_name']}',
               (e) => '券 ${e['coupon_count']} · 核銷 ${e['redemption_count']}',
-              '暫無商户。'),
+              '暫無商戶。'),
           _simpleListTab(_coupons, (e) => '${e['coupon_name']}',
               (e) => '${e['shop_name']} · ${e['status']}',
               '暫無優惠券。'),

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../language.dart';
 import '../models.dart';
 import '../theme.dart';
 
@@ -29,14 +30,16 @@ class CatalogPhoto extends StatelessWidget {
 /// Two-column coupon card (home grid / lists). Photo on top, name, price row
 /// (discount large, original struck through), orange CTA, heart top-right.
 class CouponCard extends StatelessWidget {
-  const CouponCard({super.key, required this.coupon, this.onTap, this.onFavorite});
+  const CouponCard({super.key, required this.coupon, this.onTap, this.onFavorite, this.isFavorite});
 
   final Coupon coupon;
   final VoidCallback? onTap;
   final VoidCallback? onFavorite;
+  final bool? isFavorite;
 
   @override
   Widget build(BuildContext context) {
+    final favorite = isFavorite ?? coupon.isFavorite;
     return Card(
       clipBehavior: Clip.antiAlias,
       child: InkWell(
@@ -53,27 +56,18 @@ class CouponCard extends StatelessWidget {
                 Positioned(
                   right: 6,
                   top: 6,
-                  child: GestureDetector(
-                    onTap: onFavorite,
-                    child: Container(
-                      padding: const EdgeInsets.all(6),
-                      decoration: const BoxDecoration(
-                        color: Colors.white,
-                        shape: BoxShape.circle,
-                      ),
-                      child: Image.asset(
-                        coupon.isFavorite
-                            ? 'assets/images/ic_filled_heart.png'
-                            : 'assets/images/ic_empty_heart.png',
-                        width: 18,
-                        height: 18,
-                        errorBuilder: (_, __, ___) => Icon(
-                          coupon.isFavorite ? Icons.favorite : Icons.favorite_border,
-                          size: 18,
-                          color: CgColors.primary,
-                        ),
-                      ),
+                  child: IconButton(
+                    onPressed: onFavorite,
+                    tooltip: favorite
+                        ? context.tr('取消收藏', 'Remove from favorites')
+                        : context.tr('加入收藏', 'Add to favorites'),
+                    style: IconButton.styleFrom(
+                      backgroundColor: Colors.white,
+                      disabledBackgroundColor: Colors.white,
+                      minimumSize: const Size(44, 44),
                     ),
+                    icon: Icon(favorite ? Icons.favorite : Icons.favorite_border,
+                        size: 18, color: CgColors.primary),
                   ),
                 ),
               ],
@@ -161,10 +155,11 @@ class SectionHeader extends StatelessWidget {
           if (onViewAll != null)
             GestureDetector(
               onTap: onViewAll,
-              child: const Row(
+              child: Row(
                 children: [
-                  Text('睇全部', style: TextStyle(color: CgColors.primary)),
-                  Icon(Icons.chevron_right, size: 18, color: CgColors.primary),
+                  Text(context.tr('查看全部', 'See all'),
+                      style: const TextStyle(color: CgColors.primary)),
+                  const Icon(Icons.chevron_right, size: 18, color: CgColors.primary),
                 ],
               ),
             ),

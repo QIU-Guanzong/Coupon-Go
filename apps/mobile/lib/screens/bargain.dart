@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../api_client.dart';
+import '../language.dart';
 import '../models.dart';
 import '../theme.dart';
 import '../widgets/widgets.dart';
@@ -276,7 +277,7 @@ class _BargainCard extends StatelessWidget {
                   const SizedBox(width: 4),
                   Flexible(
                     child: Text(
-                      '底价 ${formatHkd(campaign.floorPrice)}',
+                      '底價 ${formatHkd(campaign.floorPrice)}',
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: const TextStyle(
@@ -308,7 +309,7 @@ class _BargainCard extends StatelessWidget {
                     padding: EdgeInsets.zero,
                   ),
                   onPressed: campaign.isSoldOut ? null : onTap,
-                  child: Text(campaign.isSoldOut ? '已售罄' : '去砍价'),
+                  child: Text(campaign.isSoldOut ? '已售罄' : '去砍價'),
                 ),
               ),
             ),
@@ -389,7 +390,7 @@ class _BargainCampaignScreenState extends State<BargainCampaignScreen> {
           Row(
             crossAxisAlignment: CrossAxisAlignment.end,
             children: [
-              const Text('底价 ',
+              const Text('底價 ',
                   style: TextStyle(
                       color: CgColors.textSecondary, fontSize: 16)),
               Text(formatHkd(c.floorPrice),
@@ -401,7 +402,7 @@ class _BargainCampaignScreenState extends State<BargainCampaignScreen> {
               const SizedBox(width: 10),
               Padding(
                 padding: const EdgeInsets.only(bottom: 6),
-                child: Text('原价 ${formatHkd(c.originalPrice)}',
+                child: Text('原價 ${formatHkd(c.originalPrice)}',
                     style: const TextStyle(
                         decoration: TextDecoration.lineThrough,
                         color: CgColors.textSecondary)),
@@ -411,29 +412,29 @@ class _BargainCampaignScreenState extends State<BargainCampaignScreen> {
           if (timeLeft != null)
             Padding(
               padding: const EdgeInsets.only(top: 4),
-              child: Text('剩余时间 ${formatCountdown(timeLeft)}',
+              child: Text('剩餘時間 ${formatCountdown(timeLeft)}',
                   style: const TextStyle(color: CgColors.textSecondary)),
             ),
           const SizedBox(height: 16),
-          const Text('砍价规则', style: TextStyle(fontWeight: FontWeight.bold)),
+          const Text('砍價規則', style: TextStyle(fontWeight: FontWeight.bold)),
           const SizedBox(height: 8),
           const _RuleStep(
               icon: Icons.payments,
-              text: '付款后发起砍价，先付原价锁定库存'),
+              text: '付款後發起砍價，先付原價鎖定庫存'),
           const _RuleStep(
-              icon: Icons.share, text: '分享给好友助力，每人帮你砍一刀'),
+              icon: Icons.share, text: '分享給好友助力，每人幫你砍一刀'),
           const _RuleStep(
               icon: Icons.replay,
-              text: '价格降到底价或时间到，差额自动退回'),
+              text: '價格降到底價或時間到，差額自動退回'),
           const SizedBox(height: 16),
           Text(
-              '数量有限，先到先得，剩余库存 ${c.stockLeft} 份',
+              '數量有限，先到先得，剩餘庫存 ${c.stockLeft} 份',
               style: const TextStyle(fontWeight: FontWeight.bold)),
           const SizedBox(height: 4),
-          Text('已有 ${c.helperCount} 人在砍 · ${c.helperLimit} 人成团',
+          Text('已有 ${c.helperCount} 人在砍 · ${c.helperLimit} 人成團',
               style: const TextStyle(color: CgColors.textSecondary)),
           const SizedBox(height: 24),
-          Text('先付 ${formatHkd(c.originalPrice)}，砍价差额自动退回',
+          Text('先付 ${formatHkd(c.originalPrice)}，砍價差額自動退回',
               textAlign: TextAlign.center,
               style: const TextStyle(fontWeight: FontWeight.bold)),
           const SizedBox(height: 8),
@@ -447,14 +448,14 @@ class _BargainCampaignScreenState extends State<BargainCampaignScreen> {
               ),
               onPressed: (_busy || c.isSoldOut) ? null : _start,
               child: Text(_busy
-                  ? '处理中…'
+                  ? context.tr('處理中…', 'Processing…')
                   : c.isSoldOut
-                      ? '已售罄'
-                      : '立即发起砍价'),
+                      ? context.tr('已售罄', 'Sold out')
+                      : context.tr('立即發起砍價', 'Start bargain')),
             ),
           ),
           const SizedBox(height: 8),
-          const Text('未成团 / 超时全额原路退款（1–3 个工作日）。',
+          const Text('未成團 / 超時全額原路退款（1–3 個工作日）。',
               textAlign: TextAlign.center,
               style: TextStyle(color: CgColors.textSecondary, fontSize: 12)),
         ],
@@ -566,7 +567,7 @@ class _BargainDetailScreenState extends State<BargainDetailScreen> {
     final ok = await _requireLogin(context, widget.api);
     if (!ok || !mounted) return;
     if (s.alreadyHelped) {
-      showCgToast(context, '你已经帮 TA 砍过啦');
+      showCgToast(context, '你已經幫 TA 砍過啦');
       return;
     }
     setState(() => _busy = true);
@@ -600,9 +601,9 @@ class _BargainDetailScreenState extends State<BargainDetailScreen> {
         builder: (ctx, scale, child) =>
             Transform.scale(scale: scale, child: child),
         child: AlertDialog(
-          title: const Text('砍价成功'),
-          content: Text('你帮 TA 砍了 ${formatHkd(cut)}！'
-              '${updated.status == 'success' ? '已砍到底价。' : ''}'),
+          title: const Text('砍價成功'),
+          content: Text('你幫 TA 砍了 ${formatHkd(cut)}！'
+              '${updated.status == 'success' ? '已砍到底價。' : ''}'),
           actions: [
             TextButton(
               onPressed: () => Navigator.of(d).pop(),
@@ -621,7 +622,7 @@ class _BargainDetailScreenState extends State<BargainDetailScreen> {
                       builder: (_) => BargainListScreen(api: widget.api)));
                 }
               },
-              child: const Text('我也要发起砍价'),
+              child: const Text('我也要發起砍價'),
             ),
           ],
         ),
@@ -638,10 +639,11 @@ class _BargainDetailScreenState extends State<BargainDetailScreen> {
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('现在购买'),
-        content: Text(
-            '以当前价 ${formatHkd(s.currentPrice)} 结算。\n'
-            '差价 ${formatHkd(refund)} 将原路退回，预计 1–3 个工作日到账。'),
+        title: Text(context.tr('現在購買', 'Buy now')),
+        content: Text(context.tr(
+            '以當前價 ${formatHkd(s.currentPrice)} 結算。\n差價 ${formatHkd(refund)} 將原路退回，預計 1–3 個工作日到帳。',
+            'Pay ${formatHkd(s.currentPrice)} now. The ${formatHkd(refund)} difference will be returned to your original payment method in 1–3 business days.',
+        )),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(ctx).pop(false),
@@ -649,7 +651,7 @@ class _BargainDetailScreenState extends State<BargainDetailScreen> {
           ),
           ElevatedButton(
             onPressed: () => Navigator.of(ctx).pop(true),
-            child: const Text('确认购买'),
+            child: Text(context.tr('確認購買', 'Confirm purchase')),
           ),
         ],
       ),
@@ -676,12 +678,12 @@ class _BargainDetailScreenState extends State<BargainDetailScreen> {
     final s = _session;
     if (s == null) return;
     Clipboard.setData(ClipboardData(text:
-        '帮我砍一刀！${s.campaign?.name ?? ''} 原价 ${formatHkd(s.originalPrice)}，'
-        '现价 ${formatHkd(s.currentPrice)}，砍到底价 ${formatHkd(s.floorPrice)} 就能拿套餐：${s.shareLink}'));
+        '幫我砍一刀！${s.campaign?.name ?? ''} 原價 ${formatHkd(s.originalPrice)}，'
+        '現價 ${formatHkd(s.currentPrice)}，砍到底價 ${formatHkd(s.floorPrice)} 就能拿套餐：${s.shareLink}'));
     showDialog<void>(
       context: context,
       builder: (d) => AlertDialog(
-        title: const Text('分享给好友助力'),
+        title: const Text('分享給好友助力'),
         content: SelectableText(
             '連結已複製，發給好友打開 App 即可助力：\n${s.shareLink}'),
         actions: [
@@ -733,7 +735,8 @@ class _BargainDetailScreenState extends State<BargainDetailScreen> {
                       name: s.initiatorName, avatar: s.initiatorAvatar),
                   const SizedBox(width: 10),
                   Expanded(
-                    child: Text('${s.initiatorName} 邀请你帮 TA 砍一刀',
+                    child: Text(context.tr('${s.initiatorName} 邀請你幫忙砍價',
+                        '${s.initiatorName} invited you to help lower the price'),
                         style: const TextStyle(fontWeight: FontWeight.w600)),
                   ),
                 ],
@@ -760,7 +763,7 @@ class _BargainDetailScreenState extends State<BargainDetailScreen> {
                 Padding(
                   padding: const EdgeInsets.only(bottom: 6),
                   child: Text(
-                    '原价 ${formatHkd(s.originalPrice)} · 底价 ${formatHkd(s.floorPrice)}',
+                    '原價 ${formatHkd(s.originalPrice)} · 底價 ${formatHkd(s.floorPrice)}',
                     style: const TextStyle(color: Colors.grey),
                   ),
                 ),
@@ -781,7 +784,7 @@ class _BargainDetailScreenState extends State<BargainDetailScreen> {
                 Text('已砍 ${formatHkd(s.cutTotal)}',
                     style: const TextStyle(fontWeight: FontWeight.bold)),
                 const SizedBox(width: 12),
-                Text('还差 ${formatHkd(s.remainingToFloor)} 到底价',
+                Text('還差 ${formatHkd(s.remainingToFloor)} 到底價',
                     style: const TextStyle(color: CgColors.textSecondary)),
                 const Spacer(),
                 Text('${s.helperCount}/${s.helperLimit} 人助力'),
@@ -793,12 +796,12 @@ class _BargainDetailScreenState extends State<BargainDetailScreen> {
                 Chip(label: Text(s.statusText)),
                 const SizedBox(width: 8),
                 if (active && _secondsLeft > 0)
-                  Text('倒计时 ${formatCountdown(Duration(seconds: _secondsLeft))}',
+                  Text('倒計時 ${formatCountdown(Duration(seconds: _secondsLeft))}',
                       style: const TextStyle(color: Colors.grey)),
                 if (s.stockLocked && active)
                   const Padding(
                     padding: EdgeInsets.only(left: 8),
-                    child: Text('已为你锁定 1 份库存',
+                    child: Text('已為你鎖定 1 份庫存',
                         style: TextStyle(color: Colors.grey)),
                   ),
               ],
@@ -808,11 +811,12 @@ class _BargainDetailScreenState extends State<BargainDetailScreen> {
               const SizedBox(height: 16),
               _TerminalCard(
                 icon: Icons.check_circle,
-                title: '已购买，套餐券在钱包',
+                title: '已購買，套餐券在錢包',
                 lines: [
                   if (s.refunds.isNotEmpty)
                     ...s.refunds.map((r) => '${r.reasonText} ${formatHkd(r.amount)}'),
-                  '预计到账：1–3 个工作日原路退回',
+                  context.tr('預計到帳：1–3 個工作日原路退回',
+                      'Expected in 1–3 business days via your original payment method'),
                 ],
               ),
             ],
@@ -820,8 +824,9 @@ class _BargainDetailScreenState extends State<BargainDetailScreen> {
               const SizedBox(height: 16),
               _TerminalCard(
                 icon: Icons.info_outline,
-                title: '砍价已结束，已全额退款 ${formatHkd(s.refundTotal)}',
-                lines: const ['预计到账：1–3 个工作日原路退回'],
+                title: '砍價已結束，已全額退款 ${formatHkd(s.refundTotal)}',
+                lines: [context.tr('預計到帳：1–3 個工作日原路退回',
+                    'Expected in 1–3 business days via your original payment method')],
               ),
               const SizedBox(height: 16),
               SizedBox(
@@ -829,7 +834,7 @@ class _BargainDetailScreenState extends State<BargainDetailScreen> {
                 height: 48,
                 child: OutlinedButton(
                   onPressed: _openOtherBargains,
-                  child: const Text('去看看其他砍价'),
+                  child: const Text('去看看其他砍價'),
                 ),
               ),
             ],
@@ -847,7 +852,7 @@ class _BargainDetailScreenState extends State<BargainDetailScreen> {
                     ),
                     onPressed: _share,
                     icon: const Icon(Icons.share),
-                    label: const Text('分享给好友'),
+                    label: const Text('分享給好友'),
                   ),
                 ),
               if (isOwner != true) ...[
@@ -859,13 +864,13 @@ class _BargainDetailScreenState extends State<BargainDetailScreen> {
                     onPressed: (s.alreadyHelped || _busy) ? null : _help,
                     icon: const Icon(Icons.content_cut),
                     label: Text(
-                        s.alreadyHelped ? '你已经帮 TA 砍过啦' : '帮 TA 砍一刀'),
+                        s.alreadyHelped ? '你已經幫 TA 砍過啦' : '幫 TA 砍一刀'),
                   ),
                 ),
                 if (s.alreadyHelped)
                   const Padding(
                     padding: EdgeInsets.only(top: 8),
-                    child: Text('你已经帮 TA 砍过啦',
+                    child: Text('你已經幫 TA 砍過啦',
                         textAlign: TextAlign.center,
                         style: TextStyle(color: CgColors.textSecondary)),
                   ),
@@ -878,25 +883,26 @@ class _BargainDetailScreenState extends State<BargainDetailScreen> {
                   child: OutlinedButton(
                     onPressed: _busy ? null : _purchase,
                     child: Text(
-                        '现在购买（以 ${formatHkd(s.currentPrice)} 结算）'),
+                        context.tr('現在購買（以 ${formatHkd(s.currentPrice)} 結算）',
+                            'Buy now for ${formatHkd(s.currentPrice)}')),
                   ),
                 ),
               ],
             ],
             const SizedBox(height: 16),
-            const Text('助力记录',
-                style: TextStyle(fontWeight: FontWeight.bold)),
+            Text(context.tr('助力記錄', 'Bargain help history'),
+                style: const TextStyle(fontWeight: FontWeight.bold)),
             if (s.helps.isEmpty)
-              const Padding(
-                padding: EdgeInsets.only(top: 8),
-                child: Text('分享给好友，每人帮你砍一刀。'),
+              Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: Text(context.tr('分享給好友，每人幫你砍一刀。', 'Share with friends so each one can help lower the price.')),
               ),
             ...s.helps.map((hp) => ListTile(
                   contentPadding: EdgeInsets.zero,
                   leading: _Avatar(name: hp.helperName, avatar: hp.avatar),
                   title: Text(hp.helperName),
                   subtitle: Text(
-                      '${hp.createdAt == null ? '' : formatDateTime(hp.createdAt)}${hp.isNewUser ? ' · 新用户助力' : ''}'),
+                      '${hp.createdAt == null ? '' : formatDateTime(hp.createdAt)}${hp.isNewUser ? ' · 新用戶助力' : ''}'),
                   trailing: Text(
                       '−${formatHkd(hp.cutAmount)}',
                       style: const TextStyle(
@@ -906,7 +912,7 @@ class _BargainDetailScreenState extends State<BargainDetailScreen> {
                 )),
             const SizedBox(height: 8),
             const Text(
-                '每人每单限助一次；新用户（注册 7 天内）助力砍得更多。未成团 / 超时全额原路退款。',
+                '每人每單限助一次；新用戶（註冊 7 天內）助力砍得更多。未成團 / 超時全額原路退款。',
                 style: TextStyle(color: Colors.grey, fontSize: 12)),
           ],
         ),
@@ -1037,7 +1043,7 @@ class BargainResultScreen extends StatelessWidget {
               child: ElevatedButton(
                 onPressed: () =>
                     Navigator.of(context).popUntil((r) => r.isFirst),
-                child: const Text('返回钱包查看套餐券'),
+                child: const Text('返回錢包查看套餐券'),
               ),
             ),
           ],
@@ -1114,7 +1120,7 @@ class _ErrorView extends StatelessWidget {
           children: [
             const Icon(Icons.wifi_off, size: 48, color: CgColors.textSecondary),
             const SizedBox(height: 12),
-            const Text('网络不稳定，请重试', textAlign: TextAlign.center),
+            const Text('網絡不穩定，請重試', textAlign: TextAlign.center),
             const SizedBox(height: 16),
             ElevatedButton(
               style: ElevatedButton.styleFrom(

@@ -1,5 +1,9 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../api_client.dart';
 import '../language.dart';
@@ -9,6 +13,7 @@ export 'discovery.dart' show DiscoveryScreen;
 import '../models.dart';
 import '../theme.dart';
 import '../widgets/widgets.dart';
+import '../widgets/favorite_control.dart';
 import 'bargain.dart';
 import 'packages.dart';
 import 'reviews_admin.dart';
@@ -40,11 +45,46 @@ class _HomeScreenState extends State<HomeScreen> {
   String _area = '全部地區';
   bool _loading = true;
   bool _error = false;
+  static const _qbotHintSeen = 'home_qbot_hint_seen_v1';
+  final _qbotHint = GlobalKey<TooltipState>();
+  Timer? _qbotHintTimer;
 
   @override
   void initState() {
     super.initState();
     _load();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _showQbotHint());
+  }
+
+  Future<void> _showQbotHint() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      if (!mounted || ModalRoute.of(context)?.isCurrent != true ||
+          prefs.getBool(_qbotHintSeen) == true) {
+        return;
+      }
+      if (_qbotHint.currentState?.ensureTooltipVisible() != true) return;
+      _qbotHintTimer = Timer(const Duration(seconds: 4), () {
+        if (mounted && ModalRoute.of(context)?.isCurrent == true) {
+          Tooltip.dismissAllToolTips();
+        }
+      });
+      await prefs.setBool(_qbotHintSeen, true);
+    } catch (_) {
+      // The hint is optional when preferences are unavailable.
+    }
+  }
+
+  void _openQbot() {
+    _qbotHintTimer?.cancel();
+    Tooltip.dismissAllToolTips();
+    Navigator.of(context).pushNamed('/qbot');
+  }
+
+  @override
+  void dispose() {
+    _qbotHintTimer?.cancel();
+    super.dispose();
   }
 
   Future<void> _load() async {
@@ -163,13 +203,35 @@ class _HomeScreenState extends State<HomeScreen> {
                 Image.asset('assets/images/img_logo.png', height: 32,
                     errorBuilder: (_, __, ___) => const SizedBox()),
                 const SizedBox(width: 8),
-                const Text('COUPON GO!',
-                    style: TextStyle(fontWeight: FontWeight.bold)),
+                const Flexible(
+                  child: Text('COUPON GO!',
+                      maxLines: 1, overflow: TextOverflow.ellipsis,
+                      style: TextStyle(fontWeight: FontWeight.bold)),
+                ),
               ],
             ),
             actions: [
-              IconButton(tooltip: 'Q仔', icon: Image.asset('assets/images/img_logo_cropped.png', width: 30),
-                onPressed: () => Navigator.of(context).pushNamed('/qbot')),
+              Tooltip(
+                key: _qbotHint,
+                message: context.tr('找優惠、查積分，問 Q仔。', 'Ask Q仔 for offers or points.'),
+                triggerMode: TooltipTriggerMode.manual,
+                preferBelow: true,
+                excludeFromSemantics: true,
+                child: TextButton(
+                  onPressed: _openQbot,
+                  style: TextButton.styleFrom(
+                    foregroundColor: Theme.of(context)
+                        .colorScheme.onPrimary,
+                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                  ),
+                  child: Row(mainAxisSize: MainAxisSize.min, children: [
+                    Image.asset('assets/images/img_logo_cropped.png',
+                        width: 24, excludeFromSemantics: true),
+                    const SizedBox(width: 4),
+                    const Text('Q仔', maxLines: 1, softWrap: false),
+                  ]),
+                ),
+              ),
               IconButton(
                 icon: const Icon(Icons.notifications_outlined),
                 tooltip: context.tr('通知','Notifications'),
@@ -473,8 +535,9 @@ class _BargainHomeCard extends StatelessWidget {
               ),
               Padding(
                 padding: const EdgeInsets.fromLTRB(8, 2, 8, 0),
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.end,
+                child: Wrap(
+                  spacing: 4,
+                  crossAxisAlignment: WrapCrossAlignment.center,
                   children: [
                     Text(
                       formatHkd(campaign.originalPrice),
@@ -484,15 +547,13 @@ class _BargainHomeCard extends StatelessWidget {
                           fontSize: 16,
                           fontFeatures: [FontFeature.tabularFigures()]),
                     ),
-                    const SizedBox(width: 4),
-                    Flexible(
-                      child: Text(
-                        '底价 ${formatHkd(campaign.floorPrice)}',
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                            color: CgColors.textSecondary, fontSize: 11),
-                      ),
+                    Text(
+                      context.tr('底價 ${formatHkd(campaign.floorPrice)}',
+                          'Floor ${formatHkd(campaign.floorPrice)}'),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                          color: CgColors.textSecondary, fontSize: 11),
                     ),
                   ],
                 ),
@@ -501,8 +562,10 @@ class _BargainHomeCard extends StatelessWidget {
                 padding: const EdgeInsets.fromLTRB(8, 2, 8, 0),
                 child: Text(
                   timeLeft == null
-                      ? '已有 ${campaign.helperCount} 人在砍'
-                      : '剩 ${formatCountdown(timeLeft)}',
+                      ? context.tr('已有 ${campaign.helperCount} 人在砍',
+                          '${campaign.helperCount} joining in')
+                      : context.tr('剩 ${formatCountdown(timeLeft)}',
+                          '${formatCountdown(timeLeft)} left'),
                   style: const TextStyle(
                       color: CgColors.textSecondary, fontSize: 11),
                 ),
@@ -518,7 +581,11 @@ class _BargainHomeCard extends StatelessWidget {
                       backgroundColor: CgColors.orange,
                       foregroundColor: Colors.white,
                       padding: EdgeInsets.zero,
-                      textStyle: const TextStyle(fontSize: 14),
+                      textStyle: const TextStyle(
+                        fontFamily: 'Roboto',
+                        fontFamilyFallback: ['Coupon UI Fallback', 'Coupon UI Supplemental'],
+                        fontSize: 14,
+                      ),
                     ),
                     onPressed: onTap,
                     child: Text(context.tr('去砍價','Bargain')),
@@ -826,11 +893,28 @@ class _CouponDetailScreenState extends State<CouponDetailScreen> {
   @override
   Widget build(BuildContext context) {
     final c = widget.coupon;
+    final validDate = c.validTo;
+    final validText = validDate?.toLocal().toString().split(' ').first;
+    final remaining = _remaining ?? c.remaining;
+    final amount = c.type == 'Cash' && c.cashAmount != null
+        ? context.tr('減 \$${c.cashAmount!.toStringAsFixed(0)}',
+            'HK\$${c.cashAmount!.toStringAsFixed(0)} off')
+        : c.type == 'Discount' && c.percentage != null
+            ? context.tr('${(c.percentage! / 10).toStringAsFixed(c.percentage! % 10 == 0 ? 0 : 1)} 折',
+                '${c.percentage!.toStringAsFixed(c.percentage! % 1 == 0 ? 0 : 1)}% of regular price')
+            : c.type == 'Gift'
+                ? context.tr(c.amountText, 'Free ${c.gift}')
+                : c.amountText;
     if (c.packageId != null) {
       return PackageDetailScreen(api: widget.api, packageId: c.packageId!);
     }
     return Scaffold(
-      appBar: AppBar(title: const Text('優惠券詳情')),
+      appBar: AppBar(
+        title: Text(context.tr('優惠券詳情', 'Coupon details')),
+        actions: [
+          FavoriteControl(api: widget.api, id: c.id, initial: c.isFavorite),
+        ],
+      ),
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
@@ -844,31 +928,42 @@ class _CouponDetailScreenState extends State<CouponDetailScreen> {
           const SizedBox(height: 6),
           Text(c.shopName, style: const TextStyle(color: CgColors.textSecondary)),
           const SizedBox(height: 12),
-          Row(
+          Wrap(
+            spacing: 10,
+            runSpacing: 6,
+            crossAxisAlignment: WrapCrossAlignment.center,
             children: [
-              Text(c.amountText,
+              Text(amount,
                   style: const TextStyle(
                       color: CgColors.primary,
                       fontSize: 26,
                       fontWeight: FontWeight.bold)),
-              if (c.regularPrice != null) ...[
-                const SizedBox(width: 10),
+              if (c.regularPrice != null)
                 Text('\$${c.regularPrice!.toStringAsFixed(0)}',
                     style: const TextStyle(
                         decoration: TextDecoration.lineThrough,
                         color: CgColors.textSecondary)),
-              ],
-              const Spacer(),
-              Chip(label: Text(c.daysLeft > 0 ? '剩 ${c.daysLeft} 日' : '即將到期')),
+              if (validDate != null)
+                Chip(label: Text(c.daysLeft > 0
+                  ? context.tr('剩 ${c.daysLeft} 日', '${c.daysLeft} days left')
+                  : validDate.isBefore(DateTime.now())
+                      ? context.tr('已到期', 'Expired')
+                      : context.tr('即將到期', 'Ends soon'))),
             ],
           ),
           const SizedBox(height: 12),
-          Text('有效日期：至 ${c.validTo?.toLocal().toString().split(' ').first ?? ''}'),
-          Text('剩餘數量：${_remaining ?? c.remaining} / ${c.total}'),
-          if (c.minSpend > 0) Text('於本店惠顧滿 \$${c.minSpend.toStringAsFixed(0)}'),
-          const SizedBox(height: 16),
-          const Text('條款和條件', style: TextStyle(fontWeight: FontWeight.bold)),
-          Text(c.terms.isEmpty ? '每人限領一次；不可與其他優惠同時使用。' : c.terms),
+          if (validText != null)
+            Text(context.tr('有效日期：至 $validText', 'Valid until $validText')),
+          Text(context.tr('剩餘數量：$remaining / ${c.total}', 'Remaining: $remaining / ${c.total}')),
+          if (c.minSpend > 0) Text(context.tr(
+              '於本店惠顧滿 \$${c.minSpend.toStringAsFixed(0)}',
+              'Minimum spend HK\$${c.minSpend.toStringAsFixed(0)}')),
+          if (c.terms.trim().isNotEmpty) ...[
+            const SizedBox(height: 16),
+            Text(context.tr('條款和條件', 'Terms and conditions'),
+                style: const TextStyle(fontWeight: FontWeight.bold)),
+            Text(c.terms.trim()),
+          ],
         ],
       ),
       bottomNavigationBar: Padding(
@@ -892,19 +987,23 @@ class _CouponDetailScreenState extends State<CouponDetailScreen> {
                       _remaining = result['coupon']?['remaining'] as int?;
                     });
                     if (context.mounted) {
-                      showCgToast(context, '已存入 Q Wallet（+10 分）');
+                      showCgToast(context, context.tr('已存入 Q Wallet', 'Saved to Q Wallet'));
                     }
                   } on ApiException catch (e) {
                     if (!context.mounted) return;
                     if (e.status == 409) setState(() => _claimed = true);
                     showCgToast(context, e.message);
                   } catch (_) {
-                    if (context.mounted) showCgToast(context, '未能確認領券結果，請重試');
+                    if (context.mounted) showCgToast(context, context.tr('未能確認領券結果，請重試', 'Could not confirm the claim. Try again.'));
                   } finally {
                     if (mounted) setState(() => _claiming = false);
                   }
                 },
-          child: Text(_claimed ? '已領取' : _claiming ? '領取中…' : '立即領取'),
+          child: Text(_claimed
+              ? context.tr('已領取', 'Claimed')
+              : _claiming
+                  ? context.tr('領取中…', 'Claiming…')
+                  : context.tr('立即領取', 'Claim now')),
         ),
       ),
     );
@@ -912,29 +1011,79 @@ class _CouponDetailScreenState extends State<CouponDetailScreen> {
 }
 
 /// Shop detail: photos, info, branches, coupons from this shop.
-class ShopDetailScreen extends StatelessWidget {
+class ShopDetailScreen extends StatefulWidget {
   const ShopDetailScreen({super.key, required this.api, required this.shop,
-    required this.onOpenCoupon});
+    required this.onOpenCoupon, this.launchExternal});
 
   final ApiClient api;
   final Shop shop;
   final void Function(Coupon) onOpenCoupon;
+  final Future<bool> Function(Uri)? launchExternal;
+
+  @override
+  State<ShopDetailScreen> createState() => _ShopDetailScreenState();
+}
+
+class _ShopDetailScreenState extends State<ShopDetailScreen> {
+  late Future<Map<String, dynamic>> _detail = widget.api.shopDetails(widget.shop.id);
+
+  void _reload() {
+    final result = widget.api.shopDetails(widget.shop.id);
+    setState(() { _detail = result; });
+  }
+
+  Future<void> _launch(Uri uri) async {
+    try {
+      final launched = await (widget.launchExternal?.call(uri) ??
+          launchUrl(uri, mode: LaunchMode.externalApplication));
+      if (launched) return;
+    } catch (_) {
+      // Stay on the shop screen if no system handler can open the link.
+    }
+    if (mounted) {
+      showCgToast(context, context.tr('未能開啟連結', 'Could not open the link'));
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
+    final api = widget.api;
+    final initialShop = widget.shop;
     return Scaffold(
-      appBar: AppBar(title: Text(shop.name)),
+      appBar: AppBar(
+        title: Text(initialShop.name),
+        actions: [
+          FavoriteControl(api: api, id: initialShop.id, shop: true, initial: initialShop.isFavorite),
+        ],
+      ),
       body: FutureBuilder<Map<String, dynamic>>(
-        future: api.shopDetails(shop.id),
+        future: _detail,
         builder: (context, snap) {
-          if (!snap.hasData) {
+          if (snap.connectionState != ConnectionState.done) {
             return const Padding(
               padding: EdgeInsets.all(16),
               child: Column(children: [SkeletonBox(height: 200)]),
             );
           }
+          if (snap.hasError || !snap.hasData) {
+            return Center(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(context.tr('未能載入商店資料', 'Could not load store details')),
+                  TextButton(onPressed: _reload, child: Text(context.tr('重試', 'Retry'))),
+                ],
+              ),
+            );
+          }
           final data = snap.data!;
-          final coupons = (data['coupons'] as List)
+          final shop = data['shop'] is Map<String, dynamic>
+              ? Shop.fromJson(data['shop'] as Map<String, dynamic>)
+              : initialShop;
+          final phone = shop.phone.trim().isEmpty ? initialShop.phone : shop.phone;
+          final dialNumber = phone.replaceAll(RegExp(r'[\s().-]'), '');
+          final canDial = RegExp(r'^\+?[0-9]+$').hasMatch(dialNumber);
+          final coupons = ((data['coupons'] as List?) ?? [])
               .map((e) => Coupon.fromJson(e))
               .toList();
           final branches = (data['branches'] as List?) ?? [];
@@ -949,14 +1098,20 @@ class ShopDetailScreen extends StatelessWidget {
               Text(shop.name,
                   style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
               Text('${shop.areaName} · ${shop.categoryName}'),
-              Text(shop.address),
-              Text(shop.phone),
+              if (shop.address.isNotEmpty) Text(shop.address),
+              if (phone.trim().isNotEmpty)
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: const Icon(Icons.call_outlined),
+                  title: Text(phone),
+                  onTap: canDial ? () => _launch(Uri(scheme: 'tel', path: dialNumber)) : null,
+                ),
               if (shop.description.isNotEmpty) Text(shop.description),
               const SizedBox(height: 8),
               ListTile(
                 leading: const Icon(Icons.star, color: CgColors.amber),
-                title: const Text('評分與評價'),
-                subtitle: const Text('口味 / 環境 / 服務三維評分'),
+                title: Text(context.tr('評分與評價', 'Ratings and reviews')),
+                subtitle: Text(context.tr('口味、環境及服務', 'Taste, ambience and service')),
                 trailing: const Icon(Icons.chevron_right),
                 onTap: () => Navigator.of(context).push(MaterialPageRoute(
                     builder: (_) =>
@@ -964,23 +1119,32 @@ class ShopDetailScreen extends StatelessWidget {
               ),
               const SizedBox(height: 8),
               if (branches.isNotEmpty) ...[
-                const Text('分店', style: TextStyle(fontWeight: FontWeight.bold)),
-                ...branches.map((b) => ListTile(
-                      leading: const Icon(Icons.store),
-                      title: Text(b['branch_name'] as String),
-                      subtitle: Text((b['address'] as String?) ?? ''),
+                Text(context.tr('分店', 'Branches'),
+                    style: const TextStyle(fontWeight: FontWeight.bold)),
+                ...branches.map((b) {
+                  final address = (b['address'] as String?)?.trim() ?? '';
+                  return ListTile(
+                    leading: const Icon(Icons.store),
+                    title: Text((b['branch_name'] as String?) ?? ''),
+                    subtitle: address.isEmpty ? null : Text(address),
+                    trailing: address.isEmpty ? null : const Icon(Icons.map_outlined),
+                    onTap: address.isEmpty ? null : () => _launch(Uri.https(
+                      'www.google.com', '/maps/search/', {'api': '1', 'query': address},
                     )),
+                  );
+                }),
               ],
               const SizedBox(height: 8),
-              const Text('本店優惠券', style: TextStyle(fontWeight: FontWeight.bold)),
+              Text(context.tr('本店優惠券', 'Store coupons'),
+                  style: const TextStyle(fontWeight: FontWeight.bold)),
               ...coupons.map((c) => ListTile(
                     leading: const Icon(Icons.local_offer, color: CgColors.primary),
                     title: Text(c.name),
                     subtitle: Text(c.amountText),
                     trailing: const Icon(Icons.chevron_right),
-                    onTap: () => onOpenCoupon(c),
+                    onTap: () => widget.onOpenCoupon(c),
                   )),
-              if (coupons.isEmpty) const Text('暫時沒有優惠券。'),
+              if (coupons.isEmpty) Text(context.tr('暫時沒有優惠券。', 'No coupons right now.')),
             ],
           );
         },
@@ -1002,7 +1166,7 @@ class CategoryScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text('分類')),
-      body: CouponResults(load: () => api.classification(categoryId: categoryId), onOpenCoupon: onOpenCoupon),
+      body: CouponResults(api: api, load: () => api.classification(categoryId: categoryId), onOpenCoupon: onOpenCoupon),
     );
   }
 }
@@ -1019,11 +1183,89 @@ class LimitedTimeScreen extends StatelessWidget {
     return Scaffold(
       appBar: AppBar(title: Text(context.tr('限時','Limited Time'))),
       body: Column(children: [
+        _LimitedBargainPreview(api: api),
         _LimitedNotification(key: ValueKey(api.isLoggedIn), api: api),
-        Expanded(child: CouponResults(load: api.limitedTime, onOpenCoupon: onOpenCoupon)),
+        Expanded(child: CouponResults(api: api, load: api.limitedTime, onOpenCoupon: onOpenCoupon)),
       ]),
     );
   }
+}
+
+class _LimitedBargainPreview extends StatefulWidget {
+  const _LimitedBargainPreview({required this.api});
+
+  final ApiClient api;
+
+  @override
+  State<_LimitedBargainPreview> createState() => _LimitedBargainPreviewState();
+}
+
+class _LimitedBargainPreviewState extends State<_LimitedBargainPreview> {
+  late Future<List<BargainCampaign>> _campaigns = _load();
+
+  Future<List<BargainCampaign>> _load() async =>
+      (await widget.api.bargainCampaigns())
+          .map((row) => BargainCampaign.fromJson(row))
+          .where((c) => c.status == 'active' && !c.isSoldOut &&
+              (c.expiresAt?.isAfter(DateTime.now()) ?? true))
+          .take(6)
+          .toList();
+
+  void _refresh() {
+    final result = _load();
+    setState(() { _campaigns = result; });
+  }
+
+  Future<void> _open(Widget screen) async {
+    await Navigator.of(context).push(MaterialPageRoute(builder: (_) => screen));
+    if (mounted) _refresh();
+  }
+
+  @override
+  Widget build(BuildContext context) => FutureBuilder<List<BargainCampaign>>(
+        future: _campaigns,
+        builder: (context, snap) {
+          if (snap.connectionState != ConnectionState.done) {
+            return const Padding(
+              padding: EdgeInsets.all(12),
+              child: SkeletonBox(height: 64),
+            );
+          }
+          if (snap.hasError) {
+            return ListTile(
+              title: Text(context.tr('未能載入砍價活動', 'Could not load bargains')),
+              trailing: TextButton(
+                onPressed: _refresh, child: Text(context.tr('重試', 'Retry')),
+              ),
+            );
+          }
+          final campaigns = snap.data!;
+          if (campaigns.isEmpty) return const SizedBox.shrink();
+          return Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              SectionHeader(
+                title: context.tr('限時砍價', 'Flash bargains'),
+                onViewAll: () => _open(BargainListScreen(api: widget.api)),
+              ),
+              SizedBox(
+                height: 200,
+                child: ListView.separated(
+                  scrollDirection: Axis.horizontal,
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                  itemCount: campaigns.length,
+                  separatorBuilder: (_, __) => const SizedBox(width: 8),
+                  itemBuilder: (_, i) => _BargainHomeCard(
+                    campaign: campaigns[i],
+                    onTap: () => _open(BargainCampaignScreen(
+                        api: widget.api, campaign: campaigns[i])),
+                  ),
+                ),
+              ),
+            ],
+          );
+        },
+      );
 }
 
 class _LimitedNotification extends StatefulWidget {

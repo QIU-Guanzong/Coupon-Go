@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 
 import '../api_client.dart';
+import '../feature_flags.dart';
 import '../language.dart';
 export 'qbot.dart' show QBotScreen;
 export 'guest_auth.dart' show AuthScreen;
@@ -105,7 +106,7 @@ class _WalletScreenState extends State<WalletScreen>
     } catch (_) {
       if (mounted && request == _request) {
         setState(() {
-          _error = '网络不稳定，请重试';
+          _error = '網絡不穩定，請重試';
           _loading = false;
         });
       }
@@ -119,7 +120,7 @@ class _WalletScreenState extends State<WalletScreen>
       }).catchError((Object _) {
         if (mounted && request == _request) setState(() => _balance = null);
       }),
-      widget.api.cashback().then((data) {
+      if (cashbackEnabled) widget.api.cashback().then((data) {
         if (!mounted || request != _request) return;
         setState(() {
           _cashbackPending = (data['pending_balance'] as num?)?.toDouble();
@@ -168,23 +169,21 @@ class _WalletScreenState extends State<WalletScreen>
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text('Q Wallet 積分',
-                  style: TextStyle(color: Colors.white70)),
-              Text("${_balance ?? '—'} 分",
+              Text(context.tr('Q Wallet 積分', 'Q Wallet points'),
+                  style: const TextStyle(color: Colors.white70)),
+              Text(context.tr("${_balance ?? '—'} 分", "${_balance ?? '—'} points"),
                   style: const TextStyle(
                       color: Colors.white,
                       fontSize: 36,
                       fontWeight: FontWeight.bold)),
-              const SizedBox(height: 8),
-              const Text('領券 +10　核銷 +20　評價 +15',
-                  style: TextStyle(color: Colors.white70, fontSize: 12)),
-              const SizedBox(height: 12),
-              // Line D: cashback balance sits next to points, separate ledger.
-              InkWell(
+              if (cashbackEnabled) ...[
+                const SizedBox(height: 12),
+                // Cashback and points remain separate ledgers.
+                InkWell(
                 onTap: () async {
                   await Navigator.of(context).push(MaterialPageRoute(
                       builder: (_) => CashbackScreen(api: widget.api)));
-                  _load();
+                  if (mounted) _load();
                 },
                 child: Row(
                   children: [
@@ -192,8 +191,8 @@ class _WalletScreenState extends State<WalletScreen>
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          const Text('返現（可提現）',
-                              style: TextStyle(color: Colors.white70)),
+                          Text(context.tr('返現（可提現）', 'Cashback available to withdraw'),
+                              style: const TextStyle(color: Colors.white70)),
                           Text(_cashbackWithdrawable == null ? '—' : formatHkd(_cashbackWithdrawable!),
                               style: const TextStyle(
                                   color: Colors.white,
@@ -203,7 +202,10 @@ class _WalletScreenState extends State<WalletScreen>
                                     FontFeature.tabularFigures()
                                   ])),
                           Text(
-                              '待確認 ${_cashbackPending == null ? '—' : formatHkd(_cashbackPending!)}',
+                              context.tr(
+                                '待確認 ${_cashbackPending == null ? '—' : formatHkd(_cashbackPending!)}',
+                                'Pending ${_cashbackPending == null ? '—' : formatHkd(_cashbackPending!)}',
+                              ),
                               style: const TextStyle(
                                   color: Colors.white70,
                                   fontSize: 12,
@@ -216,16 +218,18 @@ class _WalletScreenState extends State<WalletScreen>
                     const Icon(Icons.chevron_right, color: Colors.white70),
                   ],
                 ),
-              ),            ],
+                ),
+              ],
+            ],
           ),
         ),
         TabBar(
           controller: _tab,
           labelColor: CgColors.primary,
-          tabs: const [
-            Tab(text: '未使用'),
-            Tab(text: '已使用'),
-            Tab(text: '已失效'),
+          tabs: [
+            Tab(text: context.tr('未使用', 'Unused')),
+            Tab(text: context.tr('已使用', 'Used')),
+            Tab(text: context.tr('已失效', 'Expired')),
           ],
         ),
         Expanded(
@@ -245,7 +249,7 @@ class _WalletScreenState extends State<WalletScreen>
                       child: Column(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
-                          const Text('网络不稳定，请重试'),
+                          const Text('網絡不穩定，請重試'),
                           const SizedBox(height: 12),
                           ElevatedButton(
                               onPressed: _load, child: const Text('重試')),
@@ -272,12 +276,12 @@ class _WalletScreenState extends State<WalletScreen>
                                                     CgColors.textSecondary),
                                       ),
                                       const SizedBox(height: 12),
-                                      const Text('暫時沒有優惠券，去首頁看看吧！'),
+                                      Text(context.tr('暫時沒有優惠券，去首頁看看吧！', 'No coupons yet. Explore offers on Home.')),
                                       const SizedBox(height: 12),
                                       ElevatedButton(
                                         onPressed: () => Navigator.of(context)
                                             .pushNamed('/packages'),
-                                        child: const Text('去看看套餐'),
+                                        child: Text(context.tr('去看看套餐', 'Browse packages')),
                                       ),
                                     ],
                                   ),
@@ -423,8 +427,8 @@ class QrShowScreen extends StatefulWidget {
 class _QrShowScreenState extends State<QrShowScreen> {
   String? _code;
   String? _payload;
-  int _secondsLeft = 900;
-  int _totalSeconds = 900;
+  int _secondsLeft = 0;
+  int _totalSeconds = 0;
   Timer? _timer;
   Timer? _pollTimer;
   bool _justRefreshed = false;
@@ -490,10 +494,23 @@ class _QrShowScreenState extends State<QrShowScreen> {
     try {
       final data = await widget.api.generateQr(widget.item.id);
       if (!mounted || _expired || _redeemed) return;
+      final ttl = data['expires_in_seconds'];
+      final payload = data['qr_payload'];
+      final code = data['code'];
+      if (ttl is! int || ttl <= 0) {
+        setState(() => _qrError = context.tr(
+            '未能確認兌換碼有效時間，請重試',
+            'Could not confirm when the code expires. Try again.'));
+        return;
+      }
+      if (payload is! String || payload.isEmpty || code is! String || code.isEmpty) {
+        setState(() => _qrError = context.tr('未能取得兌換碼，請重試', 'Could not get the coupon code. Try again.'));
+        return;
+      }
       setState(() {
-        _code = data['code'] as String?;
-        _payload = data['qr_payload'] as String?;
-        _secondsLeft = data['expires_in_seconds'] as int? ?? 900;
+        _code = code;
+        _payload = payload;
+        _secondsLeft = ttl;
         _totalSeconds = _secondsLeft;
         if (auto) _justRefreshed = true;
       });
@@ -523,10 +540,9 @@ class _QrShowScreenState extends State<QrShowScreen> {
   String get _countdown => formatCountdown(
       Duration(seconds: _secondsLeft));
 
-  String get _validToText {
-    final v = widget.item.validTo;
-    if (v == null) return '有效期：—';
-    return '有效期至 ${v.year}年${v.month}月${v.day}日';
+  String? get _validToText {
+    final date = widget.item.validTo?.toLocal().toString().split(' ').first;
+    return date == null ? null : context.tr('有效期至 $date', 'Valid until $date');
   }
 
   @override
@@ -535,7 +551,7 @@ class _QrShowScreenState extends State<QrShowScreen> {
         _totalSeconds == 0 ? 0.0 : _secondsLeft / _totalSeconds;
     return Scaffold(
       backgroundColor: CgColors.primary,
-      appBar: AppBar(title: const Text('出示優惠券')),
+      appBar: AppBar(title: Text(context.tr('出示優惠券', 'Show coupon'))),
       body: Center(
         child: SingleChildScrollView(
           child: Card(
@@ -554,8 +570,8 @@ class _QrShowScreenState extends State<QrShowScreen> {
                         color: const Color(0xFFE8F5E9),
                         borderRadius: BorderRadius.circular(20),
                       ),
-                      child: const Text('二維碼已更新',
-                          style: TextStyle(color: CgColors.success)),
+                      child: Text(context.tr('QR 碼已更新', 'QR code refreshed'),
+                          style: const TextStyle(color: CgColors.success)),
                     ),
                   Text(widget.item.couponName,
                       textAlign: TextAlign.center,
@@ -566,7 +582,8 @@ class _QrShowScreenState extends State<QrShowScreen> {
                       textAlign: TextAlign.center,
                       style:
                           const TextStyle(color: CgColors.textSecondary)),
-                  Text(_validToText,
+                  if (_validToText case final validTo?)
+                  Text(validTo,
                       textAlign: TextAlign.center,
                       style:
                           const TextStyle(color: CgColors.textSecondary)),
@@ -578,15 +595,16 @@ class _QrShowScreenState extends State<QrShowScreen> {
                   else
                     const SkeletonBox(height: 220, width: 220),
                   const SizedBox(height: 12),
-                  Text(_code ?? '------',
+                  if (_code case final code?)
+                  Text(code,
                       style: const TextStyle(
                           fontSize: 32,
                           fontWeight: FontWeight.bold,
                           letterSpacing: 6,
                           fontFeatures: [FontFeature.tabularFigures()])),
                   const SizedBox(height: 12),
-                  // Countdown ring around the remaining time.
-                  SizedBox(
+                  // Show a countdown only after the server reports the actual expiry.
+                  if (_payload != null) SizedBox(
                     width: 96,
                     height: 96,
                     child: Stack(
@@ -614,9 +632,10 @@ class _QrShowScreenState extends State<QrShowScreen> {
                     ),
                   ),
                   const SizedBox(height: 12),
-                  const Text('使用前出示 QR 碼\n請讓店員掃描兌換碼以核銷優惠券',
+                  Text(context.tr('請讓店員掃描 QR 碼以使用優惠券',
+                      'Ask the staff to scan this QR code to use the coupon.'),
                       textAlign: TextAlign.center,
-                      style: TextStyle(color: CgColors.textSecondary)),
+                      style: const TextStyle(color: CgColors.textSecondary)),
                   const SizedBox(height: 12),
                   Container(
                     padding: const EdgeInsets.all(10),
@@ -624,15 +643,16 @@ class _QrShowScreenState extends State<QrShowScreen> {
                       color: const Color(0xFFFFF3CD),
                       borderRadius: BorderRadius.circular(8),
                     ),
-                    child: const Text(
-                        '请勿转发二维码\n每次出示都會產生新的兌換碼，舊碼可能已失效。',
+                    child: Text(context.tr(
+                        '請勿轉發 QR 碼。每次出示都會產生新碼。',
+                        'Do not share this QR code. A new one is created each time.'),
                         textAlign: TextAlign.center,
-                        style: TextStyle(fontSize: 13)),
+                        style: const TextStyle(fontSize: 13)),
                   ),
                   const SizedBox(height: 8),
                   TextButton(
                     onPressed: _generating || _expired ? null : () => _generate(),
-                    child: const Text('重新產生新碼'),
+                    child: Text(context.tr('取得新碼', 'Get a new code')),
                   ),
                 ],
               ),
@@ -818,8 +838,140 @@ class SettingsScreen extends StatefulWidget {
   State<SettingsScreen> createState() => _SettingsScreenState();
 }
 
-class _SettingsScreenState extends State<SettingsScreen> {
+enum _DeleteAccountAction { withdraw, reviewCashback, confirm }
 
+class _SettingsScreenState extends State<SettingsScreen> {
+  bool _deleting = false;
+
+  Future<void> _deleteAccount() async {
+    if (_deleting || !widget.api.isLoggedIn) return;
+    setState(() => _deleting = true);
+    try {
+      double? balance;
+      double? minimum;
+      double? dailyLimit;
+      if (cashbackEnabled) {
+        try {
+          final cashback = await widget.api.cashback();
+          balance = (cashback['withdrawable_balance'] as num?)?.toDouble();
+          minimum = (cashback['min_withdraw_hkd'] as num?)?.toDouble();
+          dailyLimit = (cashback['daily_withdraw_limit_hkd'] as num?)?.toDouble();
+        } catch (_) {
+          // An unavailable balance must never be treated as zero.
+        }
+      }
+      if (!mounted || !widget.api.isLoggedIn ||
+          ModalRoute.of(context)?.isCurrent == false) {
+        return;
+      }
+      final t = context.tr;
+      final currentBalance = balance;
+      final canWithdraw = currentBalance != null && currentBalance > 0 &&
+          minimum != null && minimum > 0 && currentBalance >= minimum;
+      final action = await showDialog<_DeleteAccountAction>(
+        context: context,
+        builder: (dialog) => AlertDialog(
+          title: Text(t('刪除帳戶', 'Delete account')),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(t(
+                  '提交後帳戶將停用，你將無法使用未用優惠券及積分。如有可提現返現，請先提現。',
+                  'Submitting deactivates your account. You will lose access to unused coupons and points. Withdraw any available cashback first.',
+                )),
+                if (cashbackEnabled && currentBalance == null) ...[
+                  const SizedBox(height: 12),
+                  Text(t('暫時無法核對返現餘額，請先查看返現或稍後再試。',
+                      'We could not check your balance. Review your cashback or try again later.')),
+                ] else if (cashbackEnabled && currentBalance != null && currentBalance > 0) ...[
+                  const SizedBox(height: 12),
+                  Text(t('可提現餘額：${formatHkd(currentBalance)}',
+                      'Available cashback: ${formatHkd(currentBalance)}')),
+                  if (minimum != null && currentBalance < minimum)
+                    Text(t('尚未達到 ${formatHkd(minimum)} 提現門檻。',
+                        'Below the ${formatHkd(minimum)} withdrawal minimum.')),
+                ],
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialog),
+              child: Text(t('取消', 'Cancel')),
+            ),
+            if (cashbackEnabled && (currentBalance == null || currentBalance > 0))
+              TextButton(
+                onPressed: () => Navigator.pop(dialog, canWithdraw
+                    ? _DeleteAccountAction.withdraw
+                    : _DeleteAccountAction.reviewCashback),
+                child: Text(canWithdraw
+                    ? t('去提現', 'Withdraw cashback')
+                    : t('查看返現', 'Review cashback')),
+              ),
+            TextButton(
+              onPressed: () => Navigator.pop(dialog, _DeleteAccountAction.confirm),
+              child: Text(t('繼續刪除', 'Continue to delete')),
+            ),
+          ],
+        ),
+      );
+      if (!mounted || !widget.api.isLoggedIn) return;
+      switch (action) {
+        case _DeleteAccountAction.withdraw:
+          await Navigator.of(context).push(MaterialPageRoute(
+            builder: (_) => WithdrawScreen(
+              api: widget.api,
+              balance: currentBalance,
+              minWithdrawHkd: minimum!,
+              dailyWithdrawLimitHkd: dailyLimit ?? CashbackLimits.dailyWithdrawLimitHkd,
+            ),
+          ));
+          return;
+        case _DeleteAccountAction.reviewCashback:
+          await Navigator.of(context).pushNamed('/cashback');
+          return;
+        case _DeleteAccountAction.confirm:
+          break;
+        case null:
+          return;
+      }
+      if (!mounted) return;
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (dialog) => AlertDialog(
+          title: Text(t('確認刪除帳戶？', 'Confirm account deletion?')),
+          content: Text(t('提交後，你將無法再登入此帳戶。',
+              'You will no longer be able to sign in to this account.')),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialog, false),
+              child: Text(t('取消', 'Cancel')),
+            ),
+            FilledButton(
+              style: FilledButton.styleFrom(
+                backgroundColor: Theme.of(dialog).colorScheme.error,
+                foregroundColor: Theme.of(dialog).colorScheme.onError,
+              ),
+              onPressed: () => Navigator.pop(dialog, true),
+              child: Text(t('確認刪除', 'Confirm deletion')),
+            ),
+          ],
+        ),
+      );
+      if (confirmed != true || !mounted || !widget.api.isLoggedIn) return;
+      await widget.api.post('/delete-account', body: {});
+      await widget.api.clearToken();
+      if (mounted) widget.onLogout();
+    } catch (_) {
+      if (mounted) {
+        showCgToast(context, context.tr('未能刪除帳戶，請重試。', 'Could not delete your account. Try again.'));
+      }
+    } finally {
+      if (mounted) setState(() => _deleting = false);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -834,54 +986,34 @@ class _SettingsScreenState extends State<SettingsScreen> {
             subtitle: Text((draft ?? language.english) ? 'English' : '繁體中文'),
             trailing: const Icon(Icons.chevron_right),
             onTap: () => setState(() => language.draft = language.english)),
-          if (widget.api.isLoggedIn) ...[
           ListTile(
-            title: const Text('新手指南 / 常見問題'),
+            title: Text(t('新手指南 / 常見問題', 'Guide and FAQs')),
             trailing: const Icon(Icons.chevron_right),
             onTap: () => Navigator.of(context).pushNamed('/guide'),
           ),
           ListTile(
-            title: const Text('關於 Coupon GO!'),
-            subtitle: const Text('版本 v0.1.0'),
-            onTap: () {},
+            title: Text(t('關於 Coupon GO!', 'About Coupon GO!')),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => Navigator.of(context).push(MaterialPageRoute(
+              builder: (_) => const CouponGoAboutScreen(),
+            )),
           ),
-          const Divider(),
-          ListTile(
-            title: const Text('登出', style: TextStyle(color: CgColors.primary)),
-            onTap: () async {
-              await widget.api.clearToken();
-              widget.onLogout();
-            },
-          ),
-          ListTile(
-            title: const Text('刪除帳戶', style: TextStyle(color: Colors.red)),
-            onTap: () async {
-              final ok = await showDialog<bool>(
-                context: context,
-                builder: (c) => AlertDialog(
-                  title: const Text('刪除帳戶'),
-                  content: const Text('請填寫刪除原因。刪除後帳戶將停用。'),
-                  actions: [
-                    TextButton(
-                        onPressed: () => Navigator.pop(c, false),
-                        child: const Text('取消')),
-                    TextButton(
-                        onPressed: () => Navigator.pop(c, true),
-                        child: const Text('確認刪除')),
-                  ],
-                ),
-              );
-              if (ok == true) {
-                try {
-                  await widget.api.post('/delete-account', body: {'reason': '用戶申請'});
-                  await widget.api.clearToken();
-                  widget.onLogout();
-                } on ApiException catch (e) {
-                  if (context.mounted) showCgToast(context, e.message);
-                }
-              }
-            },
-          ),
+          if (widget.api.isLoggedIn) ...[
+            const Divider(),
+            ListTile(
+              title: Text(t('登出', 'Log out'),
+                  style: const TextStyle(color: CgColors.primary)),
+              onTap: () async {
+                await widget.api.clearToken();
+                if (mounted) widget.onLogout();
+              },
+            ),
+            ListTile(
+              title: Text(t('刪除帳戶', 'Delete account'),
+                  style: TextStyle(color: Theme.of(context).colorScheme.error)),
+              enabled: !_deleting,
+              onTap: _deleting ? null : _deleteAccount,
+            ),
           ],
         ],
       ),
@@ -906,38 +1038,91 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 }
 
+/// Legal document links will be shown only when real published documents are available.
+class CouponGoAboutScreen extends StatelessWidget {
+  const CouponGoAboutScreen({super.key});
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
+        appBar: AppBar(title: Text(context.tr('關於 Coupon GO!', 'About Coupon GO!'))),
+        body: ListView(
+          children: [
+            ListTile(
+              title: Text(context.tr('開源授權', 'Open source licenses')),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () => showLicensePage(context: context, applicationName: 'Coupon GO!'),
+            ),
+          ],
+        ),
+      );
+}
+
 /// Guide + FAQ (local, behaviour-based).
 class GuideScreen extends StatelessWidget {
   const GuideScreen({super.key});
 
   static const _faqs = [
-    ('如何領取優惠券？', '在首頁或優惠券詳情頁點「立即領取」，券會存入 Q Wallet，領券 +10 分。'),
-    ('如何使用優惠券？', '在 Q Wallet 點「出示」，把 QR 碼給店員掃描，核銷成功 +20 分。'),
-    ('積分有什麼用？', '領券 +10、核銷 +20、評價 +15；9 分可以兌換 9 分分券。'),
-    ('QR 碼有效期多久？', '出示後 15:00 內有效，過期請重新出示。'),
-    ('商戶如何發券？', '切換到企業版，填表 → 預覽 → 提交審核，通過後上架。'),
-    ('忘記密碼怎麼辦？', '登錄頁點「忘記密碼」，用電郵收 6 位驗證碼重設。'),
+    (
+      '如何領取優惠券？', 'How do I claim a coupon?',
+      '在首頁或優惠券詳情點「立即領取」，優惠券便會存入 Q Wallet。',
+      'Tap Claim on Home or the coupon details page to save it to Q Wallet.',
+    ),
+    (
+      '如何使用優惠券？', 'How do I use a coupon?',
+      '在 Q Wallet 點「出示」，請店員掃描 QR 碼。',
+      'Tap Show in Q Wallet and ask the staff to scan the QR code.',
+    ),
+    (
+      '積分有甚麼用？', 'What are points for?',
+      '在 Q Wallet 查看積分餘額及可兌換的優惠。',
+      'Check Q Wallet for your points balance and available rewards.',
+    ),
+    (
+      'QR 碼有效期多久？', 'How long is the QR code valid?',
+      '以出示頁上的倒數為準；到期後請重新出示。',
+      'Use the countdown on the code screen. Show a fresh code if it expires.',
+    ),
+    (
+      '商戶如何發券？', 'How do merchants issue coupons?',
+      '切換到企業版，填寫優惠資料，檢查並提交審核。',
+      'Switch to the business workspace, enter the offer details, and submit them for review.',
+    ),
+    (
+      '忘記密碼怎麼辦？', 'What if I forget my password?',
+      '在登入頁選擇「忘記密碼」，以電郵驗證碼重設。',
+      'Select Forgot password on the login screen and use the code sent to your email.',
+    ),
   ];
 
   @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: const Text('新手指南 / 常見問題')),
-      body: ListView(
-        padding: const EdgeInsets.all(16),
-        children: [
-          const Text('消費三步', style: TextStyle(fontWeight: FontWeight.bold)),
-          const ListTile(leading: Icon(Icons.search), title: Text('1. 搜尋或瀏覽優惠券')),
-          const ListTile(leading: Icon(Icons.local_offer), title: Text('2. 領取存入 Q Wallet')),
-          const ListTile(leading: Icon(Icons.qr_code), title: Text('3. 到店出示 QR 碼核銷')),
-          const SizedBox(height: 8),
-          const Text('常見問題', style: TextStyle(fontWeight: FontWeight.bold)),
-          ..._faqs.map((f) => ExpansionTile(
-                title: Text(f.$1),
-                children: [ListTile(title: Text(f.$2))],
-              )),
-        ],
-      ),
-    );
-  }
+  Widget build(BuildContext context) => Scaffold(
+        appBar: AppBar(title: Text(context.tr('新手指南 / 常見問題', 'Guide and FAQs'))),
+        body: ListView(
+          padding: const EdgeInsets.all(16),
+          children: [
+            Text(context.tr('消費三步', 'Three steps to use an offer'),
+                style: const TextStyle(fontWeight: FontWeight.bold)),
+            ListTile(
+              leading: const Icon(Icons.search),
+              title: Text(context.tr('1. 搜尋或瀏覽優惠券', '1. Find a coupon')),
+            ),
+            ListTile(
+              leading: const Icon(Icons.local_offer),
+              title: Text(context.tr('2. 領取存入 Q Wallet', '2. Claim it in Q Wallet')),
+            ),
+            ListTile(
+              leading: const Icon(Icons.qr_code),
+              title: Text(context.tr('3. 到店出示 QR 碼核銷', '3. Show the QR code in store')),
+            ),
+            const SizedBox(height: 8),
+            Text(context.tr('常見問題', 'FAQs'),
+                style: const TextStyle(fontWeight: FontWeight.bold)),
+            for (final item in _faqs)
+              ExpansionTile(
+                title: Text(context.tr(item.$1, item.$2)),
+                children: [ListTile(title: Text(context.tr(item.$3, item.$4)))],
+              ),
+          ],
+        ),
+      );
 }
