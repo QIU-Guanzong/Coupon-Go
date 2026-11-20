@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-import '../lib/api_client.dart';
-import '../lib/language.dart';
-import '../lib/screens/qbot.dart';
+import 'package:coupon_go/api_client.dart';
+import 'package:coupon_go/language.dart';
+import 'package:coupon_go/screens/qbot.dart';
 
 class _QbotApi extends ApiClient {
   final sent = <Map<String, dynamic>>[];

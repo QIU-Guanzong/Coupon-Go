@@ -860,7 +860,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
         }
       }
       if (!mounted || !widget.api.isLoggedIn ||
-          ModalRoute.of(context)?.isCurrent == false) return;
+          ModalRoute.of(context)?.isCurrent == false) {
+        return;
+      }
       final t = context.tr;
       final currentBalance = balance;
       final canWithdraw = currentBalance != null && currentBalance > 0 &&
@@ -934,6 +936,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         case null:
           return;
       }
+      if (!mounted) return;
       final confirmed = await showDialog<bool>(
         context: context,
         builder: (dialog) => AlertDialog(
