@@ -83,10 +83,10 @@ void main() {
     expect(find.byType(SkeletonBox), findsNWidgets(3));
     expect(find.text('舊結果'), findsNothing);
 
-    api.requests[1].complete(_shops('附近商戶'));
+    api.requests[1].complete(_shops('最新附近商戶'));
     await tester.pump();
     expect(find.byType(SkeletonBox), findsNothing);
-    expect(find.text('附近商戶'), findsOneWidget);
+    expect(find.text('最新附近商戶'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 

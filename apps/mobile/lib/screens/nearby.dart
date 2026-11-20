@@ -566,7 +566,7 @@ Color _categoryColor(String category) {
   if (category.contains('餐')) return Colors.red.shade400;
   if (category.contains('咖啡')) return Colors.brown;
   if (category.contains('美容')) return Colors.pink.shade300;
-  if (category.contains('娛樂') || category.contains('娛樂')) {
+  if (category.contains('娛樂') || category.contains('娱乐')) {
     return Colors.purple.shade300;
   }
   return CgColors.primary;
