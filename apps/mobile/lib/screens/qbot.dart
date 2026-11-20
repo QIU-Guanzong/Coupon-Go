@@ -19,6 +19,8 @@ class _QBotScreenState extends State<QBotScreen> {
   final _messages = <Map<String, String>>[];
   bool _sending = false;
   bool _failed = false;
+  bool _rateLimited = false;
+  bool _invalidInput = false;
   bool _askingPermission = false;
   bool _allowedForThisVisit = false;
   int _conversation = 0;
@@ -47,8 +49,8 @@ class _QBotScreenState extends State<QBotScreen> {
       builder: (dialog) => AlertDialog(
         title: Text(dialog.tr('使用 Q仔', 'Use Q仔')),
         content: Text(dialog.tr(
-          '你的問題及近期對話會傳送給 DeepSeek 以產生回覆。請勿輸入密碼、兌換碼或其他個人資料。',
-          'Your question and recent chat messages are sent to DeepSeek to generate replies. Do not enter passwords, redemption codes or other personal information.',
+          '你的問題及最近最多 6 則對話會傳送給 DeepSeek 以產生回覆。請勿輸入密碼、驗證碼、兌換碼或其他個人資料。',
+          'Your question and up to 6 recent messages are sent to DeepSeek to generate replies. Do not enter passwords, verification codes, redemption codes or other personal information.',
         )),
         actions: [
           TextButton(
@@ -80,6 +82,8 @@ class _QBotScreenState extends State<QBotScreen> {
       if (!retry) _messages.add({'role': 'user', 'text': q});
       _sending = true;
       _failed = false;
+      _rateLimited = false;
+      _invalidInput = false;
       if (!retry) _ctrl.clear();
     });
     _scrollDown();
@@ -94,7 +98,7 @@ class _QBotScreenState extends State<QBotScreen> {
               'text': m['text']!.characters.take(1100).toString()
             }
         ],
-      });
+      }).timeout(const Duration(seconds: 35));
       if (!mounted || id != _conversation) return;
       setState(() => _messages.add({
             'role': 'assistant',
@@ -102,8 +106,20 @@ class _QBotScreenState extends State<QBotScreen> {
             if (data['points_balance'] != null)
               'balance': "${data['points_balance']}"
           }));
-    } catch (_) {
-      if (mounted && id == _conversation) setState(() => _failed = true);
+    } catch (error) {
+      if (mounted && id == _conversation) {
+        setState(() {
+          _failed = true;
+          _rateLimited = error is ApiException && error.status == 429;
+          _invalidInput = error is ApiException && error.status == 422;
+          if (_invalidInput) {
+            if (_ctrl.text.isEmpty) _ctrl.text = q;
+            if (_messages.isNotEmpty && _messages.last['role'] == 'user') {
+              _messages.removeLast();
+            }
+          }
+        });
+      }
     } finally {
       if (mounted && id == _conversation) {
         setState(() => _sending = false);
@@ -127,6 +143,8 @@ class _QBotScreenState extends State<QBotScreen> {
                       _messages.clear();
                       _sending = false;
                       _failed = false;
+                      _rateLimited = false;
+                      _invalidInput = false;
                     })),
       ]),
       body: SafeArea(
@@ -136,13 +154,20 @@ class _QBotScreenState extends State<QBotScreen> {
                 controller: _scroll,
                 padding: const EdgeInsets.all(16),
                 children: [
-              Text(t('我係 Q仔，可以幫你搵優惠券、查積分，或者講解點用券。',
-                  'I can help you find coupons, check points, and redeem offers.')),
+              Text(widget.api.isLoggedIn
+                  ? t('我係 Q仔，可以幫你搵優惠券、查積分，或者講解點用券。',
+                      'I can help you find coupons, check points, and redeem offers.')
+                  : t('我係 Q仔，可以幫你搵優惠券，或者講解點用券。',
+                      'I can help you find coupons and explain how to use them.')),
               const SizedBox(height: 8),
               Text(
-                  t('由 DeepSeek AI 回答。請勿輸入密碼或兌換碼。',
-                      'Answered by DeepSeek AI. Keep passwords and redemption codes private.'),
+                  t('由 DeepSeek AI 回答，內容可能有誤，請以優惠詳情為準。請勿輸入個人資料或兌換碼。',
+                      'Answered by DeepSeek AI. Answers may be inaccurate; check offer details. Do not enter personal information or redemption codes.'),
                   style: Theme.of(context).textTheme.bodySmall),
+              if (const bool.fromEnvironment('PUBLIC_DEMO'))
+                Text(t('此版本的商戶和優惠均為示例，帳戶及交易暫未開放。',
+                    'Shops and offers in this demo are examples. Accounts and transactions are unavailable.'),
+                    style: Theme.of(context).textTheme.bodySmall),
               if (_messages.isEmpty) ...[
                 const SizedBox(height: 12),
                 Wrap(
@@ -150,8 +175,11 @@ class _QBotScreenState extends State<QBotScreen> {
                   runSpacing: 8,
                   children: [
                     for (final question in [
-                      t('附近有咩優惠', 'What offers are nearby?'),
-                      t('我有幾多積分', 'How many points do I have?'),
+                      t('有咩優惠', 'What offers are available?'),
+                      if (widget.api.isLoggedIn)
+                        t('我有幾多積分', 'How many points do I have?')
+                      else
+                        t('點樣領取優惠券', 'How do I claim a coupon?'),
                       t('點樣用券', 'How do I use a coupon?'),
                     ])
                       ActionChip(
@@ -195,12 +223,19 @@ class _QBotScreenState extends State<QBotScreen> {
                     child: Text(t('Q仔正在回覆…', 'Q仔 is answering…'))),
               if (_failed)
                 Column(children: [
-                  Text(t('暫時未能回答，請稍後再試。',
-                      'Could not answer just now. Try again shortly.')),
-                  TextButton(
-                      onPressed: () =>
-                          _ask(_messages.last['text']!, retry: true),
-                      child: Text(t('重試', 'Retry'))),
+                  Semantics(
+                    liveRegion: true,
+                    child: Text(_invalidInput
+                        ? t('問題無法處理，請修改後再送出。', 'Could not process this question. Edit it and send again.')
+                        : _rateLimited
+                            ? t('提問太頻密，請稍後再試。', 'Too many requests. Try again shortly.')
+                            : t('暫時未能回答，請稍後再試。', 'Could not answer just now. Try again shortly.')),
+                  ),
+                  if (!_invalidInput)
+                    TextButton(
+                        onPressed: () =>
+                            _ask(_messages.last['text']!, retry: true),
+                        child: Text(t('重試', 'Retry'))),
                 ]),
             ])),
         Padding(

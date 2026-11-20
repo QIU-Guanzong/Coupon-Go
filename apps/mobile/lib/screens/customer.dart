@@ -213,7 +213,9 @@ class _HomeScreenState extends State<HomeScreen> {
             actions: [
               Tooltip(
                 key: _qbotHint,
-                message: context.tr('找優惠、查積分，問 Q仔。', 'Ask Q仔 for offers or points.'),
+                message: const bool.fromEnvironment('PUBLIC_DEMO')
+                    ? context.tr('找優惠、問 Q仔。', 'Ask Q仔 about offers.')
+                    : context.tr('找優惠、查積分，問 Q仔。', 'Ask Q仔 for offers or points.'),
                 triggerMode: TooltipTriggerMode.manual,
                 preferBelow: true,
                 excludeFromSemantics: true,
@@ -278,7 +280,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   const Icon(Icons.info_outline, size: 18, color: Color(0xFF785324)),
                   const SizedBox(width: 8),
                   Expanded(child: Text(
-                    context.tr('示範內容，商戶及優惠為示例。帳戶、交易及 Q仔暫未開放。', 'Demo content. Shops and offers are examples. Accounts, transactions and Q仔 are unavailable.'),
+                    context.tr('示範內容，商戶及優惠為示例。帳戶及交易暫未開放。', 'Demo content. Shops and offers are examples. Accounts and transactions are unavailable.'),
                     style: const TextStyle(color: Color(0xFF604317), fontSize: 13),
                   )),
                 ]),

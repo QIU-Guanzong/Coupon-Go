@@ -74,7 +74,7 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
     expect(tester.widget<BottomNavigationBar>(find.byType(BottomNavigationBar)).items.length, 5);
-    expect(find.text('示範內容，商戶及優惠為示例。帳戶、交易及 Q仔暫未開放。'),
+    expect(find.text('示範內容，商戶及優惠為示例。帳戶及交易暫未開放。'),
         const bool.fromEnvironment('PUBLIC_DEMO') ? findsOneWidget : findsNothing);
 
     await tester.tap(find.text('收藏'));

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart' show kIsWeb, LicenseRegistry, LicenseEntryWithLineBreaks;
 import 'package:flutter/services.dart' show Clipboard, ClipboardData, rootBundle;
 import 'package:flutter_localizations/flutter_localizations.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import 'api_client.dart';
 import 'feature_flags.dart';
@@ -587,6 +588,29 @@ class _HomeShellState extends State<HomeShell> {
             ),
           ListTile(leading: const Icon(Icons.chat_outlined), title: const Text('Q仔'),
             onTap: () { Navigator.of(context).pop(); Navigator.of(context).pushNamed('/qbot'); }),
+          if (kIsWeb && const bool.fromEnvironment('PUBLIC_DEMO'))
+            ListTile(
+              leading: const Icon(Icons.android, color: CgColors.primary),
+              title: Text(context.tr('下載 Android 示範版', 'Download Android demo')),
+              onTap: () async {
+                const publicUrl = String.fromEnvironment('PUBLIC_WEB_URL');
+                final base = publicUrl.isNotEmpty
+                    ? Uri.parse(publicUrl)
+                    : Uri.base.resolve('/coupongo/');
+                final uri = base.resolve('downloads/coupon-go-demo.apk');
+                Navigator.of(context).pop();
+                try {
+                  if (await launchUrl(uri, webOnlyWindowName: '_self')) return;
+                } catch (_) {
+                  // The feedback below covers blocked or unsupported launches.
+                }
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                    content: Text(context.tr('暫時無法下載，請稍後再試。', 'Download unavailable. Please try again.')),
+                  ));
+                }
+              },
+            ),
           ListTile(
             leading: const Icon(Icons.help_outline, color: CgColors.primary),
             title: Text(context.tr('新手指南','Guide')),
