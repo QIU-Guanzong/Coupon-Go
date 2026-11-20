@@ -834,8 +834,137 @@ class SettingsScreen extends StatefulWidget {
   State<SettingsScreen> createState() => _SettingsScreenState();
 }
 
-class _SettingsScreenState extends State<SettingsScreen> {
+enum _DeleteAccountAction { withdraw, reviewCashback, confirm }
 
+class _SettingsScreenState extends State<SettingsScreen> {
+  bool _deleting = false;
+
+  Future<void> _deleteAccount() async {
+    if (_deleting || !widget.api.isLoggedIn) return;
+    setState(() => _deleting = true);
+    try {
+      double? balance;
+      double? minimum;
+      double? dailyLimit;
+      if (cashbackEnabled) {
+        try {
+          final cashback = await widget.api.cashback();
+          balance = (cashback['withdrawable_balance'] as num?)?.toDouble();
+          minimum = (cashback['min_withdraw_hkd'] as num?)?.toDouble();
+          dailyLimit = (cashback['daily_withdraw_limit_hkd'] as num?)?.toDouble();
+        } catch (_) {
+          // An unavailable balance must never be treated as zero.
+        }
+      }
+      if (!mounted || !widget.api.isLoggedIn ||
+          ModalRoute.of(context)?.isCurrent == false) return;
+      final t = context.tr;
+      final currentBalance = balance;
+      final canWithdraw = currentBalance != null && currentBalance > 0 &&
+          minimum != null && minimum > 0 && currentBalance >= minimum;
+      final action = await showDialog<_DeleteAccountAction>(
+        context: context,
+        builder: (dialog) => AlertDialog(
+          title: Text(t('刪除帳戶', 'Delete account')),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(t(
+                  '提交後帳戶將停用，你將無法使用未用優惠券及積分。如有可提現返現，請先提現。',
+                  'Submitting deactivates your account. You will lose access to unused coupons and points. Withdraw any available cashback first.',
+                )),
+                if (cashbackEnabled && currentBalance == null) ...[
+                  const SizedBox(height: 12),
+                  Text(t('暫時無法核對返現餘額，請先查看返現或稍後再試。',
+                      'We could not check your balance. Review your cashback or try again later.')),
+                ] else if (cashbackEnabled && currentBalance != null && currentBalance > 0) ...[
+                  const SizedBox(height: 12),
+                  Text(t('可提現餘額：${formatHkd(currentBalance)}',
+                      'Available cashback: ${formatHkd(currentBalance)}')),
+                  if (minimum != null && currentBalance < minimum)
+                    Text(t('尚未達到 ${formatHkd(minimum)} 提現門檻。',
+                        'Below the ${formatHkd(minimum)} withdrawal minimum.')),
+                ],
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialog),
+              child: Text(t('取消', 'Cancel')),
+            ),
+            if (cashbackEnabled && (currentBalance == null || currentBalance > 0))
+              TextButton(
+                onPressed: () => Navigator.pop(dialog, canWithdraw
+                    ? _DeleteAccountAction.withdraw
+                    : _DeleteAccountAction.reviewCashback),
+                child: Text(canWithdraw
+                    ? t('去提現', 'Withdraw cashback')
+                    : t('查看返現', 'Review cashback')),
+              ),
+            TextButton(
+              onPressed: () => Navigator.pop(dialog, _DeleteAccountAction.confirm),
+              child: Text(t('繼續刪除', 'Continue to delete')),
+            ),
+          ],
+        ),
+      );
+      if (!mounted || !widget.api.isLoggedIn) return;
+      switch (action) {
+        case _DeleteAccountAction.withdraw:
+          await Navigator.of(context).push(MaterialPageRoute(
+            builder: (_) => WithdrawScreen(
+              api: widget.api,
+              balance: currentBalance,
+              minWithdrawHkd: minimum!,
+              dailyWithdrawLimitHkd: dailyLimit ?? CashbackLimits.dailyWithdrawLimitHkd,
+            ),
+          ));
+          return;
+        case _DeleteAccountAction.reviewCashback:
+          await Navigator.of(context).pushNamed('/cashback');
+          return;
+        case _DeleteAccountAction.confirm:
+          break;
+        case null:
+          return;
+      }
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (dialog) => AlertDialog(
+          title: Text(t('確認刪除帳戶？', 'Confirm account deletion?')),
+          content: Text(t('提交後，你將無法再登入此帳戶。',
+              'You will no longer be able to sign in to this account.')),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialog, false),
+              child: Text(t('取消', 'Cancel')),
+            ),
+            FilledButton(
+              style: FilledButton.styleFrom(
+                backgroundColor: Theme.of(dialog).colorScheme.error,
+                foregroundColor: Theme.of(dialog).colorScheme.onError,
+              ),
+              onPressed: () => Navigator.pop(dialog, true),
+              child: Text(t('確認刪除', 'Confirm deletion')),
+            ),
+          ],
+        ),
+      );
+      if (confirmed != true || !mounted || !widget.api.isLoggedIn) return;
+      await widget.api.post('/delete-account', body: {});
+      await widget.api.clearToken();
+      if (mounted) widget.onLogout();
+    } catch (_) {
+      if (mounted) {
+        showCgToast(context, context.tr('未能刪除帳戶，請重試。', 'Could not delete your account. Try again.'));
+      }
+    } finally {
+      if (mounted) setState(() => _deleting = false);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -869,8 +998,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   style: const TextStyle(color: CgColors.primary)),
               onTap: () async {
                 await widget.api.clearToken();
-                widget.onLogout();
+                if (mounted) widget.onLogout();
               },
+            ),
+            ListTile(
+              title: Text(t('刪除帳戶', 'Delete account'),
+                  style: TextStyle(color: Theme.of(context).colorScheme.error)),
+              enabled: !_deleting,
+              onTap: _deleting ? null : _deleteAccount,
             ),
           ],
         ],
