@@ -2,6 +2,8 @@ import 'dart:convert';
 import 'dart:math';
 import 'dart:typed_data';
 
+import 'app_config.dart';
+
 import 'package:flutter/foundation.dart' show ChangeNotifier;
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
@@ -27,6 +29,7 @@ class ApiClient extends ChangeNotifier {
   }
 
   final String baseUrl;
+  late final appConfig = AppConfigStore(() => get('/app-config'));
   String? _token;
 
   Future<void> loadToken() async {
@@ -115,6 +118,12 @@ class ApiClient extends ChangeNotifier {
     return data as Map<String, dynamic>;
   }
 
+  @override
+  void dispose() {
+    appConfig.dispose();
+    super.dispose();
+  }
+
   // ---- auth ----
   Future<Map<String, dynamic>> login(String email, String password) async {
     final data = await post('/login', body: {'email': email, 'password': password});
@@ -175,9 +184,7 @@ class ApiClient extends ChangeNotifier {
   Future<void> review(int walletItemId) =>
       post('/review', query: {'wallet_item_id': '$walletItemId'});
 
-  // ---- reviews v1 (line B): 3-dim rating, points/stars split ----
-  // claimPoints=true (default): +15 points, review does NOT count toward
-  // the shop rating. claimPoints=false: no points, review counts.
+  // ---- Reviews: three-dimension rating and optional review points ----
   Future<Map<String, dynamic>> submitReview({
     int? walletItemId,
     int? redemptionId,

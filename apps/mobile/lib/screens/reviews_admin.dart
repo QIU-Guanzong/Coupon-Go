@@ -31,8 +31,7 @@ List<String> _splitList(String raw) => raw
 /// camera roll (image_picker) and uploaded to
 /// POST /uploads/review-images first; the returned paths are sent as
 /// images[] to POST /reviews. The points checkbox is the
-/// points/stars split: taking the +15 points means the review does NOT
-/// count toward the shop rating.
+/// Review scores and optional points are handled by the service.
 class ReviewFormScreen extends StatefulWidget {
   const ReviewFormScreen(
       {super.key, required this.api, required this.item, this.redemptionId});
@@ -137,17 +136,17 @@ class _ReviewFormScreenState extends State<ReviewFormScreen> {
         claimPoints: _claimPoints,
       );
       if (!mounted) return;
-      // UI_SPEC §7: points are separate from stars. The server message
-      // already states the points; show the earned-points line plainly.
-      final pointsLine = _claimPoints
-          ? '已獲得 15 積分'
-          : '評價已提交，已計入商戶星級';
+      final review = data['review'];
+      final points = widget.api.appConfig.value.pointsReview;
+      final awarded = review is Map && review['points_given'] == true;
+      final pointsLine = awarded && points != null && points > 0
+          ? context.tr('已獲得 $points 積分', 'You earned $points points')
+          : context.tr('評價已提交。', 'Your review was submitted.');
       await showDialog<void>(
         context: context,
         builder: (c) => AlertDialog(
           title: const Text('評價成功'),
-          content: Text(
-              '${data['message'] as String? ?? ''}\n$pointsLine'),
+          content: Text(pointsLine),
           actions: [
             TextButton(
                 onPressed: () => Navigator.pop(c),

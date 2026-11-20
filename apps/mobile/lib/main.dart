@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart' show kIsWeb, LicenseRegistry, LicenseEntryWithLineBreaks;
 import 'package:flutter/services.dart' show Clipboard, ClipboardData, rootBundle;
@@ -47,7 +49,9 @@ class _CouponGoAppState extends State<CouponGoApp> {
   void initState() {
     super.initState();
     _api.addListener(_sessionChanged);
+    unawaited(_api.appConfig.load());
     Future.wait([_api.loadToken(), _language.load()]).then((_) {
+      if (!mounted) return;
       setState(() {
         _ready = true;
         _authed = _api.isLoggedIn;
@@ -98,7 +102,7 @@ class _CouponGoAppState extends State<CouponGoApp> {
                 builder: (_) => SettingsScreen(
                     api: _api, onLogout: () => setState(() { _authed = false; _vendorMode = false; })));
           case '/guide':
-            return MaterialPageRoute(builder: (_) => const GuideScreen());
+            return MaterialPageRoute(builder: (_) => GuideScreen(api: _api));
           case '/login':
             // 返现页 401 时的登录入口：登录成功后回原界面。
             return MaterialPageRoute(
@@ -591,7 +595,7 @@ class _HomeShellState extends State<HomeShell> {
           if (kIsWeb && const bool.fromEnvironment('PUBLIC_DEMO'))
             ListTile(
               leading: const Icon(Icons.android, color: CgColors.primary),
-              title: Text(context.tr('下載 Android 示範版', 'Download Android demo')),
+              title: Text(context.tr('下載 Android 版', 'Download for Android')),
               onTap: () async {
                 const publicUrl = String.fromEnvironment('PUBLIC_WEB_URL');
                 final base = publicUrl.isNotEmpty
@@ -723,7 +727,7 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
             Text(context.tr('收藏優惠券', 'Saved coupons'), style: const TextStyle(fontWeight: FontWeight.bold)),
             if (!_loading && !_hasError && _coupons.isEmpty) Text(widget.guest
                 ? (const bool.fromEnvironment('PUBLIC_DEMO')
-                    ? context.tr('示範版暫無個人收藏優惠券。', 'No personal saved coupons in this demo.')
+                    ? context.tr('暫時沒有收藏的優惠券。', 'No saved coupons yet.')
                     : context.tr('登入後可查看收藏的優惠券。', 'Sign in to view saved coupons.'))
                 : context.tr('暫時沒有收藏的優惠券。', 'No saved coupons yet.')),
             ..._coupons.map((c) => Card(
@@ -743,7 +747,7 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
             Text(context.tr('收藏商店', 'Saved stores'), style: const TextStyle(fontWeight: FontWeight.bold)),
             if (!_loading && !_hasError && _shops.isEmpty) Text(widget.guest
                 ? (const bool.fromEnvironment('PUBLIC_DEMO')
-                    ? context.tr('示範版暫無個人收藏商店。', 'No personal saved stores in this demo.')
+                    ? context.tr('暫時沒有收藏的商店。', 'No saved stores yet.')
                     : context.tr('登入後可查看收藏的商店。', 'Sign in to view saved shops.'))
                 : context.tr('暫時沒有收藏的商店。', 'No saved stores yet.')),
             ..._shops.map((s) => Card(
