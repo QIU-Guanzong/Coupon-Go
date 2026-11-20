@@ -22,12 +22,16 @@ def verify_password(plain: str, hashed: str) -> bool:
         return False
 
 
-def create_access_token(subject: str, role: str) -> str:
+def create_access_token(subject: str, role: str, *, consent_only: bool = False) -> str:
     expire = datetime.now(timezone.utc) + timedelta(
         minutes=config.ACCESS_TOKEN_EXPIRE_MINUTES
     )
+    claims = {"sub": subject, "role": role, "exp": expire}
+    if consent_only:
+        claims["purpose"] = "legal-consent"
+        claims["exp"] = min(expire, datetime.now(timezone.utc) + timedelta(minutes=15))
     return jwt.encode(
-        {"sub": subject, "role": role, "exp": expire},
+        claims,
         config.SECRET_KEY,
         algorithm=config.ALGORITHM,
     )

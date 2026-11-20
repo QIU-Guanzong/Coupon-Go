@@ -3,28 +3,51 @@ from fastapi import Depends, HTTPException
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.orm import Session
 
-from . import models, security
+from . import legal, models, security
 from .database import get_db
 
 bearer = HTTPBearer(auto_error=False)
+
+
+def _identity(creds, db):
+    payload = security.decode_token(creds.credentials) if creds is not None else None
+    if payload is not None and payload.get("purpose") in (None, "legal-consent"):
+        try:
+            user = db.get(models.User, int(payload["sub"]))
+        except (KeyError, TypeError, ValueError):
+            user = None
+        if user is not None and user.is_active:
+            return user, payload
+    return None, {}
+
+
+def get_session_identity(
+    creds: HTTPAuthorizationCredentials = Depends(bearer),
+    db: Session = Depends(get_db),
+) -> tuple[models.User, bool]:
+    user, payload = _identity(creds, db)
+    if user is None:
+        raise HTTPException(status_code=401, detail="請登錄以繼續")
+    return user, payload.get("purpose") == "legal-consent"
+
+
+def get_identity_user(identity=Depends(get_session_identity)) -> models.User:
+    """Identity-only routes: consent, session status, logout and deletion."""
+    return identity[0]
 
 
 def get_current_user(
     creds: HTTPAuthorizationCredentials = Depends(bearer),
     db: Session = Depends(get_db),
 ) -> models.User:
-    if creds is None:
+    user, payload = _identity(creds, db)
+    if user is None:
         raise HTTPException(status_code=401, detail="請登錄以繼續")
-    payload = security.decode_token(creds.credentials)
-    if payload is None:
-        raise HTTPException(status_code=401, detail="登錄已失效，請重新登錄")
-    try:
-        user = db.query(models.User).filter(
-            models.User.id == int(payload["sub"])).first()
-    except (KeyError, TypeError, ValueError):
-        return None
-    if user is None or not user.is_active:
-        raise HTTPException(status_code=401, detail="帳戶不存在或已停用")
+    docs = legal.documents()
+    if not legal.has_accepted(db, user.id, docs):
+        raise HTTPException(428, detail={"code": "legal_consent_required", "documents": docs})
+    if payload.get("purpose") == "legal-consent":
+        raise HTTPException(403, detail={"code": "legal_consent_token_scope"})
     return user
 
 
@@ -32,21 +55,15 @@ def get_optional_user(
     creds: HTTPAuthorizationCredentials = Depends(bearer),
     db: Session = Depends(get_db),
 ) -> models.User | None:
-    """Current user when a valid Bearer token is present, else None.
-
-    For public endpoints that personalise one field (e.g. a review's
-    helped_by_me) without requiring login. An invalid/expired token is
-    treated as anonymous, never an error, on these endpoints.
-    """
-    if creds is None:
+    """Unaccepted or consent-only tokens never personalise public routes."""
+    user, payload = _identity(creds, db)
+    if user is None or payload.get("purpose") == "legal-consent":
         return None
-    payload = security.decode_token(creds.credentials)
-    if payload is None:
+    try:
+        docs = legal.documents()
+    except HTTPException:
         return None
-    user = db.query(models.User).filter(models.User.id == int(payload["sub"])).first()
-    if user is None or not user.is_active:
-        return None
-    return user
+    return user if legal.has_accepted(db, user.id, docs) else None
 
 
 def require_role(*roles: str):
