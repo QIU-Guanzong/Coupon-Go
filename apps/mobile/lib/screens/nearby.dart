@@ -306,7 +306,7 @@ class _NearbyScreenState extends State<NearbyScreen> {
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          const Text('此範圍內暫無商户'),
+          const Text('此範圍內暫無商戶'),
           const SizedBox(height: 12),
           ElevatedButton(
             onPressed: () {
@@ -358,7 +358,7 @@ class _NearbyScreenState extends State<NearbyScreen> {
       selectedShop = matches.isEmpty ? null : matches.first;
     }
     return Scaffold(
-      appBar: AppBar(title: const Text('附近商户')),
+      appBar: AppBar(title: const Text('附近商戶')),
       body: Column(
         children: [
           Padding(
@@ -387,7 +387,7 @@ class _NearbyScreenState extends State<NearbyScreen> {
                   child: Row(
                     children: [
                       const Expanded(
-                          child: Text('開啟定位查看附近商户')),
+                          child: Text('開啟定位查看附近商戶')),
                       const SizedBox(width: 8),
                       ElevatedButton(
                         onPressed: _locating ? null : _requestLocation,
@@ -417,7 +417,7 @@ class _NearbyScreenState extends State<NearbyScreen> {
                 Expanded(
                   child: OutlinedButton.icon(
                     onPressed: () => showCgToast(
-                        context, '定位僅用於列出附近商户，不會上傳或儲存'),
+                        context, '定位僅用於列出附近商戶，不會上傳或儲存'),
                     icon: const Icon(Icons.info_outline, size: 18),
                     label: const Text('定位用途'),
                   ),
@@ -566,7 +566,7 @@ Color _categoryColor(String category) {
   if (category.contains('餐')) return Colors.red.shade400;
   if (category.contains('咖啡')) return Colors.brown;
   if (category.contains('美容')) return Colors.pink.shade300;
-  if (category.contains('娛樂') || category.contains('娱乐')) {
+  if (category.contains('娛樂') || category.contains('娛樂')) {
     return Colors.purple.shade300;
   }
   return CgColors.primary;
@@ -643,7 +643,7 @@ class _MarkerMap extends StatelessWidget {
                     left: px(s.longitude!),
                     top: py(s.latitude!),
                     child: Semantics(
-                      label: '商户 ${s.name}',
+                      label: '商戶 ${s.name}',
                       button: true,
                       child: GestureDetector(
                         onTap: () => onSelect(s),

@@ -6,6 +6,7 @@ import 'package:coupon_go/language.dart';
 import 'package:coupon_go/main.dart';
 import 'package:coupon_go/screens/account.dart' show WalletScreen;
 import 'package:coupon_go/screens/customer.dart';
+import 'package:coupon_go/screens/cashback.dart';
 import 'package:coupon_go/screens/guest_auth.dart';
 import 'package:coupon_go/theme.dart';
 import 'package:flutter/material.dart';
@@ -31,6 +32,7 @@ class _NavApi extends ApiClient {
       meCalls++;
       return pendingMe?.future ?? {'role': role, 'name': name};
     }
+    if (path == '/get-home') return {'popular_merchants': []};
     if (path == '/get-limited-time-coupons') {
       return {'coupons': <dynamic>[]};
     }
@@ -44,7 +46,13 @@ class _NavApi extends ApiClient {
   @override
   Future<Map<String, dynamic>> cashback() async {
     cashbackCalls++;
-    return {'pending_balance': 0, 'withdrawable_balance': 0};
+    return {
+      'pending_balance': 20,
+      'withdrawable_balance': 75,
+      'min_withdraw_hkd': 50,
+      'daily_withdraw_limit_hkd': 500,
+      'transactions': <dynamic>[],
+    };
   }
 
   @override
@@ -168,6 +176,19 @@ void main() {
     expect(
         find.text('Cashback available to withdraw'), cashbackEnabled ? findsOneWidget : findsNothing);
     expect(api.cashbackCalls, cashbackEnabled ? 1 : 0);
+    if (!cashbackEnabled) return;
+    await tester.tap(find.text('Cashback available to withdraw'));
+    await tester.pumpAndSettle();
+    expect(find.byType(CashbackScreen), findsOneWidget);
+    await tester.tap(find.text('Withdraw'));
+    await tester.pumpAndSettle();
+    expect(find.byType(WithdrawScreen), findsOneWidget);
+    expect(tester.widget<WithdrawScreen>(find.byType(WithdrawScreen)).balance, 75);
+    tester.state<NavigatorState>(find.byType(Navigator)).pop();
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Missing cashback?'));
+    await tester.pumpAndSettle();
+    expect(find.byType(MissingCashbackScreen), findsOneWidget);
   });
 
   testWidgets('cashback direct route is not built when its flag is off',

@@ -704,9 +704,9 @@ class Package {
   /// 退款规则行：接口字段优先，默认「未使用随时可退，过期自动退款」；
   /// 不可退显示「该套餐售出后不可退」，不允许隐藏。
   String get refundRuleText {
-    if (isNonRefundable) return '该套餐售出后不可退';
+    if (isNonRefundable) return '該套餐售出後不可退';
     if (refundPolicyText.trim().isNotEmpty) return refundPolicyText.trim();
-    return '未使用随时可退，过期自动退款';
+    return '未使用隨時可退，過期自動退款';
   }
 
   /// 下单数量上限：min(限购余量, 库存)。
@@ -798,9 +798,16 @@ class PackageOrder {
 
   String get refundStatusText => switch (refundStatus) {
         'refunded' => '已退款',
-        'requested' => '退款处理中',
-        'rejected' => '退款被拒绝',
+        'requested' => '退款處理中',
+        'rejected' => '退款被拒絕',
         _ => '未退款',
+      };
+
+  String get refundStatusEnglishText => switch (refundStatus) {
+        'refunded' => 'Refunded',
+        'requested' => 'Refund processing',
+        'rejected' => 'Refund declined',
+        _ => 'Not refunded',
       };
 
   String get paymentStatusText => switch (paymentStatus) {
@@ -809,6 +816,14 @@ class PackageOrder {
         'timeout' => '支付逾時',
         'cancelled' => '已取消',
         _ => '待支付',
+      };
+
+  String get paymentStatusEnglishText => switch (paymentStatus) {
+        'paid' => 'Paid',
+        'failed' => 'Payment failed',
+        'timeout' => 'Payment expired',
+        'cancelled' => 'Cancelled',
+        _ => 'Awaiting payment',
       };
 
   String get paymentMethodText => paymentMethod == 'card' ? '信用卡' : 'FPS 轉數快';

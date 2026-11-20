@@ -7,6 +7,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../api_client.dart';
+import '../language.dart';
 import '../models.dart';
 import '../theme.dart';
 import '../widgets/widgets.dart';
@@ -133,7 +134,7 @@ class _ErrorView extends StatelessWidget {
               width: double.infinity,
               child: ElevatedButton(
                 onPressed: () => Navigator.of(context).pushNamed('/login'),
-                child: const Text('去登錄'),
+                child: Text(context.tr('去登錄', 'Sign in')),
               ),
             ),
           if (needsLogin) const SizedBox(height: 8),
@@ -141,7 +142,7 @@ class _ErrorView extends StatelessWidget {
             width: double.infinity,
             child: OutlinedButton(
               onPressed: onRetry,
-              child: const Text('重試'),
+              child: Text(context.tr('重試', 'Retry')),
             ),
           ),
         ],
@@ -341,7 +342,7 @@ class _CashbackScreenState extends State<CashbackScreen> with WalletUpdates<Cash
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('返現'),
+        title: Text(context.tr('返現', 'Cashback')),
         actions: [
           TextButton(
             onPressed: _openMissing,
@@ -349,7 +350,7 @@ class _CashbackScreenState extends State<CashbackScreen> with WalletUpdates<Cash
               foregroundColor: Colors.white,
               minimumSize: const Size(44, 44),
             ),
-            child: const Text('沒收到返現？'),
+            child: Text(context.tr('沒收到返現？', 'Missing cashback?')),
           ),
         ],
       ),
@@ -379,7 +380,7 @@ class _CashbackScreenState extends State<CashbackScreen> with WalletUpdates<Cash
                 width: double.infinity,
                 child: ElevatedButton(
                   onPressed: _canWithdraw ? _openWithdraw : null,
-                  child: const Text('提現'),
+                  child: Text(context.tr('提現', 'Withdraw')),
                 ),
               ),
               const SizedBox(height: 8),
@@ -398,7 +399,7 @@ class _CashbackScreenState extends State<CashbackScreen> with WalletUpdates<Cash
                             WithdrawalHistoryScreen(api: widget.api)));
                   },
                   style: TextButton.styleFrom(minimumSize: const Size(44, 44)),
-                  child: const Text('查看提現記錄'),
+                  child: Text(context.tr('查看提現記錄', 'Withdrawal history')),
                 ),
               ),
               if (_hasDineinPending && !_ruleDismissed)
@@ -816,7 +817,7 @@ class _WithdrawScreenState extends State<WithdrawScreen> {
     final amountError = _showAmountError ? _amountError() : null;
     final nameError = _showNameError ? _nameError() : null;
     return Scaffold(
-      appBar: AppBar(title: const Text('提現返現')),
+      appBar: AppBar(title: Text(context.tr('提現返現', 'Withdraw cashback'))),
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
@@ -898,7 +899,7 @@ class _WithdrawScreenState extends State<WithdrawScreen> {
               width: double.infinity,
               child: OutlinedButton(
                 onPressed: () => Navigator.of(context).pushNamed('/login'),
-                child: const Text('去登錄'),
+                child: Text(context.tr('去登錄', 'Sign in')),
               ),
             ),
           ],
@@ -1361,7 +1362,7 @@ class _MissingCashbackScreenState extends State<MissingCashbackScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('申訴返現')),
+      appBar: AppBar(title: Text(context.tr('申訴返現', 'Report missing cashback'))),
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
@@ -1379,7 +1380,7 @@ class _MissingCashbackScreenState extends State<MissingCashbackScreen> {
                 TextButton(
                   onPressed: _loadShops,
                   style: TextButton.styleFrom(minimumSize: const Size(44, 44)),
-                  child: const Text('重試'),
+                  child: Text(context.tr('重試', 'Retry')),
                 ),
               ],
             )
@@ -1387,7 +1388,7 @@ class _MissingCashbackScreenState extends State<MissingCashbackScreen> {
             DropdownButton<int>(
               value: _shopId,
               isExpanded: true,
-              hint: const Text('選擇商戶'),
+              hint: Text(context.tr('選擇商戶', 'Choose a merchant')),
               items: _shops
                   .map(
                       (s) => DropdownMenuItem(value: s.id, child: Text(s.name)))
