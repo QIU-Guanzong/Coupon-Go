@@ -226,7 +226,7 @@ class _WalletScreenState extends State<WalletScreen>
                         ],
                       ),
                     ),
-                    const Icon(Icons.chevron_right, color: Colors.white70),
+                    if (!widget.guest) const Icon(Icons.chevron_right, color: Colors.white70),
                   ],
                 ),
                 ),
@@ -288,7 +288,9 @@ class _WalletScreenState extends State<WalletScreen>
                                       ),
                                       const SizedBox(height: 12),
                                       Text(widget.guest
-                                          ? context.tr('登入後可在這裏查看已領取的優惠券。', 'Sign in to view your coupons.')
+                                          ? (const bool.fromEnvironment('PUBLIC_DEMO')
+                                              ? context.tr('示範版暫無個人優惠券。', 'No personal coupons in this demo.')
+                                              : context.tr('登入後可在這裏查看已領取的優惠券。', 'Sign in to view your coupons.'))
                                           : context.tr('暫時沒有優惠券，去首頁看看吧！', 'No coupons yet. Explore offers on Home.')),
                                       const SizedBox(height: 12),
                                       ElevatedButton(
@@ -807,7 +809,11 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                           size: 64,
                           color: CgColors.textSecondary)),
                   const SizedBox(height: 12),
-                  Text(widget.guest ? context.tr('登入後可查看你的通知。', 'Sign in to view your notifications.') : context.tr('沒有新通知。', 'No new notifications.')),
+                  Text(widget.guest
+                      ? (const bool.fromEnvironment('PUBLIC_DEMO')
+                          ? context.tr('示範版暫無個人通知。', 'No personal notifications in this demo.')
+                          : context.tr('登入後可查看你的通知。', 'Sign in to view your notifications.'))
+                      : context.tr('沒有新通知。', 'No new notifications.')),
                 ],
               ),
             )

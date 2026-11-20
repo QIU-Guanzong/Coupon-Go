@@ -118,4 +118,28 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('cashback entry is interactive only for signed-in wallets',
+      (tester) async {
+    final api = JourneyApi();
+    Widget wallet({required bool guest}) => MaterialApp(
+      home: Scaffold(body: WalletScreen(
+        api: api, guest: guest, onShowQr: (_) async {},
+      )),
+    );
+
+    await tester.pumpWidget(wallet(guest: true));
+    await tester.pumpAndSettle();
+    expect(find.byIcon(Icons.chevron_right), findsNothing);
+    final guestRow = tester.widget<InkWell>(find.ancestor(
+      of: find.text('返現（可提現）'), matching: find.byType(InkWell)).first);
+    expect(guestRow.onTap, isNull);
+
+    await tester.pumpWidget(wallet(guest: false));
+    await tester.pumpAndSettle();
+    expect(find.byIcon(Icons.chevron_right), findsOneWidget);
+    final memberRow = tester.widget<InkWell>(find.ancestor(
+      of: find.text('返現（可提現）'), matching: find.byType(InkWell)).first);
+    expect(memberRow.onTap, isNotNull);
+  });
+
 }

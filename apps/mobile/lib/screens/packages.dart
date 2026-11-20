@@ -1056,7 +1056,11 @@ class _OrdersScreenState extends State<OrdersScreen> with WalletUpdates<OrdersSc
   }
 
   String _emptyMessage(int tab) {
-    if (widget.guest) return context.tr('登入後可查看你的訂單。', 'Sign in to view your orders.');
+    if (widget.guest) {
+      return const bool.fromEnvironment('PUBLIC_DEMO')
+          ? context.tr('示範版暫無個人訂單。', 'No personal orders in this demo.')
+          : context.tr('登入後可查看你的訂單。', 'Sign in to view your orders.');
+    }
     switch (tab) {
       case 1:
         return '暫時沒有待支付訂單。';

@@ -698,7 +698,9 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
               const SkeletonBox(height: 72),
             Text(context.tr('收藏優惠券', 'Saved coupons'), style: const TextStyle(fontWeight: FontWeight.bold)),
             if (!_loading && !_hasError && _coupons.isEmpty) Text(widget.guest
-                ? context.tr('登入後可查看收藏的優惠券。', 'Sign in to view saved coupons.')
+                ? (const bool.fromEnvironment('PUBLIC_DEMO')
+                    ? context.tr('示範版暫無個人收藏優惠券。', 'No personal saved coupons in this demo.')
+                    : context.tr('登入後可查看收藏的優惠券。', 'Sign in to view saved coupons.'))
                 : context.tr('暫時沒有收藏的優惠券。', 'No saved coupons yet.')),
             ..._coupons.map((c) => Card(
                   margin: const EdgeInsets.only(top: 8),
@@ -716,7 +718,9 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
             const SizedBox(height: 16),
             Text(context.tr('收藏商店', 'Saved stores'), style: const TextStyle(fontWeight: FontWeight.bold)),
             if (!_loading && !_hasError && _shops.isEmpty) Text(widget.guest
-                ? context.tr('登入後可查看收藏的商店。', 'Sign in to view saved shops.')
+                ? (const bool.fromEnvironment('PUBLIC_DEMO')
+                    ? context.tr('示範版暫無個人收藏商店。', 'No personal saved stores in this demo.')
+                    : context.tr('登入後可查看收藏的商店。', 'Sign in to view saved shops.'))
                 : context.tr('暫時沒有收藏的商店。', 'No saved stores yet.')),
             ..._shops.map((s) => Card(
                   margin: const EdgeInsets.only(top: 8),
