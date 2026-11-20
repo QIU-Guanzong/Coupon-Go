@@ -899,9 +899,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(t(
-                  '提交後帳戶將停用，你將無法使用未用優惠券及積分。如有可提現返現，請先提現。',
-                  'Submitting deactivates your account. You will lose access to unused coupons and points. Withdraw any available cashback first.',
+                  '提交後帳戶將停用，你將無法使用未用優惠券及積分。',
+                  'Submitting deactivates your account. You will lose access to unused coupons and points.',
                 )),
+                Text(cashbackEnabled
+                    ? t('如有可提現返現，請先提現。',
+                        'Withdraw any available cashback first.')
+                    : t('如有尚待處理的款項，請先聯絡客服。',
+                        'If you have any outstanding funds, contact support first.')),
                 if (cashbackEnabled && currentBalance == null) ...[
                   const SizedBox(height: 12),
                   Text(t('暫時無法核對返現餘額，請先查看返現或稍後再試。',

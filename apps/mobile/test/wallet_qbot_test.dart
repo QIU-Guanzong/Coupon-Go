@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:coupon_go/api_client.dart';
+import 'package:coupon_go/feature_flags.dart';
 import 'package:coupon_go/language.dart';
 import 'package:coupon_go/models.dart';
 import 'package:coupon_go/screens/account.dart';
@@ -129,17 +130,25 @@ void main() {
 
     await tester.pumpWidget(wallet(guest: true));
     await tester.pumpAndSettle();
+    final entry = find.text('返現（可提現）');
     expect(find.byIcon(Icons.chevron_right), findsNothing);
-    final guestRow = tester.widget<InkWell>(find.ancestor(
-      of: find.text('返現（可提現）'), matching: find.byType(InkWell)).first);
-    expect(guestRow.onTap, isNull);
+    expect(entry, cashbackEnabled ? findsOneWidget : findsNothing);
+    if (cashbackEnabled) {
+      final guestRow = tester.widget<InkWell>(find.ancestor(
+          of: entry, matching: find.byType(InkWell)).first);
+      expect(guestRow.onTap, isNull);
+    }
 
     await tester.pumpWidget(wallet(guest: false));
     await tester.pumpAndSettle();
-    expect(find.byIcon(Icons.chevron_right), findsOneWidget);
-    final memberRow = tester.widget<InkWell>(find.ancestor(
-      of: find.text('返現（可提現）'), matching: find.byType(InkWell)).first);
-    expect(memberRow.onTap, isNotNull);
+    expect(find.byIcon(Icons.chevron_right),
+        cashbackEnabled ? findsOneWidget : findsNothing);
+    expect(entry, cashbackEnabled ? findsOneWidget : findsNothing);
+    if (cashbackEnabled) {
+      final memberRow = tester.widget<InkWell>(find.ancestor(
+          of: entry, matching: find.byType(InkWell)).first);
+      expect(memberRow.onTap, isNotNull);
+    }
   });
 
 }
