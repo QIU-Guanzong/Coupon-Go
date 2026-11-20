@@ -13,12 +13,14 @@ class _Api extends ApiClient {
   bool failDelete = false;
   bool failBalance = false;
   int deletes = 0;
+  int cashbackReads = 0;
 
   @override
   bool get isLoggedIn => loggedIn;
 
   @override
   Future<Map<String, dynamic>> cashback() async {
+    cashbackReads++;
     if (failBalance) throw ApiException(503, 'Unavailable');
     return {
       'withdrawable_balance': balance,
@@ -91,8 +93,14 @@ void main() {
     await _tap(tester, 'Delete account');
     if (!cashbackEnabled) {
       expect(find.text('Withdraw cashback'), findsNothing);
+      expect(find.text('Review cashback'), findsNothing);
+      expect(find.textContaining('Withdraw any available cashback'), findsNothing);
+      expect(find.textContaining('outstanding funds'), findsOneWidget);
+      expect(api.cashbackReads, 0);
+      expect(api.deletes, 0);
       return;
     }
+    expect(api.cashbackReads, 1);
     expect(find.textContaining('Available cashback'), findsOneWidget);
     await _tap(tester, 'Withdraw cashback');
     final page = tester.widget<WithdrawScreen>(find.byType(WithdrawScreen));

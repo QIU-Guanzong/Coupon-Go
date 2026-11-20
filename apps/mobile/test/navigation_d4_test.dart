@@ -99,6 +99,11 @@ Widget _home(_NavApi api, {bool vendorMode = true}) => HomeShell(
     );
 
 void main() {
+  test('cashback is hidden by default and can be explicitly enabled', () {
+    const hasOverride = bool.hasEnvironment('COUPON_CASHBACK_ENABLED');
+    const optedIn = bool.fromEnvironment('COUPON_CASHBACK_ENABLED');
+    expect(cashbackEnabled, hasOverride ? optedIn : false);
+  });
   testWidgets(
       'only a verified admin sees Administration; the application remains',
       (tester) async {
