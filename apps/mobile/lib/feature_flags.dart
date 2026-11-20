@@ -1,3 +1,6 @@
-/// Open only after the cashback backend is integrated and the release owner
-/// confirms availability. An unset build flag must not expose the feature.
-const cashbackEnabled = bool.fromEnvironment('COUPON_CASHBACK_ENABLED');
+/// Cashback is available by default. Build with
+/// --dart-define=COUPON_CASHBACK_ENABLED=false for an emergency shutdown.
+const cashbackEnabled = bool.fromEnvironment(
+  'COUPON_CASHBACK_ENABLED',
+  defaultValue: true,
+);

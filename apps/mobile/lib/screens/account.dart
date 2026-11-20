@@ -168,9 +168,9 @@ class _WalletScreenState extends State<WalletScreen>
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text('Q Wallet 積分',
-                  style: TextStyle(color: Colors.white70)),
-              Text("${_balance ?? '—'} 分",
+              Text(context.tr('Q Wallet 積分', 'Q Wallet points'),
+                  style: const TextStyle(color: Colors.white70)),
+              Text(context.tr("${_balance ?? '—'} 分", "${_balance ?? '—'} points"),
                   style: const TextStyle(
                       color: Colors.white,
                       fontSize: 36,
@@ -190,8 +190,8 @@ class _WalletScreenState extends State<WalletScreen>
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          const Text('返現（可提現）',
-                              style: TextStyle(color: Colors.white70)),
+                          Text(context.tr('返現（可提現）', 'Cashback available to withdraw'),
+                              style: const TextStyle(color: Colors.white70)),
                           Text(_cashbackWithdrawable == null ? '—' : formatHkd(_cashbackWithdrawable!),
                               style: const TextStyle(
                                   color: Colors.white,
@@ -201,7 +201,10 @@ class _WalletScreenState extends State<WalletScreen>
                                     FontFeature.tabularFigures()
                                   ])),
                           Text(
-                              '待確認 ${_cashbackPending == null ? '—' : formatHkd(_cashbackPending!)}',
+                              context.tr(
+                                '待確認 ${_cashbackPending == null ? '—' : formatHkd(_cashbackPending!)}',
+                                'Pending ${_cashbackPending == null ? '—' : formatHkd(_cashbackPending!)}',
+                              ),
                               style: const TextStyle(
                                   color: Colors.white70,
                                   fontSize: 12,
@@ -222,10 +225,10 @@ class _WalletScreenState extends State<WalletScreen>
         TabBar(
           controller: _tab,
           labelColor: CgColors.primary,
-          tabs: const [
-            Tab(text: '未使用'),
-            Tab(text: '已使用'),
-            Tab(text: '已失效'),
+          tabs: [
+            Tab(text: context.tr('未使用', 'Unused')),
+            Tab(text: context.tr('已使用', 'Used')),
+            Tab(text: context.tr('已失效', 'Expired')),
           ],
         ),
         Expanded(
@@ -272,12 +275,12 @@ class _WalletScreenState extends State<WalletScreen>
                                                     CgColors.textSecondary),
                                       ),
                                       const SizedBox(height: 12),
-                                      const Text('暫時沒有優惠券，去首頁看看吧！'),
+                                      Text(context.tr('暫時沒有優惠券，去首頁看看吧！', 'No coupons yet. Explore offers on Home.')),
                                       const SizedBox(height: 12),
                                       ElevatedButton(
                                         onPressed: () => Navigator.of(context)
                                             .pushNamed('/packages'),
-                                        child: const Text('去看看套餐'),
+                                        child: Text(context.tr('去看看套餐', 'Browse packages')),
                                       ),
                                     ],
                                   ),

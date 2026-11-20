@@ -166,7 +166,7 @@ void main() {
     )));
     await tester.pumpAndSettle();
     expect(
-        find.text('返現（可提現）'), cashbackEnabled ? findsOneWidget : findsNothing);
+        find.text('Cashback available to withdraw'), cashbackEnabled ? findsOneWidget : findsNothing);
     expect(api.cashbackCalls, cashbackEnabled ? 1 : 0);
   });
 
