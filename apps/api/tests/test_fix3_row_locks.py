@@ -105,9 +105,9 @@ else:
 TestingSession = sessionmaker(bind=engine)
 
 PERIOD = datetime.now(timezone.utc).strftime("%Y-%m")
-# Seed cash coupons (id -> (shop_id, cash_amount)); one shop per test so
+# Settlement fixtures (id -> (shop_id, discount_price)); one shop per test so
 # the per-(shop, period) settlement uniqueness never collides.
-CASH = {2: (1, 30), 5: (3, 100), 8: (4, 15), 17: (9, 150), 22: (11, 10),
+PRICED = {2: (1, 30), 5: (3, 100), 8: (4, 15), 17: (9, 150), 22: (11, 10),
         24: (12, 20)}
 
 
@@ -124,6 +124,14 @@ def client():
     Base.metadata.create_all(bind=engine)
     db = TestingSession()
     seed(db)
+    # These tests exercise a nonzero payable settlement; cash vouchers
+    # are zero-valued for settlement under M8.
+    for coupon_id, (_, amount) in PRICED.items():
+        coupon = db.get(models.Coupon, coupon_id)
+        coupon.coupon_type = "Price"
+        coupon.discount_price = amount
+        coupon.cash_amount = None
+    db.commit()
     db.close()
 
     def _get_db():
@@ -541,7 +549,7 @@ def test_double_pay_settlement_sequential_rejected(client):
 def test_concurrent_invoices_total_capped_at_net__row_lock(
         client, monkeypatch):
     import app.routers.admin_v2 as admin_router
-    shop_id, face = CASH[5]  # cash 100, rate 0.10 -> net 90
+    shop_id, face = PRICED[5]  # price 100, rate 0.10 -> net 90
     s = _approved_settlement(client, "fix3-inv@example.com", 5, shop_id)
     assert s["net_amount"] == 90, s
     fh = _finance_headers(client)
@@ -569,7 +577,7 @@ def test_concurrent_invoices_total_capped_at_net__row_lock(
 
 
 def test_invoice_cap_sequential_rejected(client):
-    shop_id, face = CASH[17]  # cash 150, rate 0.10 -> net 135
+    shop_id, face = PRICED[17]  # price 150, rate 0.10 -> net 135
     s = _approved_settlement(client, "fix3-inv-seq@example.com", 17, shop_id)
     fh = _finance_headers(client)
     r = client.post("/api/v3/admin/invoices", json={

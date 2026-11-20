@@ -111,9 +111,9 @@ else:
 TestingSession = sessionmaker(bind=engine)
 
 PERIOD = datetime.now(timezone.utc).strftime("%Y-%m")
-# Seed cash coupons (id -> (shop_id, cash_amount)); one shop per test so
+# Settlement fixtures (id -> (shop_id, discount_price)); one shop per test so
 # the per-(shop, period) settlement uniqueness never collides.
-CASH = {2: (1, 30), 5: (3, 100), 8: (4, 15), 17: (9, 150), 22: (11, 10),
+PRICED = {2: (1, 30), 5: (3, 100), 8: (4, 15), 11: (6, 50), 17: (9, 150), 22: (11, 10),
         24: (12, 20)}
 
 
@@ -130,6 +130,14 @@ def client():
     Base.metadata.create_all(bind=engine)
     db = TestingSession()
     seed(db)
+    # These tests exercise a nonzero payable settlement; cash vouchers
+    # are zero-valued for settlement under M8.
+    for coupon_id, (_, amount) in PRICED.items():
+        coupon = db.get(models.Coupon, coupon_id)
+        coupon.coupon_type = "Price"
+        coupon.discount_price = amount
+        coupon.cash_amount = None
+    db.commit()
     db.close()
 
     def _get_db():

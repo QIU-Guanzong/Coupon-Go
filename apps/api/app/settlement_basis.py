@@ -15,9 +15,8 @@ Basis (actual paid amount, not coupon face value):
   A refund that is only "requested" still settles — the money has
   not been returned yet.
 - price coupon -> discount_price.
-- cash coupon -> cash_amount (the merchant-issued voucher
-  denomination; e.g. "滿 $200 減 $30" settles the $30 the merchant
-  gave up, not the customer's spend).
+- cash coupon -> 0. A face-value discount (e.g. "滿 $200 減 $30")
+  is not a platform collection, even for legacy positive snapshots.
 - anything else (gift / percentage-only / pure-threshold coupon) ->
   0. regular_price is NEVER a basis: a free coupon settling at
   regular_price was the platform paying the merchant for a freebie.
@@ -25,10 +24,11 @@ Basis (actual paid amount, not coupon face value):
 Snapshot rule (F6 mechanism kept): when a redemption row is passed
 and its face_value snapshot is not NULL, the snapshot wins over the
 live coupon / order rows, so a later price change cannot drift the
-basis. The refund check above runs BEFORE the snapshot: a refunded
-order's redemption is excluded even if it carries a snapshot.
+basis. The refund and M8 cash-coupon rules run before the snapshot;
+existing issued settlement entries remain unchanged.
 Legacy NULL snapshots fall back to the live rows below. Migration
-0014 rewrites pre-M6 snapshots (old basis) to this basis.
+0014 rewrites pre-M6 snapshots to the historical M6 basis; the M8
+zero-cash rule is enforced at runtime without rewriting history.
 """
 from decimal import Decimal
 
@@ -56,7 +56,14 @@ def settlement_basis(db: Session, coupon: models.Coupon = None,
     # Refunded orders never settle, snapshot or not.
     if order is not None and order.refund_status == "refunded":
         return None
-    # F6: prefer the snapshot taken at scan time.
+    # A Cash coupon is a discount, not money collected by the platform.
+    # Also apply this rule to pre-M8 positive face-value snapshots.
+    if order is None:
+        if coupon is None and redemption is not None:
+            coupon = db.get(models.Coupon, redemption.coupon_id)
+        if coupon is not None and (coupon.coupon_type or "").strip().lower() == "cash":
+            return Decimal("0")
+    # F6: prefer the snapshot taken at scan time for other coupons.
     if redemption is not None and getattr(redemption, "face_value", None) \
             is not None:
         return Decimal(str(redemption.face_value))
@@ -67,6 +74,4 @@ def settlement_basis(db: Session, coupon: models.Coupon = None,
     if coupon is not None:
         if getattr(coupon, "discount_price", None) is not None:
             return Decimal(str(coupon.discount_price))
-        if getattr(coupon, "cash_amount", None) is not None:
-            return Decimal(str(coupon.cash_amount))
     return Decimal("0")

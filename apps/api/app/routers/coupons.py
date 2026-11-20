@@ -233,10 +233,10 @@ def scan_coupon(body: schemas.ScanIn,
     coupon.used_count = models.Coupon.used_count + 1
     # M6: snapshot the settlement basis at scan time via the one
     # shared function (see app.settlement_basis) — package = order
-    # paid_amount, price coupon = discount_price, cash coupon =
-    # cash_amount, free / gift / percentage-only / pure-threshold = 0.
-    # Settlement generation and reconciliation read this snapshot,
-    # never the live coupon row. None means the order was already
+    # paid_amount, price coupon = discount_price. Cash / free / gift /
+    # percentage-only / pure-threshold coupons contribute 0.
+    # Settlement and reconciliation prefer the snapshot, except for
+    # refunded orders and old cash-coupon snapshots. None means the order was already
     # refunded: snapshot 0, the redemption never settles anyway.
     _basis = settlement_basis(db, coupon, wallet_item=item)
     face_value = _basis if _basis is not None else Decimal("0")

@@ -572,6 +572,24 @@ def resolve_settlement(settlement_id: int,
             "settlement": _settlement_out(db, s)}
 
 
+def _hold_legacy_cash_voucher_payment(db: Session, settlement_id: int) -> None:
+    """Require finance reconciliation before paying an old cash-discount line."""
+    line = (db.query(SettlementItem.id)
+            .join(models.Redemption, models.Redemption.id == SettlementItem.redemption_id)
+            .join(models.Coupon, models.Coupon.id == models.Redemption.coupon_id)
+            .outerjoin(models.WalletItem, models.WalletItem.id == models.Redemption.wallet_item_id)
+            .outerjoin(Order, Order.id == models.WalletItem.order_id)
+            .outerjoin(SettlementReversal, SettlementReversal.item_id == SettlementItem.id)
+            .filter(SettlementItem.settlement_id == settlement_id,
+                    SettlementItem.amount > 0,
+                    func.lower(func.trim(models.Coupon.coupon_type)) == "cash",
+                    Order.id.is_(None),
+                    SettlementReversal.item_id.is_(None))
+            .first())
+    if line is not None:
+        raise HTTPException(409, "舊結算單含現金券折扣，請先完成對賬及調整")
+
+
 @router.post("/admin/settlements/{settlement_id}/pay")
 def pay_settlement(settlement_id: int,
                    body: schemas_line_f.SettlementTransferIn | None = None,
@@ -594,6 +612,7 @@ def pay_settlement(settlement_id: int,
             raise HTTPException(409, "付款金額或憑證已變更，請重新核對")
     if s.status != "approved":
         raise HTTPException(status_code=400, detail="只有已確認的結算單可以付款")
+    _hold_legacy_cash_voucher_payment(db, s.id)
     s.status = "paid"
     db.add(SettlementTransfer(settlement_id=s.id, amount=s.net_amount, kind="payment",
                               reference=reference, actor_id=user.id))

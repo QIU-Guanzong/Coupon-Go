@@ -48,7 +48,7 @@ PERIOD = datetime.now(timezone.utc).strftime("%Y-%m")
 # 5: shop 3, Cash $100
 # 8: shop 4, Cash $15
 # 10: shop 5, Price $138 (discount_price 138 / regular 188)
-# 11: shop 6, Cash $50
+# 11: shop 6, Price $50 (explicitly set for the fallback test)
 # 17: shop 9, Cash $150
 
 
@@ -230,13 +230,14 @@ def test_f6_legacy_null_snapshot_falls_back_to_live_price(client):
     # face_value NULL; settlement must fall back to the current coupon
     # price instead of crashing or pricing at 0.
     fh = _finance_headers(client)
-    rid = _redeem(client, "f6-d@example.com", coupon_id=11)  # shop 6, Cash $50
+    _set_coupon_price(11, coupon_type="Price", cash_amount=None, discount_price=50)
+    rid = _redeem(client, "f6-d@example.com", coupon_id=11)  # shop 6, Price $50
     db = TestingSession()
     red = db.query(models.Redemption).filter(models.Redemption.id == rid).first()
     red.face_value = None
     db.commit()
     db.close()
-    _set_coupon_price(11, cash_amount=77)
+    _set_coupon_price(11, discount_price=77)
     r = _generate(client, fh, 6)
     assert r.status_code == 201, r.text
     assert r.json()["settlement"]["gross_amount"] == 77, r.text

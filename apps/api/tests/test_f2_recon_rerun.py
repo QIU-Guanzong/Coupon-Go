@@ -36,7 +36,7 @@ engine = create_engine(f"sqlite:///{TEST_DB}", connect_args={"check_same_thread"
 TestingSession = sessionmaker(bind=engine)
 
 PERIOD = datetime.now(timezone.utc).strftime("%Y-%m")
-# Coupon 11: shop 6, Cash $50 (unused by test_line_f.py, which uses
+# Coupon 11: shop 6, Price $50 (test fixture) (unused by test_line_f.py, which uses
 # shops 1/3/4/9/11/12, so the per-(shop, period) settlement stays ours).
 SHOP_ID = 6
 COUPON_ID = 11
@@ -51,6 +51,11 @@ def client():
     Base.metadata.create_all(bind=engine)
     db = TestingSession()
     seed(db)
+    coupon = db.get(models.Coupon, COUPON_ID)
+    coupon.coupon_type = "Price"
+    coupon.discount_price = FACE
+    coupon.cash_amount = None
+    db.commit()
     db.close()
 
     def _get_db():
