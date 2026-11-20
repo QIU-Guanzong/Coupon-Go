@@ -48,6 +48,10 @@ Endpoint 名稱沿用 Coupon GO! 1.2.6 APK 逆向出的原始名稱（含原始�
 | POST | `/favorite-shop`、`/favorite-coupon-all` | 收藏/取消收藏 |
 | GET | `/get-subscription-categories-list`、`/get-subscription-plan-list` | 訂閱計劃 |
 
+## Q仔
+
+見 [Q仔 API（額度、公開商品與 offers）](M9_QBOT_API.md)。
+
 ## 券 / 錢包 / 積分
 
 | 方法 | 路徑 | 說明 |

@@ -335,7 +335,7 @@ def test_qbot_public_offers_and_private_points(client, monkeypatch):
     body = {"message": "我有幾多積分？"}
     result = client.post("/api/v3/qbot/chat", headers=h, json=body)
     assert result.status_code == 200
-    assert result.json() == {"answer": "打開 Q Wallet。", "points_balance": 10}
+    assert result.json() == {"answer": "打開 Q Wallet。", "points_balance": 10, "offers": []}
     assert client.post("/api/v3/qbot/chat", json=body).json()["points_balance"] is None
     assert len(calls) == 2
     monkeypatch.delenv("DEEPSEEK_API_KEY")
