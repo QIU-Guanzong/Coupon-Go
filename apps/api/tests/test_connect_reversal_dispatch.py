@@ -82,8 +82,17 @@ def test_success_then_local_commit_failure_stays_unknown(client, monkeypatch):
     assert client.post(f"/api/v3/redemptions/{scan['redemption_id']}/revoke", headers=vendor).status_code == 200
     with base._db() as db:
         entry = db.query(ConnectLedgerEntry).filter_by(id=entry_id).with_for_update().one()
+        real_commit = db.commit
+        commits = []
+        def fail_result_commit():
+            commits.append(1)
+            if len(commits) == 2:
+                raise RuntimeError('simulated local result commit failure')
+            return real_commit()
+        monkeypatch.setattr(db, 'commit', fail_result_commit)
         assert connect_service._attempt_reversal(db, entry)['reversed']
-        # Simulate the transaction committing the provider response failing.
+        with pytest.raises(RuntimeError, match='result commit failure'):
+            db.commit()
         db.rollback()
     base._sweep()
     assert calls == [f'reversal-{entry_id}']
