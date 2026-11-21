@@ -29,8 +29,7 @@ from sqlalchemy import (
 from .database import Base
 
 
-def _now():
-    return datetime.now(timezone.utc).replace(tzinfo=None)
+from .timeutil import utcnow as _now
 
 
 def _json_list(value):

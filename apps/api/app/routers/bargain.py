@@ -62,6 +62,7 @@ from ..models_bargain import (
     BargainCampaign, BargainHelp, BargainRefund, BargainSession,
 )
 from ..payments_gateway import GatewayError, refund_payment
+from ..shared import issue_wallet_item
 
 router = APIRouter()
 
@@ -83,8 +84,7 @@ PACKAGE_TERMS = ("砍价成团套餐券；未核销可退款，过期自动退�
                  "退款原路返回，1–3 个工作日。")
 
 
-def _now():
-    return datetime.now(timezone.utc).replace(tzinfo=None)
+from ..timeutil import utcnow as _now
 
 
 def _money(value) -> Decimal:
@@ -579,10 +579,7 @@ def purchase_bargain(session_id: int,
         kind="package", package_id=campaign.package_id)
     db.add(coupon)
     db.flush()
-    item = models.WalletItem(user_id=user.id, coupon_id=coupon.id, status=1,
-                             source="bargain", order_id=None)
-    db.add(item)
-    db.flush()
+    item = issue_wallet_item(db, user.id, coupon.id, "bargain")
     s.wallet_item_id = item.id
     s.stock_locked = False  # locked unit is now sold, no longer held
     refund = _add_refund(db, s, _money(s.paid_amount) - current, "price_cut")
