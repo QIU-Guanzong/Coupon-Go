@@ -16,7 +16,9 @@ from app import models_bargain  # noqa: E402,F401  (line E)
 config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
-config.set_main_option("sqlalchemy.url", app_config.DATABASE_URL)
+# Alembic stores options through ConfigParser, where percent signs are
+# interpolation markers. Preserve URL-encoded credentials and socket paths.
+config.set_main_option("sqlalchemy.url", app_config.DATABASE_URL.replace("%", "%%"))
 target_metadata = Base.metadata
 
 
