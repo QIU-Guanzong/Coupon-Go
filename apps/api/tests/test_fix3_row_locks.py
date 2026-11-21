@@ -593,7 +593,7 @@ def test_invoice_cap_sequential_rejected(client):
 # ---------- 6. concurrent revoke: exactly one revokes, points reversed once ----------
 def test_concurrent_revoke_redemption_only_once__row_lock(
         client, monkeypatch):
-    import app.routers.redemption as redemption_router
+    import app.points as points_module
     h, wid, red_id = _redeem(client, "fix3-revoke@example.com", 22)
     vh = _vendor_headers(client)
     db = TestingSession()
@@ -605,9 +605,10 @@ def test_concurrent_revoke_redemption_only_once__row_lock(
         db.close()
     assert before == 30, before  # +10 claim, +20 redeem
     # add_points() reverses the +20 after the revoked_at check.
+    # Seam moved by dianping/unify: points writes now live in app.points.
     monkeypatch.setattr(
-        redemption_router, "add_points",
-        _sleeping_wrapper(redemption_router.add_points, seconds=0.4))
+        points_module, "add_points",
+        _sleeping_wrapper(points_module.add_points, seconds=0.4))
     results = _run_two(lambda i, tc: tc.post(
         f"/api/v3/redemptions/{red_id}/revoke", headers=vh))
     statuses = sorted(r.status_code for r in results)
@@ -705,7 +706,7 @@ def test_concurrent_scan_same_code_only_one_succeeds__row_lock(
     is recorded. Pre-fix both scans read status 1 before either
     commits, so both succeed.
     """
-    import app.routers.coupons as coupons_router
+    import app.points as points_module
     h = _register_and_login(client, "m2-scan@example.com")
     r = client.post("/api/v3/new-favorite-coupon",
                     params={"coupon_id": 22}, headers=h)
@@ -727,9 +728,10 @@ def test_concurrent_scan_same_code_only_one_succeeds__row_lock(
     assert before == 10, before  # +10 claim only, not yet redeemed
     # add_points() runs after the status check, before the commit —
     # sleep there to widen the race window.
+    # Seam moved by dianping/unify: points writes now live in app.points.
     monkeypatch.setattr(
-        coupons_router, "add_points",
-        _sleeping_wrapper(coupons_router.add_points, seconds=0.4))
+        points_module, "add_points",
+        _sleeping_wrapper(points_module.add_points, seconds=0.4))
     results = _run_two(lambda i, tc: tc.post(
         "/api/v3/new-scan-coupon", json={"code": code}, headers=vh))
     statuses = sorted(r.status_code for r in results)

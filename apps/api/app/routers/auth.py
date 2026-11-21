@@ -19,8 +19,7 @@ from ..deps import get_current_user, get_identity_user, get_session_identity
 router = APIRouter()
 
 
-def _now():
-    return datetime.now(timezone.utc).replace(tzinfo=None)
+from ..timeutil import utcnow as _now
 
 
 def _issue_otp(db: Session, email: str, purpose: str, role: str = "customer") -> str:
