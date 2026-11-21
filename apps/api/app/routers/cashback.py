@@ -105,6 +105,11 @@ def list_transactions(status: str = Query(None),
 @router.post("/cashback/withdraw")
 def withdraw(body: WithdrawIn, user: models.User = Depends(get_current_user),
              db: Session = Depends(get_db)):
+    # M10: new withdrawals are blocked while the cashback switch is off,
+    # even against an old withdrawable balance. Balance query, ledger,
+    # admin review, void and missing appeals stay available.
+    if not config.CASHBACK_ENABLED:
+        raise HTTPException(status_code=403, detail="返现功能已关闭")
     def _do():
         w = svc.withdraw(db, user, body.amount, body.method,
                          body.account_name, body.account_ref, body.request_key)

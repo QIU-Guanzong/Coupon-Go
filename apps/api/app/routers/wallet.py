@@ -15,7 +15,8 @@ from .coupons import _refresh_expiry
 
 router = APIRouter()
 
-POINTS_EXCHANGE_COST = 9
+# M10: POINTS_EXCHANGE_COST moved to app.config (single source of truth,
+# env-configurable); wallet reads config.POINTS_EXCHANGE_COST below.
 
 
 @router.get("/get-favorite-coupons-list")
@@ -135,7 +136,7 @@ def exchange_points(coupon_id: int, user: models.User = Depends(get_current_user
     coupon = db.query(models.Coupon).filter(models.Coupon.id == coupon_id).first()
     if coupon is None or not coupon.is_points_exchange:
         raise HTTPException(status_code=404, detail="找不到此積分券")
-    if points_balance(db, user.id) < POINTS_EXCHANGE_COST:
+    if points_balance(db, user.id) < config.POINTS_EXCHANGE_COST:
         raise HTTPException(status_code=400, detail="積分不足")
     existing = db.query(models.WalletItem).filter(
         models.WalletItem.user_id == user.id,
@@ -144,7 +145,7 @@ def exchange_points(coupon_id: int, user: models.User = Depends(get_current_user
         raise HTTPException(status_code=400, detail="已經兌換過此券")
     item = models.WalletItem(user_id=user.id, coupon_id=coupon.id, status=1)
     db.add(item)
-    add_points(db, user.id, -POINTS_EXCHANGE_COST, "exchange", ref_id=coupon.id)
+    add_points(db, user.id, -config.POINTS_EXCHANGE_COST, "exchange", ref_id=coupon.id)
     db.commit()
     return {"message": "兌換成功，已存入 Q Wallet",
             "balance": points_balance(db, user.id)}

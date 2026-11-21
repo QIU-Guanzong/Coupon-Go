@@ -64,6 +64,20 @@ CASHBACK_MIN_WITHDRAW_HKD = float(os.environ.get("CASHBACK_MIN_WITHDRAW_HKD", "5
 CASHBACK_DAILY_WITHDRAW_LIMIT_HKD = float(os.environ.get("CASHBACK_DAILY_WITHDRAW_LIMIT_HKD", "1500"))
 CASHBACK_MAX_PER_TXN_HKD = float(os.environ.get("CASHBACK_MAX_PER_TXN_HKD", "0"))  # 0 = 不设上限
 CASHBACK_MISSING_WINDOW_DAYS = int(os.environ.get("CASHBACK_MISSING_WINDOW_DAYS", "30"))
+# --- M10: cashback master switch (default OFF) ---
+# §3.2 already hides the cashback entry on the frontend; the backend
+# must not keep recording invisible HK$ liability either. When off,
+# redemptions skip record_spend entirely (including its dine-in unlock
+# of earlier pending earnings — they unlock again once the switch
+# re-opens) and new withdrawals return 403. Read at call time via the
+# module global so tests can monkeypatch it.
+CASHBACK_ENABLED = os.environ.get("CASHBACK_ENABLED", "false").strip().lower() in ("1", "true", "yes", "on")
+# --- M10: /app-config display fields ---
+# points_exchange_cost: single source of truth for the 9-points voucher
+# (was a module constant in routers/wallet.py). open_login is field-only
+# for now — no behaviour change (PROMPTS_OPEN_LOGIN_20261120.md not found).
+POINTS_EXCHANGE_COST = int(os.environ.get("POINTS_EXCHANGE_COST", "9"))
+OPEN_LOGIN = os.environ.get("OPEN_LOGIN", "false").strip().lower() in ("1", "true", "yes", "on")
 # --- line C (套餐 2A): payments (Stripe test mode only) ---
 # No real merchant account is connected and no real key is stored anywhere
 # in the repo. With STRIPE_SECRET_KEY unset the gateway runs its local

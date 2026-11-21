@@ -255,10 +255,16 @@ def scan_coupon(body: schemas.ScanIn,
     # expected outcome is a new pending earning, or None when the coupon
     # carries no verifiable spend.
     db.flush()
-    try:
-        cashback_service.record_spend(db, red)
-    except cashback_service.CashbackError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+    # M10: cashback master switch (default OFF). When off, skip the whole
+    # record_spend call — including its dine-in unlock of earlier pending
+    # earnings for this merchant; they unlock again once the switch
+    # re-opens. Revocation still reverses old earnings (see
+    # void_for_revocation, ungated by design).
+    if config.CASHBACK_ENABLED:
+        try:
+            cashback_service.record_spend(db, red)
+        except cashback_service.CashbackError as e:
+            raise HTTPException(status_code=400, detail=str(e))
     add_scanned_sale(db, red)
     db.commit()
     db.refresh(red)
