@@ -8,6 +8,13 @@ import '../widgets/widgets.dart';
 import 'reviews_admin.dart';
 import 'withdrawal_review.dart';
 
+String _commissionRateText(num rate) {
+  final percent = (rate * 100).toStringAsFixed(4)
+      .replaceFirst(RegExp(r'0+$'), '')
+      .replaceFirst(RegExp(r'\.$'), '');
+  return '$percent%';
+}
+
 /// Admin v2 home (line F). UI_SPEC §9 first phase: onboarding review,
 /// orders and settlements are the three first-phase blocks; the other
 /// entries are the pre-existing v2 screens.
@@ -541,7 +548,7 @@ class _OrdersAdminScreenState extends State<OrdersAdminScreen> {
           children: [
             Text('訂單 #${order.id} · ${formatHkd(order.paidAmount)}'),
             const SizedBox(height: 8),
-            const Text('退款後套餐券作廢，確定退款嗎？'),
+            const Text('將退款整筆訂單，訂單內所有券會作廢。確定退款嗎？'),
             const SizedBox(height: 8),
             TextField(
               controller: ctrl,
@@ -884,6 +891,10 @@ class _SettlementsScreenState extends State<SettlementsScreen> {
             _drawerRow('核銷筆數', '${s['redemption_count'] ?? 0}'),
             _drawerRow('毛額', _moneyText(s['gross_amount'])),
             _drawerRow('佣金', _moneyText(s['commission'])),
+            if (s['commission_rate_mixed'] == true)
+              const Text('此結算單包含不同佣金率，詳見各筆核銷。')
+            else if (s['applied_commission_rate'] is num)
+              _drawerRow('佣金率', _commissionRateText(s['applied_commission_rate'] as num)),
             _drawerRow('商家應收', _moneyText(s['net_amount'])),
             _drawerRow('已付淨額', _moneyText(s['transferred_net'])),
             _drawerRow(_balanceLabel(s), _moneyText((s['outstanding_net'] as num).abs())),
@@ -914,7 +925,7 @@ class _SettlementsScreenState extends State<SettlementsScreen> {
               ),
             const Divider(),
             for (final line in s['items'] as List? ?? []) ...[
-              Text("核銷 #${line['redemption_id']} · ${_moneyText(line['amount'])} · 佣金 ${_moneyText(line['commission'])}"),
+              Text("核銷 #${line['redemption_id']} · ${_moneyText(line['amount'])} · 佣金 ${_moneyText(line['commission'])}${line['commission_rate'] is num ? ' · 佣金率 ${_commissionRateText(line['commission_rate'] as num)}' : ''}"),
               if (line['reversal'] != null)
                 Text("沖回 #${line['redemption_id']} · ${_moneyText(line['reversal']['amount'])} · 佣金 ${_moneyText(line['reversal']['commission'])}"),
             ],

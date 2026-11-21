@@ -320,7 +320,7 @@ class _WalletScreenState extends State<WalletScreen>
                                         title: Text(item.couponName),
                                         subtitle: Text(
                                             '${item.shopName} · ${item.statusText}'
-                                            '${item.isPackage ? ' · 套餐券 ×${item.quantity}' : ''}'),
+                                            '${item.orderNeedsReview ? ' · 訂單數量待核對' : item.isPackage ? ' · 套餐券 ×${item.quantity}' : ''}'),
                                         trailing: item.status == 1
                                             ? Row(
                                                 mainAxisSize: MainAxisSize.min,
@@ -332,7 +332,7 @@ class _WalletScreenState extends State<WalletScreen>
                                                           context: context,
                                                           builder: (ctx) => AlertDialog(
                                                             title: const Text('申請退款'),
-                                                            content: Text('${item.couponName} · ${item.quantity} 份\n確定退回整張套餐券嗎？'),
+                                                            content: Text('${item.couponName} · 訂單共 ${item.orderQuantity} 份\n將退款整筆訂單及其所有券，只有全部符合退款條件時才可申請。確定嗎？'),
                                                             actions: [
                                                               TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('取消')),
                                                               ElevatedButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('確認退款')),
@@ -362,7 +362,7 @@ class _WalletScreenState extends State<WalletScreen>
                                                       child: const Text('退款'),
                                                     ),
                                                   ElevatedButton(
-                                                    onPressed: () async { await widget.onShowQr(item); if (mounted) await _load(); },
+                                                    onPressed: item.orderNeedsReview ? null : () async { await widget.onShowQr(item); if (mounted) await _load(); },
                                                     style: ElevatedButton
                                                         .styleFrom(
                                                       minimumSize:
