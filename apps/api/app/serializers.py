@@ -109,6 +109,7 @@ def wallet_out(db: Session, w: models.WalletItem):
     return {
         "quantity": (order.quantity or 1) if order and len(items) == 1 else 1,
         "order_quantity": (order.quantity or 1) if order else None,
+        "order_paid_amount": (float(order.paid_amount) if order and order.payment_status == "paid" and order.paid_amount is not None else None),
         "order_refundable": order_refundable,
         "order_wallet_quantity_status": order_wallet_status,
         "refund_status": order.refund_status if order else "none",

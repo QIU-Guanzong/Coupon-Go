@@ -245,6 +245,7 @@ def test_order_and_wallet_refundability_follow_every_voucher(client):
     assert before['wallet_item_ids'] == ids and before['refundable'] is True
     assert len(wallets) == 2
     assert all(w['quantity'] == 1 and w['order_quantity'] == 2 and w['order_refundable'] for w in wallets)
+    assert all(w['order_paid_amount'] == 100.01 for w in wallets)
     red = scan(client, user, vendor, ids[1])
     used, wallets = projections()
     assert used['voucher_redeemed'] is True and used['refundable'] is False

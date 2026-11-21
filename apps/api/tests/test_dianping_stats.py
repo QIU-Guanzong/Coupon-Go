@@ -522,7 +522,9 @@ def test_legacy_free_voucher_with_old_positive_snapshot_is_not_untracked(client)
     from app.models_connect import ConnectLedgerEntry
 
     before = _balance(client, GIFT_SHOP)
-    _, _, red = _redeem(client, 'stats-legacy-gift@example.com', GIFT_COUPON)
+    user, wallet_id, red = _redeem(client, 'stats-legacy-gift@example.com', GIFT_COUPON)
+    wallets = client.get('/api/v3/get-favorite-coupons-list', headers=user).json()['items']
+    assert next(w for w in wallets if w['id'] == wallet_id)['order_paid_amount'] is None
     with TestingSession() as db:
         # Reconstruct a legacy erroneous face-value snapshot for a free gift.
         db.get(models.Redemption, red).face_value = 50

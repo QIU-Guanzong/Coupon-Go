@@ -451,7 +451,7 @@ def test_m8_cash_voucher_snapshot_and_legacy_positive_value_never_payable(client
         assert db.query(SettlementTransfer).filter_by(settlement_id=statement["id"]).count() == 1
 
 
-def test_m8_price_coupon_nonzero_statement_can_be_marked_paid(client):
+def test_m8_price_coupon_connect_statement_cannot_be_manually_paid(client):
     fh = _finance_headers(client)
     _set_coupon_fields(33, coupon_type="Price", discount_price=25, cash_amount=None)
     _redeem(client, "m8-price@example.com", coupon_id=33)  # shop 19
@@ -462,7 +462,8 @@ def test_m8_price_coupon_nonzero_statement_can_be_marked_paid(client):
     path = f"/api/v3/admin/settlements/{s['id']}"
     assert client.post(path + "/approve", headers=fh).status_code == 200
     pay = client.post(path + "/pay", headers=fh)
-    assert pay.status_code == 200 and pay.json()["settlement"]["status"] == "paid", pay.text
+    assert pay.status_code == 409, pay.text
+    assert client.get(path, headers=fh).json()["settlement"]["payment_mode"] == "connect"
 
 
 def test_m6_settled_period_amount_unchanged_and_flagged(client):
@@ -507,6 +508,11 @@ def test_paid_package_credit_and_cash_recovery_are_independent(client):
     finance = _finance_headers(client)
     email = "settlement-credit@example.com"
     rid, order = _redeem_package(client, email, 11, price=19.95, quantity=2)
+    # Model an old non-Connect settlement: the payout predates the ledger.
+    from app.models_connect import ConnectLedgerEntry
+    with TestingSession() as db:
+        db.query(ConnectLedgerEntry).filter_by(redemption_id=rid).delete()
+        db.commit()
     customer = _login(client, email)
     sid = _generate(client, finance, 11).json()["settlement"]["id"]
     url = f"/api/v3/admin/settlements/{sid}"
@@ -549,8 +555,16 @@ def test_paid_package_credit_and_cash_recovery_are_independent(client):
 
 def test_per_line_rounding_and_late_paid_sale(client):
     finance = _finance_headers(client)
+    from app.models_connect import ConnectLedgerEntry
+    old_reds = []
     for n in range(2):
-        _redeem_package(client, f"round-{n}@example.com", 12, price=1.05)
+        rid, _ = _redeem_package(client, f"round-{n}@example.com", 12, price=1.05)
+        old_reds.append(rid)
+    # The first two lines are historic manual payments, while the later
+    # redemption has a new Connect entry and must not be paid twice.
+    with TestingSession() as db:
+        db.query(ConnectLedgerEntry).filter(ConnectLedgerEntry.redemption_id.in_(old_reds)).delete(synchronize_session=False)
+        db.commit()
     s = _generate(client, finance, 12).json()["settlement"]
     url = f"/api/v3/admin/settlements/{s['id']}"
     assert (s["gross_amount"], s["commission"], s["net_amount"]) == (2.10, 0.20, 1.90)
@@ -559,9 +573,10 @@ def test_per_line_rounding_and_late_paid_sale(client):
     _redeem_package(client, "late-sale@example.com", 12, price=1.05)
     s = client.get(url, headers=finance).json()["settlement"]
     assert (s["commission"], s["net_amount"], s["transferred_net"], s["outstanding_net"]) == (0.3, 2.85, 1.9, 0.95)
+    assert s["payment_mode"] == "mixed_review"
     assert client.post(url + "/transfers", headers=finance,
-                       json={"amount": 0.95, "reference": "supplement-1"}).status_code == 200
-    assert _run_recon(client, finance, 12)["financials"]["outstanding_net"] == 0
+                       json={"amount": 0.95, "reference": "supplement-1"}).status_code == 409
+    assert _run_recon(client, finance, 12)["financials"]["outstanding_net"] == 0.95
 
 
 def test_rescan_in_new_period_waits_for_its_own_statement(client):
