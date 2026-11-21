@@ -232,7 +232,9 @@ def test_package_voucher_redeem_via_scan(client):
     wallet = client.get("/api/v3/get-favorite-coupons-list",
                         params={"status": 2}, headers=h).json()
     assert any(i["id"] == wid for i in wallet["items"])
-    assert client.get("/api/v3/points", headers=h).json()["balance"] == 20
+    # P1-C: paid package voucher earns per-HKD-spent points (150 paid
+    # -> +150), no longer the old flat +20.
+    assert client.get("/api/v3/points", headers=h).json()["balance"] == 150
 
 
 # ---------- refunds ----------

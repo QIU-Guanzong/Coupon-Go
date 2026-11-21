@@ -35,7 +35,7 @@ from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from .. import cashback_service, config, models
+from .. import cashback_service, config, models, points_service
 from ..settlement_ledger import reverse_sale
 from ..database import get_db
 from ..deps import get_current_user, get_optional_user, require_role
@@ -303,6 +303,12 @@ def _resume_refund(db, order_id):
             if red.revoked_at is not None:
                 cashback_service.void_for_revocation(db, red)
             reverse_sale(db, red, "refunded")
+        # P1-C: claw back the points this order's redemption earned
+        # (0 when the voucher was never redeemed; may drive the
+        # balance negative, which then blocks exchange / transfer).
+        # Every refund path funnels through here (user, admin,
+        # expired-package sweep), and the clawback is once per order.
+        points_service.clawback_order_points(db, order)
         attempt.status = "refunded"
         order.settlement_status = "void"
         order.commission_amount = order.net_amount = 0
