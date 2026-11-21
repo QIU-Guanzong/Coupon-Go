@@ -439,6 +439,27 @@ UUID，不用客戶端檔名，無路徑穿越風險。上傳時已無損剝離 
 - 用戶可見文案統一：網絡問題「網絡不穩定，請重試」；支付失敗
   「支付失敗，請稍後重試」（服務端 `detail` 優先於通用文案）。
 
+### 統一功能（dianping/unify，對照 `docs/DIANPING_UNIFY_API.md`）
+
+- 錯誤包絡在 `{"detail": "<中文文案>"}` 之上只加一個字段 `code`
+  （穩定英文碼，如 `coupon_not_found`、`points_insufficient`），
+  完整對照表見 `app/errors.py` 與 `DIANPING_UNIFY_API.md` §2；
+  老客戶端按 `detail` / 狀態碼匹配不受影響。尚未全量遷移：
+  套餐購買 / 退款與砍價仍用 plain `HTTPException`，文案不變。
+- 分頁查詢參數一律 `page`（默認 1）+ `page_size`（默認 20，
+  1–100）；響應包絡一律
+  `{"current_page", "total_pages", "total", <資源名>}`。
+- 金額一律 HK$，JSON number（非字符串），2 位小數 HALF_UP；
+  套餐 / 價格券的結算口徑仍是 `settlement_basis()`（實付金額），
+  與 `FEATURE_GAP` §3 已定決策一致。
+- 導出：`GET /admin/settlements?format=csv`、
+  `GET /admin/orders?format=csv`、`GET /vendor/redemptions/export`
+  新增 `from` / `to` / `coupon_id` / `revoked` 篩選；
+  `GET /admin/audit-logs` 新增 `admin_id` / `action` / `target_type`
+  篩選。積分兌換的券現在 `source="exchange"`（以前誤記為 `claim`）。
+- 調度器新增 `coupon-expiry` 任務（到期前 3 天提醒、過期自動失效），
+  手動補跑 `POST /admin/coupon-expiry-sweep`（僅 admin）。
+
 ### 枚舉總表
 
 **訂單支付狀態 `Order.payment_status`**（`models_packages.py`

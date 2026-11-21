@@ -12,12 +12,12 @@ from .. import models, schemas
 from ..database import get_db
 from ..deps import get_current_user, require_role
 from ..serializers import amount_text, coupon_out, shop_out
+from ..shared import vendor_shop_ids
 
 router = APIRouter()
 
 
-def _now():
-    return datetime.now(timezone.utc).replace(tzinfo=None)
+from ..timeutil import utcnow as _now
 
 
 @router.get("/get-vendor-coupon-list")
@@ -100,8 +100,7 @@ def approve_coupon(coupon_id: int, approve: bool = True,
 @router.get("/get-vendor-record-list")
 def vendor_records(vendor: models.User = Depends(require_role("vendor", "admin")),
                    db: Session = Depends(get_db)):
-    shop_ids = [s.id for s in db.query(models.Shop).filter(
-        models.Shop.vendor_id == vendor.id).all()]
+    shop_ids = vendor_shop_ids(db, vendor)
     reds = (db.query(models.Redemption)
             .filter(models.Redemption.shop_id.in_(shop_ids))
             .order_by(models.Redemption.scanned_at.desc()).all()) if shop_ids else []

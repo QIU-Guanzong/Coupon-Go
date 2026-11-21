@@ -1,15 +1,16 @@
 """Q Wallet, points, records, reviews."""
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from .. import config, models, schemas
+from .. import config, errors, models, points, schemas
 from ..database import get_db
-from ..deps import add_points, get_current_user, points_balance
+from ..deps import get_current_user, points_balance
 from ..models_cashback import WithdrawalEvent
 from ..serializers import wallet_out
+from ..shared import issue_wallet_item, paginate
 from .packages import sweep_expired_packages
 from .coupons import _refresh_expiry
 
@@ -19,7 +20,9 @@ POINTS_EXCHANGE_COST = 9
 
 
 @router.get("/get-favorite-coupons-list")
-def get_wallet(page: int = Query(1, ge=1), status: int = Query(None),
+def get_wallet(page: int = Query(1, ge=1),
+               page_size: int = Query(20, ge=1, le=100),
+               status: int = Query(None),
                sortby: str = Query("expiry"),
                user: models.User = Depends(get_current_user),
                db: Session = Depends(get_db)):
@@ -33,15 +36,8 @@ def get_wallet(page: int = Query(1, ge=1), status: int = Query(None),
     items.sort(key=lambda i: (
         i.coupon.valid_to if sortby == "expiry" else i.claimed_at, i.id
     ))
-    per_page = 20
-    total = len(items)
-    page_items = items[(page - 1) * per_page: page * per_page]
-    return {
-        "current_page": page,
-        "total_pages": max(1, (total + per_page - 1) // per_page),
-        "total": total,
-        "items": [wallet_out(db, i) for i in page_items],
-    }
+    out = paginate(items, page, page_size)
+    return {**out, "items": [wallet_out(db, i) for i in out["items"]]}
 
 
 @router.get("/wallet/revision")
@@ -65,13 +61,13 @@ def wallet_item_status(item_id: int, redemption_id: int | None = None, user: mod
                        db: Session = Depends(get_db)):
     item = db.query(models.WalletItem).filter_by(id=item_id, user_id=user.id).first()
     if item is None:
-        raise HTTPException(status_code=404, detail="找不到此優惠券")
+        raise errors.coupon_not_found()
     _refresh_expiry(db, item)
     receipts = db.query(models.Redemption).filter_by(wallet_item_id=item.id)
     receipt = (receipts.filter_by(id=redemption_id).first() if redemption_id is not None
                else receipts.order_by(models.Redemption.id.desc()).first())
     if redemption_id is not None and receipt is None:
-        raise HTTPException(404, "找不到此核銷記錄")
+        raise errors.redemption_not_found()
     return {"id": item.id, "status": item.status, "reviewed": item.reviewed,
             "has_code": bool(item.code), "redemption_id": receipt.id if receipt else None,
             "revoked": receipt is not None and receipt.revoked_at is not None}
@@ -115,15 +111,15 @@ def review(wallet_item_id: int, rating: int = Query(5, ge=1, le=5),
         models.WalletItem.id == wallet_item_id,
         models.WalletItem.user_id == user.id).first()
     if item is None:
-        raise HTTPException(status_code=404, detail="找不到此優惠券")
+        raise errors.coupon_not_found()
     if item.status != 2:
-        raise HTTPException(status_code=400, detail="只有已使用的優惠券可以評價")
+        raise errors.review_not_redeemed()
     if item.reviewed:
-        raise HTTPException(status_code=400, detail="已經評價過")
+        raise errors.review_already_done()
     if not db.query(models.WalletItem).filter_by(id=item.id, status=2, reviewed=False).update(
             {"reviewed": True}, synchronize_session=False):
-        raise HTTPException(400, "優惠券狀態已更新，請返回錢包")
-    add_points(db, user.id, config.POINTS_REVIEW, "review", ref_id=item.id)
+        raise errors.bad_request("優惠券狀態已更新，請返回錢包")
+    points.award_review_points(db, user.id, item.id)
     db.commit()
     return {"message": f"評價成功，+{config.POINTS_REVIEW} 分",
             "balance": points_balance(db, user.id)}
@@ -134,17 +130,17 @@ def exchange_points(coupon_id: int, user: models.User = Depends(get_current_user
                     db: Session = Depends(get_db)):
     coupon = db.query(models.Coupon).filter(models.Coupon.id == coupon_id).first()
     if coupon is None or not coupon.is_points_exchange:
-        raise HTTPException(status_code=404, detail="找不到此積分券")
+        raise errors.points_coupon_not_found()
     if points_balance(db, user.id) < POINTS_EXCHANGE_COST:
-        raise HTTPException(status_code=400, detail="積分不足")
+        raise errors.points_insufficient()
     existing = db.query(models.WalletItem).filter(
         models.WalletItem.user_id == user.id,
         models.WalletItem.coupon_id == coupon_id).first()
     if existing:
-        raise HTTPException(status_code=400, detail="已經兌換過此券")
-    item = models.WalletItem(user_id=user.id, coupon_id=coupon.id, status=1)
-    db.add(item)
-    add_points(db, user.id, -POINTS_EXCHANGE_COST, "exchange", ref_id=coupon.id)
+        raise errors.points_coupon_already_exchanged()
+    issue_wallet_item(db, user.id, coupon.id, "exchange")
+    points.spend_points(db, user.id, POINTS_EXCHANGE_COST, "exchange",
+                        coupon.id)
     db.commit()
     return {"message": "兌換成功，已存入 Q Wallet",
             "balance": points_balance(db, user.id)}

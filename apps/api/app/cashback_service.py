@@ -52,8 +52,7 @@ logger = logging.getLogger(__name__)
 CENT = Decimal("0.01")
 
 
-def _now():
-    return datetime.now(timezone.utc).replace(tzinfo=None)
+from .timeutil import utcnow as _now
 
 
 def money(value) -> Decimal:

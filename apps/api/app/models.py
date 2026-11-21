@@ -17,8 +17,7 @@ from sqlalchemy.orm import relationship
 from .database import Base
 
 
-def _now():
-    return datetime.now(timezone.utc).replace(tzinfo=None)
+from .timeutil import utcnow as _now
 
 
 class User(Base):

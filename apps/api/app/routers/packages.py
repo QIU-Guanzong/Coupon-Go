@@ -39,7 +39,8 @@ from .. import cashback_service, config, models
 from ..settlement_ledger import reverse_sale
 from ..database import get_db
 from ..deps import get_current_user, get_optional_user, require_role
-from ..models_packages import Order, Package, Payment, Refund
+from ..models_packages import Order, Package, Payment, Refund, REFUND_POLICIES
+from ..shared import issue_wallet_item
 from ..payments_gateway import (
     GatewayError, create_payment_intent, refund_payment,
     retrieve_payment_intent, retrieve_refund, verify_webhook_signature,
@@ -59,11 +60,9 @@ logger = logging.getLogger(__name__)
 GATEWAY_FAILURE_MESSAGE = "支付失败，请稍后重试"
 
 PAYMENT_METHODS = ("fps", "card")
-REFUND_POLICIES = ("anytime", "expiry_only", "non_refundable")
 
 
-def _now():
-    return datetime.now(timezone.utc).replace(tzinfo=None)
+from ..timeutil import utcnow as _now
 
 
 # ---------- helpers ----------
@@ -199,12 +198,8 @@ def _issue_voucher(db: Session, order: Order, package: Package):
     coupon = _package_coupon(db, package)
     if coupon is None:
         raise HTTPException(status_code=500, detail="套餐券模板缺失，請聯繫客服")
-    item = models.WalletItem(
-        user_id=order.user_id, coupon_id=coupon.id, status=1,
-        source="purchase", order_id=order.id)
-    db.add(item)
-    db.flush()
-    return item
+    return issue_wallet_item(db, order.user_id, coupon.id, "purchase",
+                             order_id=order.id)
 
 
 def _apply_payment_result(db: Session, order: Order, attempt: Payment,
