@@ -41,6 +41,7 @@ queue §F 2026-11-21):
   or reversal remains unresolved; a confirmed reversal permits retry.
 """
 import logging
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
 from fastapi import HTTPException
@@ -306,7 +307,7 @@ def _attempt_transfer(db: Session, entry: ConnectLedgerEntry) -> dict:
     entry.status = "transferred"
     entry.stripe_transfer_id = transfer_id
     entry.retry_count = 0
-    entry.note = "reversal_pending" if entry.pending_reversal else ""
+    entry.note = "reversal_queued" if entry.pending_reversal else ""
     db.flush()
     return {"transferred": True, "reason": "transferred",
             "stripe_transfer_id": entry.stripe_transfer_id}
@@ -347,6 +348,51 @@ def sweep_pending_transfers(db: Session, batch_size=None) -> dict:
             out["failed"] += 1
             logger.exception("Connect transfer sweep failed entry=%s",
                              row.id)
+    # Reversals are dispatched only after the business transaction that
+    # requested them has committed. Older failed reversals are ambiguous;
+    # only this version's explicit, durable queue marker may be dispatched.
+    reversal_ids = (db.query(ConnectLedgerEntry.id)
+                    .filter_by(kind="transfer", status="transferred",
+                               pending_reversal=True, note="reversal_queued")
+                    .order_by(ConnectLedgerEntry.id).limit(size).all())
+    for (entry_id,) in reversal_ids:
+        try:
+            entry = (db.query(ConnectLedgerEntry).filter_by(id=entry_id)
+                     .with_for_update().populate_existing().one())
+            if entry.status != "transferred" or not entry.pending_reversal or entry.note != "reversal_queued":
+                db.rollback()
+                continue
+            _attempt_reversal(db, entry)
+            db.commit()
+        except Exception:
+            db.rollback()
+            out["failed"] += 1
+            logger.exception("Connect reversal sweep failed entry=%s", entry_id)
+    # A crash after dispatch leaves an intentionally non-retryable marker.
+    # Surface stale/legacy ambiguous rows to admins rather than leaving them
+    # silently blocked forever. Never send another provider request here.
+    cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(minutes=15)
+    stale = (db.query(ConnectLedgerEntry.id)
+             .filter(ConnectLedgerEntry.kind == "transfer",
+                     ConnectLedgerEntry.status == "transferred",
+                     ConnectLedgerEntry.pending_reversal.is_(True),
+                     ConnectLedgerEntry.note != "reversal_queued",
+                     ConnectLedgerEntry.manual_notified.is_(False),
+                     ConnectLedgerEntry.updated_at < cutoff)
+             .order_by(ConnectLedgerEntry.id).limit(size).all())
+    for (entry_id,) in stale:
+        try:
+            entry = (db.query(ConnectLedgerEntry).filter_by(id=entry_id)
+                     .with_for_update().populate_existing().one())
+            if (entry.pending_reversal and entry.status == "transferred" and
+                    entry.note != "reversal_queued" and not entry.manual_notified and
+                    entry.updated_at < cutoff):
+                _maybe_notify_manual(db, entry, "Connect 冲回结果待人工核对")
+            db.commit()
+        except Exception:
+            db.rollback()
+            out["failed"] += 1
+            logger.exception("Connect reversal notification failed entry=%s", entry_id)
     out["still_pending"] = (db.query(ConnectLedgerEntry)
                             .filter_by(kind="transfer", status="pending")
                             .count())
@@ -360,28 +406,42 @@ def _attempt_reversal(db: Session, entry: ConnectLedgerEntry) -> dict:
     for the retry endpoint. A gateway failure counts toward
     retry_count; after CONNECT_MAX_TRANSFER_RETRIES an admin
     notification is raised once."""
+    if entry.note != "reversal_queued":
+        return {"reversed": False, "reason": "reversal_result_unknown"}
     account = get_account(db, entry.shop_id)
     if not connect_configured():
         entry.pending_reversal = True
-        entry.note = "reversal_pending: not_configured"
         return {"reversed": False, "reason": "not_configured"}
     if account is None:
         entry.pending_reversal = True
-        entry.note = "reversal_pending: no_account"
         return {"reversed": False, "reason": "no_account"}
+    if not entry.stripe_transfer_id:
+        entry.note = "reversal_result_unknown"
+        _maybe_notify_manual(db, entry, "Connect 冲回缺少转帐编号，需人工核对")
+        return {"reversed": False, "reason": "reversal_result_unknown"}
+    entry_id, transfer_id, amount = entry.id, entry.stripe_transfer_id, entry.net_amount
+    # This commit is intentionally outside the originating revoke/refund
+    # transaction: it records an irreversible dispatch boundary.
+    entry.note = "reversal_dispatch_started"
+    db.commit()
     try:
         reversal = connect_gateway.reverse_transfer(
-            entry.stripe_transfer_id, entry.net_amount,
-            idempotency_key=f"reversal-{entry.id}")
+            transfer_id, amount, idempotency_key=f"reversal-{entry_id}")
+        if not reversal.get("reversal_id"):
+            raise ValueError("provider response omitted reversal id")
     except Exception as exc:  # noqa: BLE001 — caller decides, never crash
+        db.rollback()
+        entry = (db.query(ConnectLedgerEntry).filter_by(id=entry_id)
+                 .with_for_update().populate_existing().one())
         entry.pending_reversal = True
         entry.retry_count = (entry.retry_count or 0) + 1
-        entry.note = f"reversal_pending: failed: {exc}"[:255]
+        entry.note = "reversal_result_unknown"
         logger.warning("Connect reversal failed for entry %s: %s",
                        entry.id, exc)
-        if entry.retry_count >= _max_retries():
-            _maybe_notify_manual(db, entry, "Connect 冲回多次失败，需人工处理")
-        return {"reversed": False, "reason": "failed"}
+        _maybe_notify_manual(db, entry, "Connect 冲回结果待人工核对")
+        return {"reversed": False, "reason": "reversal_result_unknown"}
+    entry = (db.query(ConnectLedgerEntry).filter_by(id=entry_id)
+             .with_for_update().populate_existing().one())
     entry.status = "reversed"
     entry.stripe_reversal_id = reversal.get("reversal_id", "")
     entry.pending_reversal = False
@@ -416,10 +476,13 @@ def reverse_redemption(db: Session, red: models.Redemption,
             entry.status = "transfer_unknown"
         entry.note = "transfer_result_unknown_reversal_requested"
         return {"reversed": False, "reason": "transfer_result_unknown"}
-    out = _attempt_reversal(db, entry)
-    if out["reversed"]:
-        entry.note = reason
-    return out
+    # Enqueue with the revoke/refund transaction; never contact Stripe
+    # until that transaction is durably committed.
+    if not entry.pending_reversal:
+        entry.pending_reversal = True
+        entry.note = "reversal_queued"
+    reason = entry.note if entry.note in ("reversal_queued", "reversal_dispatch_started") else "reversal_result_unknown"
+    return {"reversed": False, "reason": reason}
 
 
 def retry_entry(db: Session, entry_id: int) -> dict:
@@ -441,6 +504,8 @@ def retry_entry(db: Session, entry_id: int) -> dict:
     if entry.status == "reversed":
         raise HTTPException(status_code=409, detail="此笔已冲回，无需重试")
     if entry.pending_reversal:
+        if entry.note != "reversal_queued":
+            raise HTTPException(status_code=409, detail="冲回结果待核对，请联系财务处理")
         out = _attempt_reversal(db, entry)
         if not out["reversed"]:
             db.commit()  # persist retry_count / note before the 502

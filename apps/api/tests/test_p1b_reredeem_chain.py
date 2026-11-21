@@ -168,7 +168,7 @@ def test_inflight_transfer_then_revoke_blocks_rescan_without_deadlock(client, mo
         release.set()
         t.join(timeout=20)
     assert not t.is_alive()
-    assert _entries(paid['wallet_item_id']) == [(entry, 'transferred', True)]
+    assert _entries(paid['wallet_item_id']) == [(entry, 'reversed', False)]
 
 
 @pytest.mark.parametrize('legacy', [False, True])
@@ -231,14 +231,15 @@ def test_rescan_waits_for_concurrent_successful_reversal(client, monkeypatch):
     scan_thread = threading.Thread(target=rescan)
     scan_thread.start()
     try:
-        assert not scan_done.wait(0.3), 'scan should wait for the previous ledger lock'
+        assert scan_done.wait(5), 'scan should reject while reversal is in flight'
     finally:
         release.set()
         retry_thread.join(timeout=20)
         scan_thread.join(timeout=20)
     assert not retry_thread.is_alive() and not scan_thread.is_alive()
     assert result['retry'].status_code == 200, result['retry'].text
-    assert result['scan'].status_code == 200, result['scan'].text
+    assert result['scan'].status_code == 409, result['scan'].text
+    assert _rescan(client, vendor, code).status_code == 200
     rows = _entries(paid['wallet_item_id'])
     assert len(rows) == 2 and rows[0][1] == 'reversed' and rows[1][1] == 'pending'
 

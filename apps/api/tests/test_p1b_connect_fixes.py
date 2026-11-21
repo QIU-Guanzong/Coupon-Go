@@ -564,7 +564,8 @@ def test_negative_balance_blocks_payout_and_lists_recovery(client):
     r = client.post(f"/api/v3/redemptions/{scan['redemption_id']}/revoke",
                     headers=vh)
     assert r.status_code == 200, r.text
-    assert r.json()["connect"]["reversed"] is True
+    assert r.json()["connect"]["reason"] == "reversal_queued"
+    _sweep()
     bal = _balance(client, shop_id=15)
     assert bal["available"] == -135.00
     # Negative balance stops new payouts.
@@ -598,13 +599,13 @@ def test_reversal_failure_counts_retries_and_notifies_admin(client, monkeypatch)
     assert r.status_code == 200, r.text
     assert r.json()["connect"]["reversed"] is False
     assert _entry(entry_id)["pending_reversal"] is True
-    assert _entry(entry_id)["retry_count"] == 1
-    for _ in range(4):
-        r = client.post(
-            f"/api/v3/merchant/connect/transfers/{entry_id}/retry", headers=vh)
-        assert r.status_code == 502, r.text
+    assert _entry(entry_id)["retry_count"] == 0
+    _sweep()
+    r = client.post(
+        f"/api/v3/merchant/connect/transfers/{entry_id}/retry", headers=vh)
+    assert r.status_code == 409, r.text
     row = _entry(entry_id)
-    assert row["retry_count"] == 5
+    assert row["retry_count"] == 1
     assert row["manual_notified"] is True
     assert row["pending_reversal"] is True
     with _db() as db:

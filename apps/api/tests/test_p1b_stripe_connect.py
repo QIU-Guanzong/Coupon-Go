@@ -377,7 +377,8 @@ def test_revoke_reverses_transferred_entry(client):
     rid = scan["redemption_id"]
     r = client.post(f"/api/v3/redemptions/{rid}/revoke", headers=vh)
     assert r.status_code == 200, r.text
-    assert r.json()["connect"]["reversed"] is True
+    assert r.json()["connect"]["reason"] == "reversal_queued"
+    _sweep()
     with _db() as db:
         row = db.query(models.ConnectLedgerEntry).filter_by(
             redemption_id=rid).one()
