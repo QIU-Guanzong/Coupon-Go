@@ -35,7 +35,7 @@ from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from .. import cashback_service, config, models
+from .. import cashback_service, config, listing, models
 from ..settlement_ledger import reverse_sale
 from ..database import get_db
 from ..deps import get_current_user, get_optional_user, require_role
@@ -480,6 +480,9 @@ def create_package(body: sp.PackageCreateIn,
 
 
 def store_package(db: Session, shop: models.Shop, body: sp.PackageCreateIn):
+    # §3.2: a package now enters review like a coupon — created
+    # pending_review, never live on creation. Admin approval lands it
+    # on active / scheduled; the template coupon mirrors the package.
     pkg = Package(
         shop_id=body.shop_id, name=body.name, name_en=body.name_en,
         items=json.dumps([i.model_dump() for i in body.items],
@@ -491,7 +494,7 @@ def store_package(db: Session, shop: models.Shop, body: sp.PackageCreateIn):
         usage_rules=json.dumps(body.usage_rules.model_dump(),
                                ensure_ascii=False),
         stock_total=body.stock_total, stock_left=body.stock_total,
-        refund_policy=body.refund_policy, status="active")
+        refund_policy=body.refund_policy, status="pending_review")
     db.add(pkg)
     db.flush()
     # Coupon template for the package voucher (kind='package').
@@ -502,7 +505,7 @@ def store_package(db: Session, shop: models.Shop, body: sp.PackageCreateIn):
         regular_price=body.original_price,
         valid_from=body.valid_from, valid_to=body.valid_to,
         total=body.stock_total, remaining=body.stock_total,
-        status="active",
+        status="pending_review",
         additional_terms="套餐券：到店出示 QR 碼核銷；整張一次核銷，不可拆分。",
         kind="package", package_id=pkg.id,
         person_count=body.person_count,
@@ -512,6 +515,197 @@ def store_package(db: Session, shop: models.Shop, body: sp.PackageCreateIn):
     db.add(coupon)
     db.flush()
     return pkg, coupon
+
+
+def _get_vendor_package(db: Session, package_id: int,
+                        vendor: models.User) -> Package:
+    """The merchant's own package (admin may act on any)."""
+    pkg = _get_package(db, package_id)
+    if vendor.role != "admin":
+        shop = db.query(models.Shop).filter(models.Shop.id == pkg.shop_id).first()
+        if shop is None or shop.vendor_id != vendor.id:
+            raise HTTPException(status_code=403, detail="沒有權限")
+    return pkg
+
+
+@router.get("/admin/packages")
+def admin_packages(status: str = Query(None), shop_id: int = Query(None),
+                   admin: models.User = Depends(require_role("admin")),
+                   db: Session = Depends(get_db)):
+    """§3.2 review queue: admin lists packages by status
+    (pending_review by default for the review desk)."""
+    query = db.query(Package)
+    if shop_id is not None:
+        query = query.filter(Package.shop_id == shop_id)
+    if status:
+        query = query.filter(Package.status == status)
+    packages = query.order_by(Package.id.desc()).all()
+    return {"packages": [package_out(db, p) for p in packages]}
+
+
+@router.post("/admin/packages/{package_id}/approve")
+def approve_package(package_id: int, approve: bool = True, reason: str = "",
+                    admin: models.User = Depends(require_role("admin")),
+                    db: Session = Depends(get_db)):
+    """§3.2: admin reviews a package — the same flow as coupons.
+    Approval lands on active / scheduled (valid_from in the future)
+    / sold_out (no stock); the template coupon mirrors the package.
+    Rejection records the reason. Only pending_review can be decided."""
+    pkg = _get_package(db, package_id)
+    if pkg.status != "pending_review":
+        raise HTTPException(status_code=400, detail="只有待審核的套餐可以審批")
+    if approve:
+        if pkg.valid_to <= _now():
+            raise HTTPException(status_code=400, detail="套餐已過期，無法上架")
+        pkg.status = listing.approve_status(
+            pkg.valid_from, pkg.valid_to, pkg.stock_left)
+        listing.sync_package_coupon_status(db, pkg, pkg.status)
+        new_status = pkg.status
+    else:
+        pkg.status = "rejected"
+        listing.sync_package_coupon_status(db, pkg, "rejected")
+        new_status = "rejected"
+    db.commit()
+    listing.audit(db, admin.id,
+                  "package.approve" if approve else "package.reject",
+                  "package", pkg.id,
+                  f"approved -> {new_status}" if approve else (reason or ""))
+    coupon = _package_coupon(db, pkg)
+    return {"package_id": pkg.id, "status": pkg.status,
+            "coupon_status": coupon.status if coupon else None,
+            "reason": reason if not approve else ""}
+
+
+@router.patch("/vendor/packages/{package_id}")
+def edit_package(package_id: int, body: sp.PackageUpdateIn,
+                 vendor: models.User = Depends(require_role("vendor", "admin")),
+                 db: Session = Depends(get_db)):
+    """§3.2: merchant edits a package. Same state machine as coupon
+    edits: active / paused / scheduled -> pending_review (re-review);
+    draft / rejected -> draft; pending_review stays pending_review.
+    Expired / sold_out packages cannot be edited. stock_total may not
+    drop below the units already sold; the template coupon mirrors
+    the package status."""
+    pkg = _get_vendor_package(db, package_id, vendor)
+    if pkg.status in ("expired", "sold_out"):
+        raise HTTPException(status_code=400, detail="已過期或已售罄的套餐不可編輯，請重新建立")
+    if pkg.status not in listing.EDITABLE_STATES:
+        raise HTTPException(status_code=400, detail="此狀態的套餐不可編輯")
+    valid_from = body.valid_from if body.valid_from is not None else pkg.valid_from
+    valid_to = body.valid_to if body.valid_to is not None else pkg.valid_to
+    if valid_to <= valid_from:
+        raise HTTPException(status_code=400, detail="有效期不正確")
+    original = body.original_price if body.original_price is not None else float(pkg.original_price)
+    price = body.package_price if body.package_price is not None else float(pkg.package_price)
+    if price > original:
+        raise HTTPException(status_code=400, detail="套餐價不可高於原價")
+    if body.refund_policy is not None and body.refund_policy not in listing.REFUND_POLICIES:
+        raise HTTPException(status_code=400, detail="refund_policy 不正確")
+    sold = (pkg.stock_total or 0) - (pkg.stock_left or 0)
+    if body.stock_total is not None and body.stock_total < sold:
+        raise HTTPException(status_code=400, detail="庫存不可少於已售份數")
+    if body.name is not None:
+        pkg.name = body.name
+    if body.name_en is not None:
+        pkg.name_en = body.name_en
+    if body.items is not None:
+        pkg.items = json.dumps([i.model_dump() for i in body.items],
+                               ensure_ascii=False)
+    if body.person_count is not None:
+        pkg.person_count = body.person_count
+    pkg.original_price = original
+    pkg.package_price = price
+    pkg.valid_from = valid_from
+    pkg.valid_to = valid_to
+    if body.usage_rules is not None:
+        pkg.usage_rules = json.dumps(body.usage_rules.model_dump(),
+                                     ensure_ascii=False)
+    if body.stock_total is not None:
+        pkg.stock_left = max(0, (pkg.stock_left or 0)
+                             + (body.stock_total - (pkg.stock_total or 0)))
+        pkg.stock_total = body.stock_total
+    if body.refund_policy is not None:
+        pkg.refund_policy = body.refund_policy
+    if pkg.status in listing.RE_REVIEW_STATES:
+        pkg.status = "pending_review"
+    elif pkg.status == "rejected":
+        pkg.status = "draft"
+    listing.sync_package_coupon_status(db, pkg, pkg.status)
+    db.commit()
+    db.refresh(pkg)
+    return {"message": "已儲存，內容將重新提交審核。" if pkg.status == "pending_review" else "已儲存。",
+            "package": package_out(db, pkg)}
+
+
+@router.post("/vendor/packages/{package_id}/pause")
+def pause_package(package_id: int,
+                  vendor: models.User = Depends(require_role("vendor", "admin")),
+                  db: Session = Depends(get_db)):
+    pkg = _get_vendor_package(db, package_id, vendor)
+    if pkg.status != "active":
+        raise HTTPException(status_code=400, detail="只有上架中的套餐可以暫停")
+    pkg.status = "paused"
+    listing.sync_package_coupon_status(db, pkg, "paused")
+    db.commit()
+    return {"package_id": pkg.id, "status": pkg.status}
+
+
+@router.post("/vendor/packages/{package_id}/resume")
+def resume_package(package_id: int,
+                   vendor: models.User = Depends(require_role("vendor", "admin")),
+                   db: Session = Depends(get_db)):
+    pkg = _get_vendor_package(db, package_id, vendor)
+    if pkg.status != "paused":
+        raise HTTPException(status_code=400, detail="只有已暫停的套餐可以恢復上架")
+    target = listing.live_status(pkg.valid_from, pkg.valid_to, pkg.stock_left)
+    if target == "expired":
+        raise HTTPException(status_code=400, detail="套餐已過期，無法重新上架")
+    if target == "sold_out":
+        raise HTTPException(status_code=400, detail="套餐已售罄，無法重新上架")
+    pkg.status = target
+    listing.sync_package_coupon_status(db, pkg, target)
+    db.commit()
+    return {"package_id": pkg.id, "status": pkg.status}
+
+
+@router.post("/vendor/packages/{package_id}/unlist")
+def unlist_package(package_id: int,
+                   vendor: models.User = Depends(require_role("vendor", "admin")),
+                   db: Session = Depends(get_db)):
+    """§3.2: take a package off the shelf back to draft; the
+    template coupon mirrors it. Expired / sold_out are already off
+    the shelf."""
+    pkg = _get_vendor_package(db, package_id, vendor)
+    if pkg.status in ("expired", "sold_out"):
+        raise HTTPException(status_code=400, detail="已過期或已售罄的套餐不可下架")
+    if pkg.status == "draft":
+        raise HTTPException(status_code=400, detail="草稿本來就未上架")
+    pkg.status = "draft"
+    listing.sync_package_coupon_status(db, pkg, "draft")
+    db.commit()
+    return {"package_id": pkg.id, "status": pkg.status}
+
+
+@router.post("/vendor/packages/{package_id}/submit")
+def submit_package(package_id: int,
+                   vendor: models.User = Depends(require_role("vendor", "admin")),
+                   db: Session = Depends(get_db)):
+    pkg = _get_vendor_package(db, package_id, vendor)
+    if pkg.status not in ("draft", "rejected"):
+        raise HTTPException(status_code=400, detail="只有草稿或被駁回的套餐可以提交審核")
+    pkg.status = "pending_review"
+    listing.sync_package_coupon_status(db, pkg, "pending_review")
+    db.commit()
+    return {"package_id": pkg.id, "status": pkg.status}
+
+
+@router.post("/admin/listing-sweep")
+def admin_listing_sweep(admin: models.User = Depends(require_role("admin")),
+                        db: Session = Depends(get_db)):
+    """Manual backfill for the listing-schedule job (same sweep the
+    scheduler runs): activate due scheduled items, expire past
+    valid_to, mark sold out. Idempotent."""
+    return listing.sweep_listing_schedule(db)
 
 
 # ---------- purchase ----------

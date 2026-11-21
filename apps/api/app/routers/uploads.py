@@ -35,13 +35,15 @@ from pathlib import Path
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 
 from .. import config
-from ..deps import get_current_user
+from ..deps import get_current_user, require_role
 
 router = APIRouter()
 
 logger = logging.getLogger(__name__)
 
 ALLOWED_EXTENSIONS = {"jpg", "jpeg", "png", "webp", "gif"}
+# §3.5: merchant listing images — no GIF (still frames only).
+MERCHANT_EXTENSIONS = {"jpg", "jpeg", "png", "webp"}
 MAX_FILES = 9
 
 
@@ -138,13 +140,15 @@ def strip_exif(data: bytes, ext: str) -> bytes:
     return data
 
 
-def _save_file(upload: UploadFile) -> str:
+def _save_file(upload: UploadFile, subdir: str = "review-images",
+               allowed_exts=None) -> str:
     ext = (upload.filename or "").rsplit(".", 1)[-1].lower()
-    if ext not in ALLOWED_EXTENSIONS:
+    allowed = allowed_exts if allowed_exts is not None else ALLOWED_EXTENSIONS
+    if ext not in allowed:
         raise HTTPException(
             status_code=400,
             detail=f"不支援的圖片格式：{ext or '(無副檔名)'}，只接受 "
-                   "jpg / jpeg / png / webp / gif")
+                   + " / ".join(sorted(allowed)))
     if upload.content_type and not upload.content_type.startswith("image/"):
         raise HTTPException(status_code=400, detail="只接受圖片檔案")
     data = upload.file.read(config.UPLOAD_MAX_BYTES + 1)
@@ -154,11 +158,11 @@ def _save_file(upload: UploadFile) -> str:
             detail="圖片過大，上限 %d KB" % (config.UPLOAD_MAX_BYTES // 1024))
     if not data:
         raise HTTPException(status_code=400, detail="空檔案")
-    subdir = Path(config.UPLOAD_DIR) / "review-images"
-    subdir.mkdir(parents=True, exist_ok=True)
+    subdir_path = Path(config.UPLOAD_DIR) / subdir
+    subdir_path.mkdir(parents=True, exist_ok=True)
     name = f"{uuid.uuid4().hex}.{ext}"
-    (subdir / name).write_bytes(strip_exif(data, ext))
-    return f"/uploads/review-images/{name}"
+    (subdir_path / name).write_bytes(strip_exif(data, ext))
+    return f"/uploads/{subdir}/{name}"
 
 
 @router.post("/uploads/review-images", status_code=201)
@@ -169,4 +173,21 @@ def upload_review_images(files: list[UploadFile] = File(...),
     if len(files) > MAX_FILES:
         raise HTTPException(status_code=400, detail="一次最多上傳 9 張圖")
     paths = [_save_file(f) for f in files]
+    return {"message": "圖片已上傳", "images": paths}
+
+
+@router.post("/uploads/merchant-images", status_code=201)
+def upload_merchant_images(files: list[UploadFile] = File(...),
+                           user=Depends(require_role("vendor", "admin"))):
+    """§3.5: merchant listing images (coupon cover / shop photo).
+    Same storage, size cap and EXIF stripping as review images; only
+    jpg / png / webp. Returns /uploads/merchant-images/... paths to
+    pass as Coupon.image / Shop.image. No object storage yet — same
+    local-disk placeholder as review images (see module docstring)."""
+    if not files:
+        raise HTTPException(status_code=400, detail="請選擇圖片")
+    if len(files) > MAX_FILES:
+        raise HTTPException(status_code=400, detail="一次最多上傳 9 張圖")
+    paths = [_save_file(f, subdir="merchant-images",
+                        allowed_exts=MERCHANT_EXTENSIONS) for f in files]
     return {"message": "圖片已上傳", "images": paths}

@@ -9,7 +9,7 @@ import secrets
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
-from sqlalchemy import exists, text
+from sqlalchemy import exists, func, select, text
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
@@ -76,32 +76,50 @@ def claim_coupon(coupon_id: int, user: models.User = Depends(get_current_user),
         raise HTTPException(status_code=404, detail="找不到此優惠券")
     if coupon.status != "active" or coupon.valid_to <= _now():
         raise HTTPException(status_code=400, detail="此優惠券已失效")
+    if coupon.valid_from > _now():
+        # §3.3: a scheduled (or legacy active-but-early) coupon is not
+        # claimable before its valid_from.
+        raise HTTPException(status_code=400, detail="此優惠券尚未到使用日期")
     if coupon.kind == "package":
         # Line C: package vouchers are bought, not claimed for free.
         raise HTTPException(status_code=400, detail="套餐券請購買，不可免費領取")
+    if coupon.sale_price is not None and float(coupon.sale_price) > 0:
+        # §3.1 calibre (P1-A compatible): paid coupons are bought, not
+        # claimed for free. The purchase endpoint itself is P1-A's.
+        raise HTTPException(status_code=400, detail="付費券請購買，不可免費領取")
     if coupon.is_points_exchange:
         raise HTTPException(status_code=400, detail="積分券請用積分兌換")
-    existing = db.query(models.WalletItem).filter(
+    # §3.4: per-user limit (default 1 = previous behaviour).
+    limit = coupon.per_user_limit if coupon.per_user_limit else 1
+    claimed = db.query(models.WalletItem).filter(
         models.WalletItem.user_id == user.id,
-        models.WalletItem.coupon_id == coupon_id).first()
-    if existing:
+        models.WalletItem.coupon_id == coupon_id).count()
+    if claimed >= limit:
         raise HTTPException(status_code=409, detail="您已領取此 Coupon")
     if coupon.remaining <= 0:
         raise HTTPException(status_code=400, detail="優惠券已達下載上限")
     # Serialize competing claims on the stock row before checking ownership
-    # again. This write also serializes writers on SQLite.
+    # again. This write also serializes writers on SQLite. The claim
+    # count is re-read inside the UPDATE, so two concurrent claims
+    # cannot both pass a per-user limit above 1.
+    claimed_sub = (select(func.count()).select_from(models.WalletItem)
+                   .where((models.WalletItem.user_id == user.id) &
+                          (models.WalletItem.coupon_id == coupon_id))
+                   .scalar_subquery())
     available = db.query(models.Coupon).filter(
         models.Coupon.id == coupon_id, models.Coupon.remaining > 0,
         models.Coupon.status == "active", models.Coupon.valid_to > _now(),
-        ~exists().where((models.WalletItem.user_id == user.id) &
-                        (models.WalletItem.coupon_id == coupon_id))).update({
+        models.Coupon.valid_from <= _now(),
+        claimed_sub < limit).update({
         models.Coupon.remaining: models.Coupon.remaining - 1,
         models.Coupon.downloads: models.Coupon.downloads + 1,
     }, synchronize_session=False)
-    if not available or db.query(models.WalletItem.id).filter_by(
-            user_id=user.id, coupon_id=coupon_id).first():
+    if not available:
         db.rollback()
-        if db.query(models.WalletItem.id).filter_by(user_id=user.id, coupon_id=coupon_id).first():
+        claimed_now = db.query(models.WalletItem).filter(
+            models.WalletItem.user_id == user.id,
+            models.WalletItem.coupon_id == coupon_id).count()
+        if claimed_now >= limit:
             raise HTTPException(status_code=409, detail="您已領取此 Coupon")
         raise HTTPException(status_code=400, detail="此優惠券已不能領取")
     item = models.WalletItem(user_id=user.id, coupon_id=coupon.id, status=1)

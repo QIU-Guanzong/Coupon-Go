@@ -13,6 +13,8 @@
 - GET /shops/{id}/map — shop position (lat/lng, address) + Google Maps
   search / directions links for in-app navigation jump (Hong Kong).
 """
+from datetime import datetime, timezone
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
@@ -24,6 +26,10 @@ from ..models_line_b import ShopRating
 from ..serializers import shop_out
 
 router = APIRouter()
+
+
+def _now():
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 DEFAULT_RADIUS_KM = 10.0
 MAX_RADIUS_KM = 50.0
@@ -66,10 +72,14 @@ def nearby_shops(lat: float = Query(None), lng: float = Query(None),
         d["rating"] = rating.overall if rating else None
         d["has_coupons"] = db.query(models.Coupon).filter(
             models.Coupon.shop_id == s.id,
-            models.Coupon.status == "active").first() is not None
+            models.Coupon.status == "active",
+            models.Coupon.valid_from <= _now(),
+            models.Coupon.valid_to > _now()).first() is not None
         d["has_packages"] = db.query(models.Package).filter(
             models.Package.shop_id == s.id,
-            models.Package.status == "active").first() is not None
+            models.Package.status == "active",
+            models.Package.valid_from <= _now(),
+            models.Package.valid_to > _now()).first() is not None
         d["created_at"] = (s.created_at.isoformat()
                            if s.created_at else None)
         out.append(d)
