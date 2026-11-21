@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 
 from .. import cashback_service as cashback_svc, config, legal, models, schemas, security
 from ..database import get_db
-from ..models_cashback import CashbackWithdrawal
+from ..models_cashback import CashbackTransaction, CashbackWithdrawal
 from ..models_line_b import MerchantApplication
 from ..models_line_f import Settlement, SettlementItem
 from ..models_packages import Order, Package
@@ -263,13 +263,18 @@ def update_profile(body: schemas.ProfileUpdateIn, user: models.User = Depends(ge
     return user
 
 
+def _delete_blocked(code: str, detail: str, **extra):
+    return JSONResponse(status_code=409, content={"detail": detail, "code": code, **extra})
+
+
 @router.post("/delete-account")
 def delete_account(body: schemas.DeleteAccountIn, user: models.User = Depends(get_identity_user),
                    db: Session = Depends(get_db)):
     """Deactivate and anonymize the identity, while retaining financial ledgers.
 
-    - Fail closed on money: sweep first, then refuse deletion while
-      cashback is withdrawable, pending, tracked, or otherwise unresolved.
+    - Settle elapsed cashback transitions first and preserve money already
+      withdrawable or in flight. Void remaining pending/tracked cashback
+      in the same transaction as deletion, retaining its ledger row.
     - Voids unused wallet coupons (status 1 -> 3, expired) and zeroes
       points with a negative PointTransaction (reason account_delete);
       the ledger is kept for audit. Already-used coupons are untouched.
@@ -287,35 +292,35 @@ def delete_account(body: schemas.DeleteAccountIn, user: models.User = Depends(ge
     # administrator privileges to be transferred/revoked there first.
     # This is safe even when multiple administrators delete concurrently.
     if user.role == "admin":
-        raise HTTPException(status_code=409, detail="請先轉移並解除管理員權限")
+        return _delete_blocked("admin_role", "請先在管理員設定交接並解除此帳戶的管理員權限")
     if (db.query(CashbackWithdrawal.id).filter(
             CashbackWithdrawal.user_id == user.id,
             CashbackWithdrawal.status.in_(("pending", "approved"))).first()):
-        raise HTTPException(status_code=409, detail="仍有處理中的返現提現，請完成後再刪除帳戶")
+        return _delete_blocked("withdrawal_in_flight", "仍有處理中的返現提現。請在提現紀錄查看進度，待處理完成後再刪除帳戶")
     if (db.query(MerchantApplication.id).filter(
             MerchantApplication.user_id == user.id,
             MerchantApplication.status == "pending").first()):
-        raise HTTPException(status_code=409, detail="仍有處理中的商戶申請，請先聯絡平台處理")
-    pending_customer_order = (db.query(Order.id).filter(
-        Order.user_id == user.id,
-        or_(Order.payment_status == "pending", Order.refund_status == "requested",
-            and_(Order.payment_status == "paid", Order.refund_status != "refunded",
-                 db.query(models.WalletItem.id).filter(
-                     models.WalletItem.order_id == Order.id,
-                     models.WalletItem.status == 1).exists()))).first())
-    if pending_customer_order:
-        raise HTTPException(status_code=409, detail="仍有未完成訂單或未使用的已購買優惠，請先處理")
+        return _delete_blocked("merchant_application", "仍有待審核的商戶申請。請等候審核結果，或請客服撤回申請後再刪除帳戶")
+    if (db.query(Order.id).filter(Order.user_id == user.id, Order.refund_status == "requested").first()):
+        return _delete_blocked("refund_in_flight", "仍有處理中的退款。請在我的訂單查看退款進度，待退款完成後再刪除帳戶")
+    if (db.query(Order.id).filter(Order.user_id == user.id, Order.payment_status == "pending").first()):
+        return _delete_blocked("payment_in_flight", "仍有待付款訂單。請先在我的訂單取消訂單或完成付款")
+    if (db.query(Order.id).filter(
+            Order.user_id == user.id, Order.payment_status == "paid", Order.refund_status != "refunded",
+            db.query(models.WalletItem.id).filter(
+                models.WalletItem.order_id == Order.id, models.WalletItem.status == 1).exists()).first()):
+        return _delete_blocked("unused_paid_voucher", "仍有未使用的付費優惠券，請先退款或使用")
     # Ownership is authoritative: an administrator may have changed a
     # former vendor's role while leaving Shop.vendor_id unchanged.
     if db.query(models.Shop.id).filter(models.Shop.vendor_id == user.id).first():
         shop_ids = db.query(models.Shop.id).filter(models.Shop.vendor_id == user.id)
         if db.query(models.Shop.id).filter(
                 models.Shop.vendor_id == user.id, models.Shop.is_approved.is_(True)).first():
-            raise HTTPException(status_code=409, detail="仍有營運中的商戶店舖，請先聯絡平台處理")
+            return _delete_blocked("active_shop", "仍有營運中的商戶店舖。請在商戶後台停止營運，或請客服安排交接")
         if db.query(Settlement.id).filter(
                 Settlement.shop_id.in_(shop_ids), Settlement.status != "paid",
                 Settlement.net_amount != 0).first():
-            raise HTTPException(status_code=409, detail="仍有未結算商戶款項，請先聯絡平台處理")
+            return _delete_blocked("unsettled_merchant_funds", "仍有未結算商戶款項。請在商戶後台核對款項，待結算完成後再刪除帳戶")
         # Sales not yet included in any statement can still be owed even
         # when the shop is no longer approved. Preserve those receivables.
         unposted = (db.query(models.Redemption)
@@ -326,7 +331,7 @@ def delete_account(body: schemas.DeleteAccountIn, user: models.User = Depends(ge
         for redemption in unposted:
             amount = settlement_basis(db, redemption=redemption)
             if amount is not None and amount > 0:
-                raise HTTPException(status_code=409, detail="仍有未結算商戶款項，請先聯絡平台處理")
+                return _delete_blocked("unsettled_merchant_funds", "仍有未結算商戶款項。請在商戶後台核對款項，待結算完成後再刪除帳戶")
         if (db.query(Order.id).join(Package, Order.package_id == Package.id)
                 .filter(Package.shop_id.in_(shop_ids),
                         or_(Order.payment_status == "pending",
@@ -338,17 +343,22 @@ def delete_account(body: schemas.DeleteAccountIn, user: models.User = Depends(ge
                                      db.query(models.WalletItem.id).filter(
                                          models.WalletItem.order_id == Order.id,
                                          models.WalletItem.status == 1).exists())))).first()):
-            raise HTTPException(status_code=409, detail="仍有進行中的商戶訂單，請先聯絡平台處理")
+            return _delete_blocked("merchant_orders", "仍有進行中的商戶訂單。請先在商戶後台完成訂單或退款")
     cashback = cashback_svc.balances(db, user.id)
     withdrawable = float(cashback["withdrawable_balance"])
+    if cashback["withdrawal_unreconciled"] > 0:
+        return _delete_blocked("withdrawal_unreconciled", "有提現款項尚未對帳。請把提現紀錄編號交給客服核對款項")
     if withdrawable > 0:
-        return JSONResponse(
-            status_code=409,
-            content={"detail": f"仍有可提現返現 HK${withdrawable:g}，請先提現",
-                     "withdrawable_balance": withdrawable})
-    if (withdrawable < 0 or cashback["pending_balance"] > 0 or
-            cashback["tracked_balance"] > 0 or cashback["withdrawal_unreconciled"] > 0):
-        raise HTTPException(status_code=409, detail="仍有待確認或未結清的返現，請先聯絡平台處理")
+        return _delete_blocked("withdrawable_cashback", f"仍有可提現返現 HK${withdrawable:g}，請先提現",
+                               withdrawable_balance=withdrawable)
+    if withdrawable < 0:
+        return _delete_blocked("cashback_adjustment", "返現帳目有未結清差額。請把返現紀錄交給客服核對差額")
+    # Keep ledger identity/amount, not a second offsetting row. The account
+    # lock and status predicate ensure no settled earning is ever voided.
+    db.query(CashbackTransaction).filter(
+        CashbackTransaction.user_id == user.id,
+        CashbackTransaction.status.in_(("pending", "tracked")),
+    ).update({"status": "void", "void_reason": "account_delete"}, synchronize_session=False)
     db.query(models.WalletItem).filter(
         models.WalletItem.user_id == user.id,
         models.WalletItem.status == 1).update({"status": 3, "code": "", "qr_expires_at": None})

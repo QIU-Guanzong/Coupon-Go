@@ -17,27 +17,40 @@ it does not inherit the old account's data or verification records. SQLite
 does not provide the same row-lock semantics and is not proof of concurrency
 safety for a deployed multi-worker database.
 
-Deletion returns 409 while the user has withdrawable, pending or tracked
-cashback, an unreconciled cashback adjustment or a pending or
+After the normal time-based ledger sweep, deletion voids remaining pending
+and tracked earning rows with `void_reason=account_delete`, retaining their
+identity, amount, and provenance. This is part of the deletion transaction.
+A due earning that is already eligible to withdraw is treated as money owed.
+Deletion returns 409 while the user has withdrawable cashback, an
+unreconciled cashback adjustment or a pending or
 approved cashback withdrawal, a pending merchant application, a pending
 order/refund or unused paid voucher, or while a vendor has an approved shop,
 unpaid nonzero statement, unposted nonzero sale or in-progress merchant order.
 Shop ownership is checked by `Shop.vendor_id` even after a role change.
 Administrators cannot self-delete until their privileges are transferred and
 revoked through the existing administrator-management flow. All checks and
-changes run in the request transaction.
+changes run in the request transaction. A 409 includes an actionable
+`detail` and a `code`; the deletion UI links paid/cancel/refund blockers to
+My Orders and in-flight withdrawals to withdrawal history. The normal
+withdrawal screen link remains behind its existing feature flag; the M10
+follow-up must make the legacy-balance withdrawal path available while
+new cashback accrual is disabled.
 
 Authenticated HTTP writes using `get_current_user` or `get_identity_user`
 take the account row lock and recheck its active/deleted state before starting.
 Some flows commit more than once, background/webhook operations do not all use
 these dependencies, and external side effects cannot be undone by this lock.
-A complete deletion-vs-order, claim, redemption, refund and webhook audit is
-still required before treating the feature as release-ready. A PostgreSQL
-delete-vs-password-reset smoke test passed on an earlier revision, before
-the shared authentication-dependency lock was added; it does not validate
-the final version's complete concurrency behavior. An independent review of
-authentication/deletion concurrency was blocked by the tool platform's
-security review; do not treat that review as completed or route around it.
+On this revision, the focused suite passed 24 tests including these
+PostgreSQL checks on a disposable, socket-only database:
+- Deletion and password reset both wait on the same user row; the deleted
+  account's token, password and code cannot be used afterward.
+- If deletion wins, purchase returns 401 with no order, stock reservation or
+  payment call. If purchase wins, deletion returns 409 and retains the
+  pending order and stock reservation. Payment is simulated in both cases.
+
+These checks do not cover every claim, redemption, refund, retry, webhook
+or background-job interaction. The broader concurrency audit and independent
+security review are not complete.
 
 This is identity deactivation and limited data removal, **not a claim of
 complete erasure from every table, attachment, log or backup**. In particular:

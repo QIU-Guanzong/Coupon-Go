@@ -242,21 +242,23 @@ def test_customer_paid_unused_voucher_blocks_delete(case):
         item = models.WalletItem(user_id=old['user_id'], coupon_id=coupon.id, order_id=order.id,
                                  source='purchase', status=1)
         db.add(item); db.commit()
-    assert client.post('/api/v3/delete-account', headers=token(old), json={}).status_code == 409
+    result = client.post('/api/v3/delete-account', headers=token(old), json={})
+    assert result.status_code == 409
+    assert result.json()['code'] == 'unused_paid_voucher'
+    assert '請先退款或使用' in result.json()['detail']
     with sessions() as db:
         assert db.get(models.User, old['user_id']).deleted_at is None
         assert db.query(models.WalletItem).filter_by(user_id=old['user_id']).one().status == 1
 
 
-@pytest.mark.skipif(not os.environ.get('COUPONGO_M97_PG_SOCKET'), reason='isolated PostgreSQL socket not supplied')
-def test_postgres_delete_serializes_with_password_reset_and_old_code_cannot_cross_identity(monkeypatch):
-    """Exercise row locks on a dedicated local PostgreSQL cluster, never production."""
+@pytest.fixture
+def postgres_case():
+    """Exclusive socket-only test cluster, never a production connection."""
     from pathlib import Path
-    from concurrent.futures import ThreadPoolExecutor
-    from threading import Event
     from sqlalchemy import URL
-    from app.routers import auth
 
+    if not os.environ.get('COUPONGO_M97_PG_SOCKET'):
+        pytest.skip('isolated PostgreSQL socket not supplied')
     socket = Path(os.environ['COUPONGO_M97_PG_SOCKET']).resolve()
     assert socket.name == 'socket' and socket.parent.name.startswith('coupon-pr13-pg.')
     assert socket.parent.stat().st_uid == os.getuid() and socket.parent.stat().st_mode & 0o077 == 0
@@ -273,53 +275,152 @@ def test_postgres_delete_serializes_with_password_reset_and_old_code_cannot_cros
     app.dependency_overrides[get_db] = db_override
     try:
         with TestClient(app) as client:
-            email = 'pg-race@example.com'
-            old, _ = register(client, email)
-            with sessions() as db:
-                db.add(models.OtpCode(email=email, code='314159', purpose='forgot',
-                                      expires_at=datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(minutes=10)))
-                db.commit()
-
-            started_reset, started_delete = Event(), Event()
-            real_lookup, real_sweep = auth._lock_email_user, auth.cashback_svc.sweep_user
-            def mark_lookup(db, value):
-                started_reset.set()
-                return real_lookup(db, value)
-            def mark_sweep(db, value):
-                started_delete.set()
-                return real_sweep(db, value)
-            monkeypatch.setattr(auth, '_lock_email_user', mark_lookup)
-            monkeypatch.setattr(auth.cashback_svc, 'sweep_user', mark_sweep)
-            gate = sessions()
-            try:
-                gate.query(models.User).filter_by(id=old['user_id']).with_for_update().one()
-                with ThreadPoolExecutor(max_workers=2) as pool:
-                    reset = pool.submit(client.post, '/api/v3/password/reset',
-                                        json={'email':email,'code':'314159','new_password':'Changed-987'})
-                    delete = pool.submit(client.post, '/api/v3/delete-account', headers=token(old), json={})
-                    assert started_reset.wait(5) and started_delete.wait(5)
-                    assert not reset.done() and not delete.done()
-                    gate.commit()
-                    reset_result, delete_result = reset.result(timeout=10), delete.result(timeout=10)
-                assert reset_result.status_code in (200, 400)
-                assert delete_result.status_code == 200, delete_result.text
-            finally:
-                gate.close()
-
-            with sessions() as db:
-                deleted = db.get(models.User, old['user_id'])
-                assert deleted.deleted_at is not None and not deleted.is_active and deleted.email != email
-                assert db.query(models.OtpCode).filter_by(email=email).count() == 0
-            assert client.get('/api/v3/me', headers=token(old)).status_code == 401
-            for password in ('First-Pass-123', 'Changed-987'):
-                assert client.post('/api/v3/login', json={'email':email,'password':password}).status_code == 401
-            fresh = client.post('/api/v3/new-register', json={'email':email,'password':'Fresh-123','role':'customer'})
-            assert fresh.status_code == 200
-            assert client.post('/api/v3/password/reset', json={'email':email,'code':'314159','new_password':'Stolen-123'}).status_code != 200
+            yield client, sessions
     finally:
         app.dependency_overrides.pop(get_db, None)
         Base.metadata.drop_all(engine)
         engine.dispose()
+
+
+def test_postgres_delete_serializes_with_password_reset_and_old_code_cannot_cross_identity(postgres_case, monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+    from app import deps
+    from app.routers import auth
+
+    client, sessions = postgres_case
+    email = 'pg-race@example.com'
+    old, _ = register(client, email)
+    with sessions() as db:
+        db.add(models.OtpCode(email=email, code='314159', purpose='forgot',
+                              expires_at=datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(minutes=10)))
+        db.commit()
+
+    started_reset, started_delete = Event(), Event()
+    real_lookup, real_identity = auth._lock_email_user, deps._identity
+    def mark_lookup(db, value):
+        started_reset.set()
+        return real_lookup(db, value)
+    def mark_identity(*args, **kwargs):
+        if kwargs.get('lock_for_write'):
+            started_delete.set()
+        return real_identity(*args, **kwargs)
+    monkeypatch.setattr(auth, '_lock_email_user', mark_lookup)
+    monkeypatch.setattr(deps, '_identity', mark_identity)
+    gate = sessions()
+    try:
+        gate.query(models.User).filter_by(id=old['user_id']).with_for_update().one()
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            reset = pool.submit(client.post, '/api/v3/password/reset',
+                                json={'email':email,'code':'314159','new_password':'Changed-987'})
+            delete = pool.submit(client.post, '/api/v3/delete-account', headers=token(old), json={})
+            try:
+                assert started_reset.wait(5) and started_delete.wait(5)
+                assert not reset.done() and not delete.done()
+            finally:
+                gate.rollback()  # Release even when an assertion fails.
+
+            reset_result, delete_result = reset.result(timeout=10), delete.result(timeout=10)
+        assert reset_result.status_code in (200, 400)
+        assert delete_result.status_code == 200, delete_result.text
+    finally:
+        gate.close()
+
+    with sessions() as db:
+        deleted = db.get(models.User, old['user_id'])
+        assert deleted.deleted_at is not None and not deleted.is_active and deleted.email != email
+        assert db.query(models.OtpCode).filter_by(email=email).count() == 0
+    assert client.get('/api/v3/me', headers=token(old)).status_code == 401
+    for password in ('First-Pass-123', 'Changed-987'):
+        assert client.post('/api/v3/login', json={'email':email,'password':password}).status_code == 401
+    fresh = client.post('/api/v3/new-register', json={'email':email,'password':'Fresh-123','role':'customer'})
+    assert fresh.status_code == 200
+    assert client.post('/api/v3/password/reset', json={'email':email,'code':'314159','new_password':'Stolen-123'}).status_code != 200
+
+
+@pytest.mark.parametrize('winner', ['deletion', 'order'])
+def test_postgres_delete_serializes_with_new_order(postgres_case, monkeypatch, winner):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+    from app import deps
+    from app.models_packages import Order, Package
+    from app.routers import auth, packages
+
+    client, sessions = postgres_case
+    user, _ = register(client, 'pg-order-race@example.com')
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    with sessions() as db:
+        vendor = models.User(email='pg-vendor@example.com', password_hash='!', role='vendor', is_active=True)
+        db.add(vendor); db.flush()
+        shop = models.Shop(vendor_id=vendor.id, name='PG Test Shop', is_approved=True)
+        db.add(shop); db.flush()
+        product = Package(shop_id=shop.id, name='PG Test Package', original_price=30, package_price=20,
+                          valid_from=now - timedelta(days=1), valid_to=now + timedelta(days=1),
+                          stock_total=2, stock_left=2, status='active')
+        db.add(product); db.flush()
+        pid = product.id
+        db.commit()
+
+    lock_held, release, contender_entered = Event(), Event(), Event()
+    original_sweep, original_identity = auth.cashback_svc.sweep_user, deps._identity
+    gateway_calls = []
+
+    def pause_locked_winner():
+        lock_held.set()
+        assert release.wait(10)
+
+    def sweep(*args, **kwargs):
+        if winner == 'deletion':
+            pause_locked_winner()
+        return original_sweep(*args, **kwargs)
+
+    def fake_gateway(order_id, amount, method):
+        gateway_calls.append(order_id)
+        if winner == 'order':
+            pause_locked_winner()
+        return {'gateway_ref': 'pi_local_pg_fixture', 'client_secret': 'test_fixture', 'currency': 'HKD'}
+
+    def observe_identity(*args, **kwargs):
+        if lock_held.is_set() and kwargs.get('lock_for_write'):
+            contender_entered.set()
+        return original_identity(*args, **kwargs)
+
+    monkeypatch.setattr(auth.cashback_svc, 'sweep_user', sweep)
+    monkeypatch.setattr(packages, 'create_payment_intent', fake_gateway)
+    monkeypatch.setattr(deps, '_identity', observe_identity)
+
+    def deletion():
+        return client.post('/api/v3/delete-account', headers=token(user), json={})
+
+    def order():
+        return client.post(f'/api/v3/packages/{pid}/purchase', headers=token(user),
+                           json={'payment_method': 'fps', 'client_ref': 'pg-order-fixture'})
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first, second = (deletion, order) if winner == 'deletion' else (order, deletion)
+        result1 = pool.submit(first)
+        try:
+            assert lock_held.wait(10)
+            result2 = pool.submit(second)
+            assert contender_entered.wait(10)
+            assert not result2.done()
+        finally:
+            release.set()
+        r1, r2 = result1.result(timeout=10), result2.result(timeout=10)
+
+    with sessions() as db:
+        account = db.get(models.User, user['user_id'])
+        orders = db.query(Order).filter_by(user_id=user['user_id']).all()
+        if winner == 'deletion':
+            assert (r1.status_code, r2.status_code) == (200, 401), (r1.text, r2.text)
+            assert account.deleted_at is not None and orders == []
+            assert db.get(Package, pid).stock_left == 2 and gateway_calls == []
+        else:
+            assert (r1.status_code, r2.status_code) == (200, 409), (r1.text, r2.text)
+            assert r2.json()['code'] == 'payment_in_flight'
+            assert account.deleted_at is None and len(orders) == 1
+            assert orders[0].payment_status == 'pending'
+            assert db.get(Package, pid).stock_left == 1 and gateway_calls == [orders[0].id]
 
 
 def test_pending_application_blocks_delete_until_review_is_resolved(case):

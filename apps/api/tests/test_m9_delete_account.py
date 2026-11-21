@@ -246,6 +246,8 @@ def test_delete_refused_with_withdrawable_cashback(client):
     r = _delete(client, h, {"reason": "想刪號"})
     assert r.status_code == 409, r.text
     assert r.json()["withdrawable_balance"] == 60.0
+    assert r.json()["code"] == "withdrawable_cashback"
+    assert "請先提現" in r.json()["detail"]
 
     # Nothing changed: fail closed, the user can still withdraw.
     user = _user("del-carol@example.com")
@@ -259,23 +261,36 @@ def test_delete_refused_with_withdrawable_cashback(client):
         db.close()
 
 
-def test_delete_with_only_pending_cashback_is_blocked(client):
-    h = _register_and_login(client, "del-dave@example.com")
-    user_id = _user("del-dave@example.com").id
-    _claim(client, h, _make_coupon(name="待確認券"))
-    txn_id = _insert_cashback_txn("del-dave@example.com", 30, "pending")
+@pytest.mark.parametrize("status", ["pending", "tracked"])
+def test_delete_voids_unearned_cashback_but_preserves_ledger(client, status):
+    email = f"del-{status}@example.com"
+    headers = _register_and_login(client, email)
+    user_id = _user(email).id
+    _claim(client, headers, _make_coupon(name="待確認券"))
+    txn_id = _insert_cashback_txn(email, 30, status)
 
-    r = _delete(client, h)
-    assert r.status_code == 409, r.text
-    db = TestingSession()
-    try:
-        assert db.get(models.User, user_id).is_active is True
-        # Pending earnings stay available to their still-active owner.
-        assert db.get(models_cashback.CashbackTransaction, txn_id).status == "pending"
+    response = _delete(client, headers)
+    assert response.status_code == 200, response.text
+    assert client.get("/api/v3/me", headers=headers).status_code == 401
+    with TestingSession() as db:
+        user = db.get(models.User, user_id)
+        assert not user.is_active and user.deleted_at is not None
+        txn = db.get(models_cashback.CashbackTransaction, txn_id)
+        assert (txn.user_id, float(txn.amount), txn.status, txn.void_reason) == (
+            user_id, 30, "void", "account_delete",
+        )
+        assert txn.redemption_id is not None
+
+
+def test_delete_preserves_online_cashback_already_due_for_withdrawal(client):
+    email = "del-due@example.com"
+    h = _register_and_login(client, email)
+    user_id = _user(email).id
+    _claim(client, h, _make_coupon(name="待確認券"))
+    txn_id = _insert_cashback_txn(email, 30, "pending")
+    with TestingSession() as db:
         db.get(models_cashback.CashbackTransaction, txn_id).expected_confirm_at = _now() - timedelta(seconds=1)
         db.commit()
-    finally:
-        db.close()
     # A later sweep must not strand the value on a deleted identity.
     assert _delete(client, h).status_code == 409
     db = TestingSession()
@@ -288,6 +303,29 @@ def test_delete_with_only_pending_cashback_is_blocked(client):
         assert cashback_service.balances(db, user_id)["withdrawable_balance"] == 30
     finally:
         db.close()
+
+
+def test_cashback_void_rolls_back_if_deletion_fails(client, monkeypatch):
+    from app.routers import auth
+
+    email = "del-rollback@example.com"
+    headers = _register_and_login(client, email)
+    user_id = _user(email).id
+    wallet_id = _claim(client, headers, _make_coupon(name="回滾券"))
+    txn_id = _insert_cashback_txn(email, 30, "pending")
+
+    def fail_points(*args, **kwargs):
+        raise RuntimeError("synthetic failure after ledger write")
+
+    monkeypatch.setattr(auth, "add_points", fail_points)
+    with pytest.raises(RuntimeError, match="synthetic failure after ledger write"):
+        _delete(client, headers)
+    with TestingSession() as db:
+        assert db.get(models.User, user_id).deleted_at is None
+        assert db.get(models.WalletItem, wallet_id).status == 1
+        txn = db.get(models_cashback.CashbackTransaction, txn_id)
+        assert (txn.status, txn.void_reason) == ("pending", None)
+    assert client.get("/api/v3/me", headers=headers).status_code == 200
 
 
 def test_delete_requires_login(client):
