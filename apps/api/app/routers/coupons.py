@@ -18,7 +18,7 @@ from .. import cashback_service, config, connect_service, models, schemas
 from ..database import get_db
 from ..deps import add_points, get_current_user, require_role
 from ..serializers import coupon_out
-from ..settlement_ledger import add_scanned_sale
+from ..settlement_ledger import add_scanned_sale, lock_shop
 from ..settlement_basis import settlement_basis
 
 router = APIRouter()
@@ -240,9 +240,13 @@ def scan_coupon(body: schemas.ScanIn,
     # refunded: snapshot 0, the redemption never settles anyway.
     _basis = settlement_basis(db, coupon, wallet_item=item)
     face_value = _basis if _basis is not None else Decimal("0")
+    # The shop lock also serializes commission updates with the snapshot.
+    lock_shop(db, coupon.shop_id)
+    commission_rate_snapshot = connect_service.effective_commission_rate(db, coupon.shop_id)
     red = models.Redemption(
         wallet_item_id=item.id, coupon_id=coupon.id, shop_id=coupon.shop_id,
         scanned_by_vendor_id=vendor.id, face_value=face_value,
+        commission_rate_snapshot=commission_rate_snapshot,
         idempotency_key=body.idempotency_key or None,
         prepared_at=prepared_at)
     db.add(red)

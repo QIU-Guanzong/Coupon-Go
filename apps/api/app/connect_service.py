@@ -189,7 +189,8 @@ def record_redemption(db: Session, red: models.Redemption) -> dict:
     if basis is None or basis <= 0:
         return {"transfer": "skipped_zero", "net_amount": 0.0,
                 "gross_amount": 0.0, "commission": 0.0}
-    rate = effective_commission_rate(db, red.shop_id)
+    from .settlement_ledger import redemption_commission_rate
+    rate = redemption_commission_rate(red, effective_commission_rate(db, red.shop_id))
     commission = (basis * rate).quantize(CENT)
     net = basis - commission
     if net <= 0:

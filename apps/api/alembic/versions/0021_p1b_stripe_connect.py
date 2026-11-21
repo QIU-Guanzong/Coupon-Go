@@ -19,6 +19,10 @@ depends_on = None
 
 
 def upgrade():
+    # Legacy redemptions keep NULL; their historical rate is not known.
+    columns = {column['name'] for column in sa.inspect(op.get_bind()).get_columns('redemptions')}
+    if 'commission_rate_snapshot' not in columns:
+        op.add_column('redemptions', sa.Column('commission_rate_snapshot', sa.Numeric(5, 4), nullable=True))
     if not sa.inspect(op.get_bind()).has_table("connect_accounts"):
         op.create_table(
             "connect_accounts",
@@ -63,6 +67,8 @@ def upgrade():
 
 
 def downgrade():
+    if op.get_bind().execute(sa.text('SELECT count(*) FROM redemptions WHERE commission_rate_snapshot IS NOT NULL')).scalar():
+        raise RuntimeError('Commission snapshots require a coordinated data restore')
     if op.get_bind().execute(sa.text("SELECT count(*) FROM connect_ledger_entries")).scalar():
         raise RuntimeError("A populated Connect ledger requires a coordinated data restore")
     if op.get_bind().execute(sa.text("SELECT count(*) FROM connect_accounts")).scalar():
@@ -70,3 +76,4 @@ def downgrade():
     op.drop_index("ix_connect_ledger_entries_shop_id", table_name="connect_ledger_entries")
     op.drop_table("connect_ledger_entries")
     op.drop_table("connect_accounts")
+    op.drop_column('redemptions', 'commission_rate_snapshot')
