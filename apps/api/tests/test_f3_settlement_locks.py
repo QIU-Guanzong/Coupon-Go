@@ -73,7 +73,9 @@ PG_URL = os.environ.get(
     # only; a bare postgresql:// URL makes SQLAlchemy 2.x look for
     # psycopg (v3) and fail to import.
     "postgresql+psycopg2://coupon_go:coupon_go@localhost:5432/coupon_go_test_f3")
-SQLITE_DB = "/tmp/coupon_go_test_f3.db"
+from tests.db_isolation import sqlite_test_path  # noqa: E402
+
+SQLITE_DB = sqlite_test_path("coupon_go_test_f3.db")
 
 
 def _pg_reachable():

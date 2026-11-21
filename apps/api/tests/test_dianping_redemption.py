@@ -14,8 +14,8 @@ Covers GAP_ANALYSIS_20261121.md §4:
 * 4.5 (P2, small) export filters.
 
 Run:  cd ~/workspace/coupon-go-dianping-4 && ./run_tests.sh tests/test_dianping_redemption.py -v
-Uses its own throwaway DB (DIANPING4_TEST_DB, default under the block's
-workdir .pytest-tmp) so parallel blocks do not share /tmp test DBs.
+Uses a process-isolated throwaway SQLite DB by default. An explicit
+DIANPING4_TEST_DB override must itself be unique per concurrent run.
 Postgres mode: set DIANPING4_POSTGRES_URL (default
 postgresql+psycopg2://coupon_go:coupon_go@localhost:5432/coupon_go_test_dianping4;
 the database must exist) — the module then runs against real
@@ -41,11 +41,10 @@ from app.main import app  # noqa: E402
 from app.models_line_b import AdminAuditLog  # noqa: E402
 from app.seed import seed  # noqa: E402
 
-TEST_DB = os.environ.get(
-    "DIANPING4_TEST_DB",
-    os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                 "..", ".pytest-tmp", "coupon_go_test_dianping4.db"))
-TEST_DB = os.path.normpath(TEST_DB)
+from tests.db_isolation import sqlite_test_path  # noqa: E402
+
+TEST_DB = os.path.normpath(os.environ.get("DIANPING4_TEST_DB") or
+                           sqlite_test_path("coupon_go_test_dianping4.db"))
 
 # Postgres mode (same pattern as test_f3): set DIANPING4_POSTGRES_URL to
 # run this module against real PostgreSQL, which is the only backend

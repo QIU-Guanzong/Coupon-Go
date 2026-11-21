@@ -45,7 +45,9 @@ from app.models_line_f import Settlement, SettlementItem, SettlementTransfer  # 
 from app.models_packages import Order  # noqa: E402
 from app.seed import seed  # noqa: E402
 
-TEST_DB = os.getenv("M6_TEST_DB", "/tmp/coupon_go_test_m6.db")
+from tests.db_isolation import sqlite_test_path  # noqa: E402
+
+TEST_DB = os.getenv("M6_TEST_DB") or sqlite_test_path("coupon_go_test_m6.db")
 PG_URL = os.getenv("M8_TEST_POSTGRES_URL")
 if PG_URL:
     from sqlalchemy.engine import make_url
