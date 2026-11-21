@@ -79,13 +79,19 @@ class Package(Base):
 
 
 class Order(Base):
-    """A paid package order. Free coupon claims never create orders."""
+    """A paid order: package (order_type='package', package_id) or
+    paid coupon (P1-A: order_type='coupon', coupon_id). Free coupon
+    claims never create orders."""
     __tablename__ = "orders"
     id = Column(Integer, primary_key=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     # package (report also reserves 'cashback-eligible' for line B)
     order_type = Column(String(30), default="package", nullable=False)
     package_id = Column(Integer, ForeignKey("packages.id"), nullable=True)
+    # P1-A: paid-coupon orders (order_type='coupon') link the coupon
+    # itself. Package orders keep package_id; coupon orders keep
+    # coupon_id; exactly one of the two is set on a paid order.
+    coupon_id = Column(Integer, ForeignKey("coupons.id"), nullable=True)
     quantity = Column(Integer, default=1, nullable=False)  # Gap 7: 购买份数
     amount = Column(Numeric(10, 2), nullable=False)       # 应付金额
     paid_amount = Column(Numeric(10, 2), default=0)       # 实付金额

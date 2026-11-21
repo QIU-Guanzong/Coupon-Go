@@ -10,7 +10,8 @@ Coupon types: Cash / Discount / Gift / Price.
 from datetime import datetime, timezone
 
 from sqlalchemy import (
-    Boolean, Column, DateTime, ForeignKey, Integer, Numeric, String, Text,
+    Boolean, CheckConstraint, Column, DateTime, ForeignKey, Integer,
+    Numeric, String, Text, UniqueConstraint,
 )
 from sqlalchemy.orm import relationship
 
@@ -38,6 +39,19 @@ class User(Base):
     shops = relationship("Shop", back_populates="vendor")
     wallet_items = relationship("WalletItem", back_populates="user")
     points = relationship("PointTransaction", back_populates="user")
+
+
+class LegalAcceptance(Base):
+    __tablename__ = "legal_acceptances"
+    __table_args__ = (UniqueConstraint("user_id", "terms_version", "privacy_version",
+                                       name="uq_legal_acceptance_versions"),)
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    terms_version = Column(String(64), nullable=False)
+    privacy_version = Column(String(64), nullable=False)
+    terms_url = Column(String(1024), nullable=False)
+    privacy_url = Column(String(1024), nullable=False)
+    accepted_at = Column(DateTime, default=_now, nullable=False)
 
 
 class OtpCode(Base):
@@ -122,6 +136,10 @@ class Coupon(Base):
     gift = Column(String(160), default="")
     discount_price = Column(Numeric(10, 2), nullable=True)
     regular_price = Column(Numeric(10, 2), nullable=True)
+    # P1-A: sale price (售價，HKD). NULL / 0 = free coupon, behaviour
+    # unchanged; > 0 = paid coupon: it can only be bought
+    # (POST /coupons/{id}/purchase), never claimed for free.
+    sale_price = Column(Numeric(10, 2), nullable=True)
     min_spend = Column(Numeric(10, 2), default=0)          # 需消費金額
     image = Column(String(255), default="")
     valid_from = Column(DateTime, nullable=False)
@@ -150,6 +168,13 @@ class Coupon(Base):
     usage_rules = Column(Text, default="")
     # refund policy: anytime | expiry_only | non_refundable
     refund_policy = Column(String(20), default="anytime", nullable=False)
+
+    __table_args__ = (
+        # P1-A / FIX-3 backstop: remaining can never go below zero even
+        # if a row lock fails to serialise (mirrors packages.stock_left).
+        CheckConstraint("remaining >= 0",
+                        name="ck_coupons_remaining_nonneg"),
+    )
 
     shop = relationship("Shop", back_populates="coupons")
 
