@@ -19,7 +19,9 @@ class _NavApi extends ApiClient {
   final String name;
   bool failBargains = false;
   bool hasBargains = false;
-  int meCalls = 0, cashbackCalls = 0;
+  int meCalls = 0, cashbackCalls = 0, profileCalls = 0;
+  final notificationWrites = <String>[];
+  bool hasLimitedCoupon = false;
   Completer<Map<String, dynamic>>? pendingMe;
 
   @override
@@ -33,10 +35,30 @@ class _NavApi extends ApiClient {
       return pendingMe?.future ?? {'role': role, 'name': name};
     }
     if (path == '/get-home') return {'popular_merchants': []};
+    if (path == '/get-profile') {
+      profileCalls++;
+      return {'limited_time_notify': false};
+    }
     if (path == '/get-limited-time-coupons') {
-      return {'coupons': <dynamic>[]};
+      return {'coupons': <dynamic>[
+        if (hasLimitedCoupon)
+          {
+            'coupon_id': 30,
+            'coupon_name': 'Tea coupon',
+            'coupon_type': 'Cash',
+            'cash_amount': 20,
+          },
+      ]};
     }
     return {};
+  }
+
+  @override
+  Future<Map<String, dynamic>> post(String path,
+      {Map<String, dynamic>? body, Map<String, String>? query}) async {
+    expect(path, '/limited-time-notification');
+    notificationWrites.add(query!['enabled']!);
+    return {'limited_time_notification': query['enabled'] == 'true'};
   }
 
   @override
@@ -105,7 +127,7 @@ void main() {
     expect(cashbackEnabled, hasOverride ? optedIn : false);
   });
   testWidgets(
-      'only a verified admin sees Administration; the application remains',
+      'only a verified non-preview admin sees Administration',
       (tester) async {
     for (final role in ['vendor', 'admin']) {
       final api = _NavApi(role: role)..pendingMe = Completer();
@@ -114,15 +136,18 @@ void main() {
       tester.state<ScaffoldState>(outer).openDrawer();
       await tester.pumpAndSettle();
       expect(find.text('Administration'), findsNothing);
-      await tester.scrollUntilVisible(find.text('Merchant application'), 150,
-          scrollable: find.descendant(
-              of: find.byType(Drawer), matching: find.byType(Scrollable)));
-      expect(find.text('Merchant application'), findsOneWidget);
+      if (!publicPreview) {
+        await tester.scrollUntilVisible(find.text('Merchant application'), 150,
+            scrollable: find.descendant(
+                of: find.byType(Drawer), matching: find.byType(Scrollable)));
+      }
+      expect(find.text('Merchant application'),
+          publicPreview ? findsNothing : findsOneWidget);
       expect(find.text('Invite Friends'), findsNothing);
       api.pendingMe!.complete({'role': role, 'name': 'Tea House'});
       await tester.pumpAndSettle();
       expect(find.text('Administration'),
-          role == 'admin' ? findsOneWidget : findsNothing);
+          !publicPreview && role == 'admin' ? findsOneWidget : findsNothing);
       await tester.pumpWidget(const SizedBox());
     }
   });
@@ -171,6 +196,56 @@ void main() {
     expect(find.text('Flash bargains'), findsNothing);
   });
 
+  testWidgets('390px preview guest can browse Limited without a switch',
+      (tester) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(390, 844);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.view.resetPhysicalSize);
+    final api = _NavApi()..hasLimitedCoupon = true;
+    await tester.pumpWidget(
+        _app(LimitedTimeScreen(api: api, onOpenCoupon: (_) {})));
+    await tester.pumpAndSettle();
+    expect(find.text('Tea coupon'), findsOneWidget);
+    expect(find.byType(SwitchListTile), findsNothing);
+    expect(find.byType(AuthScreen), findsNothing);
+    expect(api.profileCalls, 0);
+    expect(api.notificationWrites, isEmpty);
+  }, skip: !publicPreview);
+
+  testWidgets('preview Limited tab does not expose account login',
+      (tester) async {
+    final api = _NavApi()..hasLimitedCoupon = true;
+    await tester.pumpWidget(_app(_home(api, vendorMode: false)));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.tap(find.descendant(
+        of: find.byType(BottomNavigationBar),
+        matching: find.text('Limited Time')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(find.text('Tea coupon'), findsOneWidget);
+    expect(find.byType(SwitchListTile), findsNothing);
+    expect(find.byType(AuthScreen), findsNothing);
+    expect(tester.widget<BottomNavigationBar>(find.byType(BottomNavigationBar))
+        .currentIndex, 3);
+  }, skip: !publicPreview);
+
+  testWidgets('ordinary signed-in Limited preserves notification control',
+      (tester) async {
+    final api = _NavApi(role: 'customer');
+    await tester.pumpWidget(
+        _app(LimitedTimeScreen(api: api, onOpenCoupon: (_) {})));
+    await tester.pumpAndSettle();
+    final toggle = find.byType(SwitchListTile);
+    expect(api.profileCalls, 1);
+    expect(tester.widget<SwitchListTile>(toggle).value, isFalse);
+    await tester.tap(toggle);
+    await tester.pumpAndSettle();
+    expect(api.notificationWrites, ['true']);
+    expect(tester.widget<SwitchListTile>(toggle).value, isTrue);
+  }, skip: publicPreview);
+
   testWidgets('cashback flag controls wallet entry and balance reads',
       (tester) async {
     final api = _NavApi(role: 'customer');
@@ -203,13 +278,16 @@ void main() {
     await tester.pump();
     final app = tester.widget<MaterialApp>(find.byType(MaterialApp));
     expect(app.onGenerateRoute!(const RouteSettings(name: '/cashback')),
-        cashbackEnabled ? isA<MaterialPageRoute>() : isNull);
+        cashbackEnabled && !publicPreview ? isA<MaterialPageRoute>() : isNull);
   });
 
   testWidgets('unavailable social options are hidden', (tester) async {
     await tester.pumpWidget(_app(AuthScreen(api: _NavApi(), onAuthed: () {})));
     await tester.pumpAndSettle();
-    expect(find.text('Continue with Email account'), findsOneWidget);
+    expect(find.text('Continue with Email account'),
+        publicPreview ? findsNothing : findsOneWidget);
+    expect(find.text('Enter preview'),
+        publicPreview ? findsOneWidget : findsNothing);
     expect(find.textContaining('Google'), findsNothing);
     expect(find.textContaining('Facebook'), findsNothing);
   });
