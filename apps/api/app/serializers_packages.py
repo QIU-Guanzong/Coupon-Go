@@ -173,6 +173,35 @@ def payment_out(pay: Payment) -> dict:
     }
 
 
+def order_wallet_refundable(db: Session, order: Order, items=None, payments=None) -> bool:
+    """Read-only projection of the whole-order manual refund conditions.
+
+    The mutation endpoint rechecks under locks; this value is informational
+    and may change before the customer submits a request.
+    """
+    if order.payment_status != "paid" or order.refund_status not in ("none", "rejected"):
+        return False
+    if items is None:
+        items = db.query(models.WalletItem).filter_by(order_id=order.id).all()
+    if not items or (len(items) > 1 and len(items) != (order.quantity or 1)):
+        return False
+    if any(i.status != 1 or i.used_at is not None or
+                        i.refund_hold_previous_status is not None for i in items):
+        return False
+    if any(((db.get(models.Coupon, i.coupon_id).refund_policy or "anytime")
+            if db.get(models.Coupon, i.coupon_id) else "anytime") != "anytime" for i in items):
+        return False
+    if db.query(models.Redemption.id).filter(
+        models.Redemption.wallet_item_id.in_([i.id for i in items]),
+        models.Redemption.revoked_at.is_(None)).first():
+        return False
+    if payments is None:
+        payments = db.query(Payment).filter_by(order_id=order.id).order_by(Payment.id).all()
+    succeeded = next((p for p in reversed(payments) if p.status == "succeeded"), None)
+    return bool(succeeded and succeeded.gateway_ref and succeeded.amount == order.paid_amount
+                and (succeeded.currency or "").upper() == "HKD")
+
+
 def order_out(db: Session, o: Order) -> dict:
     pkg = None
     if o.package_id:
@@ -180,11 +209,10 @@ def order_out(db: Session, o: Order) -> dict:
     shop = None
     if pkg:
         shop = db.query(models.Shop).filter(models.Shop.id == pkg.shop_id).first()
-    wallet_item = None
-    if o.id:
-        wallet_item = (db.query(models.WalletItem)
-                       .filter(models.WalletItem.order_id == o.id)
-                       .first())
+    wallet_items = (db.query(models.WalletItem)
+                    .filter(models.WalletItem.order_id == o.id)
+                    .order_by(models.WalletItem.id).all()) if o.id else []
+    wallet_item = wallet_items[0] if wallet_items else None
     wallet_item_id = wallet_item.id if wallet_item else None
     latest_refund = (db.query(Refund).filter(Refund.order_id == o.id)
                      .order_by(Refund.id.desc()).first())
@@ -201,23 +229,12 @@ def order_out(db: Session, o: Order) -> dict:
         func.coalesce(func.sum(Refund.amount), 0))
         .filter(Refund.order_id == o.id,
                 Refund.status == "refunded").scalar() or 0)
-    # Gap 10 — voucher_redeemed: the order's voucher (WalletItem) is
-    # used (status 2) — the same fact the redeem path records.
-    voucher_redeemed = bool(wallet_item is not None and (
-        wallet_item.status == 2 or wallet_item.used_at is not None))
-    # Gap 10 — refundable: mirrors the manual-refund gate in
-    # routers.packages._refund_order_checked (paid + no refund yet +
-    # voucher still unused + policy 'anytime'). expiry_only /
-    # non_refundable, used/voided vouchers, and unpaid orders are
-    # not manually refundable.
-    refundable = False
-    if (o.payment_status == "paid" and o.refund_status in ("none", "rejected")
-            and wallet_item is not None and wallet_item.status == 1):
-        coupon = (db.query(models.Coupon).filter(
-            models.Coupon.id == wallet_item.coupon_id).first()
-            if wallet_item.coupon_id else None)
-        policy = (coupon.refund_policy if coupon else None) or "anytime"
-        refundable = policy == "anytime"
+    voucher_redeemed = any(i.status == 2 or i.used_at is not None for i in wallet_items)
+    if wallet_items and not voucher_redeemed:
+        voucher_redeemed = bool(db.query(models.Redemption.id).filter(
+            models.Redemption.wallet_item_id.in_([i.id for i in wallet_items]),
+            models.Redemption.revoked_at.is_(None)).first())
+    refundable = order_wallet_refundable(db, o, wallet_items, payments)
     fee, net, settlement_status = o.commission_amount, o.net_amount, o.settlement_status
     if wallet_item and o.settlement_status != "void":
         # A returned voucher may be scanned again in a later month. Only the
@@ -239,6 +256,35 @@ def order_out(db: Session, o: Order) -> dict:
                 settlement_status = "reversed"
                 if sale is None:
                     fee = net = 0
+    settlement_amount_complete = True
+    if len(wallet_items) > 1 and o.settlement_status != "void":
+        # Aggregate each voucher's newest redemption, not just the first
+        # voucher. Unsettled vouchers make the amount explicitly partial.
+        from decimal import Decimal
+        row_states = []
+        fee, net = Decimal("0"), Decimal("0")
+        for item in wallet_items:
+            line = (db.query(models.Redemption.revoked_at, SettlementItem, SettlementReversal, Settlement.status)
+                    .select_from(models.Redemption)
+                    .outerjoin(SettlementItem, SettlementItem.redemption_id == models.Redemption.id)
+                    .outerjoin(Settlement, Settlement.id == SettlementItem.settlement_id)
+                    .outerjoin(SettlementReversal, SettlementReversal.item_id == SettlementItem.id)
+                    .filter(models.Redemption.wallet_item_id == item.id)
+                    .order_by(models.Redemption.id.desc()).first())
+            if not line:
+                row_states.append("unsettled")
+                settlement_amount_complete = False
+                continue
+            revoked_at, sale, reversal, status = line
+            if sale is None:
+                row_states.append("reversed" if revoked_at else "unsettled")
+                settlement_amount_complete = False
+                continue
+            line_fee = sale.commission + (reversal.commission if reversal else 0)
+            fee += line_fee
+            net += sale.amount + (reversal.amount if reversal else 0) - line_fee
+            row_states.append("reversed" if reversal or revoked_at else status)
+        settlement_status = row_states[0] if len(set(row_states)) == 1 else "partial"
     return {
         "id": o.id,
         "order_id": o.id,
@@ -262,9 +308,12 @@ def order_out(db: Session, o: Order) -> dict:
         "refundable": refundable,
         "voucher_redeemed": voucher_redeemed,
         "settlement_status": settlement_status,
+        "settlement_amount_complete": settlement_amount_complete,
         "commission_amount": float(fee or 0),
         "net_amount": float(net or 0),
         "wallet_item_id": wallet_item_id,
+        "wallet_item_ids": [i.id for i in wallet_items],
+        "wallet_quantity_status": ("needs_review" if len(wallet_items) > 1 and len(wallet_items) != (o.quantity or 1) else "ok"),
         "created_at": o.created_at,
         "paid_at": o.paid_at,
         "payments": [payment_out(p) for p in payments],

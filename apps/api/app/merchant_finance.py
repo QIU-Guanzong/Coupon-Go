@@ -68,7 +68,7 @@ def shop_balance(db: Session, shop: models.Shop) -> dict:
         "withdrawable": _money(balance["available"]),
         "reserved": _money(balance["processing"]),
         "withdrawn": _money(balance["paid_out"]),
-        "commission_rate": _money(effective_commission_rate(db, shop.id)),
+        "commission_rate": float(effective_commission_rate(db, shop.id)),
     }
 
 

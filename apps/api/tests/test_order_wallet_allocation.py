@@ -16,6 +16,12 @@ def make_order(client, suffix, count=3, price=100.01):
     pkg = base._create_package(client, name=f'allocation-{suffix}', price=price)
     _, paid = base._buy_paid(client, user, pkg['id'])
     with base.TestingSession() as db:
+        # Synthetic discounted legacy order: keep quantity, issued vouchers
+        # and consumed stock consistent while retaining an odd-cent total.
+        stored_order = db.get(Order, paid['id'])
+        stored_order.quantity = count
+        stored_package = db.get(models.Package, pkg['id'])
+        stored_package.stock_left -= count - 1
         first = db.get(models.WalletItem, paid['wallet_item_id'])
         for _ in range(count - 1):
             db.add(models.WalletItem(user_id=first.user_id, coupon_id=first.coupon_id,
@@ -117,9 +123,9 @@ def test_refund_failure_restores_all_then_success_once(client, monkeypatch):
         assert [(db.get(models.WalletItem, i).status, db.get(models.WalletItem, i).refund_hold_previous_status) for i in ids] == [(1, None), (1, None)]
     result['gateway_ref'], result['status'] = 're_alloc_2', 'succeeded'
     assert client.post(url + '/refund', json={}, headers=user).json()['refund']['status'] == 'refunded'
-    assert base._stock_left(client, pkg['id']) == before + 1
+    assert base._stock_left(client, pkg['id']) == before + len(ids)
     assert client.post(url + '/refund', json={}, headers=user).status_code == 400
-    assert base._stock_left(client, pkg['id']) == before + 1
+    assert base._stock_left(client, pkg['id']) == before + len(ids)
     assert len(calls) == 2 and calls[0] != calls[1]
 
 
@@ -137,9 +143,9 @@ def test_revoke_every_voucher_then_refund_once(client):
     with base.TestingSession() as db:
         assert all(row.status == 'void' for row in db.query(CashbackTransaction).filter(CashbackTransaction.redemption_id.in_(reds)))
         assert all(db.get(models.WalletItem, item_id).status == 3 for item_id in ids)
-    assert base._stock_left(client, pkg['id']) == before + 1
+    assert base._stock_left(client, pkg['id']) == before + len(ids)
     assert client.post(f"/api/v3/orders/{order['id']}/refund", json={}, headers=user).status_code == 400
-    assert base._stock_left(client, pkg['id']) == before + 1
+    assert base._stock_left(client, pkg['id']) == before + len(ids)
 
 
 def test_cashback_cap_applies_to_each_allocated_share(client, monkeypatch):
@@ -168,3 +174,81 @@ def test_failed_refund_restores_distinct_prior_statuses(client, monkeypatch):
         assert service._process_refund(db, locked, 'test', expired=True).status == 'rejected'
     with base.TestingSession() as db:
         assert [(db.get(models.WalletItem, i).status, db.get(models.WalletItem, i).refund_hold_previous_status) for i in ids] == [(3, None), (1, None)]
+
+
+def test_three_vouchers_connect_statement_revoke_and_refund_conserve(client):
+    """Combined #12/#19/#16 path: no extra receivable or refund."""
+    from datetime import datetime, timezone
+    from app.models_connect import ConnectLedgerEntry
+    from app.models_line_f import Settlement, SettlementItem, SettlementReversal
+
+    user, pkg, order, ids = make_order(client, 'combined-finance', count=3)
+    vendor = base._vendor_headers(client)
+    admin = base._admin_headers(client)
+    before_stock = base._stock_left(client, pkg['id'])
+    reds = [scan(client, user, vendor, item_id) for item_id in ids]
+    with base.TestingSession() as db:
+        entries = db.query(ConnectLedgerEntry).filter(ConnectLedgerEntry.redemption_id.in_(reds)).all()
+        assert len(entries) == 3
+        assert sum(e.gross_amount for e in entries) == Decimal('100.01')
+        assert sum(e.commission for e in entries) == Decimal('9.99')
+        assert sum(e.net_amount for e in entries) == Decimal('90.02')
+
+    period = datetime.now(timezone.utc).strftime('%Y-%m')
+    response = client.post('/api/v3/admin/settlements/generate', json={'shop_id': 1, 'period': period}, headers=admin)
+    assert response.status_code == 201, response.text
+    statement = response.json()['settlement']
+    with base.TestingSession() as db:
+        lines = db.query(SettlementItem).filter(SettlementItem.redemption_id.in_(reds)).all()
+        assert sum(i.amount for i in lines) == Decimal('100.01')
+        assert sum(i.commission for i in lines) == Decimal('9.99')
+    assert statement['payment_mode'] == 'connect'
+    projection = client.get(f"/api/v3/orders/{order['id']}", headers=user).json()['order']
+    assert projection['settlement_amount_complete'] is True
+    assert (projection['commission_amount'], projection['net_amount']) == (9.99, 90.02)
+    denied = client.post(f"/api/v3/orders/{order['id']}/refund", json={}, headers=user)
+    assert denied.status_code == 400
+    for red in reds:
+        result = client.post(f'/api/v3/redemptions/{red}/revoke', headers=vendor)
+        assert result.status_code == 200, result.text
+    result = client.post(f"/api/v3/orders/{order['id']}/refund", json={}, headers=user)
+    assert result.status_code == 200, result.text
+    assert result.json()['refund']['status'] == 'refunded'
+    with base.TestingSession() as db:
+        s = db.get(Settlement, statement['id'])
+        assert s.gross_amount == Decimal(str(statement['gross_amount'])) - Decimal('100.01')
+        assert s.commission == Decimal(str(statement['commission'])) - Decimal('9.99')
+        assert s.net_amount == Decimal(str(statement['net_amount'])) - Decimal('90.02')
+        lines = db.query(SettlementItem).filter(SettlementItem.redemption_id.in_(reds)).all()
+        assert len(lines) == 3
+        reversals = db.query(SettlementReversal).filter(SettlementReversal.item_id.in_([i.id for i in lines])).all()
+        assert len(reversals) == 3
+        assert sum(r.amount for r in reversals) == Decimal('-100.01')
+        entries = db.query(ConnectLedgerEntry).filter(ConnectLedgerEntry.redemption_id.in_(reds)).all()
+        assert all(e.status == 'reversed' for e in entries)
+        assert all(db.get(models.WalletItem, item_id).status == 3 for item_id in ids)
+    assert base._stock_left(client, pkg['id']) == before_stock + len(ids)
+
+
+def test_order_and_wallet_refundability_follow_every_voucher(client):
+    user, _, order, ids = make_order(client, 'client-projection', count=2)
+    vendor = base._vendor_headers(client)
+    url = f"/api/v3/orders/{order['id']}"
+
+    def projections():
+        body = client.get(url, headers=user).json()['order']
+        rows = client.get('/api/v3/get-favorite-coupons-list', headers=user).json()['items']
+        return body, [row for row in rows if row['id'] in ids]
+
+    before, wallets = projections()
+    assert before['wallet_item_ids'] == ids and before['refundable'] is True
+    assert len(wallets) == 2
+    assert all(w['quantity'] == 1 and w['order_quantity'] == 2 and w['order_refundable'] for w in wallets)
+    red = scan(client, user, vendor, ids[1])
+    used, wallets = projections()
+    assert used['voucher_redeemed'] is True and used['refundable'] is False
+    assert all(w['order_refundable'] is False for w in wallets)
+    assert client.post(f'/api/v3/redemptions/{red}/revoke', headers=vendor).status_code == 200
+    restored, wallets = projections()
+    assert restored['voucher_redeemed'] is False and restored['refundable'] is True
+    assert all(w['order_refundable'] is True for w in wallets)

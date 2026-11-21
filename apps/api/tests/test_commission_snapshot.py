@@ -303,3 +303,18 @@ def test_ledger_guard_scopes_old_transfer_to_its_wallet_item(db):
         connect_service.ensure_prior_transfer_closed(db, first_item.id)
     assert blocked.value.status_code == 409
     connect_service.ensure_prior_transfer_closed(db, second_item.id)
+
+
+def test_fractional_percent_rate_keeps_precision_in_statement(db):
+    vendor, shop, coupon = setup_shop(db)
+    set_rate(db, shop, vendor, Decimal('0.1250'))
+    item = redemption(db, vendor, shop, coupon, Decimal('0.1250'))
+    connect_service.record_redemption(db, item)
+    db.commit()
+    generated = generate(db, vendor, shop)
+    assert generated['commission_rate'] == 0.125
+    assert generated['applied_commission_rate'] == 0.125
+    assert generated['items'][0]['commission_rate'] == 0.125
+    assert generated['commission'] == 12.5
+    detail = get_settlement(generated['id'], user=vendor, db=db)['settlement']
+    assert detail['items'][0]['commission_rate'] == 0.125

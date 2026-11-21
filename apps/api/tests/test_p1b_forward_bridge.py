@@ -96,6 +96,8 @@ def _remove_model_added_columns(connection):
     for table, names in {
         'redemptions': ['commission_rate_snapshot'],
         'connect_ledger_entries': ['dispatch_started', 'retry_count', 'manual_notified'],
+        'wallet_items': ['settlement_allocated_amount', 'refund_hold_previous_status'],
+        'orders': ['wallet_allocation_fingerprint'],
     }.items():
         for name in names:
             if name in _columns(connection, table):

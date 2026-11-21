@@ -136,9 +136,9 @@ def _settlement_out(db: Session, s: Settlement) -> dict:
         "transferred_net": _money(paid), "outstanding_net": _money(balance),
         "period": s.period, "redemption_count": s.redemption_count,
         "gross_amount": _money(s.gross_amount),
-        "commission_rate": _money(s.commission_rate),
+        "commission_rate": float(s.commission_rate),
         "commission_rate_mixed": len(line_rates) > 1,
-        "applied_commission_rate": _money(next(iter(line_rates))) if len(line_rates) == 1 else None,
+        "applied_commission_rate": float(next(iter(line_rates))) if len(line_rates) == 1 else None,
         "commission": _money(s.commission),
         "net_amount": _money(s.net_amount),
         "status": s.status, "dispute_reason": s.dispute_reason or "",
@@ -332,7 +332,7 @@ def _commission_rate_out(db: Session, row: MerchantCommissionRate) -> dict:
     return {
         "id": row.id, "shop_id": row.shop_id,
         "shop_name": shop.name if shop else "",
-        "rate": _money(row.rate), "set_by": row.set_by,
+        "rate": float(row.rate), "set_by": row.set_by,
         "created_at": row.created_at, "updated_at": row.updated_at,
     }
 
@@ -411,7 +411,7 @@ def generate_settlement(body: schemas_line_f.SettlementGenerateIn,
             "redemption_id": r.id, "coupon_id": r.coupon_id,
             "coupon_name": coupon.coupon_name if coupon else "",
             "amount": _money(a),
-            "commission_rate": _money(redemption_commission_rate(r, settlement.commission_rate)),
+            "commission_rate": float(redemption_commission_rate(r, settlement.commission_rate)),
             "basis_note": settlement_basis_note(db, coupon, redemption=r)})
     return {"message": "結算單已生成", "settlement": out}
 
@@ -465,7 +465,7 @@ def settlement_detail(db: Session, s: Settlement) -> dict:
                              "coupon_name": coupon.coupon_name if coupon else "",
                              "amount": _money(item.amount),
                              "commission": _money(item.commission),
-                             "commission_rate": _money(redemption_commission_rate(red, s.commission_rate)),
+                             "commission_rate": float(redemption_commission_rate(red, s.commission_rate)),
                              "basis_note": settlement_basis_note(
                                  db, coupon, redemption=red),
                              "created_at": item.created_at,
