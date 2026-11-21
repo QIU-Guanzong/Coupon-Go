@@ -1,0 +1,81 @@
+# P1-A tests on real PostgreSQL 16.15
+# date: 2026-11-20 17:47 UTC (rebase onto main 3f2d8bc, local commit 0c1127b)
+# DB: postgresql+psycopg2://coupon_go@localhost:5432/coupon_go_test_p1a (fresh, create_all from models)
+# result: 22 passed, 0 failed (incl. concurrent last-unit purchase __row_lock on real FOR UPDATE)
+
+============================= test session starts ==============================
+platform linux -- Python 3.12.3, pytest-9.2.0, pluggy-1.7.0 -- /home/hatch/workspace/coupon-go-p1a/apps/api/../../.venv/bin/python
+rootdir: /home/hatch/workspace/coupon-go-p1a/apps/api
+plugins: anyio-4.16.0
+collecting ... collected 22 items
+tests/test_p1a_paid_coupons.py::test_vendor_create_paid_coupon_and_free_coupon_default PASSED [  4%]
+tests/test_p1a_paid_coupons.py::test_vendor_create_paid_coupon_bad_price_or_policy PASSED [  9%]
+tests/test_p1a_paid_coupons.py::test_paid_coupon_cannot_be_claimed_free PASSED [ 13%]
+tests/test_p1a_paid_coupons.py::test_free_coupon_claim_still_works_and_cannot_be_purchased PASSED [ 18%]
+tests/test_p1a_paid_coupons.py::test_purchase_pay_voucher_wallet_chain PASSED [ 22%]
+tests/test_p1a_paid_coupons.py::test_purchase_quantity_gt_1_rejected PASSED [ 27%]
+tests/test_p1a_paid_coupons.py::test_purchase_idempotent_client_ref PASSED [ 31%]
+tests/test_p1a_paid_coupons.py::test_purchase_sold_out_and_package_template_blocked PASSED [ 36%]
+tests/test_p1a_paid_coupons.py::test_purchased_coupon_redeem_via_scan PASSED [ 40%]
+tests/test_p1a_paid_coupons.py::test_payment_failure_retry_then_success PASSED [ 45%]
+tests/test_p1a_paid_coupons.py::test_payment_timeout_releases_stock_on_read PASSED [ 50%]
+tests/test_p1a_paid_coupons.py::test_payment_timeout_outcome_and_cancel PASSED [ 54%]
+tests/test_p1a_paid_coupons.py::test_webhook_succeeded_issues_voucher_and_replay_ignored PASSED [ 59%]
+tests/test_p1a_paid_coupons.py::test_concurrent_purchase_last_unit_only_one_succeeds__row_lock PASSED [ 63%]
+tests/test_p1a_paid_coupons.py::test_remaining_cannot_go_negative__db_constraint PASSED [ 68%]
+tests/test_p1a_paid_coupons.py::test_refund_unused_voids_voucher_and_restores_stock PASSED [ 72%]
+tests/test_p1a_paid_coupons.py::test_refund_via_coupon_path PASSED       [ 77%]
+tests/test_p1a_paid_coupons.py::test_non_refundable_paid_coupon_refund_blocked PASSED [ 81%]
+tests/test_p1a_paid_coupons.py::test_expiry_only_manual_refund_blocked_then_auto_refunded PASSED [ 86%]
+tests/test_p1a_paid_coupons.py::test_refund_used_voucher_blocked PASSED  [ 90%]
+tests/test_p1a_paid_coupons.py::test_expired_paid_coupon_auto_refund PASSED [ 95%]
+tests/test_p1a_paid_coupons.py::test_settlement_basis_refunded_paid_coupon_is_none PASSED [100%]
+../../.venv/lib/python3.12/site-packages/fastapi/testclient.py:1
+    from starlette.testclient import TestClient as TestClient  # noqa
+app/schemas_line_b.py:29
+  /home/hatch/workspace/coupon-go-p1a/apps/api/app/schemas_line_b.py:29: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.14/migration/
+    class ReviewOut(BaseModel):
+app/schemas_line_b.py:93
+  /home/hatch/workspace/coupon-go-p1a/apps/api/app/schemas_line_b.py:93: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.14/migration/
+    class MerchantApplicationOut(BaseModel):
+app/schemas_line_b.py:120
+  /home/hatch/workspace/coupon-go-p1a/apps/api/app/schemas_line_b.py:120: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.14/migration/
+    class AdminAuditLogOut(BaseModel):
+app/schemas_packages.py:46
+  /home/hatch/workspace/coupon-go-p1a/apps/api/app/schemas_packages.py:46: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.14/migration/
+    class PackageOut(BaseModel):
+app/schemas_packages.py:91
+  /home/hatch/workspace/coupon-go-p1a/apps/api/app/schemas_packages.py:91: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.14/migration/
+    class PaymentOut(BaseModel):
+app/schemas_packages.py:107
+  /home/hatch/workspace/coupon-go-p1a/apps/api/app/schemas_packages.py:107: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.14/migration/
+    class OrderOut(BaseModel):
+app/schemas_packages.py:168
+  /home/hatch/workspace/coupon-go-p1a/apps/api/app/schemas_packages.py:168: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.14/migration/
+    class RefundOut(BaseModel):
+app/schemas.py:63
+  /home/hatch/workspace/coupon-go-p1a/apps/api/app/schemas.py:63: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.14/migration/
+    class UserOut(BaseModel):
+app/schemas.py:87
+  /home/hatch/workspace/coupon-go-p1a/apps/api/app/schemas.py:87: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.14/migration/
+    class CouponOut(BaseModel):
+app/schemas.py:118
+  /home/hatch/workspace/coupon-go-p1a/apps/api/app/schemas.py:118: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.14/migration/
+    class ShopOut(BaseModel):
+app/schemas.py:138
+  /home/hatch/workspace/coupon-go-p1a/apps/api/app/schemas.py:138: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.14/migration/
+    class BranchOut(BaseModel):
+app/schemas.py:237
+  /home/hatch/workspace/coupon-go-p1a/apps/api/app/schemas.py:237: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.14/migration/
+    class NotificationOut(BaseModel):
+app/main.py:52
+  
+          
+../../.venv/lib/python3.12/site-packages/fastapi/applications.py:5039
+../../.venv/lib/python3.12/site-packages/fastapi/applications.py:5039
+  
+          
+app/main.py:75
+  
+          
+================= 22 passed, 17 warnings in 121.90s (0:02:01) ==================
