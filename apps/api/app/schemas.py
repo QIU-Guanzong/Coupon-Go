@@ -210,6 +210,10 @@ class ScanIn(BaseModel):
     # redemption) and optional prepare token from /new-scan-coupon/prepare.
     idempotency_key: Optional[str] = None
     prepare_token: Optional[str] = None
+    # Dianping §1.2: branch the customer is redeeming at. When the
+    # coupon is restricted to specific branches, the scan is rejected
+    # unless branch_id is one of them; omitted = shop-level scan.
+    branch_id: Optional[int] = None
 
 
 class PrepareIn(BaseModel):

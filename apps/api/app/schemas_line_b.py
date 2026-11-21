@@ -117,6 +117,21 @@ class MerchantApplicationReviewIn(BaseModel):
     reject_reason: str = ""
 
 
+class MerchantApplicationUpdateIn(BaseModel):
+    """Dianping §1.6: edit a PENDING application in place (admin only).
+
+    All fields optional; only provided fields change. A rejected
+    application is still resubmitted as a NEW application (v1 rule)."""
+    shop_name: Optional[str] = None
+    contact_name: Optional[str] = None
+    phone: Optional[str] = None
+    address: Optional[str] = None
+    business_license: Optional[str] = None
+    id_card: Optional[str] = None
+    shop_photos: Optional[List[str]] = None
+    industry_license: Optional[str] = None
+
+
 class AdminAuditLogOut(BaseModel):
     id: int
     admin_id: int
