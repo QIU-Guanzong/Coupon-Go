@@ -22,7 +22,7 @@ Endpoint 名稱沿用 Coupon GO! 1.2.6 APK 逆向出的原始名稱（含原始�
 | POST | `/password/reset` | OTP + 新密碼重設 |
 | GET | `/get-profile` | 個人資料 |
 | POST | `/update-customer-profile` | 更新資料 |
-| POST | `/delete-account` | 刪除帳戶（M9-7 真刪號，軟刪除不硬刪）：未使用券作廢（status 1→3）、積分清零（負向 PointTransaction 記帳）、帳戶停用並記錄 `deleted_at` + 可選 `reason`；有可提現返現時 409 拒絕並返回 `withdrawable_balance`（先提現，絕不靜默刪錢）；待確認返現不攔截 |
+| POST | `/delete-account` | 停用並匿名化帳戶：變更電郵為隨機佔位、清空姓名電話、作廢密碼和舊 OTP、清除搜索與收藏；未使用券和 QR 作廢、積分清零並保留記帳，詳見 [刪號保留範圍](M97_ACCOUNT_DELETION_SCOPE.md)。待確認或可提現返現、處理中提現/商戶申請、未完成訂單、營運店舖或未結算商戶款項會回 409；管理員須先轉移及解除權限；金融與審計行仍保留。 |
 | GET | `/_dev/otp` | **僅 dev**：讀取最新未用 OTP（手動測試用） |
 
 ## 首頁 / 發現（部分遊客可調）

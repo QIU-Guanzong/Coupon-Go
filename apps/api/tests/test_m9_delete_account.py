@@ -12,8 +12,8 @@ Rules (M9-7, FEATURE_GAP_20261120 §3 + frontend R1/D5 contract):
   (ledger kept for audit).
 - A withdrawable cashback balance REFUSES the delete (409 + the balance,
   fail closed) so the user's money is never silently deleted; the
-  account, coupons and points are left untouched. Pending (not yet
-  withdrawable) cashback does not block deletion.
+  account, coupons and points are left untouched. Pending cashback also
+  blocks deletion until its disposition can preserve the user's rights.
 - reason is optional: POST {} deletes fine.
 """
 import os
@@ -37,10 +37,8 @@ from app.main import app  # noqa: E402
 from app import models_cashback  # noqa: E402
 from app.seed import seed  # noqa: E402
 
-TEST_DB = "/tmp/coupon_go_test_m9_delete.db"
-
-engine = create_engine(f"sqlite:///{TEST_DB}", connect_args={"check_same_thread": False})
-TestingSession = sessionmaker(bind=engine)
+engine = None
+TestingSession = None
 
 
 def _now():
@@ -48,9 +46,11 @@ def _now():
 
 
 @pytest.fixture(scope="module")
-def client():
-    if os.path.exists(TEST_DB):
-        os.remove(TEST_DB)
+def client(tmp_path_factory):
+    global engine, TestingSession
+    database = tmp_path_factory.mktemp("m97-deletion") / "test.db"
+    engine = create_engine(f"sqlite:///{database}", connect_args={"check_same_thread": False})
+    TestingSession = sessionmaker(bind=engine)
     Base.metadata.create_all(bind=engine)
     db = TestingSession()
     seed(db)
@@ -67,6 +67,7 @@ def client():
     with TestClient(app) as c:
         yield c
     app.dependency_overrides.clear()
+    engine.dispose()
 
 
 def _register_and_login(client, email):
@@ -178,6 +179,7 @@ def _delete(client, h, body=None):
 
 def test_delete_deactivates_and_voids_unused_coupons_and_points(client):
     h = _register_and_login(client, "del-alice@example.com")
+    user_id = _user("del-alice@example.com").id
     vh = _vendor_headers(client)
     unused = _claim(client, h, _make_coupon(name="未用券"))
     used = _claim(client, h, _make_coupon(name="已用券"))
@@ -189,11 +191,11 @@ def test_delete_deactivates_and_voids_unused_coupons_and_points(client):
 
     db = TestingSession()
     try:
-        user = db.query(models.User).filter(
-            models.User.email == "del-alice@example.com").first()
+        user = db.get(models.User, user_id)
         assert user.is_active is False
         assert user.deleted_at is not None
-        assert user.delete_reason == "不再使用"
+        assert user.email != "del-alice@example.com" and user.name == "" and user.phone == ""
+        assert user.delete_reason is None
         items = {i.id: i.status for i in db.query(models.WalletItem).filter(
             models.WalletItem.user_id == user.id).all()}
         assert items[unused] == 3  # voided
@@ -206,25 +208,30 @@ def test_delete_deactivates_and_voids_unused_coupons_and_points(client):
         note = db.query(models.Notification).filter(
             models.Notification.user_id == user.id,
             models.Notification.title == "帳戶刪除").first()
-        assert note is not None and "不再使用" in note.body
+        assert note is not None and "不再使用" not in note.body
     finally:
         db.close()
 
     # A deleted account can no longer log in or call authed endpoints.
     r = client.post("/api/v3/login", json={
         "email": "del-alice@example.com", "password": "Demo123!"})
-    assert r.status_code == 403, r.text
+    assert r.status_code == 401, r.text
     r = client.get("/api/v3/me", headers=h)
     assert r.status_code == 401, r.text
 
 
 def test_delete_without_reason_succeeds(client):
     h = _register_and_login(client, "del-bob@example.com")
+    user_id = _user("del-bob@example.com").id
     r = _delete(client, h)  # POST {} — the app sends an empty body today
     assert r.status_code == 200, r.text
-    user = _user("del-bob@example.com")
-    assert user.is_active is False and user.deleted_at is not None
-    assert user.delete_reason in (None, "")
+    db = TestingSession()
+    try:
+        user = db.get(models.User, user_id)
+        assert user.is_active is False and user.deleted_at is not None
+        assert user.delete_reason is None
+    finally:
+        db.close()
 
 
 # ---------- cashback guard (fail closed) ----------
@@ -252,18 +259,33 @@ def test_delete_refused_with_withdrawable_cashback(client):
         db.close()
 
 
-def test_delete_with_only_pending_cashback_succeeds(client):
+def test_delete_with_only_pending_cashback_is_blocked(client):
     h = _register_and_login(client, "del-dave@example.com")
+    user_id = _user("del-dave@example.com").id
     _claim(client, h, _make_coupon(name="待確認券"))
     txn_id = _insert_cashback_txn("del-dave@example.com", 30, "pending")
 
     r = _delete(client, h)
-    assert r.status_code == 200, r.text
-    assert _user("del-dave@example.com").is_active is False
+    assert r.status_code == 409, r.text
     db = TestingSession()
     try:
-        # Pending (not withdrawable) earnings stay in the ledger untouched.
+        assert db.get(models.User, user_id).is_active is True
+        # Pending earnings stay available to their still-active owner.
         assert db.get(models_cashback.CashbackTransaction, txn_id).status == "pending"
+        db.get(models_cashback.CashbackTransaction, txn_id).expected_confirm_at = _now() - timedelta(seconds=1)
+        db.commit()
+    finally:
+        db.close()
+    # A later sweep must not strand the value on a deleted identity.
+    assert _delete(client, h).status_code == 409
+    db = TestingSession()
+    try:
+        from app import cashback_service
+        cashback_service.sweep_user(db, user_id)
+        db.commit()
+        assert db.get(models.User, user_id).is_active is True
+        assert db.get(models_cashback.CashbackTransaction, txn_id).status == "withdrawable"
+        assert cashback_service.balances(db, user_id)["withdrawable_balance"] == 30
     finally:
         db.close()
 
