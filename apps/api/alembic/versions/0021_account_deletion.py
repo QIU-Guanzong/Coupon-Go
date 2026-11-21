@@ -1,9 +1,9 @@
 """M9-7: account-deletion audit columns on users.
 
-Adds users.deleted_at + users.delete_reason. Soft delete only: the
-account is deactivated (is_active=False) and the deletion time +
-optional reason are recorded; no user row or ledger row is ever
-deleted, so audit and settlement history stay intact.
+Adds users.deleted_at + users.delete_reason. The user row and financial
+ledgers remain for audit; the request handler anonymizes identity fields
+and does not retain the optional free-form reason because it may contain
+personal information. See docs/M97_ACCOUNT_DELETION_SCOPE.md for limits.
 """
 import sqlalchemy as sa
 from alembic import op

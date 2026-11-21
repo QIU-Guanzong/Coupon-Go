@@ -11,16 +11,33 @@ from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse
+from sqlalchemy import and_, or_
 from sqlalchemy.orm import Session
 
 from .. import cashback_service as cashback_svc, config, legal, models, schemas, security
 from ..database import get_db
+from ..models_cashback import CashbackWithdrawal
+from ..models_line_b import MerchantApplication
+from ..models_line_f import Settlement, SettlementItem
+from ..models_packages import Order, Package
+from ..settlement_basis import settlement_basis
 from ..deps import (
     add_points, get_current_user, get_identity_user, get_session_identity,
     points_balance,
 )
 
 router = APIRouter()
+
+
+def _lock_email_user(db: Session, email: str):
+    """Serialize identity transitions for an existing account.
+
+    The same user-row lock is taken by deletion and cashback operations.
+    Never read an OTP before acquiring this lock: a stale OTP must not
+    cross a deletion and be applied to a new account with the same email.
+    """
+    return (db.query(models.User).filter(models.User.email == email)
+            .with_for_update().populate_existing().first())
 
 
 def _now():
@@ -97,10 +114,13 @@ def register_vendor(body: schemas.RegisterIn, db: Session = Depends(get_db)):
 
 @router.post("/new-verify-otp")
 def verify_otp(body: schemas.OtpVerifyIn, db: Session = Depends(get_db)):
+    user = _lock_email_user(db, body.email)
+    if (user is None or user.deleted_at is not None or
+            body.purpose not in ("register", "forgot") or
+            (body.purpose == "register" and user.is_active) or
+            (body.purpose == "forgot" and not user.is_active)):
+        raise HTTPException(status_code=400, detail="驗證碼錯誤，請重新輸入")
     otp = _check_otp(db, body.email, body.code, body.purpose)
-    user = db.query(models.User).filter(models.User.email == body.email).first()
-    if user is None:
-        raise HTTPException(status_code=404, detail="帳戶不存在")
     docs = legal.documents()
     if body.purpose == "register":
         if not legal.has_accepted(db, user.id, docs):
@@ -120,7 +140,11 @@ def verify_otp_password(body: schemas.OtpVerifyIn, db: Session = Depends(get_db)
 
 @router.post("/new-resent-otp")
 def resend_otp(body: schemas.OtpRequestIn, db: Session = Depends(get_db)):
-    _issue_otp(db, body.email, body.purpose)
+    user = _lock_email_user(db, body.email)
+    if (user is not None and user.deleted_at is None and
+            ((body.purpose == "register" and not user.is_active) or
+             (body.purpose == "forgot" and user.is_active))):
+        _issue_otp(db, body.email, body.purpose)
     return {"message": "驗證碼已重新發送"}
 
 
@@ -131,8 +155,10 @@ def resend_otp_forgot(body: schemas.OtpRequestIn, db: Session = Depends(get_db))
 
 @router.post("/login")
 def login(body: schemas.LoginIn, db: Session = Depends(get_db)):
-    user = db.query(models.User).filter(models.User.email == body.email).first()
+    user = _lock_email_user(db, body.email)
     if user is None or not security.verify_password(body.password, user.password_hash):
+        raise HTTPException(status_code=401, detail="電郵或密碼錯誤")
+    if user.deleted_at is not None:
         raise HTTPException(status_code=401, detail="電郵或密碼錯誤")
     if not user.is_active:
         raise HTTPException(status_code=403, detail="請先完成驗證碼驗證")
@@ -157,7 +183,7 @@ def social_login(body: schemas.SocialLoginIn, db: Session = Depends(get_db)):
         raise HTTPException(status_code=400, detail="不支援的登錄方式")
     digest = hashlib.sha256(body.token.encode()).hexdigest()[:16]
     email = f"{body.provider}_{digest}@social.example"
-    user = db.query(models.User).filter(models.User.email == email).first()
+    user = _lock_email_user(db, email)
     if user is None:
         user = models.User(
             email=email, password_hash=security.hash_password(secrets.token_hex(16)),
@@ -166,22 +192,25 @@ def social_login(body: schemas.SocialLoginIn, db: Session = Depends(get_db)):
         db.add(user)
         db.commit()
         db.refresh(user)
+    if user.deleted_at is not None or not user.is_active:
+        raise HTTPException(status_code=401, detail="無法登入")
     return _token_for(user, db)
 
 
 @router.post("/password/forgot")
 def forgot(body: schemas.ForgotIn, db: Session = Depends(get_db)):
-    if db.query(models.User).filter(models.User.email == body.email).first():
+    user = _lock_email_user(db, body.email)
+    if user is not None and user.is_active and user.deleted_at is None:
         _issue_otp(db, body.email, "forgot")
     return {"message": "如帳戶存在，我們已發送重設密碼的驗證碼"}
 
 
 @router.post("/password/reset")
 def reset(body: schemas.ResetIn, db: Session = Depends(get_db)):
+    user = _lock_email_user(db, body.email)
+    if user is None or not user.is_active or user.deleted_at is not None:
+        raise HTTPException(status_code=400, detail="驗證碼錯誤，請重新輸入")
     otp = _check_otp(db, body.email, body.code, "forgot")
-    user = db.query(models.User).filter(models.User.email == body.email).first()
-    if user is None:
-        raise HTTPException(status_code=404, detail="帳戶不存在")
     otp.used = True
     user.password_hash = security.hash_password(body.new_password)
     db.commit()
@@ -237,43 +266,113 @@ def update_profile(body: schemas.ProfileUpdateIn, user: models.User = Depends(ge
 @router.post("/delete-account")
 def delete_account(body: schemas.DeleteAccountIn, user: models.User = Depends(get_identity_user),
                    db: Session = Depends(get_db)):
-    """M9-7: true account deletion (soft delete, never hard-delete).
+    """Deactivate and anonymize the identity, while retaining financial ledgers.
 
-    - Fail closed on money: sweep first (like GET /cashback), then
-      refuse with 409 + withdrawable_balance while any withdrawable
-      cashback remains, so the user is sent to withdraw instead of
-      silently losing it. Pending (not yet withdrawable) cashback
-      does not block; its rows stay in the ledger untouched.
+    - Fail closed on money: sweep first, then refuse deletion while
+      cashback is withdrawable, pending, tracked, or otherwise unresolved.
     - Voids unused wallet coupons (status 1 -> 3, expired) and zeroes
       points with a negative PointTransaction (reason account_delete);
       the ledger is kept for audit. Already-used coupons are untouched.
-    - Deactivates the account (is_active=False, deleted_at + optional
-      reason recorded); all audit/settlement rows are kept. A deleted
-      account can no longer log in (login 403) or call authed
-      endpoints (identity 401).
-    - reason is optional: the app currently posts {}.
+    - Clears identity fields and verification codes; preserves the immutable
+      user id and audit/settlement rows. Free-form reasons are not retained
+      because they can themselves contain personal information.
     """
     cashback_svc.sweep_user(db, user.id)
-    withdrawable = float(cashback_svc.balances(db, user.id)["withdrawable_balance"])
+    # get_identity_user resolved the token before this transaction acquired
+    # its account lock; refresh to reject a concurrent completed deletion.
+    db.refresh(user)
+    if user.deleted_at is not None or not user.is_active:
+        raise HTTPException(status_code=401, detail="請登錄以繼續")
+    # The role-management flow protects the final administrator; require
+    # administrator privileges to be transferred/revoked there first.
+    # This is safe even when multiple administrators delete concurrently.
+    if user.role == "admin":
+        raise HTTPException(status_code=409, detail="請先轉移並解除管理員權限")
+    if (db.query(CashbackWithdrawal.id).filter(
+            CashbackWithdrawal.user_id == user.id,
+            CashbackWithdrawal.status.in_(("pending", "approved"))).first()):
+        raise HTTPException(status_code=409, detail="仍有處理中的返現提現，請完成後再刪除帳戶")
+    if (db.query(MerchantApplication.id).filter(
+            MerchantApplication.user_id == user.id,
+            MerchantApplication.status == "pending").first()):
+        raise HTTPException(status_code=409, detail="仍有處理中的商戶申請，請先聯絡平台處理")
+    pending_customer_order = (db.query(Order.id).filter(
+        Order.user_id == user.id,
+        or_(Order.payment_status == "pending", Order.refund_status == "requested",
+            and_(Order.payment_status == "paid", Order.refund_status != "refunded",
+                 db.query(models.WalletItem.id).filter(
+                     models.WalletItem.order_id == Order.id,
+                     models.WalletItem.status == 1).exists()))).first())
+    if pending_customer_order:
+        raise HTTPException(status_code=409, detail="仍有未完成訂單或未使用的已購買優惠，請先處理")
+    # Ownership is authoritative: an administrator may have changed a
+    # former vendor's role while leaving Shop.vendor_id unchanged.
+    if db.query(models.Shop.id).filter(models.Shop.vendor_id == user.id).first():
+        shop_ids = db.query(models.Shop.id).filter(models.Shop.vendor_id == user.id)
+        if db.query(models.Shop.id).filter(
+                models.Shop.vendor_id == user.id, models.Shop.is_approved.is_(True)).first():
+            raise HTTPException(status_code=409, detail="仍有營運中的商戶店舖，請先聯絡平台處理")
+        if db.query(Settlement.id).filter(
+                Settlement.shop_id.in_(shop_ids), Settlement.status != "paid",
+                Settlement.net_amount != 0).first():
+            raise HTTPException(status_code=409, detail="仍有未結算商戶款項，請先聯絡平台處理")
+        # Sales not yet included in any statement can still be owed even
+        # when the shop is no longer approved. Preserve those receivables.
+        unposted = (db.query(models.Redemption)
+                    .outerjoin(SettlementItem, SettlementItem.redemption_id == models.Redemption.id)
+                    .filter(models.Redemption.shop_id.in_(shop_ids),
+                            models.Redemption.revoked_at.is_(None),
+                            SettlementItem.id.is_(None)).yield_per(200))
+        for redemption in unposted:
+            amount = settlement_basis(db, redemption=redemption)
+            if amount is not None and amount > 0:
+                raise HTTPException(status_code=409, detail="仍有未結算商戶款項，請先聯絡平台處理")
+        if (db.query(Order.id).join(Package, Order.package_id == Package.id)
+                .filter(Package.shop_id.in_(shop_ids),
+                        or_(Order.payment_status == "pending",
+                            Order.refund_status == "requested",
+                            and_(Order.payment_status == "paid",
+                                 Order.refund_status != "refunded",
+                                 Order.settlement_status != "void",
+                                 or_(Order.settlement_status == "pending",
+                                     db.query(models.WalletItem.id).filter(
+                                         models.WalletItem.order_id == Order.id,
+                                         models.WalletItem.status == 1).exists())))).first()):
+            raise HTTPException(status_code=409, detail="仍有進行中的商戶訂單，請先聯絡平台處理")
+    cashback = cashback_svc.balances(db, user.id)
+    withdrawable = float(cashback["withdrawable_balance"])
     if withdrawable > 0:
         return JSONResponse(
             status_code=409,
             content={"detail": f"仍有可提現返現 HK${withdrawable:g}，請先提現",
                      "withdrawable_balance": withdrawable})
+    if (withdrawable < 0 or cashback["pending_balance"] > 0 or
+            cashback["tracked_balance"] > 0 or cashback["withdrawal_unreconciled"] > 0):
+        raise HTTPException(status_code=409, detail="仍有待確認或未結清的返現，請先聯絡平台處理")
     db.query(models.WalletItem).filter(
         models.WalletItem.user_id == user.id,
-        models.WalletItem.status == 1).update({"status": 3})
+        models.WalletItem.status == 1).update({"status": 3, "code": "", "qr_expires_at": None})
     balance = points_balance(db, user.id)
     if balance > 0:
         add_points(db, user.id, -balance, "account_delete")
-    # Reason is recorded in the notification log for audit; account is deactivated.
+    # Do not retain user-supplied free text: it may contain identifying data.
     db.add(models.Notification(
         user_id=user.id, title="帳戶刪除",
-        body=f"刪除原因：{body.reason or '未填寫'}", notification_type="account",
+        body="帳戶已刪除", notification_type="account",
     ))
+    original_email = user.email
+    db.query(models.OtpCode).filter(models.OtpCode.email == original_email).delete(synchronize_session=False)
+    db.query(models.SearchHistory).filter_by(user_id=user.id).delete(synchronize_session=False)
+    db.query(models.Favorite).filter_by(user_id=user.id).delete(synchronize_session=False)
+    # Randomness prevents a deleted id from claiming a predictable tombstone.
+    user.email = f"deleted+{user.id}-{secrets.token_hex(16)}@deleted.invalid"
+    user.name = ""
+    user.phone = ""
+    # This deliberately cannot be verified by bcrypt; no old credential works.
+    user.password_hash = "!deleted!" + secrets.token_hex(32)
     user.is_active = False
     user.deleted_at = _now()
-    user.delete_reason = body.reason or None
+    user.delete_reason = None
     db.commit()
     return {"message": "帳戶已刪除"}
 
