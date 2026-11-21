@@ -100,6 +100,14 @@ def _vendor_headers(client):
     return _login(client, "vendor@coupon-go.example")
 
 
+
+def _admin_headers(client):
+    r = client.post("/api/v3/login", json={
+        "email": "admin@coupon-go.example", "password": "Demo123!"})
+    assert r.status_code == 200, r.text
+    return {"Authorization": f"Bearer {r.json()['access_token']}"}
+
+
 def _redeem(client, email, coupon_id):
     """Register, claim coupon, QR, vendor scan. Returns (headers, wid, rid)."""
     h = _register_and_login(client, email)
@@ -141,6 +149,14 @@ def _create_package(client, name="M4 套餐", refund_policy="anytime",
     }
     r = client.post("/api/v3/packages", json=body, headers=vh)
     assert r.status_code == 201, r.text
+    pkg = r.json()["package"]
+    # §3.2: packages enter review on creation; approve before use.
+    ah = _admin_headers(client)
+    r = client.post(f"/api/v3/admin/packages/{pkg['id']}/approve",
+                    params={"approve": True}, headers=ah)
+    assert r.status_code == 200, r.text
+    r = client.get("/api/v3/package-details", params={"package_id": pkg["id"]})
+    assert r.status_code == 200, r.text
     return r.json()["package"]
 
 

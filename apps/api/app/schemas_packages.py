@@ -5,12 +5,21 @@ Paths follow docs/FEATURE_RESEARCH_20261116.md §12 (套餐）.
 from datetime import datetime
 from typing import List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class PackageItemIn(BaseModel):
-    name: str
-    qty: int = 1
+    name: str = Field(min_length=1)
+    qty: int = Field(default=1, ge=1)
+
+    @field_validator("name")
+    @classmethod
+    def _name_not_blank(cls, v: str) -> str:
+        # §3.6: a set-meal item must name something; blank rows are
+        # a merchant typo, not an item.
+        if not v.strip():
+            raise ValueError("菜品名稱不可為空")
+        return v.strip()
 
 
 class UsageRulesIn(BaseModel):
@@ -24,6 +33,25 @@ class UsageRulesIn(BaseModel):
     time_slots: List[str] = []
     stackable: Optional[bool] = None
     per_user_limit: Optional[int] = Field(default=None, ge=1)
+
+
+class PackageUpdateIn(BaseModel):
+    """Merchant edit of a package (§3.2). Same state machine as
+    CouponUpdateIn: editing an active / paused / scheduled package
+    sends it back to pending_review; draft / rejected -> draft;
+    pending_review stays pending_review. stock_total may not drop
+    below the units already sold."""
+    name: Optional[str] = None
+    name_en: Optional[str] = None
+    items: Optional[List[PackageItemIn]] = None
+    person_count: Optional[int] = Field(default=None, ge=1)
+    original_price: Optional[float] = Field(default=None, gt=0)
+    package_price: Optional[float] = Field(default=None, gt=0)
+    valid_from: Optional[datetime] = None
+    valid_to: Optional[datetime] = None
+    usage_rules: Optional[UsageRulesIn] = None
+    stock_total: Optional[int] = Field(default=None, ge=0)
+    refund_policy: Optional[str] = None
 
 
 class PackageCreateIn(BaseModel):

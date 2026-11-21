@@ -53,7 +53,7 @@ from .models_scheduler import SchedulerLock  # noqa: F401  (register table)
 logger = logging.getLogger(__name__)
 
 JOB_NAMES = ("expired-packages", "bargain-expire", "payment-timeouts",
-             "cashback-sweep")
+             "cashback-sweep", "listing-schedule")
 
 # Fixed Postgres advisory-lock keys, one per job (arbitrary but stable;
 # changing them orphans nothing — advisory locks die with the session).
@@ -62,6 +62,7 @@ ADVISORY_LOCK_KEYS = {
     "bargain-expire": 2026111702,
     "payment-timeouts": 2026111703,
     "cashback-sweep": 2026111704,
+    "listing-schedule": 2026111705,
 }
 
 
@@ -224,20 +225,29 @@ def run_cashback_sweep(db, batch_size=None):
                     batch_size=size)
 
 
+def run_listing_schedule(db):
+    """§3.3: scheduled coupons / packages whose valid_from arrived go
+    live; past valid_to expires; exhausted stock sells out."""
+    from . import listing
+    return _run_job(db, "listing-schedule", listing.sweep_listing_schedule)
+
+
 JOB_RUNNERS = {
     "expired-packages": run_expired_packages,
     "bargain-expire": run_bargain_expire,
     "payment-timeouts": run_payment_timeouts,
     "cashback-sweep": run_cashback_sweep,
+    "listing-schedule": run_listing_schedule,
 }
 
 
 def run_all_jobs(session_factory=None, batch_size=None):
-    """Run all four sweeps once, each in its own session. Returns
+    """Run all sweeps once, each in its own session. Returns
     {job_name: sweep result}."""
     factory = session_factory or SessionLocal
     results = {}
-    for name in ("expired-packages", "bargain-expire", "payment-timeouts"):
+    for name in ("expired-packages", "bargain-expire", "payment-timeouts",
+                 "listing-schedule"):
         db = factory()
         try:
             results[name] = JOB_RUNNERS[name](db)
@@ -285,6 +295,10 @@ def create_scheduler(session_factory=None, interval_seconds=None):
                   trigger=IntervalTrigger(seconds=interval),
                   id="cashback-sweep", max_instances=1, coalesce=True,
                   misfire_grace_time=60)
+    sched.add_job(lambda: _one(run_listing_schedule),
+                  trigger=IntervalTrigger(seconds=interval),
+                  id="listing-schedule", max_instances=1, coalesce=True,
+                  misfire_grace_time=60)
     return sched
 
 
@@ -297,9 +311,10 @@ def validate_scheduler_config():
     if not status["enabled"]:
         logger.warning(
             "Scheduler disabled: %s. Expired-package refunds, bargain "
-            "settlement, payment-timeout close and cashback sweep will "
-            "NOT run automatically; only the admin manual endpoints "
-            "can backfill them.", status["reason"])
+            "settlement, payment-timeout close, cashback sweep and "
+            "scheduled-listing activation will NOT run automatically; "
+            "only the admin manual endpoints can backfill them.",
+            status["reason"])
     else:
         logger.info("Scheduler config: %s", status["reason"])
     return status
@@ -323,7 +338,8 @@ def main(argv=None):
     parser = argparse.ArgumentParser(
         prog="app.scheduler",
         description="M1 background jobs: expired refunds, bargain "
-                    "settlement, payment-timeout close, cashback sweep "
+                    "settlement, payment-timeout close, cashback sweep, "
+                    "scheduled-listing activation "
                     "(same logic as the admin manual endpoints).")
     sub = parser.add_subparsers(dest="command", required=True)
     p_once = sub.add_parser(

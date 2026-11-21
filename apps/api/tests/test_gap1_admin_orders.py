@@ -67,6 +67,10 @@ def _vendor_headers(client):
     return _login(client, "vendor@coupon-go.example")
 
 
+def _admin_headers(client):
+    return _login(client, "admin@coupon-go.example")
+
+
 def _create_package(client, shop_id, name, price=150, stock=5):
     r = client.post("/api/v3/packages", json={
         "shop_id": shop_id, "name": name,
@@ -78,6 +82,14 @@ def _create_package(client, shop_id, name, price=150, stock=5):
         "stock_total": stock, "refund_policy": "anytime",
     }, headers=_vendor_headers(client))
     assert r.status_code == 201, r.text
+    pkg = r.json()["package"]
+    # §3.2: packages enter review on creation; approve before use.
+    ah = _admin_headers(client)
+    r = client.post(f"/api/v3/admin/packages/{pkg['id']}/approve",
+                    params={"approve": True}, headers=ah)
+    assert r.status_code == 200, r.text
+    r = client.get("/api/v3/package-details", params={"package_id": pkg["id"]})
+    assert r.status_code == 200, r.text
     return r.json()["package"]
 
 

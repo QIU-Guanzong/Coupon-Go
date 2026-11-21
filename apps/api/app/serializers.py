@@ -44,6 +44,12 @@ def coupon_out(db: Session, c: models.Coupon, user_id=None,
         "gift": c.gift or "",
         "discount_price": float(c.discount_price) if c.discount_price is not None else None,
         "regular_price": float(c.regular_price) if c.regular_price is not None else None,
+        # §3.1 calibre (P1-A compatible): sale_price > 0 = paid coupon.
+        "sale_price": float(c.sale_price) if getattr(c, "sale_price", None) is not None else None,
+        "is_paid": bool(getattr(c, "sale_price", None) or 0) > 0,
+        "refund_policy": c.refund_policy or "anytime",
+        # §3.4: max claims per user; None (legacy row) = 1.
+        "per_user_limit": c.per_user_limit if getattr(c, "per_user_limit", None) else 1,
         "min_spend": float(c.min_spend or 0),
         "image": c.image or "",
         "valid_from": c.valid_from,

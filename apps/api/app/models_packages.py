@@ -66,7 +66,8 @@ class Package(Base):
     stock_total = Column(Integer, default=0, nullable=False)
     stock_left = Column(Integer, default=0, nullable=False)
     refund_policy = Column(String(20), default="anytime", nullable=False)
-    # active | inactive | sold_out
+    # active | inactive | sold_out | pending_review | draft | paused |
+    # scheduled (approved, waiting for valid_from)
     status = Column(String(20), default="active", nullable=False)
     created_at = Column(DateTime, default=_now)
 

@@ -102,6 +102,22 @@ def _vendor_headers(client):
     return headers
 
 
+
+def _admin_headers(client):
+    r = client.post("/api/v3/login", json={
+        "email": "admin@coupon-go.example", "password": "Demo123!"})
+    assert r.status_code == 200, r.text
+    headers = {"Authorization": f"Bearer {r.json()['access_token']}"}
+    # Same legal-consent flow as _vendor_headers in this file: the
+    # monkeypatched test-v1 documents are not accepted by the seeded
+    # admin yet, so accept them before calling admin endpoints.
+    if r.json()["consent_required"]:
+        accepted = client.post("/api/v3/legal/accept", headers=headers, json=LEGAL_VERSIONS)
+        assert accepted.status_code == 200, accepted.text
+        headers = {"Authorization": f"Bearer {accepted.json()['access_token']}"}
+    return headers
+
+
 def _create_package(client, name, stock=5):
     vh = _vendor_headers(client)
     r = client.post("/api/v3/packages", json={
@@ -114,6 +130,14 @@ def _create_package(client, name, stock=5):
         "stock_total": stock, "refund_policy": "anytime",
     }, headers=vh)
     assert r.status_code == 201, r.text
+    pkg = r.json()["package"]
+    # §3.2: packages enter review on creation; approve before use.
+    ah = _admin_headers(client)
+    r = client.post(f"/api/v3/admin/packages/{pkg['id']}/approve",
+                    params={"approve": True}, headers=ah)
+    assert r.status_code == 200, r.text
+    r = client.get("/api/v3/package-details", params={"package_id": pkg["id"]})
+    assert r.status_code == 200, r.text
     return r.json()["package"]
 
 
