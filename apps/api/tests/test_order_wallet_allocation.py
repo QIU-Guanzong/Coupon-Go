@@ -14,20 +14,21 @@ from app.models_cashback import CashbackTransaction
 def make_order(client, suffix, count=3, price=100.01):
     user = base._register_and_login(client, f'allocation-{suffix}@example.com')
     pkg = base._create_package(client, name=f'allocation-{suffix}', price=price)
-    _, paid = base._buy_paid(client, user, pkg['id'])
+    response = client.post(f"/api/v3/packages/{pkg['id']}/purchase", json={'quantity': count, 'payment_method': 'fps'}, headers=user)
+    assert response.status_code == 200, response.text
+    paid = base._pay(client, user, response.json()['order']['id'])
     with base.TestingSession() as db:
-        # Synthetic discounted legacy order: keep quantity, issued vouchers
-        # and consumed stock consistent while retaining an odd-cent total.
-        stored_order = db.get(Order, paid['id'])
-        stored_order.quantity = count
-        stored_package = db.get(models.Package, pkg['id'])
-        stored_package.stock_left -= count - 1
+        # Simulate a discounted order with a cent remainder while preserving
+        # the actual reservation of `count` units and authoritative payment.
+        db.get(Order, paid['id']).paid_amount = Decimal(str(price))
+        db.query(models.Payment).filter_by(order_id=paid['id']).one().amount = Decimal(str(price))
         first = db.get(models.WalletItem, paid['wallet_item_id'])
         for _ in range(count - 1):
             db.add(models.WalletItem(user_id=first.user_id, coupon_id=first.coupon_id,
                                      order_id=first.order_id, source='purchase', status=1))
         db.commit()
         ids = [x.id for x in db.query(models.WalletItem).filter_by(order_id=paid['id']).order_by(models.WalletItem.id)]
+    paid['paid_amount'] = price
     return user, pkg, paid, ids
 
 
@@ -285,3 +286,85 @@ def test_refunded_legacy_redemption_does_not_create_untracked_balance(client):
         db.get(Order, order['id']).refund_status = 'refunded'
         db.flush()
         assert shop_balance(db, shop)['legacy_untracked_redemptions'] == previous
+@pytest.mark.parametrize('quantity', [1, 3])
+def test_inconsistent_wallet_quantity_blocks_allocation_and_refund(client, quantity):
+    from app.routers import packages as service
+    user, pkg, order, ids = make_order(client, f'quantity-{quantity}', count=2)
+    before = base._stock_left(client, pkg['id'])
+    with base.TestingSession() as db:
+        stored = db.get(Order, order['id'])
+        stored.quantity = quantity
+        db.commit()
+        with pytest.raises(HTTPException) as exc:
+            ensure_order_allocations(db, order['id'])
+        assert exc.value.status_code == 409
+        db.rollback()
+        # The non-refundable expiry path must not release stock either.
+        coupon = db.get(models.WalletItem, ids[0]).coupon
+        from datetime import datetime, timedelta, timezone
+        coupon.refund_policy = 'non_refundable'
+        coupon.valid_to = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=1)
+        db.commit()
+        with pytest.raises(HTTPException) as exc:
+            service._settle_expired(db, order['id'])
+        assert exc.value.status_code == 409
+        db.rollback()
+    response = client.post(f"/api/v3/orders/{order['id']}/refund", json={}, headers=user)
+    assert response.status_code == 409, response.text
+    assert base._stock_left(client, pkg['id']) == before
+
+
+@pytest.mark.parametrize('corruption', ['owner', 'source', 'coupon'])
+def test_wallet_identity_mismatch_cannot_release_stock(client, corruption):
+    user, pkg, order, ids = make_order(client, f'identity-{corruption}', count=2)
+    other = base._create_package(client, name=f'other-{corruption}')
+    before = base._stock_left(client, pkg['id'])
+    with base.TestingSession() as db:
+        item = db.get(models.WalletItem, ids[1])
+        if corruption == 'source': item.source = 'claim'
+        elif corruption == 'owner': item.user_id = db.query(models.User).filter(models.User.id != item.user_id).first().id
+        else: item.coupon_id = db.query(models.Coupon).filter_by(package_id=other['id']).one().id
+        db.commit()
+        with pytest.raises(HTTPException) as exc:
+            ensure_order_allocations(db, order['id'])
+        assert exc.value.status_code == 409
+    response = client.post(f"/api/v3/orders/{order['id']}/refund", json={}, headers=user)
+    assert response.status_code == 409, response.text
+    assert base._stock_left(client, pkg['id']) == before
+
+
+def test_single_legacy_voucher_can_represent_three_units(client):
+    user, pkg, order, ids = make_order(client, 'single-three', count=3)
+    before = base._stock_left(client, pkg['id'])
+    with base.TestingSession() as db:
+        for item_id in ids[1:]: db.delete(db.get(models.WalletItem, item_id))
+        db.commit()
+        assert ensure_order_allocations(db, order['id']) == {ids[0]: Decimal('100.01')}
+        db.commit()
+    response = client.post(f"/api/v3/orders/{order['id']}/refund", json={}, headers=user)
+    assert response.status_code == 200, response.text
+    assert response.json()['refund']['status'] == 'refunded'
+    assert base._stock_left(client, pkg['id']) == before + 3
+
+
+def test_pending_refund_with_changed_quantity_does_not_retry_gateway(client, monkeypatch):
+    from app.routers import packages as service
+    user, pkg, order, _ = make_order(client, 'quantity-retry', count=2)
+    with base.TestingSession() as db:
+        payment = db.query(models.Payment).filter_by(order_id=order['id']).one()
+        result = dict(gateway_ref='re_pending_quantity', payment_intent=payment.gateway_ref,
+                      amount=float(order['paid_amount']), currency='hkd', status='pending')
+    monkeypatch.setattr(service, 'refund_payment', lambda *args, **kwargs: result)
+    calls = []
+    monkeypatch.setattr(service, 'retrieve_refund', lambda ref: calls.append(ref) or result)
+    before = base._stock_left(client, pkg['id'])
+    response = client.post(f"/api/v3/orders/{order['id']}/refund", json={}, headers=user)
+    assert response.status_code == 200 and response.json()['refund']['status'] == 'requested'
+    with base.TestingSession() as db:
+        db.get(Order, order['id']).quantity = 3
+        db.commit()
+        with pytest.raises(HTTPException) as exc:
+            service._resume_refund(db, order['id'])
+        assert exc.value.status_code == 409
+    assert calls == []
+    assert base._stock_left(client, pkg['id']) == before

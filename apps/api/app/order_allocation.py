@@ -40,16 +40,31 @@ def _paid_cents(order):
         _needs_reconciliation()
 
 
+def wallet_quantity_consistent(order, items):
+    """One legacy voucher represents the order; multiple vouchers are one unit each."""
+    quantity = order.quantity
+    return (isinstance(quantity, int) and not isinstance(quantity, bool) and quantity > 0
+            and bool(items) and (len(items) == 1 or len(items) == quantity))
+
+
+def wallet_order_consistent(order, items):
+    """Prove the entire set belongs to the purchase before allocating/refunding."""
+    return (wallet_quantity_consistent(order, items)
+            and len({item.coupon_id for item in items}) == 1
+            and all(item.order_id == order.id and item.user_id == order.user_id
+                    and item.source == "purchase" and item.coupon is not None
+                    and (order.package_id is None or item.coupon.package_id == order.package_id)
+                    for item in items))
+
+
 def _expected(order, rows):
     if order is None or order.payment_status != "paid":
         _needs_reconciliation()
-    if not rows or any(row.source != "purchase" or row.user_id != order.user_id for row in rows):
-        _needs_reconciliation()
-    if len({row.coupon_id for row in rows}) != 1:
+    if not wallet_order_consistent(order, rows):
         _needs_reconciliation()
     total_cents = _paid_cents(order)
     fingerprint = hashlib.sha256(json.dumps({
-        "order_id": order.id, "paid_cents": total_cents,
+        "order_id": order.id, "quantity": order.quantity, "paid_cents": total_cents,
         "wallets": [[r.id, r.coupon_id, r.user_id, r.source] for r in rows],
     }, separators=(",", ":"), sort_keys=True).encode()).hexdigest()
     base, remainder = divmod(total_cents, len(rows))

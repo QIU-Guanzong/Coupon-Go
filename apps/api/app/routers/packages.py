@@ -41,6 +41,7 @@ from ..database import get_db
 from ..deps import get_current_user, get_optional_user, require_role
 from ..models_packages import Order, Package, Payment, Refund, REFUND_POLICIES
 from ..shared import issue_wallet_item
+from ..order_allocation import wallet_order_consistent
 from ..payments_gateway import (
     GatewayError, create_payment_intent, refund_payment,
     retrieve_payment_intent, retrieve_refund, verify_webhook_signature,
@@ -248,6 +249,8 @@ def _claim_unused_voucher(db, order, *, expired=False):
     # must win this write before contacting the gateway or returning stock.
     items = (db.query(models.WalletItem).filter_by(order_id=order.id)
              .order_by(models.WalletItem.id).with_for_update().populate_existing().all())
+    if not wallet_order_consistent(order, items):
+        raise HTTPException(409, "訂單數量與券數不符，請聯絡客服核對")
     active = (db.query(models.Redemption.id).filter(
         models.Redemption.wallet_item_id.in_([i.id for i in items]),
         models.Redemption.revoked_at.is_(None)).first())
@@ -276,6 +279,10 @@ def _resume_refund(db, order_id):
         raise HTTPException(409, "找不到退款記錄，請聯絡客服核對")
     if order.refund_status != "requested" or refund.status != "requested":
         return refund
+    items = (db.query(models.WalletItem).filter_by(order_id=order.id)
+             .order_by(models.WalletItem.id).with_for_update().populate_existing().all())
+    if not wallet_order_consistent(order, items):
+        raise HTTPException(409, "訂單數量與券數不符，請聯絡客服核對")
     attempt = _paid_attempt(db, order)
     try:
         if (refund.gateway_ref or "").startswith("request-"):
@@ -355,6 +362,8 @@ def _settle_expired(db, order_id):
         return None
     items = (db.query(models.WalletItem).filter_by(order_id=order_id)
              .order_by(models.WalletItem.id).with_for_update().populate_existing().all())
+    if not wallet_order_consistent(order, items):
+        raise HTTPException(409, "訂單數量與券數不符，請聯絡客服核對")
     if (not items or any(i.status not in (1, 3) or i.used_at is not None or
                          i.coupon.valid_to > _now() for i in items)):
         return None
@@ -796,6 +805,8 @@ def _refund_order_checked(db: Session, order: Order, reason: str) -> dict:
              .order_by(models.WalletItem.id).with_for_update().populate_existing().all())
     if not items:
         raise HTTPException(status_code=400, detail="找不到此訂單的套餐券")
+    if not wallet_order_consistent(order, items):
+        raise HTTPException(409, "訂單數量與券數不符，請聯絡客服核對")
     for item in items:
         if item.status != 1 or item.used_at is not None:
             raise HTTPException(status_code=400, detail="訂單含已使用或失效的券，不可整單退款")

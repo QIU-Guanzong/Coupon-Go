@@ -13,8 +13,14 @@ def make_order(client, suffix):
     user = base._register_and_login(client, f'alloc-pg-{suffix}@example.com')
     vendor = base._vendor_headers(client)
     pkg = base._create_package(client, f'alloc-pg-{suffix}', price=100.01)
-    order = base._buy_paid(client, user, pkg['id'])
+    response = client.post(f"/api/v3/packages/{pkg['id']}/purchase", json={'quantity': 2, 'payment_method': 'card'}, headers=user)
+    assert response.status_code == 200, response.text
+    response = client.post(f"/api/v3/orders/{response.json()['order']['id']}/confirm-payment", json={'outcome': 'succeeded'}, headers=user)
+    assert response.status_code == 200, response.text
+    order = response.json()['order']
     with base._db() as db:
+        db.get(models.Order, order['id']).paid_amount = Decimal('100.01')
+        db.query(models.Payment).filter_by(order_id=order['id']).one().amount = Decimal('100.01')
         item = db.get(models.WalletItem, order['wallet_item_id'])
         db.add(models.WalletItem(user_id=item.user_id, coupon_id=item.coupon_id,
                                  order_id=item.order_id, source='purchase', status=1))
