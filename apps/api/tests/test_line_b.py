@@ -282,7 +282,10 @@ def test_admin_dashboard_readonly(client):
                 "coupons_by_status", "wallet_by_status", "total_redemptions",
                 "total_reviews", "pending_applications", "pending_coupons"):
         assert key in body, key
-    assert body["total_shops"] == 20 and body["total_coupons"] >= 36
+    assert body["total_shops"] == 21 and body["total_coupons"] >= 36
+    # 21 = 20 seed shops + 1 opened by the approval in
+    # test_merchant_application_flow above (dianping §1.1: approval opens
+    # the shop; this module shares one DB, so the count carries over).
     assert client.get("/api/v3/admin/shops", headers=ah).status_code == 200
     assert client.get("/api/v3/admin/coupons", headers=ah).status_code == 200
     assert client.get("/api/v3/admin/coupons",

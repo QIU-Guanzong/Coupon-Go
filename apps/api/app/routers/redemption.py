@@ -28,9 +28,13 @@ from sqlalchemy.orm import Session
 
 from .. import config, models, prepare_token
 from ..cashback_service import lock_account, void_for_revocation
+from ..deps import add_points, get_current_user, require_role
+from ..permissions_line_f import (
+    SHOP_ROLE_PERMISSIONS, can_redeem_shop, shop_member_role,
+)
+from ..serializers import coupon_branch_ids
 from ..settlement_ledger import reverse_sale
 from ..database import get_db
-from ..deps import add_points, require_role
 from .coupons import _refresh_expiry, ensure_paid_voucher, ensure_redeemable, presented_item
 from .reviews import hide_reviews_for_revoked_redemption
 
@@ -48,7 +52,25 @@ def _vendor_shop_ids(db: Session, vendor: models.User):
         models.Shop.vendor_id == vendor.id).all()]
 
 
-def _check_item(db: Session, item: models.WalletItem, vendor: models.User):
+def _check_branch(db: Session, coupon: models.Coupon, branch_id):
+    """Dianping §1.2: branch-scope check. Returns a reason or None.
+
+    No branch restriction on the coupon -> any branch of its shop is
+    fine. A branch_id outside the shop is never a valid branch."""
+    if branch_id is None:
+        return None
+    branch = db.query(models.Branch).filter(
+        models.Branch.id == branch_id).first()
+    if branch is None or branch.shop_id != coupon.shop_id:
+        return "找不到此分店"
+    allowed = coupon_branch_ids(db, coupon.id)
+    if allowed and branch_id not in allowed:
+        return "此優惠券不適用於此分店"
+    return None
+
+
+def _check_item(db: Session, item: models.WalletItem, vendor: models.User,
+                branch_id=None):
     """Shared eligibility check for prepare. Returns (coupon, reason|None)."""
     _refresh_expiry(db, item)
     coupon = db.query(models.Coupon).filter(
@@ -59,8 +81,21 @@ def _check_item(db: Session, item: models.WalletItem, vendor: models.User):
         return coupon, "此優惠券已失效"
     if item.qr_expires_at and item.qr_expires_at < _now():
         return coupon, "QR 碼已過期，請重新出示"
-    if coupon is None or coupon.shop_id not in _vendor_shop_ids(db, vendor):
+    # Dianping §1.3: redemption is a shop permission, not a platform
+    # role — owner / admin / redeem-capable member (manager / cashier /
+    # legacy merchant-admin). A member of THIS shop without redeem
+    # (finance) gets a permission reason; anyone else gets the generic
+    # wrong-shop reason so shop membership is not leaked.
+    if coupon is None:
         return coupon, "無效的 QR 碼！此碼屬於其他商店。"
+    shop = db.query(models.Shop).filter(models.Shop.id == coupon.shop_id).first()
+    if shop is None or not can_redeem_shop(db, vendor, shop):
+        if shop is not None and shop_member_role(db, vendor, shop) is not None:
+            return coupon, "沒有核銷權限"
+        return coupon, "無效的 QR 碼！此碼屬於其他商店。"
+    reason = _check_branch(db, coupon, branch_id)
+    if reason is not None:
+        return coupon, reason
     try:
         ensure_paid_voucher(db, item)
         ensure_redeemable(coupon)
@@ -81,14 +116,16 @@ def _phone_last4(phone):
 
 @router.post("/new-scan-coupon/prepare")
 def prepare_scan(body: dict,
-                 vendor: models.User = Depends(require_role("vendor", "admin")),
+                 vendor: models.User = Depends(get_current_user),
                  db: Session = Depends(get_db)):
     code = (body or {}).get("code", "")
     item = presented_item(db, code)
     if item is None:
         return {"can_redeem": False, "reason": "無效的 QR 碼！",
                 "prepare_token": None, "wallet_item_id": None}
-    coupon, reason = _check_item(db, item, vendor)
+    # §1.2: optional branch_id narrows the check to that branch.
+    branch_id = (body or {}).get("branch_id")
+    coupon, reason = _check_item(db, item, vendor, branch_id=branch_id)
     if reason is not None:
         return {"can_redeem": False, "reason": reason,
                 "prepare_token": None, "wallet_item_id": item.id,
@@ -112,6 +149,7 @@ def prepare_scan(body: dict,
             "coupon_name": coupon.coupon_name,
             "shop_id": coupon.shop_id,
             "shop_name": shop.name if shop else "",
+            "branch_id": branch_id,
             "phone_last4": last4,
             "customer_phone_last4": last4,
             "valid_until": valid_to,
@@ -190,10 +228,21 @@ def revoke_redemption(redemption_id: int, acknowledge_existing: bool = False,
 
 @router.get("/vendor/redemptions/export")
 def export_redemptions(format: str = Query("json", pattern="^(json|csv)$"),
-                       vendor: models.User = Depends(
-                           require_role("vendor", "admin")),
+                       vendor: models.User = Depends(get_current_user),
                        db: Session = Depends(get_db)):
-    shop_ids = None if vendor.role == "admin" else _vendor_shop_ids(db, vendor)
+    # §1.3: admin sees all; owners see their shops; staff see only the
+    # shops where their role grants view_redemptions (cashier/manager/
+    # legacy merchant-admin — not finance).
+    if vendor.role == "admin":
+        shop_ids = None
+    else:
+        shop_ids = _vendor_shop_ids(db, vendor)
+        for m in db.query(models.ShopMember).filter(
+                models.ShopMember.user_id == vendor.id,
+                models.ShopMember.status == "active").all():
+            if "view_redemptions" in SHOP_ROLE_PERMISSIONS.get(m.role, set()):
+                shop_ids.append(m.shop_id)
+        shop_ids = sorted(set(shop_ids))
     q = db.query(models.Redemption)
     if shop_ids is not None:
         q = q.filter(models.Redemption.shop_id.in_(shop_ids)) if shop_ids else q.filter(False)

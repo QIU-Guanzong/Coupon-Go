@@ -27,6 +27,7 @@ from .. import models, schemas_line_b
 from ..database import get_db
 from ..deps import get_current_user, require_role
 from ..models_line_b import AdminAuditLog, MerchantApplication, Review
+from ..notify import notify
 from ..permissions_line_f import ALL_ROLES
 from ..serializers import coupon_out, shop_out
 
@@ -144,13 +145,74 @@ def review_application(application_id: int,
     applicant = db.query(models.User).filter(models.User.id == app.user_id).first()
     if body.approve and applicant is not None and applicant.role == "customer":
         applicant.role = "vendor"
+    # Dianping §1.1: approval opens the shop. The review can only happen
+    # once (pending-only above), so one approval creates exactly one shop:
+    # name / address / phone come from the application, is_approved=True,
+    # category / hours / photos are completed by the merchant afterwards
+    # via PATCH /merchant/shops/{id} (§1.4). A second approved application
+    # for the same merchant opens a second shop.
+    shop = None
+    if body.approve and applicant is not None:
+        shop = models.Shop(vendor_id=applicant.id, name=app.shop_name,
+                            address=app.address or "", phone=app.phone or "",
+                            is_approved=True)
+        db.add(shop)
+        db.flush()
+        notify(db, applicant.id, "入駐申請已通過",
+               f"「{app.shop_name}」已通過審核，門店已開通，請完善門店資料後上架優惠券。",
+               "application_approved", target_shop_id=shop.id)
+    if not body.approve and applicant is not None:
+        notify(db, applicant.id, "入駐申請被拒絕",
+               f"「{app.shop_name}」未通過審核。原因：{app.reject_reason}",
+               "application_rejected")
     action = ("merchant_application.approve" if body.approve
               else "merchant_application.reject")
     _log(db, admin.id, action, "merchant_application", app.id,
          f"shop_name={app.shop_name}" + ("" if body.approve
-                                         else f"; reason={app.reject_reason}"))
+                                         else f"; reason={app.reject_reason}")
+         + (f"; shop_id={shop.id}" if shop is not None else ""))
     db.commit()
     return {"message": "入駐申請已通過" if body.approve else "入駐申請已拒絕",
+            "application": _application_out(db, app),
+            "shop": shop_out(db, shop) if shop is not None else None}
+
+
+@router.patch("/admin/merchant-applications/{application_id}")
+def update_application(application_id: int,
+                       body: schemas_line_b.MerchantApplicationUpdateIn,
+                       admin: models.User = Depends(admin_only),
+                       db: Session = Depends(get_db)):
+    """Dianping §1.6: edit a PENDING application in place (admin only).
+
+    A rejected application is still resubmitted as a NEW application —
+    this only corrects material while the review is still open."""
+    app = db.query(MerchantApplication).filter(
+        MerchantApplication.id == application_id).first()
+    if app is None:
+        raise HTTPException(status_code=404, detail="找不到此入駐申請")
+    if app.status != "pending":
+        raise HTTPException(status_code=400, detail="只有待審核的申請可以修改")
+    if body.shop_name is not None:
+        app.shop_name = body.shop_name
+    if body.contact_name is not None:
+        app.contact_name = body.contact_name
+    if body.phone is not None:
+        app.phone = body.phone
+    if body.address is not None:
+        app.address = body.address
+    if body.business_license is not None:
+        app.business_license = body.business_license
+    if body.id_card is not None:
+        app.id_card = body.id_card
+    if body.shop_photos is not None:
+        app.shop_photos = json.dumps(body.shop_photos, ensure_ascii=False)
+    if body.industry_license is not None:
+        app.industry_license = body.industry_license
+    _log(db, admin.id, "merchant_application.update", "merchant_application",
+         app.id, f"shop_name={app.shop_name}")
+    db.commit()
+    db.refresh(app)
+    return {"message": "入駐申請已更新",
             "application": _application_out(db, app)}
 
 

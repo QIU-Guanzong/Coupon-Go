@@ -35,7 +35,7 @@ from pathlib import Path
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 
 from .. import config
-from ..deps import get_current_user
+from ..deps import get_current_user, require_role
 
 router = APIRouter()
 
@@ -138,7 +138,7 @@ def strip_exif(data: bytes, ext: str) -> bytes:
     return data
 
 
-def _save_file(upload: UploadFile) -> str:
+def _save_file(upload: UploadFile, subdir_name: str = "review-images") -> str:
     ext = (upload.filename or "").rsplit(".", 1)[-1].lower()
     if ext not in ALLOWED_EXTENSIONS:
         raise HTTPException(
@@ -154,11 +154,11 @@ def _save_file(upload: UploadFile) -> str:
             detail="圖片過大，上限 %d KB" % (config.UPLOAD_MAX_BYTES // 1024))
     if not data:
         raise HTTPException(status_code=400, detail="空檔案")
-    subdir = Path(config.UPLOAD_DIR) / "review-images"
+    subdir = Path(config.UPLOAD_DIR) / subdir_name
     subdir.mkdir(parents=True, exist_ok=True)
     name = f"{uuid.uuid4().hex}.{ext}"
     (subdir / name).write_bytes(strip_exif(data, ext))
-    return f"/uploads/review-images/{name}"
+    return f"/uploads/{subdir_name}/{name}"
 
 
 @router.post("/uploads/review-images", status_code=201)
@@ -169,4 +169,19 @@ def upload_review_images(files: list[UploadFile] = File(...),
     if len(files) > MAX_FILES:
         raise HTTPException(status_code=400, detail="一次最多上傳 9 張圖")
     paths = [_save_file(f) for f in files]
+    return {"message": "圖片已上傳", "images": paths}
+
+
+@router.post("/uploads/merchant-images", status_code=201)
+def upload_merchant_images(files: list[UploadFile] = File(...),
+                           user=Depends(require_role("vendor", "admin"))):
+    """Dianping §1.4/§3.5: merchant image upload (shop cover / gallery /
+    coupon images). Same rules as review images — EXIF stripped, UUID
+    filename, <= 5 MB each, at most 9 per request. Returns URL paths to
+    store in Shop.image / Shop.gallery / Coupon.image."""
+    if not files:
+        raise HTTPException(status_code=400, detail="請選擇圖片")
+    if len(files) > MAX_FILES:
+        raise HTTPException(status_code=400, detail="一次最多上傳 9 張圖")
+    paths = [_save_file(f, "merchant-images") for f in files]
     return {"message": "圖片已上傳", "images": paths}

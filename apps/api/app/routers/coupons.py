@@ -17,7 +17,8 @@ from sqlalchemy.orm import Session
 from .. import cashback_service, config, models, schemas
 from ..database import get_db
 from ..deps import add_points, get_current_user, require_role
-from ..serializers import coupon_out
+from ..permissions_line_f import can_redeem_shop, shop_member_role
+from ..serializers import coupon_branch_ids, coupon_out
 from ..settlement_ledger import add_scanned_sale
 from ..settlement_basis import settlement_basis
 
@@ -159,10 +160,13 @@ def generate_qr(wallet_item_id: int, user: models.User = Depends(get_current_use
 
 @router.post("/new-scan-coupon")
 def scan_coupon(body: schemas.ScanIn,
-                vendor: models.User = Depends(require_role("vendor", "admin")),
+                vendor: models.User = Depends(get_current_user),
                 db: Session = Depends(get_db)):
     # Line A idempotency: replaying the same idempotency_key returns the
     # original result once, never a second redemption / second +20 points.
+    # Dianping §1.3: the scanner is whoever holds the redeem permission
+    # on the coupon's shop (owner / admin / manager / cashier / legacy
+    # merchant-admin) — not only platform role vendor.
     def prior_result():
         if not body.idempotency_key:
             return None
@@ -205,10 +209,24 @@ def scan_coupon(body: schemas.ScanIn,
     if item.qr_expires_at and item.qr_expires_at < _now():
         raise HTTPException(status_code=400, detail="QR 碼已過期，請重新出示")
     coupon = db.query(models.Coupon).filter(models.Coupon.id == item.coupon_id).first()
-    if coupon.shop_id not in [s.id for s in
-                              db.query(models.Shop).filter(
-                                  models.Shop.vendor_id == vendor.id).all()]:
+    # §1.3: redeem permission on the coupon's shop. A member of THIS shop
+    # without redeem (finance) gets 403; anyone unrelated keeps the old
+    # generic wrong-shop 400 so shop membership is not leaked.
+    shop = db.query(models.Shop).filter(
+        models.Shop.id == coupon.shop_id).first() if coupon is not None else None
+    if shop is None or not can_redeem_shop(db, vendor, shop):
+        if shop is not None and shop_member_role(db, vendor, shop) is not None:
+            raise HTTPException(status_code=403, detail="沒有核銷權限")
         raise HTTPException(status_code=400, detail="無效的 QR 碼！此碼屬於其他商店。")
+    # §1.2: branch restriction, same rule as prepare.
+    if body.branch_id is not None:
+        branch = db.query(models.Branch).filter(
+            models.Branch.id == body.branch_id).first()
+        if branch is None or branch.shop_id != coupon.shop_id:
+            raise HTTPException(status_code=400, detail="找不到此分店")
+        allowed = coupon_branch_ids(db, coupon.id)
+        if allowed and body.branch_id not in allowed:
+            raise HTTPException(status_code=400, detail="此優惠券不適用於此分店")
     ensure_paid_voucher(db, item)
     ensure_redeemable(coupon)
     today_start = _now().replace(hour=0, minute=0, second=0, microsecond=0)
