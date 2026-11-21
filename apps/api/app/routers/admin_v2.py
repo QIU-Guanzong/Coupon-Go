@@ -97,6 +97,26 @@ def _invoice_totals(db: Session, settlement: Settlement) -> dict:
     }
 
 
+def _settlement_payment_mode(db: Session, settlement: Settlement) -> str:
+    """Distinguish Connect payouts from old, manually recorded payments."""
+    from ..models_connect import ConnectAccount, ConnectLedgerEntry
+
+    items = db.query(SettlementItem).filter_by(settlement_id=settlement.id).all()
+    positive_ids = {i.redemption_id for i in items if i.amount > 0}
+    entries = db.query(ConnectLedgerEntry).filter(
+        ConnectLedgerEntry.redemption_id.in_(positive_ids),
+        ConnectLedgerEntry.kind == "transfer").all() if positive_ids else []
+    represented = {e.redemption_id for e in entries}
+    has_account = db.query(ConnectAccount.id).filter_by(shop_id=settlement.shop_id).first() is not None
+    has_manual_payment = db.query(SettlementTransfer.id).filter_by(
+        settlement_id=settlement.id, kind="payment").first() is not None
+    if not entries and not has_account:
+        return "legacy_manual"
+    if has_manual_payment or represented != positive_ids:
+        return "mixed_review"
+    return "connect"
+
+
 def _settlement_out(db: Session, s: Settlement) -> dict:
     shop = db.query(models.Shop).filter(models.Shop.id == s.shop_id).first()
     paid, balance = cash_totals(db, s)
@@ -112,6 +132,7 @@ def _settlement_out(db: Session, s: Settlement) -> dict:
         **_invoice_totals(db, s),
         "id": s.id, "shop_id": s.shop_id,
         "shop_name": shop.name if shop else "",
+        "payment_mode": _settlement_payment_mode(db, s),
         "transferred_net": _money(paid), "outstanding_net": _money(balance),
         "period": s.period, "redemption_count": s.redemption_count,
         "gross_amount": _money(s.gross_amount),
@@ -390,6 +411,7 @@ def generate_settlement(body: schemas_line_f.SettlementGenerateIn,
             "redemption_id": r.id, "coupon_id": r.coupon_id,
             "coupon_name": coupon.coupon_name if coupon else "",
             "amount": _money(a),
+            "commission_rate": _money(redemption_commission_rate(r, settlement.commission_rate)),
             "basis_note": settlement_basis_note(db, coupon, redemption=r)})
     return {"message": "結算單已生成", "settlement": out}
 
@@ -443,6 +465,7 @@ def settlement_detail(db: Session, s: Settlement) -> dict:
                              "coupon_name": coupon.coupon_name if coupon else "",
                              "amount": _money(item.amount),
                              "commission": _money(item.commission),
+                             "commission_rate": _money(redemption_commission_rate(red, s.commission_rate)),
                              "basis_note": settlement_basis_note(
                                  db, coupon, redemption=red),
                              "created_at": item.created_at,
@@ -566,8 +589,12 @@ def pay_settlement(settlement_id: int,
                    user: models.User = Depends(
                        require_perm("settlements.write")),
                    db: Session = Depends(get_db)):
-    # FIX-3: lock the settlement row before the status check so a
-    # second concurrent pay blocks here and sees status == "paid".
+    # Match scan/generation lock order: shop before statement. A concurrent
+    # scan cannot add a Connect entry after the legacy eligibility check.
+    shop_id = db.query(Settlement.shop_id).filter_by(id=settlement_id).scalar()
+    if shop_id is None:
+        raise HTTPException(status_code=404, detail="找不到此結算單")
+    lock_shop(db, shop_id)
     s = lock_statement(db, settlement_id)
     if s is None:
         raise HTTPException(status_code=404, detail="找不到此結算單")
@@ -582,6 +609,8 @@ def pay_settlement(settlement_id: int,
             raise HTTPException(409, "付款金額或憑證已變更，請重新核對")
     if s.status != "approved":
         raise HTTPException(status_code=400, detail="只有已確認的結算單可以付款")
+    if _settlement_payment_mode(db, s) != "legacy_manual":
+        raise HTTPException(409, "結算單包含 Connect 收款或待核對記錄，請使用 Connect 流水，不可重複手動登記付款")
     _hold_legacy_cash_voucher_payment(db, s.id)
     s.status = "paid"
     db.add(SettlementTransfer(settlement_id=s.id, amount=s.net_amount, kind="payment",
@@ -599,9 +628,15 @@ def pay_settlement(settlement_id: int,
 def record_balance_transfer(settlement_id: int, body: schemas_line_f.SettlementTransferIn,
                             user: models.User = Depends(require_perm("settlements.write")),
                             db: Session = Depends(get_db)):
+    shop_id = db.query(Settlement.shop_id).filter_by(id=settlement_id).scalar()
+    if shop_id is None:
+        raise HTTPException(404, "找不到此結算單")
+    lock_shop(db, shop_id)
     s = lock_statement(db, settlement_id)
     if s is None:
         raise HTTPException(404, "找不到此結算單")
+    if _settlement_payment_mode(db, s) != "legacy_manual":
+        raise HTTPException(409, "結算單包含 Connect 收款或待核對記錄，不可手動登記補款或收回")
     reference = body.reference.strip()
     if not reference:
         raise HTTPException(400, "請填寫付款或收回憑證編號")

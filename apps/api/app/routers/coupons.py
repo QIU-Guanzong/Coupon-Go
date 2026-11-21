@@ -253,6 +253,7 @@ def _redeem_item(db: Session, item: models.WalletItem,
     connect_block = connect_service.record_redemption(db, red)
     db.commit()
     db.refresh(red)
+    red._connect_result = connect_block
     return red
 
 
@@ -261,7 +262,8 @@ def _scan_response(red: models.Redemption, coupon, duplicate: bool) -> dict:
             "shop_id": coupon.shop_id, "redemption_id": red.id,
             "revoke_window_minutes": config.REVOKE_WINDOW_MINUTES,
             "scanned_at": red.scanned_at.replace(tzinfo=timezone.utc),
-            "duplicate": duplicate}
+            "duplicate": duplicate,
+            "connect": getattr(red, "_connect_result", None)}
 
 
 @router.post("/new-scan-coupon")

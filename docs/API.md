@@ -1088,16 +1088,11 @@ subtitle, has_branch: 0|1}], keyword}`（券與商户各最多 5 條）。
 | GET | `/merchant/balance`、`/merchant/shops/{shop_id}/balance` | 實時餘額：`pending_settlement` / `withdrawable` / `reserved` / `withdrawn` |
 | GET | `/merchant/shops/{shop_id}/balance/entries` | 餘額按單明細 |
 | GET | `/merchant/shops/{shop_id}/dashboard`、`/merchant/dashboard` | 經營看板：核銷趨勢、收入、客單、按券轉化、按店對比 |
-| POST / GET | `/merchant/withdrawals`、`/merchant/withdrawals/{id}`、`/merchant/withdrawals/{id}/cancel` | 商户提款申請（僅針對已確認結算單） |
-| GET / POST | `/admin/merchant-withdrawals`、`/admin/merchant-withdrawals/{id}/approve|reject|execute-payout|reverse` | 平台提款審核與打款。注意：`/admin/withdrawals` 仍是用戶返現提款隊列，不要混用 |
 | POST | `/merchant/settlements/{id}/dispute` | 商户側結算單異議入口（與平台側 `dispute` 同一狀態機） |
 
-### 打款執行（P1-B 依賴）
+### 商戶收款
 
-`POST /admin/merchant-withdrawals/{id}/execute-payout` 只調
-`app/payouts.execute_merchant_payout()`。P1-B Stripe Connect 未接通前
-返回 **503**，提款單保持 `approved`，不產生任何打款記錄（fail closed，
-絕不退回成「標記已付」）。P1-B 接入點見 `app/payouts.py`。
+商戶收款和提款統一走 Stripe Connect，詳見 `P1B_API.md`；結算單不另設提款審核流程。
 
 ### 對賬變化
 

@@ -1,45 +1,6 @@
-"""Dianping stats (GAP §2): merchant balance, withdrawals, monthly
-settlement sweep, dashboard, basis notes, merchant dispute, CSV export.
+"""Merchant dashboard and monthly statements with Connect as payout source.
 
-What this file proves (TDD — written before the implementation):
-- P0-3 (§2.1): a merchant sees a live balance — pending_settlement /
-  withdrawable / withdrawn — aggregated from the settlement ledger,
-  with a per-redemption entry list. Amounts follow settlement_basis
-  only (package = Order.paid_amount, price coupon = discount_price,
-  cash / free / pure-threshold = 0, refunded order = never settles).
-- P0-4 (§2.2): a merchant can file a withdrawal against an APPROVED
-  settlement, finance approves/rejects it, and payout execution FAILS
-  CLOSED (503) while P1-B Stripe Connect is not wired in — it must
-  never fall back to "mark as paid". The payout seam is
-  app.payouts.execute_merchant_payout, monkeypatchable in tests so the
-  paid / reversed path is provable without a real Stripe account.
-- P1 (§2.3): the scheduler gains a 5th job, monthly-settlements —
-  1st of month 02:00 UTC — generating last month's settlement for
-  every shop with unsettled redemptions, reusing the same generation
-  logic as POST /admin/settlements/generate.
-- §2.4: merchant dashboard — redemption trend (daily), revenue,
-  average order value, per-coupon conversion, per-shop breakdown.
-- §2.5: settlement lines carry basis_note (package_paid /
-  price_coupon / cash_zero / free_zero / refunded_skip) plus a
-  plain-language basis_explainer on the settlement.
-- §2.6: a merchant can dispute their own settlement from the
-  merchant side (reuses the admin dispute state machine).
-- Export: settlement lists (admin + merchant) support ?format=csv.
-- Reconciliation stays truthful with partial payouts: an approved
-  settlement with a partial withdrawal payment is NOT a discrepancy.
-
-Isolation: every settlement-generating test owns one (shop, period)
-pair — redemptions are backdated into that period before generation —
-so tests never collide on uq_settlement_shop_period and never pollute
-each other's balance assertions.
-
-RUN MODE — same setup as test_f3_settlement_locks.py:
-  * Postgres when reachable (STATS_POSTGRES_URL, default
-    postgresql+psycopg2://coupon_go:coupon_go@localhost:5432/coupon_go_test_stats).
-  * SQLite fallback in a fresh mkdtemp dir (never the shared /tmp
-    coupon_go_test_*.db files the parallel blocks use).
-
-Run:  cd apps/api && ../../.venv/bin/python -m pytest tests/test_dianping_stats.py -v
+Uses an isolated SQLite database unless an explicit test PostgreSQL is selected.
 """
 import os
 import sys
@@ -259,14 +220,6 @@ def _approved_settlement(client, email, shop_id, period, amount=100):
     return _approve(client, s["id"])
 
 
-def _create_withdrawal(client, settlement_id, amount, shop_id):
-    vh = _vendor_headers(client)
-    r = client.post("/api/v3/merchant/withdrawals", json={
-        "shop_id": shop_id, "settlement_id": settlement_id,
-        "amount": amount}, headers=vh)
-    return r
-
-
 # ---------- P0-3 (§2.1): live balance ----------
 def test_balance_pending_before_settlement(client):
     _redeem(client, "stats-bal-1@example.com", PRICE_COUPON)
@@ -277,23 +230,16 @@ def test_balance_pending_before_settlement(client):
     assert bal["shop_id"] == PRICE_SHOP
 
 
-def test_balance_moves_through_states(client):
+def test_statement_approval_does_not_create_a_second_payout_balance(client):
     _redeem(client, "stats-bal-2@example.com", PRICE_COUPON_2)
     fh = _finance_headers(client)
     s = _generate(client, fh, PRICE_SHOP_2, PERIOD)
-    # Generated but not approved: still pending, not withdrawable.
-    bal = _balance(client, PRICE_SHOP_2)
-    assert bal["pending_settlement"] == pytest.approx(_net(PRICE_AMOUNT_2))
-    assert bal["withdrawable"] == 0
+    before = _balance(client, PRICE_SHOP_2)
     _approve(client, s["id"])
-    bal = _balance(client, PRICE_SHOP_2)
-    assert bal["withdrawable"] == pytest.approx(_net(PRICE_AMOUNT_2))
-    assert bal["pending_settlement"] == 0
-    r = client.post(f"/api/v3/admin/settlements/{s['id']}/pay", headers=fh)
-    assert r.status_code == 200, r.text
-    bal = _balance(client, PRICE_SHOP_2)
-    assert bal["withdrawable"] == 0
-    assert bal["withdrawn"] == pytest.approx(_net(PRICE_AMOUNT_2))
+    after = _balance(client, PRICE_SHOP_2)
+    assert after == before
+    assert after["pending_settlement"] == pytest.approx(_net(PRICE_AMOUNT_2))
+    assert after["withdrawable"] == 0
 
 
 def test_balance_cash_coupon_contributes_zero(client):
@@ -317,7 +263,7 @@ def test_balance_entries_show_per_redemption_state(client):
     mine = [e for e in entries if e["coupon_id"] == PRICE_COUPON]
     assert mine
     e = mine[-1]
-    assert e["state"] == "pending_settlement"
+    assert e["state"] == "pending"
     assert e["basis_amount"] == pytest.approx(PRICE_AMOUNT)
     assert e["commission"] == pytest.approx(PRICE_AMOUNT * RATE)
     assert e["net_amount"] == pytest.approx(_net(PRICE_AMOUNT))
@@ -341,156 +287,13 @@ def test_balance_aggregate_across_shops(client):
     assert PRICE_SHOP in shop_ids
 
 
-# ---------- P0-4 (§2.2): withdrawals ----------
-def test_withdrawal_create_validation(client):
-    s = _approved_settlement(client, "stats-wd-1@example.com",
-                             shop_id=3, period="2026-01")
-    assert _create_withdrawal(client, s["id"], 0, 3).status_code == 400
-    assert _create_withdrawal(client, s["id"], -5, 3).status_code == 400
-    assert _create_withdrawal(client, s["id"], 999999, 3).status_code == 400
-    assert _create_withdrawal(client, 999999, 10, 3).status_code == 404
-
-
-def test_withdrawal_requires_approved_settlement(client):
-    cid = _priced_coupon_for_shop(4, 100)
-    _, _, rid = _redeem(client, "stats-wd-2@example.com", cid)
-    _backdate_redemption(rid, "2026-02")
-    fh = _finance_headers(client)
-    s = _generate(client, fh, 4, "2026-02")  # pending, not approved
-    assert _create_withdrawal(client, s["id"], 10, 4).status_code == 400
-
-
-def test_withdrawal_reserves_balance(client):
-    s = _approved_settlement(client, "stats-wd-3@example.com",
-                             shop_id=6, period="2026-03")
-    avail = _net(100)
-    r = _create_withdrawal(client, s["id"], 50, 6)
-    assert r.status_code == 201, r.text
-    w = r.json()["withdrawal"]
-    assert w["status"] == "pending"
-    bal = _balance(client, 6)
-    assert bal["withdrawable"] == pytest.approx(avail - 50)
-    assert bal["reserved"] == pytest.approx(50)
-    # The reserved 50 cannot be withdrawn a second time.
-    assert _create_withdrawal(client, s["id"], avail - 50 + 0.01, 6).status_code == 400
-    # ... but the exact remainder can.
-    r2 = _create_withdrawal(client, s["id"], avail - 50, 6)
-    assert r2.status_code == 201, r2.text
-
-
-def test_withdrawal_approve_reject_cancel(client):
-    s = _approved_settlement(client, "stats-wd-4@example.com",
-                             shop_id=7, period="2026-04")
-    fh = _finance_headers(client)
+def test_duplicate_settlement_withdrawal_routes_are_absent(client):
     vh = _vendor_headers(client)
-    w1 = _create_withdrawal(client, s["id"], 10, 7).json()["withdrawal"]
-    r = client.post(f"/api/v3/admin/merchant-withdrawals/{w1['id']}/approve",
-                    headers=fh)
-    assert r.status_code == 200, r.text
-    assert r.json()["withdrawal"]["status"] == "approved"
-    # An approved withdrawal can no longer be cancelled by the merchant.
-    r = client.post(f"/api/v3/merchant/withdrawals/{w1['id']}/cancel",
-                    headers=vh)
-    assert r.status_code == 400
-    w2 = _create_withdrawal(client, s["id"], 10, 7).json()["withdrawal"]
-    r = client.post(f"/api/v3/admin/merchant-withdrawals/{w2['id']}/reject",
-                    json={"reason": "資料不符，請重新提交"}, headers=fh)
-    assert r.status_code == 200, r.text
-    assert r.json()["withdrawal"]["status"] == "rejected"
-    # Rejection frees the reservation (only w1's 10 stays reserved).
-    bal = _balance(client, 7)
-    assert bal["reserved"] == pytest.approx(10)
-    w3 = _create_withdrawal(client, s["id"], 5, 7).json()["withdrawal"]
-    r = client.post(f"/api/v3/merchant/withdrawals/{w3['id']}/cancel",
-                    headers=vh)
-    assert r.status_code == 200, r.text
-    assert r.json()["withdrawal"]["status"] == "cancelled"
-
-
-def test_withdrawal_execute_payout_fails_closed_without_p1b(client):
-    """No Stripe Connect wired in yet: executing a payout must fail
-    closed (503) and must NOT mark anything paid."""
-    s = _approved_settlement(client, "stats-wd-5@example.com",
-                             shop_id=9, period="2026-05")
     fh = _finance_headers(client)
-    w = _create_withdrawal(client, s["id"], 10, 9).json()["withdrawal"]
-    client.post(f"/api/v3/admin/merchant-withdrawals/{w['id']}/approve",
-                headers=fh)
-    r = client.post(
-        f"/api/v3/admin/merchant-withdrawals/{w['id']}/execute-payout",
-        headers=fh)
-    assert r.status_code == 503, r.text
-    assert "Stripe" in r.text or "Connect" in r.text or "P1-B" in r.text
-    after = client.get(f"/api/v3/merchant/withdrawals/{w['id']}",
-                       headers=_vendor_headers(client)).json()["withdrawal"]
-    assert after["status"] == "approved"  # unchanged, nothing paid
-    assert after["payout_reference"] in (None, "")
-    bal = _balance(client, 9)
-    assert bal["withdrawn"] == 0
+    assert client.post("/api/v3/merchant/withdrawals", json={}, headers=vh).status_code == 404
+    assert client.get("/api/v3/admin/merchant-withdrawals", headers=fh).status_code == 404
 
 
-def test_withdrawal_execute_payout_and_reverse_with_fake_provider(
-        client, monkeypatch):
-    """The P1-B seam: patching app.payouts.execute_merchant_payout
-    stands in for the real Stripe Connect payout. Full payout marks
-    the settlement paid; a reversal (payout bounced) restores it."""
-    import app.payouts as payouts
-
-    def _fake_payout(db, withdrawal):
-        return {"payout_reference": "po_test_fake_001",
-                "provider": "stripe_connect"}
-
-    monkeypatch.setattr(payouts, "execute_merchant_payout", _fake_payout)
-    s = _approved_settlement(client, "stats-wd-6@example.com",
-                             shop_id=10, period="2026-06")
-    fh = _finance_headers(client)
-    avail = _net(100)
-    w = _create_withdrawal(client, s["id"], avail, 10).json()["withdrawal"]
-    client.post(f"/api/v3/admin/merchant-withdrawals/{w['id']}/approve",
-                headers=fh)
-    r = client.post(
-        f"/api/v3/admin/merchant-withdrawals/{w['id']}/execute-payout",
-        headers=fh)
-    assert r.status_code == 200, r.text
-    paid = r.json()["withdrawal"]
-    assert paid["status"] == "paid"
-    assert paid["payout_reference"] == "po_test_fake_001"
-    # Settlement fully transferred -> paid.
-    got = client.get(f"/api/v3/admin/settlements/{s['id']}",
-                     headers=fh).json()["settlement"]
-    assert got["status"] == "paid"
-    assert got["transferred_net"] == pytest.approx(avail)
-    bal = _balance(client, 10)
-    assert bal["withdrawn"] == pytest.approx(avail)
-    # Reversal: payout bounced after the fact.
-    r = client.post(
-        f"/api/v3/admin/merchant-withdrawals/{w['id']}/reverse",
-        json={"reason": "銀行退票"}, headers=fh)
-    assert r.status_code == 200, r.text
-    assert r.json()["withdrawal"]["status"] == "reversed"
-    got = client.get(f"/api/v3/admin/settlements/{s['id']}",
-                     headers=fh).json()["settlement"]
-    assert got["status"] == "approved"  # back to withdrawable
-    assert got["transferred_net"] == pytest.approx(0)
-    bal = _balance(client, 10)
-    assert bal["withdrawable"] == pytest.approx(avail)
-
-
-def test_withdrawal_admin_list(client):
-    s = _approved_settlement(client, "stats-wd-7@example.com",
-                             shop_id=11, period="2026-07")
-    _create_withdrawal(client, s["id"], 10, 11)
-    fh = _finance_headers(client)
-    r = client.get("/api/v3/admin/merchant-withdrawals", headers=fh)
-    assert r.status_code == 200, r.text
-    assert r.json()["total"] >= 1
-    vh = _vendor_headers(client)
-    r = client.get("/api/v3/merchant/withdrawals", headers=vh)
-    assert r.status_code == 200, r.text
-    assert r.json()["total"] >= 1
-
-
-# ---------- P1 (§2.3): monthly settlement sweep ----------
 def test_monthly_settlement_sweep(client):
     from app.merchant_finance import sweep_monthly_settlements
     _, _, rid1 = _redeem(client, "stats-sched-1@example.com", PRICE_COUPON)
@@ -645,43 +448,64 @@ def test_settlements_csv_export(client):
     assert "period" in r.text
 
 
-# ---------- reconciliation stays truthful with partial payouts ----------
-def test_reconciliation_ok_with_partial_withdrawal_payment(
-        client, monkeypatch):
-    import app.payouts as payouts
-    monkeypatch.setattr(
-        payouts, "execute_merchant_payout",
-        lambda db, w: {"payout_reference": "po_test_partial_001",
-                       "provider": "stripe_connect"})
-    s = _approved_settlement(client, "stats-recon-1@example.com",
-                             shop_id=12, period="2026-08")
+
+
+def test_dashboard_balance_agrees_with_connect_ledger_and_pending_reversal(client):
+    from app.models_connect import ConnectLedgerEntry
+
+    vh = _vendor_headers(client)
+    _, _, red = _redeem(client, "stats-connect-consistency@example.com", PRICE_COUPON)
+    with TestingSession() as db:
+        entry = db.query(ConnectLedgerEntry).filter_by(redemption_id=red).one()
+        entry.status = "transferred"
+        entry.pending_reversal = False
+        db.commit()
+
+    def check():
+        stats = client.get(f"/api/v3/merchant/shops/{PRICE_SHOP}/balance", headers=vh)
+        connect = client.get("/api/v3/merchant/connect/balance", params={"shop_id": PRICE_SHOP}, headers=vh)
+        assert stats.status_code == connect.status_code == 200
+        a, b = stats.json(), connect.json()
+        assert (a["pending_settlement"], a["withdrawable"], a["reserved"], a["withdrawn"]) == (
+            b["pending"], b["available"], b["processing"], b["paid_out"])
+        return a
+
+    before = check()
+    with TestingSession() as db:
+        entry = db.query(ConnectLedgerEntry).filter_by(redemption_id=red).one()
+        entry.pending_reversal = True
+        db.commit()
+    after = check()
+    assert after["withdrawable"] == pytest.approx(before["withdrawable"] - _net(PRICE_AMOUNT))
+    entries = client.get(f"/api/v3/merchant/shops/{PRICE_SHOP}/balance/entries", headers=vh).json()["entries"]
+    assert next(e for e in entries if e["redemption_id"] == red)["state"] == "reversal_pending"
+
+
+def test_connect_settlement_cannot_also_be_manually_paid(client):
+    from app.models_line_f import SettlementTransfer
+
+    settlement = _approved_settlement(client, "stats-connect-no-double@example.com", 11, "2026-07")
+    assert settlement["payment_mode"] == "connect"
     fh = _finance_headers(client)
-    w = _create_withdrawal(client, s["id"], 50, 12).json()["withdrawal"]
-    client.post(f"/api/v3/admin/merchant-withdrawals/{w['id']}/approve",
-                headers=fh)
-    r = client.post(
-        f"/api/v3/admin/merchant-withdrawals/{w['id']}/execute-payout",
-        headers=fh)
-    assert r.status_code == 200, r.text
-    # Settlement is still approved (partially paid) and reconciliation
-    # must NOT flag the partial payment as a discrepancy.
-    r = client.post("/api/v3/admin/reconciliation/run", json={
-        "shop_id": 12, "period": "2026-08"}, headers=fh)
-    assert r.status_code == 201, r.text
-    rep = r.json()["report"]
-    bad = [d for d in rep["discrepancies"]
-           if d["discrepancy_type"].startswith("payment")]
-    assert bad == [], rep["discrepancies"]
+    response = client.post(f"/api/v3/admin/settlements/{settlement['id']}/pay", headers=fh)
+    assert response.status_code == 409
+    with TestingSession() as db:
+        assert db.query(SettlementTransfer).filter_by(settlement_id=settlement["id"]).count() == 0
 
 
-# ---------- migration chain ----------
-def test_migration_chain_single_head_is_0021():
-    from alembic.config import Config
-    from alembic.script import ScriptDirectory
-    cfg = Config()
-    cfg.set_main_option(
-        "script_location",
-        os.path.join(os.path.dirname(os.path.dirname(
-            os.path.abspath(__file__))), "alembic"))
-    heads = ScriptDirectory.from_config(cfg).get_heads()
-    assert list(heads) == ["0021_merchant_withdrawals"], heads
+def test_legacy_settlement_without_connect_keeps_manual_recording(client):
+    from app.models_connect import ConnectLedgerEntry
+
+    coupon = _priced_coupon_for_shop(12, 100)
+    _, _, red = _redeem(client, "stats-legacy-pay@example.com", coupon)
+    _backdate_redemption(red, "2026-07")
+    with TestingSession() as db:
+        db.query(ConnectLedgerEntry).filter_by(redemption_id=red).delete()
+        db.commit()
+    fh = _finance_headers(client)
+    settlement = _generate(client, fh, 12, "2026-07")
+    assert settlement["payment_mode"] == "legacy_manual"
+    _approve(client, settlement["id"])
+    response = client.post(f"/api/v3/admin/settlements/{settlement['id']}/pay", headers=fh)
+    assert response.status_code == 200, response.text
+    assert response.json()["settlement"]["status"] == "paid"

@@ -11,16 +11,16 @@
 
 - **进程内调度器**：`app/scheduler.py`，FastAPI 启动时（`app/main.py` startup）
 启动 `BackgroundScheduler`，每 `SCHEDULER_INTERVAL_SECONDS`（默认 300 秒）
-执行 4 个间隔任务，另有 1 个月度任务（每月 1 日 02:00 UTC），各自独立的锁、会话与失败日志。
+执行 6 个间隔任务，另有 1 个月度任务（每月 1 日 02:00 UTC），各自独立的锁、会话与失败日志。
 - **run-once CLI**（运维 / cron / 测试手动跑，不受 `SCHEDULER_ENABLED` 开关影响）：
 ```bash
 cd apps/api
-python -m app.scheduler run-once [--job expired-packages|bargain-expire|payment-timeouts|cashback-sweep|monthly-settlements|all] [--batch-size N]
+python -m app.scheduler run-once [--job expired-packages|bargain-expire|payment-timeouts|cashback-sweep|coupon-expiry|connect-transfers|monthly-settlements|all] [--batch-size N]
 python -m app.scheduler run # 前台常驻调度器
 python -m app.scheduler status # 打印当前调度配置
 ```
 
-## 6 个任务（与手动接口共用同一份逻辑）
+## 7 个任务（与手动接口共用同一份逻辑）
 
 | 任务 | 共用逻辑 | 幂等保证 |
 |---|---|---|
@@ -31,11 +31,12 @@ python -m app.scheduler status # 打印当前调度配置
 | `coupon-expiry` 券到期提醒与自动过期（dianping/unify） | `routers/coupons.py: sweep_coupon_expiry()`，手动接口 `POST /admin/coupon-expiry-sweep` 同调它 | 同一（用户，券）24 小时内只提醒一次；过期翻转只对 `status == 1` 的行生效 |
 | `monthly-settlements` 月结算单自动生成（Dianping §2.3） | `merchant_finance.py: sweep_monthly_settlements()`，手动接口 `POST /admin/settlements/generate` 同调 `generate_settlement_for_shop()` | 同一商户同一周期重复生成撞 `uq_settlement_shop_period` 计 skipped；单店失败不阻塞其他店，下一周期重试 |
 
+| `connect-transfers` Connect 转帐（P1-B 队列 §F 第 3 项） | `connect_service.py: sweep_pending_transfers()`（`pending` 流水按 id 顺序，每批上限 `SCHEDULER_CONNECT_BATCH_SIZE` 默认 50 条；手动接口 `POST /merchant/connect/transfers/{id}/retry` 同调 `_attempt_transfer`） | 已转帐 / 已冲回 / 已 `needs_manual` 的流水不再入选；每条带幂等键 `transfer-{entry_id}`，重试不重复转帐 |
+
 `monthly-settlements` 是唯一不走间隔触发的任务：每月 1 日 02:00 UTC
 （CronTrigger，misfire 宽限 1 小时），为上月有核销的每家门店生成结算单。
-它不在 `run_all_jobs()` / `run-once --job all` 里（那是 5 个间隔任务），
+它不在 `run_all_jobs()` / `run-once --job all` 里（那是 6 个间隔任务），
 手动跑用 `python -m app.scheduler run-once --job monthly-settlements`。
-| `connect-transfers` Connect 转帐（P1-B 队列 §F 第 3 项） | `connect_service.py: sweep_pending_transfers()`（`pending` 流水按 id 顺序，每批上限 `SCHEDULER_CONNECT_BATCH_SIZE` 默认 50 条；手动接口 `POST /merchant/connect/transfers/{id}/retry` 同调 `_attempt_transfer`） | 已转帐 / 已冲回 / 已 `needs_manual` 的流水不再入选；每条带幂等键 `transfer-{entry_id}`，重试不重复转帐 |
 
 单条失败不影响其他：每个 sweep 按条 try/except，失败写日志（`logger.exception`）、
 回滚该条、计入 `failed`，下一周期重试。网关失败的砍价退款仍保持 failed 状态，
@@ -43,12 +44,12 @@ python -m app.scheduler status # 打印当前调度配置
 
 ## 多实例只执行一次
 
-- **Postgres**：每任务一个固定 advisory lock key（`2026111701`–`2026111706`），
-`pg_try_advisory_lock` 抢不到的实例直接跳过（结果 `skipped: true`），
-锁随会话结束自动释放。
-  > 注意：第 2 块的 `monthly-settlements` 与第 3 块的 `listing-schedule`
-  > 都用了 `2026111705`（撞号，待裁决）；本片的 `coupon-expiry` 取了下一个空号
-  > `2026111706`。
+- **Postgres**：每任务一个固定 advisory lock key，`pg_try_advisory_lock`
+  抢不到的实例跳过；锁随会话结束释放。本组合分支使用：
+  `expired-packages` 2026111701、`bargain-expire` 2026111702、
+  `payment-timeouts` 2026111703、`cashback-sweep` 2026111704、
+  `coupon-expiry` 2026111706、`connect-transfers` 2026111707、
+  `monthly-settlements` 2026111708。后续合并任务时须再次核对唯一性。
 - **其他数据库（SQLite 等）**：抢 `scheduler_locks` 表的一行
 （`INSERT... ON CONFLICT DO NOTHING` + 租约过期回收，默认租约
 `SCHEDULER_LOCK_LEASE_SECONDS=600` 秒；迁移 `0013_m1_scheduler_locks`）。

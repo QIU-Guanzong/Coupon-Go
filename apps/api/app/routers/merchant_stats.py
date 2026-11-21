@@ -1,15 +1,6 @@
-"""Merchant stats + finance (Dianping §2).
+"""Merchant dashboard, settlement statements, disputes and exports.
 
-Merchant-facing balance / dashboard / withdrawals, the admin
-withdrawal review queue, the merchant settlement-dispute entry, and
-CSV export for settlement lists. Amounts come from
-app.merchant_finance (settlement_basis only); the payout itself lives
-in app.payouts and fails closed while P1-B is not wired in.
-
-Admin withdrawal paths live under /admin/merchant-withdrawals on
-purpose: GET /admin/withdrawals and POST /admin/withdrawals/{id}
-already belong to the user-cashback withdrawal review queue
-(routers/cashback.py) — the two pots of money stay separate.
+Connect is the only merchant payout and balance mechanism.
 """
 from datetime import datetime, timezone
 
@@ -20,17 +11,14 @@ from .. import merchant_finance as mf
 from .. import models
 from ..database import get_db
 from ..deps import get_current_user
-from ..models_merchant_finance import MerchantWithdrawal
 from ..permissions_line_f import (
-    can_access_shop, get_shop_or_404, require_perm,
+    can_access_shop, get_shop_or_404,
 )
 from ..settlement_basis import BASIS_EXPLAINER
 from . import admin_v2
 from .admin_v2 import _settlement_out
 
 router = APIRouter()
-
-finance_only = require_perm("withdrawals.review")
 
 
 def _page(items, page: int, per_page: int = 20):
@@ -131,137 +119,6 @@ def merchant_dashboard(days: int = Query(30, ge=1, le=90),
         "shops": [{"shop_id": s["shop_id"], "shop_name": s["shop_name"],
                    "totals": s["totals"]} for s in per_shop],
     }
-
-
-# ---------- withdrawals (§2.2) ----------
-@router.post("/merchant/withdrawals", status_code=201)
-def create_merchant_withdrawal(body: dict,
-                               user: models.User = Depends(get_current_user),
-                               db: Session = Depends(get_db)):
-    shop = get_shop_or_404(db, body.get("shop_id") or 0)
-    if not can_access_shop(db, user, shop):
-        raise HTTPException(status_code=403, detail="沒有權限查看此商户")
-    w = mf.create_withdrawal(db, user, shop, body.get("settlement_id"),
-                             body.get("amount"))
-    return {"message": "提款申請已提交",
-            "withdrawal": mf.withdrawal_out(db, w)}
-
-
-@router.get("/merchant/withdrawals")
-def list_own_withdrawals(status: str = Query(None),
-                         page: int = Query(1, ge=1),
-                         user: models.User = Depends(get_current_user),
-                         db: Session = Depends(get_db)):
-    shop_ids = _merchant_shop_ids(db, user)
-    q = (db.query(MerchantWithdrawal)
-         .filter(MerchantWithdrawal.shop_id.in_(shop_ids))
-         .order_by(MerchantWithdrawal.id.desc())) if shop_ids else \
-        db.query(MerchantWithdrawal).filter(False)
-    if status in ("pending", "approved", "paid", "rejected",
-                  "cancelled", "reversed"):
-        q = q.filter(MerchantWithdrawal.status == status)
-    out = _page([mf.withdrawal_out(db, w) for w in q.all()], page)
-    return {"current_page": out["current_page"],
-            "total_pages": out["total_pages"], "total": out["total"],
-            "withdrawals": out["items"]}
-
-
-@router.get("/merchant/withdrawals/{withdrawal_id}")
-def get_own_withdrawal(withdrawal_id: int,
-                       user: models.User = Depends(get_current_user),
-                       db: Session = Depends(get_db)):
-    w = db.get(MerchantWithdrawal, withdrawal_id)
-    if w is None:
-        raise HTTPException(status_code=404, detail="找不到此提款申請")
-    shop = db.get(models.Shop, w.shop_id)
-    if not can_access_shop(db, user, shop):
-        raise HTTPException(status_code=403, detail="沒有權限查看此提款申請")
-    return {"withdrawal": mf.withdrawal_out(db, w)}
-
-
-@router.post("/merchant/withdrawals/{withdrawal_id}/cancel")
-def cancel_own_withdrawal(withdrawal_id: int,
-                          user: models.User = Depends(get_current_user),
-                          db: Session = Depends(get_db)):
-    w = db.get(MerchantWithdrawal, withdrawal_id)
-    if w is None:
-        raise HTTPException(status_code=404, detail="找不到此提款申請")
-    shop = db.get(models.Shop, w.shop_id)
-    if not can_access_shop(db, user, shop):
-        raise HTTPException(status_code=403, detail="沒有權限查看此提款申請")
-    w = mf.cancel_withdrawal(db, w)
-    return {"message": "提款申請已取消",
-            "withdrawal": mf.withdrawal_out(db, w)}
-
-
-@router.get("/admin/merchant-withdrawals")
-def list_merchant_withdrawals(shop_id: int = Query(None),
-                              status: str = Query(None),
-                              page: int = Query(1, ge=1),
-                              user: models.User = Depends(finance_only),
-                              db: Session = Depends(get_db)):
-    q = db.query(MerchantWithdrawal).order_by(
-        MerchantWithdrawal.id.desc())
-    if shop_id:
-        q = q.filter(MerchantWithdrawal.shop_id == shop_id)
-    if status in ("pending", "approved", "paid", "rejected",
-                  "cancelled", "reversed"):
-        q = q.filter(MerchantWithdrawal.status == status)
-    out = _page([mf.withdrawal_out(db, w) for w in q.all()], page)
-    return {"current_page": out["current_page"],
-            "total_pages": out["total_pages"], "total": out["total"],
-            "withdrawals": out["items"]}
-
-
-@router.post("/admin/merchant-withdrawals/{withdrawal_id}/approve")
-def approve_merchant_withdrawal(withdrawal_id: int,
-                                user: models.User = Depends(finance_only),
-                                db: Session = Depends(get_db)):
-    w = db.get(MerchantWithdrawal, withdrawal_id)
-    if w is None:
-        raise HTTPException(status_code=404, detail="找不到此提款申請")
-    w = mf.approve_withdrawal(db, w, user)
-    return {"message": "提款申請已批准",
-            "withdrawal": mf.withdrawal_out(db, w)}
-
-
-@router.post("/admin/merchant-withdrawals/{withdrawal_id}/reject")
-def reject_merchant_withdrawal(withdrawal_id: int, body: dict,
-                               user: models.User = Depends(finance_only),
-                               db: Session = Depends(get_db)):
-    w = db.get(MerchantWithdrawal, withdrawal_id)
-    if w is None:
-        raise HTTPException(status_code=404, detail="找不到此提款申請")
-    w = mf.reject_withdrawal(db, w, user, body.get("reason") or "")
-    return {"message": "提款申請已駁回",
-            "withdrawal": mf.withdrawal_out(db, w)}
-
-
-@router.post("/admin/merchant-withdrawals/{withdrawal_id}/execute-payout")
-def execute_merchant_withdrawal(withdrawal_id: int,
-                                user: models.User = Depends(finance_only),
-                                db: Session = Depends(get_db)):
-    """Execute the payout via app.payouts (P1-B Stripe Connect).
-    While P1-B is not wired in this fails closed with 503 — the
-    withdrawal stays approved and nothing is marked paid."""
-    w = db.get(MerchantWithdrawal, withdrawal_id)
-    if w is None:
-        raise HTTPException(status_code=404, detail="找不到此提款申請")
-    w = mf.execute_withdrawal_payout(db, w, user)
-    return {"message": "提款已打款",
-            "withdrawal": mf.withdrawal_out(db, w)}
-
-
-@router.post("/admin/merchant-withdrawals/{withdrawal_id}/reverse")
-def reverse_merchant_withdrawal(withdrawal_id: int, body: dict,
-                                user: models.User = Depends(finance_only),
-                                db: Session = Depends(get_db)):
-    w = db.get(MerchantWithdrawal, withdrawal_id)
-    if w is None:
-        raise HTTPException(status_code=404, detail="找不到此提款申請")
-    w = mf.reverse_withdrawal(db, w, user, body.get("reason") or "")
-    return {"message": "提款已沖回",
-            "withdrawal": mf.withdrawal_out(db, w)}
 
 
 # ---------- merchant dispute (§2.6) ----------

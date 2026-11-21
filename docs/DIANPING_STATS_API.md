@@ -9,16 +9,11 @@
 
 ## 余额口径（§2.1，P0-3）
 
-商户余额分四笔数，定义写死在 `merchant_finance.shop_balance()`：
-
-| 字段 | 含义 | 判定规则 |
-|---|---|---|
-| `pending_settlement`（待结算） | 还没进结算单的钱 + 待审核 / 争议中结算单的未付净额 | 未进结算单的核销净额（基数 − 佣金），加 pending / disputed 结算单的 `outstanding`，再减去已预留的提款额 |
-| `withdrawable`（可提取） | 能提的钱 | **已确认（approved）**结算单的 `outstanding` 减去已预留的提款额。核销后没有额外冻结期，财务确认即变可提 |
-| `reserved`（已预留） | 提款申请占住、还没打款的钱 | 状态为 pending / approved 的提款单金额之和 |
-| `withdrawn`（已提取） | 已打出去的钱 | 各结算单 `transferred_net` 之和（打款 − 冲回，与结算单视图同一口径） |
-
-佣金按商户生效费率（`merchant_commission_rates`，无配置时默认 10%）从基数中扣。
+金额唯一来源为 Stripe Connect 账本：`pending_settlement` 是待转账净额，
+`withdrawable` 是已转入商户账户且扣除已提款及处理中提款的余额，
+`reserved` 是处理中提款，`withdrawn` 是已完成提款。结算单是对账记录，
+审核结算单不会直接改变可提款余额。旧核销若缺 Connect 流水，须另行核对，
+不能按结算单推断已转款。
 
 ## 接口清单
 
@@ -48,8 +43,8 @@
  "state": "pending_settlement", "settlement_id": null, "reversed": false}
 ```
 
-`state` 取值：`pending_settlement`（待结算）/ `withdrawable`（可提取）/
-`withdrawn`（已提取）/ `reversed`（已冲回）。
+`state` 为 Connect 转账流水状态；`reversal_pending` 表示冲回未确认，
+`unavailable` 表示没有转账流水，不能据此断言已付款。
 
 ### 经营看板（§2.4）
 
@@ -81,49 +76,10 @@ gross / redemptions`；`conversion_rate = redemptions / claims`（领券→核�
 `GET /merchant/dashboard` 在此基础上把 `totals` 汇总，并给 `shops` 数组
 每店一行 `{shop_id, shop_name, totals}`（分店对比）。
 
-### 提款（§2.2，P0-4）
+### 商户收款
 
-状态机：`pending` → `approved` → `paid`；`pending` → `rejected` /
-`cancelled`；`paid` → `reversed`（打款后被银行退回）。提款单只针对**一张
-已确认（approved）的结算单**，金额不得超过该结算单的可提余额（净额 −
-已打款 − 已预留）；提交后金额即被预留，不可重复提。
-
-| 方法 | 路径 | 权限 | 说明 |
-|---|---|---|---|
-| POST | `/merchant/withdrawals` | 店主 / 店员 | 提交提款申请。Body `{shop_id*, settlement_id*, amount*}`（amount > 0，最多两位小数）；201 返回 `{message, withdrawal}` |
-| GET | `/merchant/withdrawals?status=&page=` | 店主 / 店员 | 本人的提款单列表 |
-| GET | `/merchant/withdrawals/{id}` | 店主 / 店员 | 提款单详情 |
-| POST | `/merchant/withdrawals/{id}/cancel` | 店主 / 店员 | 取消待审核的提款（释放预留） |
-| GET | `/admin/merchant-withdrawals?shop_id=&status=&page=` | finance / admin（`withdrawals.review`） | 平台审核队列 |
-| POST | `/admin/merchant-withdrawals/{id}/approve` | finance / admin | 批准（结算单须仍为 approved，否则 400） |
-| POST | `/admin/merchant-withdrawals/{id}/reject` | finance / admin | 驳回。Body `{reason*}`（释放预留） |
-| POST | `/admin/merchant-withdrawals/{id}/execute-payout` | finance / admin | 执行打款（见下） |
-| POST | `/admin/merchant-withdrawals/{id}/reverse` | finance / admin | 打款后冲回。Body `{reason*}` |
-
-`withdrawal` 对象示例：
-
-```json
-{"id": 7, "shop_id": 5, "shop_name": "櫻花壽司屋",
- "settlement_id": 3, "settlement_period": "2026-10",
- "user_id": 2, "amount": 124.2, "status": "approved",
- "payout_reference": "", "payout_provider": "",
- "reject_reason": "", "decided_by": 5, "decided_at": "2026-11-21T10:00:00",
- "paid_at": null, "created_at": "2026-11-21T09:00:00",
- "updated_at": "2026-11-21T09:30:00"}
-```
-
-**打款执行与 P1-B 依赖（重要）**：`POST .../execute-payout` 只调
-`app/payouts.execute_merchant_payout()`。P1-B（Stripe Connect）未接通前，
-该函数抛 `PayoutNotConfigured`，接口返回 **503**，提款单保持 `approved`，
-**不产生任何打款记录、不改结算单状态**——绝不会退回成“标记已付”。
-P1-B 接入时只需在 `app/payouts.py` 内实现向商户 Stripe Connect 帐户的
-transfer 并返回 `{"payout_reference": ..., "provider": "stripe_connect"}`；
-调用方随即写 `SettlementTransfer`（kind=payment），结清整单时结算单自动
-变为 paid。**不要**在前端或别处另写打款逻辑。用户返现提款
-（`/admin/withdrawals`）是另一笔钱，与此无关。
-
-注意路径：`/admin/withdrawals`（GET 列表 / POST 审核）已是用户返现提款
-队列，商户提款管理端特意用 `/admin/merchant-withdrawals`，不要混用。
+核销后的商户转账和提款统一使用 Stripe Connect；具体接口和状态见
+`P1B_API.md`。不另设基于月结单的商户提现审批流程。
 
 ### 结算单异议（§2.6，商户侧入口）
 
