@@ -53,7 +53,7 @@ from .models_scheduler import SchedulerLock  # noqa: F401  (register table)
 logger = logging.getLogger(__name__)
 
 JOB_NAMES = ("expired-packages", "bargain-expire", "payment-timeouts",
-             "cashback-sweep")
+             "cashback-sweep", "connect-transfers", "connect-payouts")
 
 # Fixed Postgres advisory-lock keys, one per job (arbitrary but stable;
 # changing them orphans nothing — advisory locks die with the session).
@@ -62,6 +62,8 @@ ADVISORY_LOCK_KEYS = {
     "bargain-expire": 2026111702,
     "payment-timeouts": 2026111703,
     "cashback-sweep": 2026111704,
+    "connect-transfers": 2026111726,
+    "connect-payouts": 2026111727,
 }
 
 
@@ -224,11 +226,23 @@ def run_cashback_sweep(db, batch_size=None):
                     batch_size=size)
 
 
+def run_connect_transfers(db):
+    from . import connect_service
+    return _run_job(db, "connect-transfers", connect_service.sweep_connect_transfers)
+
+
+def run_connect_payouts(db):
+    from . import connect_service
+    return _run_job(db, "connect-payouts", connect_service.sweep_payout_status)
+
+
 JOB_RUNNERS = {
     "expired-packages": run_expired_packages,
     "bargain-expire": run_bargain_expire,
     "payment-timeouts": run_payment_timeouts,
     "cashback-sweep": run_cashback_sweep,
+    "connect-transfers": run_connect_transfers,
+    "connect-payouts": run_connect_payouts,
 }
 
 
@@ -247,6 +261,16 @@ def run_all_jobs(session_factory=None, batch_size=None):
     try:
         results["cashback-sweep"] = run_cashback_sweep(
             db, batch_size=batch_size)
+    finally:
+        db.close()
+    db = factory()
+    try:
+        results["connect-transfers"] = run_connect_transfers(db)
+    finally:
+        db.close()
+    db = factory()
+    try:
+        results["connect-payouts"] = run_connect_payouts(db)
     finally:
         db.close()
     return results
@@ -284,6 +308,14 @@ def create_scheduler(session_factory=None, interval_seconds=None):
     sched.add_job(lambda: _one(run_cashback_sweep),
                   trigger=IntervalTrigger(seconds=interval),
                   id="cashback-sweep", max_instances=1, coalesce=True,
+                  misfire_grace_time=60)
+    sched.add_job(lambda: _one(run_connect_transfers),
+                  trigger=IntervalTrigger(seconds=interval),
+                  id="connect-transfers", max_instances=1, coalesce=True,
+                  misfire_grace_time=60)
+    sched.add_job(lambda: _one(run_connect_payouts),
+                  trigger=IntervalTrigger(seconds=interval),
+                  id="connect-payouts", max_instances=1, coalesce=True,
                   misfire_grace_time=60)
     return sched
 

@@ -5,8 +5,8 @@ Same conventions as app.payments_gateway (line C, FIX-1):
 * If STRIPE_SECRET_KEY is set, the adapter talks to the real Stripe
   test-mode API via httpx — test keys only; a live key is refused
   (a live key must never be used by this dev build).
-* If no key is set (the normal dev state), a deterministic local
-  test-mode simulator stands in: it mints ``acct_test_…`` /
+* Only when APP_ENV=dev and STRIPE_CONNECT_SIMULATOR=1, a local
+  test-mode simulator stands in for an absent key: it mints ``acct_test_…`` /
   ``tr_test_…`` / ``trr_test_…`` / ``po_test_…`` ids with the same
   shapes Stripe returns, so onboarding -> transfer -> payout works
   end-to-end without any secret and without a real merchant account.
@@ -62,6 +62,9 @@ This module never touches FIX-1 webhook verification.
 """
 import hashlib
 import uuid
+from decimal import Decimal, InvalidOperation
+from datetime import datetime
+import re
 
 import httpx
 
@@ -73,7 +76,6 @@ STRIPE_API_V2 = "https://api.stripe.com/v2"
 # Newest preview version in the official docs at migration time
 # (2026-11-20): docs.stripe.com/connect/accounts-v2 and
 # docs.stripe.com/connect/embedded-onboarding both use it.
-STRIPE_V2_VERSION = "2026-11-18.preview"
 
 # Configurations applied to every merchant account: merchant (accept
 # payments + payouts) and recipient (receive platform transfers).
@@ -93,10 +95,12 @@ def _sim_ref(prefix: str, seed: str) -> str:
 
 def _require_test_key() -> str:
     """Return the configured test key, or "" for simulator mode.
-    Raises when a live key is configured (never use one here)."""
+    Raises when a live key or no key without explicit dev simulation is configured."""
     key = config.STRIPE_SECRET_KEY
     if key and not _is_test_key(key):
         raise GatewayError("只接受 Stripe 测试密钥（sk_test_…），拒绝正式密钥")
+    if not key and not (config.APP_ENV == "dev" and config.STRIPE_CONNECT_SIMULATOR):
+        raise GatewayError("Stripe 未配置，拒绝模拟资金操作")
     return key
 
 
@@ -104,10 +108,10 @@ def _post(key, path, data, headers=None):
     try:
         res = httpx.post(f"{STRIPE_API}{path}", data=data,
                          auth=(key, ""), headers=headers or {}, timeout=15)
-    except httpx.HTTPError as exc:
-        raise GatewayError(f"Stripe 测试网关连接失败：{exc}")
+    except httpx.HTTPError:
+        raise GatewayError("Stripe 测试网关连接失败") from None
     if res.status_code >= 400:
-        raise GatewayError(f"Stripe 测试网关拒绝：{res.text[:200]}")
+        raise GatewayError(f"Stripe 测试网关拒绝（HTTP {res.status_code}）")
     return res.json()
 
 
@@ -115,27 +119,41 @@ def _get(key, path, headers=None):
     try:
         res = httpx.get(f"{STRIPE_API}{path}", auth=(key, ""),
                         headers=headers or {}, timeout=15)
-    except httpx.HTTPError as exc:
-        raise GatewayError(f"Stripe 测试网关连接失败：{exc}")
+    except httpx.HTTPError:
+        raise GatewayError("Stripe 测试网关连接失败") from None
     if res.status_code >= 400:
-        raise GatewayError(f"Stripe 测试网关拒绝：{res.text[:200]}")
+        raise GatewayError(f"Stripe 测试网关拒绝（HTTP {res.status_code}）")
     return res.json()
 
 
+def valid_v2_api_version(version: str) -> bool:
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}\.(?:preview|[a-z]+)", version or ""):
+        return False
+    try:
+        datetime.strptime(version[:10], "%Y-%m-%d")
+    except ValueError:
+        return False
+    return True
+
+
 def _v2_headers(key: str) -> dict:
-    # v2 uses Bearer auth + an explicit preview API version header.
+    # Accept dated preview or named stable versions only; never forward an
+    # unvalidated config value as an HTTP header.
+    version = config.STRIPE_CONNECT_API_VERSION
+    if not valid_v2_api_version(version):
+        raise GatewayError("Stripe Accounts v2 API 版本配置无效")
     return {"Authorization": f"Bearer {key}",
-            "Stripe-Version": STRIPE_V2_VERSION}
+            "Stripe-Version": version}
 
 
 def _post_v2(key, path, payload):
     try:
         res = httpx.post(f"{STRIPE_API_V2}{path}", json=payload,
                          headers=_v2_headers(key), timeout=15)
-    except httpx.HTTPError as exc:
-        raise GatewayError(f"Stripe Accounts v2 网关连接失败：{exc}")
+    except httpx.HTTPError:
+        raise GatewayError("Stripe Accounts v2 网关连接失败") from None
     if res.status_code >= 400:
-        raise GatewayError(f"Stripe Accounts v2 网关拒绝：{res.text[:200]}")
+        raise GatewayError(f"Stripe Accounts v2 网关拒绝（HTTP {res.status_code}）")
     return res.json()
 
 
@@ -143,10 +161,10 @@ def _get_v2(key, path, params=None):
     try:
         res = httpx.get(f"{STRIPE_API_V2}{path}", headers=_v2_headers(key),
                         params=params or [], timeout=15)
-    except httpx.HTTPError as exc:
-        raise GatewayError(f"Stripe Accounts v2 网关连接失败：{exc}")
+    except httpx.HTTPError:
+        raise GatewayError("Stripe Accounts v2 网关连接失败") from None
     if res.status_code >= 400:
-        raise GatewayError(f"Stripe Accounts v2 网关拒绝：{res.text[:200]}")
+        raise GatewayError(f"Stripe Accounts v2 网关拒绝（HTTP {res.status_code}）")
     return res.json()
 
 
@@ -305,63 +323,107 @@ def set_manual_payouts(account_id: str) -> dict:
     return {"manual": True, "simulated": False}
 
 
-def create_transfer(account_id: str, amount_hkd: float,
-                    transfer_group: str, currency: str = "HKD") -> dict:
+def _amount_cents(amount_hkd) -> int:
+    """Convert an exact two-decimal monetary amount without float arithmetic."""
+    try:
+        amount = Decimal(str(amount_hkd))
+        cents = amount * 100
+        if not amount.is_finite() or cents != cents.to_integral_value() or cents <= 0:
+            raise ValueError
+        return int(cents)
+    except (InvalidOperation, ValueError, TypeError):
+        raise GatewayError("金额必须是正数，且最多两位小数") from None
+
+
+def create_transfer(account_id: str, amount_hkd: Decimal,
+                    transfer_group: str, currency: str = "HKD", *, idempotency_key: str,
+                    source_transaction: str = "") -> dict:
     """Transfer funds from the platform balance to a connected account
     (separate charges and transfers). v1 Transfers API with the v2
     account id as destination (Stripe v2/v1 interop). Returns
     {transfer_id, status, amount, currency, simulated}."""
+    cents = _amount_cents(amount_hkd)
     key = _require_test_key()
     if not key:
         return {"transfer_id": _sim_ref("tr", f"{account_id}:{transfer_group}"),
                 "status": "paid", "amount": round(float(amount_hkd), 2),
                 "currency": currency, "simulated": True}
+    if not re.fullmatch(r"ch_[A-Za-z0-9]+", source_transaction or ""):
+        raise GatewayError("缺少已核实的 Stripe 收款记录")
     data = _post(key, "/transfers", {
-        "amount": int(round(float(amount_hkd) * 100)),
+        "amount": cents,
         "currency": currency.lower(),
         "destination": account_id,
         "transfer_group": transfer_group,
-    })
+        "source_transaction": source_transaction,
+        "metadata[connect_operation_key]": idempotency_key,
+    }, headers={"Idempotency-Key": idempotency_key})
     return {"transfer_id": data.get("id", ""), "status": data.get("status", ""),
             "amount": (data.get("amount") or 0) / 100,
             "currency": (data.get("currency") or currency).upper(),
             "simulated": False}
 
 
-def reverse_transfer(transfer_id: str, amount_hkd: float,
-                     currency: str = "HKD") -> dict:
+def reverse_transfer(transfer_id: str, amount_hkd: Decimal,
+                     currency: str = "HKD", *, idempotency_key: str) -> dict:
     """Reverse a transfer (full or partial). v1 Transfer Reversals API.
     Returns {reversal_id, status, amount, currency, simulated}."""
+    cents = _amount_cents(amount_hkd)
     key = _require_test_key()
     if not key:
         return {"reversal_id": _sim_ref("trr", f"{transfer_id}:{amount_hkd}"),
                 "status": "succeeded", "amount": round(float(amount_hkd), 2),
                 "currency": currency, "simulated": True}
     data = _post(key, f"/transfers/{transfer_id}/reversals", {
-        "amount": int(round(float(amount_hkd) * 100)),
-    })
+        "amount": cents,
+        "metadata[connect_operation_key]": idempotency_key,
+    }, headers={"Idempotency-Key": idempotency_key})
     return {"reversal_id": data.get("id", ""), "status": data.get("status", ""),
             "amount": (data.get("amount") or 0) / 100,
             "currency": (data.get("currency") or currency).upper(),
             "simulated": False}
 
 
-def create_payout(account_id: str, amount_hkd: float,
-                  currency: str = "HKD") -> dict:
+def create_payout(account_id: str, amount_hkd: Decimal,
+                  currency: str = "HKD", *, idempotency_key: str) -> dict:
     """Pay out from a connected account's balance to its external
     (bank) account. v1 Payouts API with the v2 account id as
     Stripe-Account. Returns {payout_id, status, amount, currency,
     simulated}."""
+    cents = _amount_cents(amount_hkd)
     key = _require_test_key()
     if not key:
         return {"payout_id": _sim_ref("po", f"{account_id}:{amount_hkd}"),
                 "status": "paid", "amount": round(float(amount_hkd), 2),
                 "currency": currency, "simulated": True}
     data = _post(key, "/payouts", {
-        "amount": int(round(float(amount_hkd) * 100)),
+        "amount": cents,
         "currency": currency.lower(),
-    }, headers={"Stripe-Account": account_id})
+        "metadata[connect_operation_key]": idempotency_key,
+    }, headers={"Stripe-Account": account_id, "Idempotency-Key": idempotency_key})
     return {"payout_id": data.get("id", ""), "status": data.get("status", ""),
             "amount": (data.get("amount") or 0) / 100,
             "currency": (data.get("currency") or currency).upper(),
             "simulated": False}
+
+
+def retrieve_payout(account_id: str, payout_id: str) -> dict:
+    """Read Stripe's authoritative payout object for reconciliation."""
+    key = _require_test_key()
+    if not key:
+        raise GatewayError("模拟环境没有可核实的 Stripe 打款对象")
+    return _get(key, f"/payouts/{payout_id}", headers={"Stripe-Account": account_id})
+
+
+def retrieve_transfer(transfer_id: str) -> dict:
+    key = _require_test_key()
+    if not key:
+        raise GatewayError("模拟环境没有可核实的 Stripe 转帐对象")
+    return _get(key, f"/transfers/{transfer_id}")
+
+
+def retrieve_reversal(transfer_id: str, reversal_id: str) -> dict:
+    key = _require_test_key()
+    if not key:
+        raise GatewayError("模拟环境没有可核实的 Stripe 冲回对象")
+    return _get(key, f"/transfers/{transfer_id}/reversals/{reversal_id}")

@@ -12,13 +12,8 @@
 
 1. 用户付款进**平台** Stripe 帐户（现有套餐 / P1-A 付费券购买链路；本 PR
    不改购买流程）。
-2. 商户核销后：结算基数取 `settlement_basis()` 的同一口径（M6 共享函数；
-   套餐 = 订单实付金额，售价券 = discount_price，现金券/免费券/纯门槛券
-   基数为 0（M8 已合入），即不产生转帐），
-   佣金 = 基数 × 生效佣金率（复用 `MerchantCommissionRate`，无配置时默认
-   10%，F5），净额 = 基数 − 佣金。
-3. 净额通过 Stripe **separate charges and transfers** 转给商户的 Connect
-   帐户（`transfer_group=coupon-go-redemption-{redemption_id}`）。
+2. 只为关联 `purchase` 钱包项、已付款订单和匹配成功付款记录创建意图；`claim` 免费领取、未关联真实订单的砍价券、退款中/已退款订单不得仅按标价生成转帐。每订单唯一意图，金额以订单实付为上限。收费券和多券拆分待 #18 统一来源与金额分摊，不能假定自动兼容。
+3. 核销事务只写待转帐流水并提交；后台任务再通过 Stripe **separate charges and transfers** 转给商户 Connect 帐户（`transfer_group=coupon-go-redemption-{redemption_id}`）。
 4. 商户在 App 里看余额、点提款：提款 = Stripe Payout（商户帐户已设为
    手动提款），从商户 Connect 帐户余额打到其银行帐户。
 5. 撤销核销 / 退款：未转帐的待结算直接冲回；已转帐的调用 Stripe
@@ -41,9 +36,7 @@
 | 平台责任：express dashboard 须 fees/losses 均由 application 承担（`defaults.responsibilities`，否则开户 400 `account_controller_express_dash_without_application_losses_or_fees`）；平台是 merchant of record，须审核入驻商户 | https://docs.stripe.com/connect/accounts-v2 ；https://docs.stripe.com/api/v2/core/accounts/create?api-version=2025-03-31.preview |
 
 **对本项目的直接推论：**
-- 核销时立即转帐（不长期滞留平台余额），既符合“核销后转帐”的决策，
-  也避开长期持有客户资金的合规灰色地带；转帐后商户侧 90 天提款上限
-  由 `payout_hold_days=90` 在状态接口中提示，超期未提款须运营介入。
+- 核销事务提交后由后台任务派发转帐；转帐后商户侧 `payout_hold_days=90` 仅供提示，实际处理须按 Stripe 与适用规定核实。
 - 开户只换网关层（`connect_gateway.create_account / create_account_link /
   retrieve_account`）：对外接口、状态机、余额口径、佣金、fail closed
   规则全部不变；Dot 的对接不用改。Embedded onboarding（Account Session +
@@ -54,29 +47,13 @@
   但流水停留在 `pending`（待结算），绝不退回成月结算单“标记已付”。
   配置恢复后用 retry 接口补转帐。
 
-## 状态机
+## 状态机和余额
 
-```
-ConnectAccount.onboarding_status: pending -> incomplete -> active
-  （active 当且仅当 charges_enabled 且 payouts_enabled；以 Stripe
-   retrieve_account 为准，不以 return_url 到达为准）
-
-ConnectLedgerEntry（kind=transfer，每核销最多一条）:
-  pending（待结算） -> transferred（已转帐） -> reversed（已冲回）
-  pending --（撤销/退款）--> reversed（未经过 Stripe，无 reversal id）
-  transferred --（撤销/退款，Transfer Reversal）--> reversed
-  transferred --（提款后余额不足等）--> 仍为 transferred，提款只看余额
-
-ConnectLedgerEntry（kind=payout）: status=paid_out，金额为负数
-  （net_amount = -提款金额），stripe_payout_id 记录 Stripe payout。
-```
-
-余额定义（`GET /merchant/connect/balance`）：
-- `pending`（待结算）= kind=transfer 且 status=pending 的 net 之和
-- `available`（可提取）= kind=transfer 且 status=transferred 的 net 之和
-  − 已提取总额
-- `paid_out`（已提取）= kind=payout 的金额绝对值之和
-- 币种固定 `HKD`。基数为 0 的核销（免费券；M8 后现金券）不写流水。
+- 核销事务只创建 `pending` 转帐意图；后台 `connect-transfers` 持有商户行锁，提交 `processing` 后才请求 Stripe。成功为 `transferred`；超时、5xx、冲突或不确定响应为 `unknown`，绝不自动重复发送。
+- 撤销或退款仅登记冲回意图：尚未发起转帐时直接 `reversed`；转帐处理中/结果未知时保留 `pending_reversal`；已转帐的流水由后台处理冲回。冲回不确定为 `reversal_unknown`，保留待对账标记。
+- 提款先以商户行锁校验余额并提交 `processing` 预留，再调用 Stripe。Stripe 接单但未最终付款为 `submitted`，确认 `paid` 才是 `paid_out`；网络不确定为 `payout_unknown`。这些状态的金额均占用可用余额；只有 Stripe 确认失败或取消才释放。
+- 可用余额 = 已转帐且不待冲回的净额 − 已支付提款 − 处理中、已提交或结果未知的提款预留。冲回后余额可为负，负数不能申请提款。
+- Stripe v1 幂等键可能在至少 24 小时后清除；业务流水、首次/最近尝试时间和 Stripe 对象编号须持久化。未知或进程中断的请求不自动重发；通过下面的管理员对账接口验证 Stripe 对象。找不到对象不等于失败，必须保持冻结并联系 Stripe 确认。
 
 ## 接口
 
@@ -220,76 +197,44 @@ Authorization: Bearer <vendor JWT>
 
 ### 6. 商户发起提款
 
-```
-POST /api/v3/merchant/connect/payouts
-Authorization: Bearer <vendor JWT>
+`POST /api/v3/merchant/connect/payouts`，仅店主或管理员。
 
-请求：{ "shop_id": 1, "amount": 100.00 }
-
-成功 200：
-{
-  "shop_id": 1,
-  "amount": 100.00,
-  "currency": "HKD",
-  "stripe_payout_id": "po_test_…",
-  "status": "paid_out",
-  "balance": { "pending": 0.00, "available": 35.00, "paid_out": 100.00 }
-}
-
-失败：
-  503 未配置 Connect；409 帐户未就绪（未开户 / payouts 未启用）；
-  422 金额 <= 0 或超过可提取余额；502 Stripe payout 调用失败
-      （失败时不写流水、不扣余额，可重试）。
+```json
+{"shop_id": 1, "amount": "100.00", "request_id": "一次操作生成的稳定随机编号"}
 ```
 
-### 7. 补转帐 / 补冲回（待结算卡住时）
+`request_id` 为 16–64 位字母、数字、`_` 或 `-`，客户端须在第一次发送前持久保存；超时、重启、重复点击均复用相同编号和金额。服务端在商户范围按编号去重；同编号不同金额返回 409。当前代码库尚无该接口的 Flutter 调用方，未来接入须先实现这个持久化契约。
 
-```
-POST /api/v3/merchant/connect/transfers/{entry_id}/retry
-Authorization: Bearer <vendor JWT>
+成功返回 `entry_id`、`stripe_payout_id` 和 `status`：`submitted` 表示 Stripe 已接收但尚未确认到账，`paid_out` 是已确认付款。处理中、超时或结果不明保持预留；502 提示待确认，不得以新编号盲目重试。
 
-成功 200：
-{ "entry_id": 12, "status": "transferred", "stripe_transfer_id": "tr_test_…",
-  "reversed": false }
-  // 若该笔此前冲回失败（pending_reversal），本次补做 Transfer Reversal：
-  // { "entry_id": 12, "status": "reversed", "stripe_reversal_id": "trr_test_…",
-  //   "reversed": true }
+### 7. 派发待转帐 / 冲回
 
-失败：503 未配置；403 非本店商户；404 找不到流水；409 该笔无需重试
-      （已转帐且无待冲回 / 已冲回）；502 网关失败（保持原状态，可再重试）。
-```
+`POST /api/v3/merchant/connect/transfers/{entry_id}/retry`：只处理未发送的 `pending` 或已经确定转帐的 `pending_reversal`。每次 Stripe POST 的 `Idempotency-Key` 分别为 `transfer-{operation_id}` 或 `reversal-{operation_id}`；提款使用 `payout-{operation_id}`；每条流水的 operation_id 是全局随机 UUID，持久化并有唯一约束，不使用可能跨库复用的整数 ID。后台调度器的 `connect-transfers` 任务也使用同一流程、批量上限 100。`processing`、`unknown`、`reversal_unknown` 一律拒绝重发并进入对账。
 
-## 核销 / 撤销 / 退款时的自动行为（无新增接口，后端钩子）
+### 8. 管理员核对 Stripe 对象
 
-| 事件 | 行为 | 失败时 |
-|---|---|---|
-| 核销成功（`POST /new-scan-coupon`） | 按基数计佣金、写 `pending` 流水；Connect 已配置且商户帐户就绪时立即创建 Stripe transfer，流水变 `transferred`；响应里多一个 `connect` 块：`{"transfer": "transferred" \| "pending" \| "not_configured" \| "skipped_zero", "net_amount": …}` | 转帐失败不阻断核销：流水留 `pending`，`note` 记原因，可用接口 7 补转 |
-| 撤销核销（`POST /redemptions/{id}/revoke`，10 分钟窗） | `pending` → `reversed`；`transferred` → Transfer Reversal 后 `reversed`；响应里多一个 `connect` 块 | 冲回网关失败：流水保持 `transferred` 并置 `pending_reversal`，用接口 7 补冲回；撤销本身仍成功 |
-| 套餐退款成功（`POST /orders/{id}/refund` 等既有退款链路） | 对该订单已撤销核销的流水做同样冲回（幂等，已冲回的不重复冲） | 同上 |
+`POST /api/v3/admin/connect/ledger/{entry_id}/reconcile`，请求 `{"provider_id": "po_... / tr_... / trr_..."}`，仅管理员。超时未拿到 ID 时，由管理员先在 Stripe 侧根据流水 metadata 的 `connect_operation_key` 核查并取得对象 ID；接口从 Stripe 重新读取对象，验证编号、操作键、金额、币种及商户账户或原转帐，且记录管理员审计日志。提款 `pending` 继续保留，`paid` 标已付，`failed` / `canceled` 才释放；已确认转帐如有待冲回会交由后台继续处理。
 
-**月结算单（Settlement）保留做对帐，不删；Connect 流水与结算单是两套
-帐：结算单的“标记已付”（`POST /admin/settlements/{id}/pay`）绝不用
-于 Connect 流水，两者不互通。**
+正在处理且距上次尝试不到两分钟的请求不得对账。若 Stripe 未找到对象，或无法确认曾否执行，保持未知状态并联系 Stripe；不得凭“查询为空”放开预留或换键重发。处理超过 v1 24 小时幂等窗口的未知请求同样如此。生产转账必须先完成 webhook/对账运维、迁移单头、真实 PostgreSQL 并发和 Stripe test mode 的完整验证，本候选尚不授权真实支付。
 
 ## 环境变量（新增）
 
 | 变量 | 缺省 | 说明 |
 |---|---|---|
 | `STRIPE_CONNECT_ENABLED` | dev 默认开、非 dev 默认关（显式 `1`/`0` 优先） | 总开关；关 = fail closed |
-| `STRIPE_SECRET_KEY` | 空（模拟器） | 沿用既有网关约定：只接受 `sk_test_…`，正式密钥拒绝 |
+| `STRIPE_SECRET_KEY` | 空（拒绝资金操作） | 只接受 `sk_test_…`，正式密钥拒绝 |
+| `STRIPE_CONNECT_SIMULATOR` | `0` | 仅 `APP_ENV=dev` 且显式设置为 `1` 才可启用测试模拟，非 dev 一律不启用 |
+| `STRIPE_CONNECT_API_VERSION` | `2026-11-18.preview` | Accounts v2 版本；仅接受日期及 preview/具名稳定后缀的合法格式，无效时 fail closed。升级需在 Stripe test mode 验证开户、状态、转账互通与 webhook 后逐环境切换。该版本仍为 preview，不据此宣称已普遍正式发布。 |
 | `STRIPE_CONNECT_RETURN_URL` | 空 | onboarding return_url 缺省值 |
 | `STRIPE_CONNECT_REFRESH_URL` | 空 | onboarding refresh_url 缺省值 |
 
-测试模式：未配 `STRIPE_SECRET_KEY` 时用本地模拟器（`acct_test_…` /
-`tr_test_…` / `po_test_…`），与现有 `payments_gateway` 测试模式一致，
-不接真实商户号。真实调用只走 Stripe 测试密钥。
+测试模拟必须在 dev 环境明确启用；未配置密钥且未明确启用模拟时 fail closed。Stripe 网络调用只接受测试密钥。
 
-## 与 P1-A 的关系
+## 当前合并阻断及后续核查
 
-付费券购买由 P1-A 做；本 PR 的转帐钩在核销后。本 PR 基线（`3f2d8bc`，
-M8 已合入，现金券基数为 0）尚无 P1-A：验证用的是现有套餐订单链路（购买 → 付款进平台 →
-核销 → 转帐），套餐券的结算基数 = 订单实付金额，与 P1-A 付费券的
-“实付金额”口径一致。P1-A 合入后，付费券核销自动走同一钩子，无需
-另改；唯一待补的是转帐与原付款的 `source_transaction` 关联——目前
-PaymentIntent 的 charge id 未持久化，转帐只带 `transfer_group`，
-P1-A 可在确认付款时持久化 charge id 后再补关联。
+- **真实付款凭证**：无权威实收证明时不能调用 Stripe 转账；当前网络转账入口明确 fail closed 为 `payment_verification_required`。须与 #18 联合实现/验证捕获 charge、退款后净额和每订单金额分配，再解除限制。模拟 `pi_test_…` 不得进入任何真实 Stripe 网络转账。
+- **开户并发**：现有 onboarding 在本地无账户时先调用 Stripe，再写本地账户；并发可能创建孤儿账户。需持久化开户意图、全局唯一幂等键和未知结果对账，完成测试后方可合并。
+- **佣金快照**：Connect 在核销时定费率，现有月结单在出单时读取当前费率；核销后调费会导致对账差异。`test_fee_change_between_redemption_and_statement_uses_same_snapshot` 是严格 xfail 复现。需与 #12/#19 统一不可变快照和历史账回填，不能静默接受差异。
+- **提现状态**：有界后台任务轮询已知 payout 的 submitted 及 paid_out，支持 late failure 并写追加对账事件；未知且无 Stripe 对象编号的操作继续冻结，需要管理员向 Stripe 查询并核实，不可盲目重发。实际 webhook/服务容量与长期轮询滞后监控仍需设计验证。
+- **环境克隆**：随机流水 operation_id 防止独立数据库重建时整数编号碰撞，但完整复制数据库也会复制 operation_id；测试与生产必须隔离 Stripe 凭据并禁止复制库自动派发，不能声称 UUID 能解决克隆风险。
+- **迁移**：本 PR 0021 尚未跟随 #13 等队列重新编号，必须在实际顺序上 rebase 后验证单头及 PostgreSQL 升降级；当前单表结构测试不证明整条迁移链已通过。

@@ -17,6 +17,8 @@ paid chain is verified through package orders (paid_amount basis).
 """
 import os
 import sys
+import tempfile
+from urllib.parse import urlparse
 from datetime import datetime, timezone
 
 import httpx
@@ -29,28 +31,27 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 os.environ["COUPON_GO_ENV"] = "dev"
 os.environ["SEED_ON_STARTUP"] = "0"
+os.environ["STRIPE_CONNECT_SIMULATOR"] = "1"
 
 from app import config, models  # noqa: E402
 from app.database import Base, get_db  # noqa: E402
 from app.main import app  # noqa: E402
 from app.seed import seed  # noqa: E402
 
-TEST_DB = "/tmp/coupon_go_test_p1b.db"
-
-# Postgres probe (same pattern as F3 / FIX-3 / M3): when P1B_POSTGRES_URL
-# points at a reachable server the suite runs against real Postgres
-# (row locks are real there; SQLite ignores with_for_update). Otherwise
-# it falls back to the throwaway SQLite file. BACKEND is reported so a
-# failure shows which run mode it ran in.
-PG_URL = os.environ.get(
-    "P1B_POSTGRES_URL",
-    # NOTE: explicit +psycopg2 driver — this venv ships psycopg2-binary
-    # only; a bare postgresql:// URL makes SQLAlchemy 2.x look for
-    # psycopg (v3) and fail to import.
-    "postgresql+psycopg2://coupon_go:coupon_go@localhost:5432/coupon_go_test_p1b")
-
+# Every run has its own SQLite file; no implicit connection to a local DB.
+_fd, TEST_DB = tempfile.mkstemp(prefix="coupon_pr16_", suffix=".sqlite3")
+os.close(_fd)
+PG_URL = os.environ.get("P1B_POSTGRES_URL", "")
+if PG_URL:
+    _pg = urlparse(PG_URL.replace("postgresql+psycopg2://", "postgresql://", 1))
+    if (_pg.hostname not in ("127.0.0.1", "localhost") or
+            not _pg.path.startswith("/coupon_pr16_") or
+            os.environ.get("P1B_ALLOW_RESET_DISPOSABLE_DB") != "1"):
+        raise RuntimeError("Postgres test requires explicit reset consent and disposable local coupon_pr16_ database")
 
 def _pg_reachable():
+    if not PG_URL:
+        return False
     try:
         from sqlalchemy import create_engine as _ce, text as _text
         probe = _ce(PG_URL, connect_args={"connect_timeout": 2})
@@ -58,8 +59,8 @@ def _pg_reachable():
             conn.execute(_text("SELECT 1"))
         probe.dispose()
         return True
-    except Exception:
-        return False
+    except Exception as exc:
+        raise RuntimeError("explicit Postgres test database is unavailable") from exc
 
 
 BACKEND = "postgres" if _pg_reachable() else "sqlite"
@@ -75,8 +76,6 @@ TestingSession = sessionmaker(bind=engine)
 def client():
     if BACKEND == "postgres":
         Base.metadata.drop_all(bind=engine)
-    elif os.path.exists(TEST_DB):
-        os.remove(TEST_DB)
     Base.metadata.create_all(bind=engine)
     db = TestingSession()
     seed(db)
@@ -282,7 +281,7 @@ def test_scan_package_pending_then_retry_transfers(client):
     assert r.status_code == 409
 
 
-def test_scan_price_coupon_transfers_when_account_ready(client):
+def test_free_price_coupon_never_transfers_but_paid_package_can_queue(client):
     h = _register_and_login(client, "p1b-price@example.com")
     vh = _vendor_headers(client)
     # Shop 5 (seed coupon 10: Price $138 belongs to shops[4], id 5)
@@ -290,8 +289,15 @@ def test_scan_price_coupon_transfers_when_account_ready(client):
     _onboard(client, vh, shop_id=5)
     _sync(client, vh, shop_id=5)
     scan = _claim_and_scan(client, h, vh, coupon_id=10)
-    assert scan["connect"]["transfer"] == "transferred"
-    assert scan["connect"]["net_amount"] == 124.20  # 138 - 10%
+    assert scan["connect"]["transfer"] == "skipped_unpaid"
+    assert _balance(client, vh, shop_id=5)["available"] == 0
+    package = _create_package(client, name="verified-order", price=138, shop_id=5)
+    paid = _buy_paid(client, h, package["id"])
+    paid_scan = _qr_and_scan(client, h, vh, paid["wallet_item_id"])
+    assert paid_scan["connect"]["transfer"] == "pending"
+    entry_id = paid_scan["connect"]["entry_id"]
+    assert client.post(f"/api/v3/merchant/connect/transfers/{entry_id}/retry", headers=vh).json()["status"] == "transferred"
+    assert paid_scan["connect"]["net_amount"] == 124.20  # 138 - 10%
     bal = _balance(client, vh, shop_id=5)
     assert bal["available"] == 124.20
 
@@ -301,7 +307,7 @@ def test_free_coupon_creates_no_entry(client):
     vh = _vendor_headers(client)
     # Seed coupon 1: percentage-only, settlement basis 0.
     scan = _claim_and_scan(client, h, vh, coupon_id=1)
-    assert scan["connect"]["transfer"] == "skipped_zero"
+    assert scan["connect"]["transfer"] == "skipped_unpaid"
     with _db() as db:
         rows = db.query(models.ConnectLedgerEntry).filter_by(
             redemption_id=scan["redemption_id"]).all()
@@ -316,19 +322,19 @@ def test_payout_moves_available_to_paid_out(client):
     bal = _balance(client, vh, shop_id=5)
     assert bal["available"] == 124.20
     r = client.post("/api/v3/merchant/connect/payouts",
-                    json={"shop_id": 5, "amount": 100.00}, headers=vh)
+                    json={"shop_id": 5, "amount": 100.00, "request_id": "payout-test-request-1"}, headers=vh)
     assert r.status_code == 200, r.text
     assert r.json()["stripe_payout_id"].startswith("po_test_")
     assert r.json()["balance"]["available"] == 24.20
     assert r.json()["balance"]["paid_out"] == 100.00
     # Over-payout is rejected and changes nothing.
     r = client.post("/api/v3/merchant/connect/payouts",
-                    json={"shop_id": 5, "amount": 100.00}, headers=vh)
+                    json={"shop_id": 5, "amount": 100.00, "request_id": "payout-test-request-2"}, headers=vh)
     assert r.status_code == 422
     assert _balance(client, vh, shop_id=5)["available"] == 24.20
     # Zero / negative amounts rejected.
     r = client.post("/api/v3/merchant/connect/payouts",
-                    json={"shop_id": 5, "amount": 0}, headers=vh)
+                    json={"shop_id": 5, "amount": 0, "request_id": "payout-test-request-3"}, headers=vh)
     assert r.status_code == 422
 
 
@@ -336,7 +342,7 @@ def test_payout_without_ready_account_rejected(client):
     vh = _vendor_headers(client)
     # Shop 7 has no Connect account at all.
     r = client.post("/api/v3/merchant/connect/payouts",
-                    json={"shop_id": 7, "amount": 10.00}, headers=vh)
+                    json={"shop_id": 7, "amount": 10.00, "request_id": "payout-test-request-4"}, headers=vh)
     assert r.status_code == 409
 
 
@@ -348,11 +354,14 @@ def test_revoke_reverses_transferred_entry(client):
     pkg = _create_package(client, name="P1-B 撤销套餐", price=150)
     paid = _buy_paid(client, h, pkg["id"])
     scan = _qr_and_scan(client, h, vh, paid["wallet_item_id"])
-    assert scan["connect"]["transfer"] == "transferred"  # shop 1 ready now
+    assert scan["connect"]["transfer"] == "pending"
+    entry_id = scan["connect"]["entry_id"]
+    assert client.post(f"/api/v3/merchant/connect/transfers/{entry_id}/retry", headers=vh).json()["status"] == "transferred"
     rid = scan["redemption_id"]
     r = client.post(f"/api/v3/redemptions/{rid}/revoke", headers=vh)
     assert r.status_code == 200, r.text
-    assert r.json()["connect"]["reversed"] is True
+    assert r.json()["connect"]["reason"] == "pending_reversal"
+    assert client.post(f"/api/v3/merchant/connect/transfers/{entry_id}/retry", headers=vh).json()["status"] == "reversed"
     with _db() as db:
         row = db.query(models.ConnectLedgerEntry).filter_by(
             redemption_id=rid).one()
@@ -370,7 +379,10 @@ def test_refund_after_revoke_does_not_double_reverse(client):
     paid = _buy_paid(client, h, pkg["id"])
     scan = _qr_and_scan(client, h, vh, paid["wallet_item_id"])
     rid = scan["redemption_id"]
+    entry_id = scan["connect"]["entry_id"]
+    assert client.post(f"/api/v3/merchant/connect/transfers/{entry_id}/retry", headers=vh).json()["status"] == "transferred"
     assert client.post(f"/api/v3/redemptions/{rid}/revoke", headers=vh).status_code == 200
+    assert client.post(f"/api/v3/merchant/connect/transfers/{entry_id}/retry", headers=vh).json()["status"] == "reversed"
     r = client.post(f"/api/v3/orders/{paid['id']}/refund",
                     json={"reason": "行程有變"}, headers=h)
     assert r.status_code == 200, r.text
@@ -408,7 +420,7 @@ def test_connect_disabled_fails_closed(client, monkeypatch):
             shop_id=6, status="paid").all()
         assert paid_rows == []
     r = client.post("/api/v3/merchant/connect/payouts",
-                    json={"shop_id": 6, "amount": 10.00}, headers=vh)
+                    json={"shop_id": 6, "amount": 10.00, "request_id": "payout-test-request-5"}, headers=vh)
     assert r.status_code == 503
     entry_id = row.id
     r = client.post(
@@ -579,11 +591,18 @@ def test_gateway_v2_transfers_and_payouts_stay_v1(monkeypatch):
 
     monkeypatch.setattr(httpx, "post", fake_post)
     tr = connect_gateway.create_transfer("acct_v2_test_123", 135.00,
-                                         "coupon-go-redemption-1")
-    po = connect_gateway.create_payout("acct_v2_test_123", 100.00)
+                                         "coupon-go-redemption-1", idempotency_key="transfer-1", source_transaction="ch_123")
+    po = connect_gateway.create_payout("acct_v2_test_123", 100.00, idempotency_key="payout-1")
     assert tr["transfer_id"] == "tr_v2_1"
     assert po["payout_id"] == "po_v2_1"
     # v1 money endpoints keep the v1 base and carry NO preview header:
     # a v2 account id is passed to them as the destination / Stripe-Account.
     assert seen == ["https://api.stripe.com/v1/transfers",
                     "https://api.stripe.com/v1/payouts"]
+
+
+def test_connect_reconcile_requires_admin(client):
+    vendor = _vendor_headers(client)
+    response = client.post('/api/v3/admin/connect/ledger/1/reconcile',
+                           json={'provider_id': 'po_test_fake'}, headers=vendor)
+    assert response.status_code == 403

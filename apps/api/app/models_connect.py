@@ -6,21 +6,13 @@ collects the merchant's identity and bank account during onboarding;
 we keep only the Stripe account id and the readiness flags Stripe
 reports (charges_enabled / payouts_enabled / details_submitted).
 
-Ledger semantics (docs/P1B_API.md):
-- kind="transfer": one row per redemption at most (redemption_id
-  unique when set). status pending (待结算) -> transferred (已转帐)
-  -> reversed (已冲回). A pending entry reversed before any Stripe
-  transfer has no stripe_reversal_id; a transferred entry reversed
-  via the Transfer Reversal API records it.
-- kind="payout": one row per merchant withdrawal, status paid_out,
-  net_amount negative, redemption_id NULL.
-- Balances are derived, never stored: pending = sum of pending
-  transfer nets; available = sum of transferred transfer nets minus
-  paid-out totals; paid_out = sum of payout magnitudes.
-- pending_reversal: a transferred entry whose reversal was requested
-  but the gateway call failed — the retry endpoint picks it up.
+Ledger semantics (docs/P1B_API.md): transfer and payout requests are
+reserved before external I/O; uncertain outcomes remain frozen until
+verified against a matching Stripe object. pending_reversal reserves
+funds immediately, including while a transfer result is in flight.
 """
 from datetime import datetime, timezone
+from uuid import uuid4
 
 from sqlalchemy import (
     Boolean, Column, DateTime, ForeignKey, Integer, Numeric, String,
@@ -59,7 +51,9 @@ class ConnectLedgerEntry(Base):
     """One merchant-balance ledger event.
 
     kind: transfer | payout.
-    status: pending | transferred | reversed | paid_out.
+    status: pending | processing | unknown | transferred | reversed |
+            reversal_processing | reversal_unknown | submitted |
+            payout_unknown | paid_out | failed.
     For kind=transfer, gross/commission/net are the redemption's
     settlement basis / platform commission / merchant net (HKD).
     For kind=payout, gross/commission are 0 and net is negative.
@@ -67,19 +61,53 @@ class ConnectLedgerEntry(Base):
     no_account / account_not_ready / failed: …) — never a silent state.
     """
     __tablename__ = "connect_ledger_entries"
+    __table_args__ = (
+        UniqueConstraint("shop_id", "kind", "client_request_id",
+                         name="uq_connect_ledger_client_request"),
+    )
     id = Column(Integer, primary_key=True)
+    # Globally unique across databases/environments; never derived from a
+    # local integer sequence that can be reused after a restore or clone.
+    operation_id = Column(String(32), nullable=False, unique=True,
+                          default=lambda: uuid4().hex)
     shop_id = Column(Integer, ForeignKey("shops.id"), nullable=False, index=True)
     redemption_id = Column(Integer, ForeignKey("redemptions.id"),
                            nullable=True, unique=True)
+    # The current issuance model grants one wallet item per paid order.
+    # Prevent paying the same order twice through duplicate redemptions.
+    order_id = Column(Integer, ForeignKey("orders.id"), nullable=True, unique=True)
+    payment_intent_id = Column(String(80), nullable=False, default="")
+    stripe_charge_id = Column(String(80), nullable=False, default="")
     kind = Column(String(20), nullable=False)  # transfer | payout
-    status = Column(String(20), default="pending", nullable=False)
+    status = Column(String(32), default="pending", nullable=False)
     gross_amount = Column(Numeric(12, 2), default=0, nullable=False)
     commission = Column(Numeric(12, 2), default=0, nullable=False)
     net_amount = Column(Numeric(12, 2), default=0, nullable=False)
     stripe_transfer_id = Column(String(60), default="")
     stripe_reversal_id = Column(String(60), default="")
     stripe_payout_id = Column(String(60), default="")
+    # Client operation identity and destination are persisted before any
+    # network call, so a timeout cannot create a second withdrawal.
+    client_request_id = Column(String(64), nullable=True)
+    destination_account_id = Column(String(60), nullable=False, default="")
+    first_attempt_at = Column(DateTime, nullable=True)
+    last_attempt_at = Column(DateTime, nullable=True)
+    last_polled_at = Column(DateTime, nullable=True, index=True)
+    attempt_count = Column(Integer, nullable=False, default=0)
     pending_reversal = Column(Boolean, default=False, nullable=False)
     note = Column(String(255), default="")
     created_at = Column(DateTime, default=_now)
     updated_at = Column(DateTime, default=_now, onupdate=_now)
+
+
+class ConnectReconciliationEvent(Base):
+    """Append-only provider reconciliation history for automated and admin checks."""
+    __tablename__ = "connect_reconciliation_events"
+    id = Column(Integer, primary_key=True)
+    entry_id = Column(Integer, ForeignKey("connect_ledger_entries.id"), nullable=False, index=True)
+    actor_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    source = Column(String(20), nullable=False)
+    prior_status = Column(String(32), nullable=False)
+    new_status = Column(String(32), nullable=False)
+    provider_id = Column(String(80), nullable=False)
+    created_at = Column(DateTime, nullable=False, default=_now)

@@ -82,6 +82,10 @@ STRIPE_WEBHOOK_TOLERANCE_SECONDS = int(
 # with 503 and redemptions only ever leave a pending ledger entry —
 # money is never marked paid without Stripe (see connect_service).
 STRIPE_CONNECT_ENABLED_RAW = os.environ.get("STRIPE_CONNECT_ENABLED")
+# Simulation must be explicitly enabled and is never allowed outside dev.
+STRIPE_CONNECT_SIMULATOR = os.environ.get("STRIPE_CONNECT_SIMULATOR", "0").strip().lower() in ("1", "true", "yes", "on")
+# Preview remains pinned until its stable replacement is validated.
+STRIPE_CONNECT_API_VERSION = os.environ.get("STRIPE_CONNECT_API_VERSION", "2026-11-18.preview")
 # Onboarding link targets (Stripe Account Links need both). The request
 # body may override them per call; when neither body nor env supplies
 # them the onboarding endpoint returns 400.

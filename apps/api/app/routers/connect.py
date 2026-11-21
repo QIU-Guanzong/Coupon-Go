@@ -7,12 +7,15 @@ changes. The monthly Settlement is untouched here — it stays the
 reconciliation record; Connect ledger entries are a separate book.
 """
 from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel, Field
+from decimal import Decimal
 from sqlalchemy.orm import Session
 
 from .. import config, connect_gateway, connect_service, models
 from ..connect_service import (
     account_out, connect_configured, get_account, merchant_balance,
     request_payout, retry_entry, sync_account,
+    reconcile_entry,
 )
 from ..database import get_db
 from ..deps import require_role
@@ -20,6 +23,17 @@ from ..models_connect import ConnectAccount, ConnectLedgerEntry
 from ..payments_gateway import GatewayError
 
 router = APIRouter()
+
+
+class PayoutRequest(BaseModel):
+    shop_id: int = Field(gt=0)
+    amount: Decimal = Field(gt=0, max_digits=12, decimal_places=2)
+    # Caller generates once and reuses for retries, including after timeouts.
+    request_id: str = Field(min_length=16, max_length=64, pattern=r"^[A-Za-z0-9_-]+$")
+
+
+class ReconcileRequest(BaseModel):
+    provider_id: str = Field(min_length=4, max_length=80, pattern=r"^[A-Za-z0-9_]+$")
 
 
 def _money(value) -> float:
@@ -38,15 +52,22 @@ def _shop_or_404(db: Session, shop_id, vendor: models.User) -> models.Shop:
 def _entry_out(entry: ConnectLedgerEntry) -> dict:
     return {
         "id": entry.id,
+        "operation_id": entry.operation_id,
         "kind": entry.kind,
         "status": entry.status,
         "redemption_id": entry.redemption_id,
+        "order_id": entry.order_id,
         "gross_amount": _money(entry.gross_amount),
         "commission": _money(entry.commission),
         "net_amount": _money(entry.net_amount),
         "stripe_transfer_id": entry.stripe_transfer_id or None,
         "stripe_reversal_id": entry.stripe_reversal_id or None,
         "stripe_payout_id": entry.stripe_payout_id or None,
+        "client_request_id": entry.client_request_id,
+        "pending_reversal": entry.pending_reversal,
+        "first_attempt_at": entry.first_attempt_at.isoformat() if entry.first_attempt_at else None,
+        "last_attempt_at": entry.last_attempt_at.isoformat() if entry.last_attempt_at else None,
+        "attempt_count": entry.attempt_count,
         "note": entry.note or "",
         "created_at": entry.created_at.isoformat() if entry.created_at else None,
     }
@@ -148,11 +169,11 @@ def connect_ledger(shop_id: int = Query(...),
 
 
 @router.post("/merchant/connect/payouts")
-def create_payout(body: dict,
+def create_payout(body: PayoutRequest,
                   vendor: models.User = Depends(require_role("vendor", "admin")),
                   db: Session = Depends(get_db)):
-    shop = _shop_or_404(db, (body or {}).get("shop_id"), vendor)
-    out = request_payout(db, shop, (body or {}).get("amount"))
+    shop = _shop_or_404(db, body.shop_id, vendor)
+    out = request_payout(db, shop, body.amount, body.request_id)
     db.commit()
     return out
 
@@ -172,3 +193,12 @@ def retry_transfer(entry_id: int,
     out = retry_entry(db, entry)
     db.commit()
     return out
+
+
+@router.post("/admin/connect/ledger/{entry_id}/reconcile")
+def reconcile_connect_entry(entry_id: int, body: ReconcileRequest,
+                            admin: models.User = Depends(require_role("admin")),
+                            db: Session = Depends(get_db)):
+    # The client supplies an object ID only; status and amounts come from
+    # Stripe and are checked against the persisted operation identity.
+    return reconcile_entry(db, entry_id, body.provider_id, admin.id)
