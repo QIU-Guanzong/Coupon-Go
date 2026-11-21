@@ -13,7 +13,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
-from .. import cashback_service as cashback_svc, config, legal, models, schemas, security
+from .. import cashback_service as cashback_svc, config, legal, models, models_line_f, models_packages, schemas, security
 from ..database import get_db
 from ..deps import (
     add_points, get_current_user, get_identity_user, get_session_identity,
@@ -25,6 +25,67 @@ router = APIRouter()
 
 def _now():
     return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+DELETED_ACCOUNT_DETAIL = "此帳戶已刪除"
+
+
+def _reject_if_deleted(user: models.User | None):
+    """Queue §A.2: every auth entry point refuses a deleted account
+    with one distinct message. deleted_at is the marker: it is set for
+    pre-fix rows whose email was never anonymised as well as for rows
+    deleted after anonymisation (whose email no longer resolves)."""
+    if user is not None and user.deleted_at is not None:
+        raise HTTPException(status_code=403, detail=DELETED_ACCOUNT_DETAIL)
+
+
+def _anonymize_user(db: Session, user: models.User):
+    """Queue §A.1: strip personal data, keep the id and every ledger /
+    audit row. The placeholder email is unique per user id and uses the
+    undeliverable .invalid TLD, so the original email is freed for
+    re-registration and the old password can never verify again."""
+    old_email = user.email
+    user.email = f"deleted+{user.id}@invalid"
+    user.name = ""
+    user.phone = ""
+    user.password_hash = security.hash_password(secrets.token_hex(32))
+    # Any OTP still outstanding for the old email dies with the account,
+    # so a code issued before deletion cannot revive or reset it.
+    db.query(models.OtpCode).filter(
+        models.OtpCode.email == old_email,
+        models.OtpCode.used.is_(False)).update({"used": True})
+
+
+def _merchant_delete_blocker(db: Session, user: models.User) -> str | None:
+    """Queue §A.4: a merchant account cannot be deleted while it still
+    has an operating shop, unsettled money or in-progress orders.
+    Returns a human-readable reason, else None."""
+    shop_ids = [s.id for s in db.query(models.Shop).filter(
+        models.Shop.vendor_id == user.id).all()]
+    if not shop_ids:
+        return None
+    active = db.query(models.Shop).filter(
+        models.Shop.vendor_id == user.id,
+        models.Shop.is_approved.is_(True)).count()
+    if active:
+        return f"名下仍有 {active} 間在營店鋪，請先結業或轉讓後再刪除帳戶"
+    unsettled = db.query(models_line_f.Settlement).filter(
+        models_line_f.Settlement.shop_id.in_(shop_ids),
+        models_line_f.Settlement.status != "paid").count()
+    if unsettled:
+        return f"名下仍有 {unsettled} 筆未結算款項，請先完成結算後再刪除帳戶"
+    in_progress = (
+        db.query(models_packages.Order)
+        .join(models_packages.Package,
+              models_packages.Order.package_id == models_packages.Package.id)
+        .filter(models_packages.Package.shop_id.in_(shop_ids),
+                models_packages.Order.payment_status.in_(("pending", "paid")),
+                models_packages.Order.refund_status != "refunded",
+                models_packages.Order.settlement_status != "void")
+        .count())
+    if in_progress:
+        return f"名下仍有 {in_progress} 筆進行中訂單，請先處理完成後再刪除帳戶"
+    return None
 
 
 def _issue_otp(db: Session, email: str, purpose: str, role: str = "customer") -> str:
@@ -75,8 +136,15 @@ def register(body: schemas.RegisterIn, db: Session = Depends(get_db)):
         raise HTTPException(status_code=400, detail="role 必須是 customer 或 vendor")
     docs = legal.documents()
     legal.require_versions(body, docs)
-    if db.query(models.User).filter(models.User.email == body.email).first():
-        raise HTTPException(status_code=400, detail="此電郵已註冊")
+    existing = db.query(models.User).filter(models.User.email == body.email).first()
+    if existing is not None:
+        if existing.deleted_at is not None:
+            # Pre-fix deleted row still holding the email: anonymise it
+            # (freeing the email) instead of blocking re-registration.
+            _anonymize_user(db, existing)
+            db.flush()
+        else:
+            raise HTTPException(status_code=400, detail="此電郵已註冊")
     user = models.User(
         email=body.email, password_hash=security.hash_password(body.password),
         name=body.name, phone=body.phone, role=body.role, is_active=False,
@@ -101,6 +169,7 @@ def verify_otp(body: schemas.OtpVerifyIn, db: Session = Depends(get_db)):
     user = db.query(models.User).filter(models.User.email == body.email).first()
     if user is None:
         raise HTTPException(status_code=404, detail="帳戶不存在")
+    _reject_if_deleted(user)
     docs = legal.documents()
     if body.purpose == "register":
         if not legal.has_accepted(db, user.id, docs):
@@ -120,6 +189,8 @@ def verify_otp_password(body: schemas.OtpVerifyIn, db: Session = Depends(get_db)
 
 @router.post("/new-resent-otp")
 def resend_otp(body: schemas.OtpRequestIn, db: Session = Depends(get_db)):
+    user = db.query(models.User).filter(models.User.email == body.email).first()
+    _reject_if_deleted(user)
     _issue_otp(db, body.email, body.purpose)
     return {"message": "驗證碼已重新發送"}
 
@@ -132,6 +203,9 @@ def resend_otp_forgot(body: schemas.OtpRequestIn, db: Session = Depends(get_db))
 @router.post("/login")
 def login(body: schemas.LoginIn, db: Session = Depends(get_db)):
     user = db.query(models.User).filter(models.User.email == body.email).first()
+    # Deleted check first: a deleted account gets its own message even
+    # though the password would no longer verify after anonymisation.
+    _reject_if_deleted(user)
     if user is None or not security.verify_password(body.password, user.password_hash):
         raise HTTPException(status_code=401, detail="電郵或密碼錯誤")
     if not user.is_active:
@@ -166,12 +240,15 @@ def social_login(body: schemas.SocialLoginIn, db: Session = Depends(get_db)):
         db.add(user)
         db.commit()
         db.refresh(user)
+    _reject_if_deleted(user)
     return _token_for(user, db)
 
 
 @router.post("/password/forgot")
 def forgot(body: schemas.ForgotIn, db: Session = Depends(get_db)):
-    if db.query(models.User).filter(models.User.email == body.email).first():
+    user = db.query(models.User).filter(models.User.email == body.email).first()
+    _reject_if_deleted(user)
+    if user is not None:
         _issue_otp(db, body.email, "forgot")
     return {"message": "如帳戶存在，我們已發送重設密碼的驗證碼"}
 
@@ -182,6 +259,7 @@ def reset(body: schemas.ResetIn, db: Session = Depends(get_db)):
     user = db.query(models.User).filter(models.User.email == body.email).first()
     if user is None:
         raise HTTPException(status_code=404, detail="帳戶不存在")
+    _reject_if_deleted(user)
     otp.used = True
     user.password_hash = security.hash_password(body.new_password)
     db.commit()
@@ -251,8 +329,18 @@ def delete_account(body: schemas.DeleteAccountIn, user: models.User = Depends(ge
       reason recorded); all audit/settlement rows are kept. A deleted
       account can no longer log in (login 403) or call authed
       endpoints (identity 401).
+    - Queue §A.1: anonymises the profile on delete (email ->
+      deleted+{user_id}@invalid, name/phone cleared, password hash
+      voided, outstanding OTPs for the old email voided), so the old
+      email can re-register as a brand-new account and the deleted
+      account cannot be revived through any auth entry point.
+    - Queue §A.4: a merchant account with an operating shop, unsettled
+      money or in-progress orders is refused with 409 and a reason.
     - reason is optional: the app currently posts {}.
     """
+    blocker = _merchant_delete_blocker(db, user)
+    if blocker:
+        return JSONResponse(status_code=409, content={"detail": blocker})
     cashback_svc.sweep_user(db, user.id)
     withdrawable = float(cashback_svc.balances(db, user.id)["withdrawable_balance"])
     if withdrawable > 0:
@@ -274,6 +362,7 @@ def delete_account(body: schemas.DeleteAccountIn, user: models.User = Depends(ge
     user.is_active = False
     user.deleted_at = _now()
     user.delete_reason = body.reason or None
+    _anonymize_user(db, user)
     db.commit()
     return {"message": "帳戶已刪除"}
 
