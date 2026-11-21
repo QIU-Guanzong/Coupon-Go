@@ -206,6 +206,10 @@ class QrOut(BaseModel):
 
 class ScanIn(BaseModel):
     code: str
+    # Dianping §4.4: how the code reached the till — "scan" (QR shown and
+    # scanned) or "manual" (the 6 digits typed in by hand). Recorded on
+    # the Redemption row; the single consume chain does not branch on it.
+    method: str = "scan"
     # Line A: idempotency key (repeat submit of the same scan = one
     # redemption) and optional prepare token from /new-scan-coupon/prepare.
     idempotency_key: Optional[str] = None
@@ -214,6 +218,45 @@ class ScanIn(BaseModel):
 
 class PrepareIn(BaseModel):
     code: str
+
+
+# ---------- dianping §4 redemption (lookup / supplementary / batch / force-revoke) ----------
+class ScanBatchIn(BaseModel):
+    """One batch scan: several presented codes, one transaction.
+
+    idempotency_key is REQUIRED and is the batch key: item i is recorded
+    under f"{idempotency_key}:{i}", so replaying the identical request
+    returns the original redemptions (duplicate: true) instead of
+    consuming again. prepare_tokens, when given, must line up with
+    codes (same order, same length).
+    """
+    codes: List[str] = Field(min_length=1, max_length=20)
+    prepare_tokens: Optional[List[str]] = None
+    idempotency_key: str = Field(min_length=1, max_length=80)
+    note: Optional[str] = Field(default=None, max_length=500)
+
+
+class SupplementaryScanIn(BaseModel):
+    """After-the-fact scan (§4.1): no presented code, no prepare token.
+
+    The merchant found the item via the lookup endpoint and the customer
+    has left / never presented a code. The consume chain is the same as
+    scan_coupon; the redemption is marked method="supplementary" and an
+    AdminAuditLog entry is written.
+    """
+    wallet_item_id: int
+    idempotency_key: Optional[str] = Field(default=None, max_length=80)
+    reason: Optional[str] = Field(default=None, max_length=500)
+    note: Optional[str] = Field(default=None, max_length=500)
+
+
+class ForceRevokeIn(BaseModel):
+    """Over-window revoke (§4.2): admin / support only, reason mandatory.
+
+    The reason is written to AdminAuditLog with the redemption id, so the
+    override is reviewable after the fact.
+    """
+    reason: str = Field(min_length=1, max_length=500)
 
 
 class PointsOut(BaseModel):

@@ -60,9 +60,13 @@ Endpoint 名稱沿用 Coupon GO! 1.2.6 APK 逆向出的原始名稱（含原始�
 | POST | `/new-favorite-coupon?coupon_id=` | 領券 → Q Wallet，+10 分；重複領取 409 |
 | POST | `/store-scaned-qr-values?wallet_item_id=` | 生成 QR 碼 + 6 位兌換碼，15:00 有效；每次出示輪換新碼（線 A 防截圖） |
 | POST | `/new-scan-coupon/prepare` | **線 A** 預核銷（唯讀查券，`{code}`）→ `can_redeem` + 5 分鐘 prepare token，不改券狀態 |
-| POST | `/new-scan-coupon` | 商戶掃碼核銷 `{code, idempotency_key?, prepare_token?}`，+20 分；錯店/已用/過期/每日 200 次上限；同 `idempotency_key` 重放只算一次（`duplicate: true`）；核銷後兌換碼失效 |
+| POST | `/new-scan-coupon` | 商戶掃碼核銷 `{code, idempotency_key?, prepare_token?, method?}`（`method=scan` 掃碼 / `manual` 手輸 6 位碼，默認 scan；其它值 422），+20 分；錯店/已用/過期/每日 200 次上限；同 `idempotency_key` 重放只算一次（`duplicate: true`）；核銷後兌換碼失效；核銷方式記入 `redemptions.method` |
+| POST | `/new-scan-coupon/batch` | **對標點評 §4.3** 一次核銷多張 `{codes[1–20], prepare_tokens?, idempotency_key（必填）, note?}`；一個事務、全部成功或全部回滾，任一張失敗即 400 且逐張報 ok / error / duplicate；批量鍵下第 `i` 張記為 `{key}:{i}`，原樣重發返回原核銷；成功寫 `redemption.batch_scan` 審計日誌 |
+| GET | `/merchant/redemptions/lookup?phone=&code_suffix=&order_id=` | **對標點評 §4.1（P0-7）** 券碼找回：按手机号 / 兌換碼後幾位 / 訂單號找本店未核銷的券（admin 看全部）；至少一個參數，否則 400；只回後四位、券名、有效期、訂單份數，**不回完整手機、不回兌換碼** |
+| POST | `/merchant/redemptions/supplementary-scan` | **對標點評 §4.1（P0-7）** 事後補核銷 `{wallet_item_id, idempotency_key?, reason?, note?}`；無需出示碼、無需 prepare token，走與掃碼同一條消費鏈（結算快照、積分、返現、流水一致），`method=supplementary`，寫 `redemption.supplementary_scan` 審計日誌；非本店 403、已用 400 |
+| POST | `/admin/redemptions/{id}/force-revoke` | **對標點評 §4.2** 超窗強制撤销（僅 admin / support，`reason` 必填）：與 10 分鐘撤销同一套沖銷（券退回、積分/返現/評價/結算全沖回），只放寬時間校驗；響應多 `forced/reason/minutes_over_window`，寫 `redemption.force_revoke` 審計日誌；已撤销 400 |
 | POST | `/redemptions/{id}/revoke` | **線 A** 核銷撤销（10 分鐘窗口內；券退回未使用、換新碼、+20 分沖回；超時 400；M7：若該核銷已有評價，評價改為隱藏、已發的 +15 評價積分沖回，響應新增 `review: {review_id, points_clawed_back, status}`，無評價時為 `null`） |
-| GET | `/vendor/redemptions/export?format=json\|csv` | **線 A** 商戶核銷記錄導出 / 匯總（對賬用；admin 看全部） |
+| GET | `/vendor/redemptions/export?format=json\|csv` | **線 A** 商戶核銷記錄導出 / 匯總（對賬用；admin 看全部）；**對標點評 §4.4/§4.5**：新增 `?from=&to=`（YYYY-MM-DD，含端）、`coupon_id`、`revoked`、`method` 篩選；記錄新增 `method`、`note`、`scanned_by_name`；CSV 末尾新增 `method`、`scanned_by_name` 兩列 |
 | GET | `/get-favorite-coupons-list?page=&status=&sortby=` | 錢包三狀態：1 未使用 / 2 已使用 / 3 已失效 |
 | GET | `/get-user-record-list` | 消費記錄 |
 | GET | `/points` | 積分餘額 + 明細 |

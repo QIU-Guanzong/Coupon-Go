@@ -157,57 +157,99 @@ def generate_qr(wallet_item_id: int, user: models.User = Depends(get_current_use
             "qr_payload": payload, "expires_in_seconds": min(config.QR_TTL_SECONDS, max(1, round((expiry - _now()).total_seconds())))}
 
 
-@router.post("/new-scan-coupon")
-def scan_coupon(body: schemas.ScanIn,
-                vendor: models.User = Depends(require_role("vendor", "admin")),
-                db: Session = Depends(get_db)):
-    # Line A idempotency: replaying the same idempotency_key returns the
-    # original result once, never a second redemption / second +20 points.
-    def prior_result():
-        if not body.idempotency_key:
-            return None
-        prior = db.query(models.Redemption).filter_by(idempotency_key=body.idempotency_key).first()
-        if prior is None:
-            return None
-        if prior.scanned_by_vendor_id != vendor.id or prior.revoked_at is not None:
-            raise HTTPException(status_code=409, detail="核銷記錄不符，請重新掃碼")
-        coupon = db.get(models.Coupon, prior.coupon_id)
-        return {"message": "您的優惠券已成功使用", "coupon_name": coupon.coupon_name,
-                "shop_id": prior.shop_id, "redemption_id": prior.id,
-                "revoke_window_minutes": config.REVOKE_WINDOW_MINUTES,
-                "scanned_at": prior.scanned_at.replace(tzinfo=timezone.utc), "duplicate": True}
+def _expire_if_due(db: Session, item: models.WalletItem):
+    """Flip an overdue unused item to expired WITHOUT committing.
 
-    replay = prior_result()
-    if replay:
-        return replay
-    item = presented_item(db, body.code, lock=True)
-    if item is None:
-        replay = prior_result()
-        if replay:
-            return replay
-    if item is None:
-        raise HTTPException(status_code=400, detail="無效的 QR 碼！")
-    # Line A: a prepare token, when supplied, must be valid for this item.
-    prepared_at = None
-    if body.prepare_token:
-        from ..prepare_token import verify_prepare_token
-        issued = verify_prepare_token(body.prepare_token, item.id, binding=f"{vendor.id}:{body.code}")
-        if issued is None:
-            raise HTTPException(status_code=400,
-                                detail="預核銷已失效，請重新預核銷")
-        prepared_at = datetime.fromtimestamp(issued, tz=timezone.utc).replace(
-            tzinfo=None)
-    _refresh_expiry(db, item)
+    Same flip as _refresh_expiry, but session-local so a batch caller can
+    still roll the whole batch back. Callers that need the flip persisted
+    on its own keep using _refresh_expiry.
+    """
+    if item.status == 1 and item.coupon.valid_to <= _now():
+        item.status = 3
+        item.code = ""
+        item.qr_expires_at = None
+        db.flush()
+    return item
+
+
+def award_redeem_points(db: Session, item: models.WalletItem,
+                        redemption: models.Redemption):
+    """Award redeem points for one redemption — the ONE handover point
+    for P1-C (FEATURE_GAP §3.4: paid coupons earn HK$1 = 1 point on the
+    amount actually paid, credited after redemption; free coupons keep
+    the current flat values).
+
+    Today P1-C is NOT on main, so this still awards the flat
+    POINTS_REDEEM (+20), exactly as scan_coupon always did. When P1-C
+    lands it must change ONLY this helper (read the order behind
+    item.order_id via settlement_basis / Order.paid_amount); every
+    consume path (single / batch / supplementary) calls it, and the
+    revoke path already claws back the ACTUAL ledger award
+    (redemption.py reads the real "redeem" PointTransaction), so a
+    P1-C amount change needs no revoke-side fix. Do not add a second
+    points rule anywhere else.
+    """
+    add_points(db, item.user_id, config.POINTS_REDEEM, "redeem", ref_id=item.id)
+
+
+def _prior_redemption(db: Session, idempotency_key, vendor: models.User):
+    """Return the earlier Redemption recorded under this key, or None.
+
+    A key recorded by another vendor, or for a revoked redemption, is a
+    conflict (409) — the replay must not silently return someone else's
+    result.
+    """
+    if not idempotency_key:
+        return None
+    prior = db.query(models.Redemption).filter_by(
+        idempotency_key=idempotency_key).first()
+    if prior is None:
+        return None
+    if prior.scanned_by_vendor_id != vendor.id or prior.revoked_at is not None:
+        raise HTTPException(status_code=409, detail="核銷記錄不符，請重新掃碼")
+    return prior
+
+
+def _duplicate_response(db: Session, prior: models.Redemption):
+    coupon = db.get(models.Coupon, prior.coupon_id)
+    return {"message": "您的優惠券已成功使用", "coupon_name": coupon.coupon_name,
+            "shop_id": prior.shop_id, "redemption_id": prior.id,
+            "revoke_window_minutes": config.REVOKE_WINDOW_MINUTES,
+            "scanned_at": prior.scanned_at.replace(tzinfo=timezone.utc),
+            "duplicate": True}
+
+
+def _redeem_item(db: Session, vendor: models.User, item: models.WalletItem, *,
+                 code=None, prepared_at=None, idempotency_key=None,
+                 method="scan", note=None, shop_ids=None):
+    """Consume ONE already-resolved WalletItem through the single chain.
+
+    Shared by scan_coupon (code presented), the batch scan (one call per
+    code) and the supplementary scan (no code at all). No commit — the
+    caller owns the transaction, so a batch can roll every item back
+    together. Raises HTTPException on any failure; nothing is consumed
+    on failure (the conditional UPDATE below is the atomic guard).
+
+    Hooks are the existing ones, reused not re-invented: settlement
+    snapshot via settlement_basis() (actual-paid basis; cash / free /
+    pure-threshold coupons contribute 0), redeem points via
+    award_redeem_points(), cashback via cashback_service.record_spend(),
+    ledger via add_scanned_sale(). shop_ids=None means "no shop
+    restriction" (admin on the new endpoints); scan_coupon passes the
+    vendor's own shop ids, which preserves its current behaviour
+    (admin has no shops, so an admin scan is refused exactly as today).
+    """
+    _expire_if_due(db, item)
     if item.status == 2:
         raise HTTPException(status_code=400, detail="此優惠券已使用")
     if item.status == 3:
         raise HTTPException(status_code=400, detail="此優惠券已失效")
-    if item.qr_expires_at and item.qr_expires_at < _now():
+    if code is not None and item.qr_expires_at and item.qr_expires_at < _now():
         raise HTTPException(status_code=400, detail="QR 碼已過期，請重新出示")
     coupon = db.query(models.Coupon).filter(models.Coupon.id == item.coupon_id).first()
-    if coupon.shop_id not in [s.id for s in
-                              db.query(models.Shop).filter(
-                                  models.Shop.vendor_id == vendor.id).all()]:
+    if coupon is None:
+        raise HTTPException(status_code=400, detail="無效的 QR 碼！")
+    if shop_ids is not None and coupon.shop_id not in shop_ids:
         raise HTTPException(status_code=400, detail="無效的 QR 碼！此碼屬於其他商店。")
     ensure_paid_voucher(db, item)
     ensure_redeemable(coupon)
@@ -218,15 +260,25 @@ def scan_coupon(body: schemas.ScanIn,
     if scans_today >= config.SCAN_DAILY_LIMIT:
         raise HTTPException(status_code=400, detail="今日掃碼已達上限")
     cashback_service.lock_account(db, item.user_id)
-    consumed = db.query(models.WalletItem).filter(
-        models.WalletItem.id == item.id, models.WalletItem.status == 1,
-        models.WalletItem.code == body.code, models.WalletItem.qr_expires_at > _now()
-    ).update({"status": 2, "used_at": _now(), "code": "", "qr_expires_at": None},
-             synchronize_session=False)
+    if code is not None:
+        consume_q = db.query(models.WalletItem).filter(
+            models.WalletItem.id == item.id, models.WalletItem.status == 1,
+            models.WalletItem.code == code, models.WalletItem.qr_expires_at > _now())
+    else:
+        # Supplementary scan: no code was ever presented (or it expired);
+        # status==1 alone is the guard — the merchant verified identity
+        # through the lookup instead.
+        consume_q = db.query(models.WalletItem).filter(
+            models.WalletItem.id == item.id, models.WalletItem.status == 1)
+    consumed = consume_q.update(
+        {"status": 2, "used_at": _now(), "code": "", "qr_expires_at": None},
+        synchronize_session=False)
     if not consumed:
-        replay = prior_result()
-        if replay:
-            return replay
+        db.refresh(item)
+        if item.status == 2:
+            raise HTTPException(status_code=400, detail="此優惠券已使用")
+        if item.status == 3:
+            raise HTTPException(status_code=400, detail="此優惠券已失效")
         raise HTTPException(status_code=400, detail="兌換碼已失效，請重新出示")
     # Line A: the presented code dies on consume — a screenshot of it
     # can never be scanned again, even before the status check.
@@ -243,10 +295,10 @@ def scan_coupon(body: schemas.ScanIn,
     red = models.Redemption(
         wallet_item_id=item.id, coupon_id=coupon.id, shop_id=coupon.shop_id,
         scanned_by_vendor_id=vendor.id, face_value=face_value,
-        idempotency_key=body.idempotency_key or None,
-        prepared_at=prepared_at)
+        idempotency_key=idempotency_key or None,
+        prepared_at=prepared_at, method=method, note=note)
     db.add(red)
-    add_points(db, item.user_id, config.POINTS_REDEEM, "redeem", ref_id=item.id)
+    award_redeem_points(db, item, red)
     # FIX-2: cashback is credited here, server-side, from this redemption
     # only — amount basis and rate come from the coupon row / server
     # config, never from the client. Same transaction as the redemption,
@@ -260,10 +312,49 @@ def scan_coupon(body: schemas.ScanIn,
     except cashback_service.CashbackError as e:
         raise HTTPException(status_code=400, detail=str(e))
     add_scanned_sale(db, red)
+    return red
+
+
+@router.post("/new-scan-coupon")
+def scan_coupon(body: schemas.ScanIn,
+                vendor: models.User = Depends(require_role("vendor", "admin")),
+                db: Session = Depends(get_db)):
+    # Line A idempotency: replaying the same idempotency_key returns the
+    # original result once, never a second redemption / second +20 points.
+    replay = _prior_redemption(db, body.idempotency_key, vendor)
+    if replay is not None:
+        return _duplicate_response(db, replay)
+    item = presented_item(db, body.code, lock=True)
+    if item is None:
+        replay = _prior_redemption(db, body.idempotency_key, vendor)
+        if replay is not None:
+            return _duplicate_response(db, replay)
+    if item is None:
+        raise HTTPException(status_code=400, detail="無效的 QR 碼！")
+    # Line A: a prepare token, when supplied, must be valid for this item.
+    prepared_at = None
+    if body.prepare_token:
+        from ..prepare_token import verify_prepare_token
+        issued = verify_prepare_token(body.prepare_token, item.id, binding=f"{vendor.id}:{body.code}")
+        if issued is None:
+            raise HTTPException(status_code=400,
+                                detail="預核銷已失效，請重新預核銷")
+        prepared_at = datetime.fromtimestamp(issued, tz=timezone.utc).replace(
+            tzinfo=None)
+    method = (body.method or "scan").strip().lower()
+    if method not in ("scan", "manual"):
+        raise HTTPException(status_code=422, detail="method 須為 scan 或 manual")
+    shop_ids = [s.id for s in
+                db.query(models.Shop).filter(
+                    models.Shop.vendor_id == vendor.id).all()]
+    red = _redeem_item(db, vendor, item, code=body.code,
+                       prepared_at=prepared_at,
+                       idempotency_key=body.idempotency_key, method=method,
+                       shop_ids=shop_ids)
     db.commit()
     db.refresh(red)
-    return {"message": "您的優惠券已成功使用", "coupon_name": coupon.coupon_name,
-            "shop_id": coupon.shop_id, "redemption_id": red.id,
+    return {"message": "您的優惠券已成功使用", "coupon_name": db.get(models.Coupon, red.coupon_id).coupon_name,
+            "shop_id": red.shop_id, "redemption_id": red.id,
             "revoke_window_minutes": config.REVOKE_WINDOW_MINUTES,
             "scanned_at": red.scanned_at.replace(tzinfo=timezone.utc), "duplicate": False}
 
