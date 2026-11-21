@@ -320,7 +320,7 @@ class _WalletScreenState extends State<WalletScreen>
                                         title: Text(item.couponName),
                                         subtitle: Text(
                                             '${item.shopName} · ${item.statusText}'
-                                            '${item.orderNeedsReview ? ' · 訂單數量待核對' : item.isPackage ? ' · 套餐券 ×${item.quantity}' : ''}'),
+                                            '${item.orderNeedsReview ? ' · 券資料待核對' : item.isPackage ? ' · 套餐券 ×${item.quantity}' : ''}'),
                                         trailing: item.status == 1
                                             ? Row(
                                                 mainAxisSize: MainAxisSize.min,

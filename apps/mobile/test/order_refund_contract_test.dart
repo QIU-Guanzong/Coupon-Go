@@ -87,7 +87,7 @@ void main() {
     await tester.pumpWidget(MaterialApp(home: Scaffold(body: WalletScreen(api: api, onShowQr: (_) async {}))));
     await tester.pumpAndSettle();
     expect(find.text('退款'), findsNothing);
-    expect(find.textContaining('訂單數量待核對'), findsOneWidget);
+    expect(find.textContaining('券資料待核對'), findsOneWidget);
     expect(tester.widget<ElevatedButton>(find.widgetWithText(ElevatedButton, '出示')).onPressed, isNull);
     await tester.pumpWidget(MaterialApp(home: OrderDetailScreen(api: api, orderId: 13)));
     await tester.pumpAndSettle();
