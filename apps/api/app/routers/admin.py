@@ -46,8 +46,41 @@ def _log(db: Session, admin_id: int, action: str, target_type: str,
     db.flush()
 
 
+def _file_meta(db: Session, file_id):
+    """Metadata for one merchant file id (no URL — downloads need a
+    signed link from POST /merchant-files/{id}/download-link)."""
+    if not file_id:
+        return None
+    from ..models_line_b import MerchantFile
+    f = db.query(MerchantFile).filter(MerchantFile.id == file_id).first()
+    if f is None:
+        return None
+    return {
+        "id": f.id, "original_filename": f.original_filename or "",
+        "size_bytes": f.size_bytes or 0, "sha256": f.sha256 or "",
+        "created_at": f.created_at.isoformat() if f.created_at else None,
+    }
+
+
 def _application_out(db: Session, a: MerchantApplication) -> dict:
+    from ..models_line_b import (MerchantContractSignature,
+                                 MerchantContractVersion)
     user = db.query(models.User).filter(models.User.id == a.user_id).first()
+    contract = None
+    if a.contract_version_id:
+        v = db.query(MerchantContractVersion).filter(
+            MerchantContractVersion.id == a.contract_version_id).first()
+        sig = (db.query(MerchantContractSignature)
+               .filter(MerchantContractSignature.application_id == a.id)
+               .order_by(MerchantContractSignature.signed_at.desc(),
+                         MerchantContractSignature.id.desc()).first())
+        contract = {
+            "version": v.version if v else "",
+            "signed_at": a.contract_signed_at.isoformat()
+            if a.contract_signed_at else None,
+            "signed_ip": a.contract_signed_ip or "",
+            "pdf_file_id": sig.pdf_file_id if sig else None,
+        }
     return {
         "id": a.id, "user_id": a.user_id,
         "applicant_email": user.email if user else "",
@@ -57,6 +90,21 @@ def _application_out(db: Session, a: MerchantApplication) -> dict:
         "id_card": a.id_card or "",
         "shop_photos": a.shop_photos_list,
         "industry_license": a.industry_license or "",
+        # P1-D Hong Kong fields
+        "br_number": a.br_number or "",
+        "documents": {
+            "br": _file_meta(db, a.br_file_id),
+            "ci": _file_meta(db, a.ci_file_id),
+            "director_id": _file_meta(db, a.director_id_file_id),
+        },
+        "shop_photo_files": [
+            m for m in (_file_meta(db, fid)
+                        for fid in a.shop_photo_file_ids_list)
+            if m is not None],
+        "stripe_account_id": a.stripe_account_id or "",
+        "stripe_charges_enabled": bool(a.stripe_charges_enabled),
+        "stripe_payouts_enabled": bool(a.stripe_payouts_enabled),
+        "contract": contract,
         "status": a.status, "reject_reason": a.reject_reason or "",
         "reviewed_by": a.reviewed_by, "reviewed_at": a.reviewed_at,
         "created_at": a.created_at,
@@ -74,6 +122,27 @@ def _page(items, page: int, per_page: int = 20):
 
 
 # ---------- merchant onboarding ----------
+def _resolve_application_file(db: Session, user: models.User, file_id: int,
+                              expected_kind: str):
+    """Validate one file reference on a new application: the file must
+    exist, belong to the applicant, be of the expected kind, and be
+    unattached (the application does not exist yet, so a file already
+    attached to another application cannot be claimed here)."""
+    from ..models_line_b import MerchantFile
+    f = db.query(MerchantFile).filter(MerchantFile.id == file_id).first()
+    if f is None:
+        raise HTTPException(status_code=400, detail="找不到指定的文件")
+    if f.uploader_id != user.id:
+        raise HTTPException(status_code=400, detail="文件不属于申请人")
+    if f.kind != expected_kind:
+        raise HTTPException(
+            status_code=400,
+            detail=f"文件類別不符：需要 {expected_kind}，實際為 {f.kind}")
+    if f.application_id is not None:
+        raise HTTPException(status_code=400, detail="文件已被其他申請使用")
+    return f
+
+
 @router.post("/admin/merchant-applications", status_code=201)
 def submit_application(body: schemas_line_b.MerchantApplicationCreateIn,
                        user: models.User = Depends(get_current_user),
@@ -83,14 +152,32 @@ def submit_application(body: schemas_line_b.MerchantApplicationCreateIn,
                        MerchantApplication.status == "pending").first())
     if pending is not None:
         raise HTTPException(status_code=400, detail="已有待審核的入駐申請")
+    # P1-D: validate Hong Kong file references before creating anything.
+    files_to_link = []
+    for file_id, kind in ((body.br_file_id, "br"),
+                          (body.ci_file_id, "ci"),
+                          (body.director_id_file_id, "director_id")):
+        if file_id is not None:
+            files_to_link.append(
+                _resolve_application_file(db, user, file_id, kind))
+    for file_id in body.shop_photo_file_ids:
+        files_to_link.append(
+            _resolve_application_file(db, user, file_id, "shop_photo"))
     app = MerchantApplication(
         user_id=user.id, shop_name=body.shop_name,
         contact_name=body.contact_name, phone=body.phone,
         address=body.address, business_license=body.business_license,
         id_card=body.id_card,
         shop_photos=json.dumps(body.shop_photos, ensure_ascii=False),
-        industry_license=body.industry_license, status="pending")
+        industry_license=body.industry_license, status="pending",
+        br_number=body.br_number or "",
+        br_file_id=body.br_file_id, ci_file_id=body.ci_file_id,
+        director_id_file_id=body.director_id_file_id,
+        shop_photo_file_ids=json.dumps(body.shop_photo_file_ids))
     db.add(app)
+    db.flush()
+    for f in files_to_link:
+        f.application_id = app.id
     db.commit()
     db.refresh(app)
     return {"message": "入駐申請已提交，請等待審核",
@@ -137,6 +224,35 @@ def review_application(application_id: int,
         raise HTTPException(status_code=400, detail="此申請已審核，不可重複審核")
     if not body.approve and not body.reject_reason.strip():
         raise HTTPException(status_code=400, detail="拒絕時請填寫拒絕原因")
+    if body.approve:
+        # P1-D approval gates (rejection is not gated):
+        # (1) the applicant signed the CURRENT contract version;
+        # (2) Stripe onboarding is complete (P1-B writes these columns;
+        #     until then admin records them via /stripe-onboarding).
+        from ..models_line_b import (MerchantContractSignature,
+                                     MerchantContractVersion)
+        current = db.query(MerchantContractVersion).filter(
+            MerchantContractVersion.is_current == True).first()  # noqa: E712
+        sig = None
+        if current is not None:
+            sig = db.query(MerchantContractSignature).filter(
+                MerchantContractSignature.application_id == app.id,
+                MerchantContractSignature.contract_version_id == current.id
+            ).first()
+        if current is None or sig is None:
+            any_sig = db.query(MerchantContractSignature).filter(
+                MerchantContractSignature.application_id == app.id).first()
+            if any_sig is not None:
+                raise HTTPException(
+                    status_code=400,
+                    detail="合約版本已更新，請簽署當前版本")
+            raise HTTPException(status_code=400,
+                                detail="尚未簽署當前版本合約")
+        if (not (app.stripe_account_id or "").strip()
+                or not app.stripe_charges_enabled
+                or not app.stripe_payouts_enabled):
+            raise HTTPException(status_code=400,
+                                detail="尚未完成 Stripe 開戶")
     app.status = "approved" if body.approve else "rejected"
     app.reject_reason = "" if body.approve else body.reject_reason.strip()
     app.reviewed_by = admin.id
@@ -151,6 +267,40 @@ def review_application(application_id: int,
                                          else f"; reason={app.reject_reason}"))
     db.commit()
     return {"message": "入駐申請已通過" if body.approve else "入駐申請已拒絕",
+            "application": _application_out(db, app)}
+
+
+@router.post("/admin/merchant-applications/{application_id}/stripe-onboarding")
+def record_stripe_onboarding(
+        application_id: int,
+        body: schemas_line_b.StripeOnboardingIn,
+        admin: models.User = Depends(admin_only),
+        db: Session = Depends(get_db)):
+    """P1-B bridge: record a merchant's Stripe Connect onboarding result
+    on the application (admin-only, audited).
+
+    Until P1-B lands, admin fills this in after verifying in the Stripe
+    Dashboard. After P1-B lands, P1-B's onboarding callback should write
+    the same three columns directly and this endpoint stays as a
+    back-office correction path. Bank account numbers are never stored:
+    Stripe collects identity + bank details.
+    """
+    app = db.query(MerchantApplication).filter(
+        MerchantApplication.id == application_id).first()
+    if app is None:
+        raise HTTPException(status_code=404, detail="找不到此入駐申請")
+    app.stripe_account_id = body.stripe_account_id.strip()
+    app.stripe_charges_enabled = bool(body.charges_enabled)
+    app.stripe_payouts_enabled = bool(body.payouts_enabled)
+    app.stripe_onboarding_updated_at = _now()
+    _log(db, admin.id, "merchant_application.stripe_onboarding",
+         "merchant_application", app.id,
+         f"stripe_account_id={app.stripe_account_id}; "
+         f"charges={app.stripe_charges_enabled}; "
+         f"payouts={app.stripe_payouts_enabled}")
+    db.commit()
+    db.refresh(app)
+    return {"message": "Stripe 開戶狀態已登記",
             "application": _application_out(db, app)}
 
 

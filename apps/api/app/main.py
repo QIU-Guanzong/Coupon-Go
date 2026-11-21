@@ -14,8 +14,9 @@ from fastapi.staticfiles import StaticFiles
 from . import config
 from .database import init_db
 from .routers import (admin, admin_v2, auth, bargain, cashback, coupons,
-                      home, nearby, notifications, packages, qbot, redemption,
-                      reviews, search, uploads, vendor, wallet)
+                      home, merchant_onboarding, nearby, notifications,
+                      packages, qbot, redemption, reviews, search, uploads,
+                      vendor, wallet)
 from .scheduler import start_scheduler, validate_scheduler_config  # noqa: F401  (M1: also registers models_scheduler.scheduler_locks)
 
 from . import models_cashback  # noqa: F401  (Line D: register cashback tables)
@@ -34,6 +35,7 @@ for router in (auth.router, home.router, coupons.router, wallet.router,
                search.router, notifications.router, vendor.router,
                redemption.router, nearby.router, reviews.router,
                admin.router, admin_v2.router, uploads.router,
+               merchant_onboarding.router,
                cashback.router, bargain.router, packages.router, qbot.router):
     app.include_router(router, prefix="/api/v3")
 
