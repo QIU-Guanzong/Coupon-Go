@@ -15,20 +15,20 @@ import hashlib
 import hmac
 import uuid
 from datetime import datetime, timezone
-from pathlib import Path
-
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
 from .. import config, models, schemas_line_b
+from ..contract_pdf import CJKFontUnavailableError, render_contract_pdf
 from ..database import get_db
 from ..deps import get_current_user, require_role
+from .. import merchant_file_storage as storage
+from ..merchant_upload_limits import check_upload_rate_limit
 from ..models_line_b import (AdminAuditLog, MerchantApplication,
                              MerchantContractSignature,
                              MerchantContractVersion, MerchantFile)
 from ..routers.uploads import strip_exif
-from ..contract_pdf import render_contract_pdf
 
 router = APIRouter()
 admin_only = require_role("admin")
@@ -125,7 +125,9 @@ def _page(items, page: int, per_page: int = 20):
 def _save_merchant_file(upload, kind: str) -> tuple[str, bytes, str]:
     """Validate + store one uploaded file. Returns (stored_name, data, ext).
 
-    Type: pdf / jpg / jpeg / png only (extension + content-type).
+    Type: pdf / jpg / jpeg / png only (extension + content-type + file
+    magic bytes -- a .pdf must start with %PDF-, a .png must carry the
+    PNG signature, a .jpg/.jpeg must start with FF D8 FF).
     Size: <= UPLOAD_MAX_BYTES. Images get EXIF stripped (same helper as
     review-images). The stored name is a server UUID; no client filename
     ever reaches the filesystem.
@@ -150,13 +152,44 @@ def _save_merchant_file(upload, kind: str) -> tuple[str, bytes, str]:
             detail="檔案過大，上限 %d KB" % (config.UPLOAD_MAX_BYTES // 1024))
     if not data:
         raise HTTPException(status_code=400, detail="空檔案")
+    # Item 4: verify content by magic bytes, not just the extension /
+    # client-declared content-type.
+    if ext == "pdf":
+        expected, label = b"%PDF-", "PDF"
+    elif ext == "png":
+        expected, label = b"\x89PNG\r\n\x1a\n", "PNG"
+    else:  # jpg / jpeg
+        expected, label = b"\xff\xd8\xff", "JPEG"
+    if not data.startswith(expected):
+        raise HTTPException(
+            status_code=400,
+            detail=f"檔案內容不是有效的 {label} 檔案")
     if ext in ("jpg", "jpeg", "png"):
         data = strip_exif(data, ext)
-    subdir = Path(config.MERCHANT_FILE_DIR)
-    subdir.mkdir(parents=True, exist_ok=True)
     name = f"{uuid.uuid4().hex}.{ext}"
-    (subdir / name).write_bytes(data)
+    storage.save(name, data)
     return name, data, ext
+
+
+def _check_unattached_quota(db: Session, user: models.User):
+    """Item 3: unattached-file quota (count + total bytes) -> 429."""
+    rows = db.query(MerchantFile.size_bytes).filter(
+        MerchantFile.uploader_id == user.id,
+        MerchantFile.application_id.is_(None)).all()
+    count = len(rows)
+    total = sum((r[0] or 0) for r in rows)
+    if count >= config.MERCHANT_UNATTACHED_MAX_FILES:
+        raise HTTPException(
+            status_code=429,
+            detail="未掛接文件已達上限（%d 個），請先提交申請認領或刪除舊文件"
+                   % config.MERCHANT_UNATTACHED_MAX_FILES,
+            headers={"Retry-After": "60"})
+    if total >= config.MERCHANT_UNATTACHED_MAX_BYTES:
+        raise HTTPException(
+            status_code=429,
+            detail="未掛接文件總大小已達上限（%d MB），請先提交申請認領或刪除舊文件"
+                   % (config.MERCHANT_UNATTACHED_MAX_BYTES // (1024 * 1024)),
+            headers={"Retry-After": "60"})
 
 
 # ---------- file upload / signed download ----------
@@ -173,6 +206,12 @@ def upload_merchant_file(
     if application_id is not None:
         app = _get_application_or_404(db, application_id)
         _require_owner_or_admin(db, user, app)
+    # Item 3: per-user per-minute rate limit, then (for unattached
+    # uploads) the count / total-bytes quota -- both checked before
+    # anything is saved, both answered 429.
+    check_upload_rate_limit(user.id)
+    if app is None:
+        _check_unattached_quota(db, user)
     stored_name, data, _ext = _save_merchant_file(file, kind)
     f = MerchantFile(
         application_id=app.id if app else None, uploader_id=user.id,
@@ -209,12 +248,20 @@ def merchant_file_download(file_id: int, exp: int = Query(None),
         raise HTTPException(status_code=404, detail="找不到此文件")
     if exp is None or not _verify_token(file_id, exp, token or ""):
         raise HTTPException(status_code=403, detail="下載連結無效或已過期")
-    path = Path(config.MERCHANT_FILE_DIR) / f.stored_name
-    if not path.exists():
+    # Item 4: Content-Type is server-detected from the stored bytes'
+    # magic number, never the client-declared value in the database;
+    # undetectable -> application/octet-stream. No new column.
+    try:
+        data = storage.open_bytes(f.stored_name)
+    except FileNotFoundError:
         raise HTTPException(status_code=404, detail="找不到此文件")
-    return FileResponse(
-        path, media_type=f.content_type or "application/octet-stream",
-        filename=f.original_filename or f.stored_name)
+    media_type = storage.detect_content_type(data) \
+        or "application/octet-stream"
+    from fastapi.responses import Response
+    return Response(
+        content=data, media_type=media_type,
+        headers={"Content-Disposition":
+                 f'attachment; filename="{f.original_filename or f.stored_name}"'})
 
 
 # ---------- e-contracts ----------
@@ -306,16 +353,19 @@ def sign_contract(application_id: int,
             "message": "合約已簽署",
             "signature": _signature_out(db, existing)})
     ip = request.client.host if request.client else ""
-    pdf_bytes = render_contract_pdf(
-        version=version.version, title=version.title,
-        body_text=version.body_text, shop_name=app.shop_name,
-        applicant_name=user.name or "", applicant_email=user.email,
-        user_id=user.id, application_id=app.id, signed_at=_now(),
-        ip_address=ip)
-    subdir = Path(config.MERCHANT_FILE_DIR)
-    subdir.mkdir(parents=True, exist_ok=True)
+    # Item 2: render BEFORE any DB write; a missing CJK font is a
+    # 503 with a clear message and leaves no half-written state.
+    try:
+        pdf_bytes = render_contract_pdf(
+            version=version.version, title=version.title,
+            body_text=version.body_text, shop_name=app.shop_name,
+            applicant_name=user.name or "", applicant_email=user.email,
+            user_id=user.id, application_id=app.id, signed_at=_now(),
+            ip_address=ip)
+    except CJKFontUnavailableError as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
     stored_name = f"{uuid.uuid4().hex}.pdf"
-    (subdir / stored_name).write_bytes(pdf_bytes)
+    storage.save(stored_name, pdf_bytes)
     pdf_file = MerchantFile(
         application_id=app.id, uploader_id=user.id, kind="contract_pdf",
         stored_name=stored_name,

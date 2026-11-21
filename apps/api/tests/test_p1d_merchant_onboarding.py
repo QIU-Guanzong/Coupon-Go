@@ -13,6 +13,7 @@ import os
 import shutil
 import sys
 import time
+from datetime import datetime, timezone
 
 import pytest
 from fastapi.testclient import TestClient
@@ -503,3 +504,204 @@ def test_mine_lists_only_own_applications(client):
                       headers=h).status_code == 200
     assert client.get(f"/api/v3/merchant-applications/{app_id}",
                       headers=other).status_code == 403
+
+
+# ---------- rework 2026-11-21 (items 2-7) ----------
+
+def test_sign_contract_no_cjk_font_returns_503(client, monkeypatch):
+    """Item 2: no usable CJK font -> 503, no half-written state."""
+    from app import contract_pdf
+    monkeypatch.setattr(contract_pdf, "_register_fonts",
+                        lambda: (None, None))
+    h = _register_and_login(client, "p1d-nofont@example.com")
+    app_id, ids = _submit_with_files(client, h, "nofont")
+    r = _sign_current(client, h, app_id)
+    assert r.status_code == 503, r.text
+    assert "字體" in r.json()["detail"] or "字体" in r.json()["detail"]
+    # No signature was recorded: the application still has no contract.
+    ah = _admin_headers(client)
+    detail = client.get(f"/api/v3/admin/merchant-applications/{app_id}",
+                        headers=ah).json()["application"]
+    assert detail["contract"] is None
+
+
+def test_sign_contract_pdf_contains_chinese_text(client):
+    """Item 2: with a real CJK font the PDF text holds Chinese clauses."""
+    import re
+    from pypdf import PdfReader
+    h = _register_and_login(client, "p1d-pdftext@example.com")
+    app_id, ids = _submit_with_files(client, h, "pdftext")
+    # The current version may have moved on (earlier tests publish new
+    # versions), so assert on the actual current body text, not v1's.
+    body = client.get("/api/v3/merchant-contracts/current",
+                      headers=h).json()["body_text"]
+    cjk = "".join(re.findall(r"[\u4e00-\u9fff]", body))[:6]
+    assert cjk, "current contract body has no Chinese text to check"
+    assert _sign_current(client, h, app_id).status_code == 201
+    pdf = client.get(f"/api/v3/merchant-applications/{app_id}/contract-pdf",
+                     headers=h)
+    assert pdf.status_code == 200, pdf.text
+    dl = client.get(pdf.json()["download_url"])
+    assert dl.status_code == 200, dl.text
+    text = "\n".join((p.extract_text() or "")
+                     for p in PdfReader(io.BytesIO(dl.content)).pages)
+    assert "合約版本" in text  # meta line, always rendered
+    assert cjk in text
+
+
+def test_upload_unattached_count_limit_429(client, monkeypatch):
+    """Item 3: > MERCHANT_UNATTACHED_MAX_FILES unattached files -> 429."""
+    from app import config as _cfg
+    monkeypatch.setattr(_cfg, "MERCHANT_UNATTACHED_MAX_FILES", 1)
+    h = _register_and_login(client, "p1d-quota-count@example.com")
+    assert _upload_unattached(client, h, "br").status_code == 201
+    r = _upload_unattached(client, h, "br")
+    assert r.status_code == 429, r.text
+    assert "未掛接" in r.json()["detail"] or "未挂接" in r.json()["detail"]
+
+
+def test_upload_unattached_bytes_limit_429(client, monkeypatch):
+    """Item 3: unattached total bytes over the cap -> 429."""
+    from app import config as _cfg
+    monkeypatch.setattr(_cfg, "MERCHANT_UNATTACHED_MAX_BYTES", 10)
+    h = _register_and_login(client, "p1d-quota-bytes@example.com")
+    assert _upload_unattached(client, h, "br").status_code == 201
+    r = _upload_unattached(client, h, "br")
+    assert r.status_code == 429, r.text
+
+
+def test_upload_rate_limit_429(client, monkeypatch):
+    """Item 3: 11th upload inside one minute for one user -> 429."""
+    from app import config as _cfg
+    from app import merchant_upload_limits
+    merchant_upload_limits.reset_for_tests()
+    monkeypatch.setattr(_cfg, "MERCHANT_UPLOAD_RATE_LIMIT_PER_MINUTE", 10)
+    h = _register_and_login(client, "p1d-rate@example.com")
+    for i in range(10):
+        r = _upload_unattached(client, h, "br")
+        assert r.status_code == 201, r.text
+    r = _upload_unattached(client, h, "br")
+    assert r.status_code == 429, r.text
+    merchant_upload_limits.reset_for_tests()
+
+
+def test_cleanup_deletes_only_stale_unattached(client):
+    """Item 3: cleanup removes stale unattached files only, disk too."""
+    from datetime import datetime, timedelta
+    from app.cleanup_merchant_files import cleanup_unattached_files
+    from app.models_line_b import MerchantFile
+    db = TestingSession()
+    try:
+        user = db.query(models.User).filter(
+            models.User.email == "admin@coupon-go.example").first()
+        old = datetime.now(timezone.utc).replace(tzinfo=None) \
+            - timedelta(days=8)
+        fresh = datetime.now(timezone.utc).replace(tzinfo=None)
+        rows = []
+        for label, app_id, created in (
+                ("stale-unattached", None, old),
+                ("stale-attached", 1, old),
+                ("fresh-unattached", None, fresh)):
+            name = f"cleanup-{label}.pdf"
+            path = os.path.join(config.MERCHANT_FILE_DIR, name)
+            os.makedirs(config.MERCHANT_FILE_DIR, exist_ok=True)
+            with open(path, "wb") as fh:
+                fh.write(b"%PDF-1.4 test")
+            row = MerchantFile(application_id=app_id, uploader_id=user.id,
+                               kind="br", stored_name=name,
+                               original_filename=name,
+                               content_type="application/pdf",
+                               size_bytes=13, sha256="x",
+                               created_at=created)
+            db.add(row)
+            rows.append((label, row, path))
+        db.commit()
+        summary = cleanup_unattached_files(db)
+        assert summary["deleted_files"] == 1, summary
+        assert summary["deleted_bytes"] == 13, summary
+        assert summary["missing_on_disk"] == 0, summary
+        for label, row, path in rows:
+            alive = db.query(MerchantFile).filter(
+                MerchantFile.id == row.id).first() is not None
+            if label == "stale-unattached":
+                assert not alive
+                assert not os.path.exists(path)
+            else:
+                assert alive, label
+                assert os.path.exists(path), label
+                # tidy up the survivors so later runs stay clean
+                os.remove(path)
+                db.query(MerchantFile).filter(
+                    MerchantFile.id == row.id).delete()
+        db.commit()
+    finally:
+        db.close()
+
+
+def test_upload_rejects_pdf_extension_with_non_pdf_content(client):
+    """Item 4: .pdf whose bytes are not a PDF -> 400."""
+    h = _register_and_login(client, "p1d-magic-pdf@example.com")
+    r = _upload_unattached(client, h, "br", filename="fake.pdf",
+                           content=b"hello, not a pdf at all",
+                           content_type="application/pdf")
+    assert r.status_code == 400, r.text
+
+
+def test_upload_rejects_png_with_jpeg_content(client):
+    """Item 4: .png whose bytes are JPEG -> 400."""
+    h = _register_and_login(client, "p1d-magic-png@example.com")
+    r = _upload_unattached(client, h, "shop_photo", filename="fake.png",
+                           content=b"\xff\xd8\xff\xe0fake-jpeg",
+                           content_type="image/png")
+    assert r.status_code == 400, r.text
+
+
+def test_download_content_type_from_server_detection(client):
+    """Item 4: download Content-Type is server-detected, not the
+    client-declared value stored at upload time."""
+    h = _register_and_login(client, "p1d-dl-type@example.com")
+    up = _upload_unattached(client, h, "shop_photo", filename="shop.jpg",
+                            content=b"\xff\xd8\xff\xe0fake-jpeg",
+                            content_type="image/png")
+    assert up.status_code == 201, up.text
+    fid = up.json()["file"]["id"]
+    assert up.json()["file"]["content_type"] == "image/png"
+    link = _download_link(client, h, fid).json()["download_url"]
+    r = client.get(link)
+    assert r.status_code == 200, r.text
+    assert r.headers["content-type"].startswith("image/jpeg"), \
+        r.headers["content-type"]
+
+
+def test_trusted_proxies_rejects_catch_all():
+    """Item 5: serve.trusted_proxies unit tests."""
+    from app.serve import trusted_proxies
+    with pytest.raises(ValueError):
+        trusted_proxies("0.0.0.0/0")
+    with pytest.raises(ValueError):
+        trusted_proxies("203.0.113.5, ::/0")
+    assert trusted_proxies("") == ""
+    assert trusted_proxies("  ") == ""
+    assert trusted_proxies("203.0.113.0/24") == "203.0.113.0/24"
+    assert trusted_proxies("203.0.113.5, 198.51.100.0/24") == \
+        "203.0.113.5,198.51.100.0/24"  # join strips the spaces
+
+
+def test_access_log_filter_strips_query_string():
+    """Item 6: the uvicorn access-log filter drops exp/token query
+    strings while keeping method, path and status."""
+    import logging
+    from app.serve import StripQueryStringFilter
+    filt = StripQueryStringFilter()
+    record = logging.LogRecord(
+        name="uvicorn.access", level=logging.INFO, pathname="x", lineno=1,
+        msg='%s - "%s %s %s" %s',
+        args=("203.0.113.10", "GET",
+              "/api/v3/merchant-files/12/download?exp=1763634000"
+              "&token=deadbeef", "HTTP/1.1", 200),
+        exc_info=None)
+    assert filt.filter(record) is True
+    rendered = record.getMessage()
+    assert "token=" not in rendered and "exp=" not in rendered
+    assert "/api/v3/merchant-files/12/download" in rendered
+    assert "GET" in rendered and "200" in rendered

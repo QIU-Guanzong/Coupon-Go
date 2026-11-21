@@ -64,6 +64,20 @@ MERCHANT_DOWNLOAD_LINK_TTL_SECONDS = int(
 # Optional path to a CJK TrueType collection for contract PDFs
 # (reportlab). Defaults to the system Noto Sans CJK TC.
 MERCHANT_CONTRACT_FONT = os.environ.get("MERCHANT_CONTRACT_FONT", "")
+# P1-D rework 2026-11-21: unattached-file quotas + upload rate limit.
+# "Unattached" = MerchantFile.application_id IS NULL (uploaded before
+# the application was submitted). Quota is checked before saving;
+# either limit breached -> 429 (see docs/P1D_API.md §1).
+MERCHANT_UNATTACHED_MAX_FILES = int(
+    os.environ.get("MERCHANT_UNATTACHED_MAX_FILES", "20"))
+MERCHANT_UNATTACHED_MAX_BYTES = int(
+    os.environ.get("MERCHANT_UNATTACHED_MAX_BYTES", "52428800"))  # 50 MB
+MERCHANT_UPLOAD_RATE_LIMIT_PER_MINUTE = int(
+    os.environ.get("MERCHANT_UPLOAD_RATE_LIMIT_PER_MINUTE", "10"))
+# Stale unattached files older than this are removed by
+# `python -m app.cleanup_merchant_files` (run daily, see docs §4).
+MERCHANT_UNATTACHED_MAX_AGE_DAYS = int(
+    os.environ.get("MERCHANT_UNATTACHED_MAX_AGE_DAYS", "7"))
 OTP_TTL_SECONDS = int(os.environ.get("OTP_TTL_SECONDS", "600"))
 OTP_LENGTH = 6
 

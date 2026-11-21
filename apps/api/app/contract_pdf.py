@@ -3,10 +3,12 @@
 Simple on purpose: a one-page-ish A4 record of what was signed -- title,
 version, merchant/applicant, timestamps, IP, and the contract body --
 plus a SHA-256 of the body text so the archive can be verified against
-the stored contract version. Chinese is rendered with Noto Sans CJK TC
-when the font is present; without it we fall back to Helvetica and
-render only the ASCII-safe fields (still a valid, downloadable PDF --
-see docs/P1D_API.md section 4 for the pre-launch font note).
+the stored contract version. Chinese is rendered with WQY Zen Hei (see
+docs/P1D_API.md §4). If no usable CJK font is available,
+render_contract_pdf raises CJKFontUnavailableError and the sign-contract
+endpoint answers 503 -- there is deliberately NO ASCII-only fallback:
+a signed-contract archive that omits the Chinese contract body is not
+an archive of what was signed.
 """
 import hashlib
 import io
@@ -17,6 +19,14 @@ from datetime import datetime
 from . import config
 
 logger = logging.getLogger(__name__)
+
+
+class CJKFontUnavailableError(RuntimeError):
+    """No usable CJK font for the contract PDF (see docs/P1D_API.md §4).
+
+    The sign-contract endpoint maps this to HTTP 503; nothing is
+    written to the database when it is raised.
+    """
 
 # (path, TTC subfont index) candidates, in order. WQY Zen Hei is
 # TrueType-outlined, which reportlab handles; the Noto CJK TTCs on
@@ -73,19 +83,23 @@ def _register_fonts():
 def render_contract_pdf(*, version, title, body_text, shop_name,
                         applicant_name, applicant_email, user_id,
                         application_id, signed_at, ip_address):
-    """Build the signed-contract PDF; returns bytes starting with %PDF."""
+    """Build the signed-contract PDF; returns bytes starting with %PDF.
+
+    Raises CJKFontUnavailableError when no usable CJK font is
+    registered: the Chinese body cannot be rendered faithfully, so
+    no PDF is produced at all (callers answer 503; nothing is stored).
+    """
     from reportlab.lib.pagesizes import A4
     from reportlab.lib.styles import ParagraphStyle
     from reportlab.lib.units import mm
     from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer
 
     regular, bold = _register_fonts()
-    cjk = regular is not None
-    if not cjk:
-        logger.warning(
-            "contract PDF: no CJK font available, rendering ASCII-only "
-            "fallback for application %s", application_id)
-    base_font = regular or "Helvetica"
+    if regular is None:
+        raise CJKFontUnavailableError(
+            "沒有可用的中文字體，無法生成合約 PDF 存檔：請安裝 "
+            "fonts-wqy-zenhei（見 docs/P1D_API.md §4）")
+    base_font = regular
     head_font = bold or base_font
     body_hash = hashlib.sha256(body_text.encode("utf-8")).hexdigest()
 
@@ -123,15 +137,10 @@ def render_contract_pdf(*, version, title, body_text, shop_name,
              para("簽署 IP：%s" % ip_address, meta_style),
              para("合約正文 SHA-256：%s" % body_hash, meta_style),
              Spacer(1, 4 * mm)]
-    if cjk:
-        for chunk in body_text.split("\n"):
-            if chunk.strip():
-                story.append(para(chunk))
-            else:
-                story.append(Spacer(1, 2 * mm))
-    else:
-        story.append(para(
-            "【本存檔以 ASCII 字段為準；合約正文以系統存儲版本為準，"
-            "SHA-256 見上：%s】" % body_hash))
+    for chunk in body_text.split("\n"):
+        if chunk.strip():
+            story.append(para(chunk))
+        else:
+            story.append(Spacer(1, 2 * mm))
     doc.build(story)
     return buf.getvalue()

@@ -29,9 +29,26 @@
   未挂接文件只能被上传者本人认领，且只能认领一次）。
 - 权限：申请的申请人本人，或 admin（代传）。他人 403；`application_id`
   指向不存在的申请 404。
-- 限类型：`pdf` / `jpg` / `jpeg` / `png`（以后缀 + content-type 双重校验）。
-  其他类型 400。
+- 限类型：`pdf` / `jpg` / `jpeg` / `png`（以后缀 + content-type
+  + 文件头魔数三重校验：PDF 须以 `%PDF-` 开头，PNG 须为
+  `89 50 4E 47 0D 0A 1A 0A`，JPEG 须以 `FF D8 FF` 开头）。
+  内容与后缀不符 → 400。
 - 限大小：单个文件 ≤ `UPLOAD_MAX_BYTES`（默认 5 MB），超限 400。
+- **未挂接文件限额**（「未挂接」= `application_id IS NULL`，即先传
+  文件、后提交申请的暂存文件；已挂接到申请的文件不受此限）：
+  每用户最多 `MERCHANT_UNATTACHED_MAX_FILES` 个（默认 20），总量最多
+  `MERCHANT_UNATTACHED_MAX_BYTES` 字节（默认 52428800 = 50 MB）。
+  保存前检查，任一超限 → 429：
+
+```json
+{"detail": "未掛接文件已達上限（20 個），請先提交申請認領或刪除舊文件"}
+```
+
+- **上传限流**：同一用户每分钟最多 `MERCHANT_UPLOAD_RATE_LIMIT_PER_MINUTE`
+  次 `POST /merchant-files`（默认 10），超限 → 429
+  `{"detail": "上傳過於頻繁，請稍後再試"}`（带 `Retry-After: 60`）。
+  实现照 `app/qbot_budget.py` 的模式：Redis INCR + 过期（原子），
+  Redis 不可用时进程内计数 fallback。过期未挂接文件由清理脚本删除（见 §4）。
 - 图片上传时去 EXIF（复用 `app/routers/uploads.py::strip_exif` 的逻辑）。
 - 文件名由服务端生成 UUID，杜绝路径穿越。
 - **不返回公开 URL**。返回文件元数据：
@@ -71,8 +88,12 @@
 ### GET `/merchant-files/{file_id}/download?exp=…&token=…` — 下载文件（200）
 
 - 不需要 Authorization header（token 即凭证）。过期 / 篡改 / 缺参数 → 403。
-- 成功返回文件字节流，`Content-Type` 为上传时的类型，
+- 成功返回文件字节流，`Content-Type` 由服务端按磁盘文件的魔数判定
+  （PDF / PNG / JPEG；验不出 → `application/octet-stream`），
+  不用上传时客户端声明的值，
   `Content-Disposition: attachment; filename="<原文件名>"`。
+- **日志不记录下载链接**：应用与 uvicorn access 日志均已配置为不记录
+  完整查询串（见 §4），`exp` / `token` 不会进日志。
 
 ## 2. 入驻申请（香港口径）
 
@@ -216,8 +237,25 @@ Body：`{}`（签当前版）或 `{"contract_version_id": 2}`（明确指定版�
 - 权限：申请人本人。申请须为 `pending`，否则 400。
 - 记录：`user_id`、合约版本、签署时间（服务器时间，UTC）、
   客户端 IP（`request.client.host`）。
-- 签署成功后生成 **PDF 存档**（reportlab + Noto Sans CJK TC 渲染中文），
+- **客户端 IP 的来源**：路由只读 `request.client.host`，不另写
+  `X-Forwarded-For` 解析。部署时必须把反向代理的 IP/CIDR 配进
+  `FORWARDED_ALLOW_IPS`（逗号分隔，如 `203.0.113.5, 198.51.100.0/24`；
+  `0.0.0.0/0` 全捕捉会被启动时拒绝，空值则关闭代理头处理、
+  fail-closed）；配好后 `request.client.host` 就是真实客户端 IP，
+  否则记录的是代理 IP。启动入口见 `app/serve.py`
+  （`proxy_headers` + `forwarded_allow_ips` 取自该变量）。
+- 签署成功后生成 **PDF 存档**（reportlab + 文泉驿正黑渲染中文），
   存为 `kind=contract_pdf` 的私有文件，并与签署记录关联。
+- **字体缺失 → 503**：运行环境没有任何可用 CJK 字体时，签署接口返回
+  503，不生成 PDF、不写任何签署记录（渲染在所有 DB 写入之前进行）：
+
+```json
+{"detail": "沒有可用的中文字體，無法生成合約 PDF 存檔：請安裝 fonts-wqy-zenhei（見 docs/P1D_API.md §4）"}
+```
+
+  之前「降级为 Helvetica 只渲染 ASCII 字段」的做法已删除——缺正文的
+  存档不是对签署内容的存档。Dockerfile 已装 `fonts-wqy-zenhei`；
+  可用 `MERCHANT_CONTRACT_FONT` 环境变量指定其他字体文件。
 - 同一申请重复签同一版本 → 200 返回已有签署记录（幂等，不重复生成 PDF）。
 - 返回：
 
@@ -247,16 +285,38 @@ Body：`{}`（签当前版）或 `{"contract_version_id": 2}`（明确指定版�
   `<repo>/apps/api/merchant-files-private/`，可用 `MERCHANT_FILE_DIR`
   环境变量改），按 `<uuid>.<ext>` 存放。**不在 `/uploads` 静态挂载下**，
   公网无法直接访问，只能走签名下载端点。
-- PDF 由 reportlab 生成（新增依赖 `reportlab`，见 `requirements.txt`），
+  存储收进小接口 `app/merchant_file_storage.py`：
+  `save(stored_name, data)` / `open_bytes(stored_name)` /
+  `delete(stored_name)`，以 `MERCHANT_FILE_DIR` 为根；上传保存、签署时
+  PDF 保存、下载读取、清理脚本删除都走这个接口，路由本身不变。
+  **本地磁盘只供体验环境；正式上线前换成私有云存储，届时只换这个
+  接口的实现，不动路由。**
+- PDF 由 reportlab 生成（新增依赖 `reportlab`，见 `requirements.txt`；
+  测试用 `pypdf` 抽文本断言中文条款，也在 `requirements.txt`），
   字体为文泉驿正黑（TrueType 轮廓，`fonts-wqy-zenhei`，
   `/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc`，子字体 0）；
   系统自带的 Noto Sans CJK TTC 是 CFF 轮廓，reportlab 不支持，会自动跳过。
-  若运行环境没有任何可用 CJK 字体，降级为 Helvetica 只渲染 ASCII 字段
-  （仍是有效 PDF、可下载），并在日志里告警。
+  Dockerfile 已装 `fonts-wqy-zenhei`（`apt-get install -y
+  --no-install-recommends fonts-wqy-zenhei`）；若运行环境没有任何可用
+  CJK 字体，签署接口返回 503（见 §3），不再降级渲染。
   可用 `MERCHANT_CONTRACT_FONT` 环境变量指定其他字体文件。
+- **下载链接不进日志**：uvicorn 默认 access 日志会把带查询串的完整
+  请求行（`?exp=…&token=…`）记下来。`app/serve.py` 给 `uvicorn.access`
+  logger 加了剥离查询串的 filter（保留方法 / 路径 / 状态码），
+  应用自身也没有记录请求 URL 的地方（核实过）。前面的反向代理也须
+  同样配置（不记录完整查询串），否则 token 会在代理日志里泄漏。
+- **清理过期未挂接文件**：`python -m app.cleanup_merchant_files`
+  （从 `apps/api/` 运行），删除 `application_id` 为 NULL 且
+  `created_at` 超过 `MERCHANT_UNATTACHED_MAX_AGE_DAYS` 天（默认 7）
+  的文件，同时删磁盘文件和库记录；幂等，打印清理数量汇总。
+  建议每天跑一次，例如 cron：`0 3 * * * cd /path/to/apps/api &&
+  python -m app.cleanup_merchant_files`。
+- **反向代理配置要求**：部署时必须把反向代理的 IP/CIDR 配进
+  `FORWARDED_ALLOW_IPS`（见 §3 的 IP 说明）；不配则代理头不被信任、
+  签约 IP 记的是代理 IP。
 - 上线前必须换的点（不做完不能上生产）：
   1. 对象存储：把 `merchant-files-private/` 换成 S3 / GCS 私有桶
-     （只换存储层：`_save_merchant_file()` 与下载读取处，其余不动）；
+     （只换存储层：`app/merchant_file_storage.py` 的实现，其余不动）；
      同时把 `reportlab` 的字体文件随部署包带上或改由对象存储/配置指定。
   2. 签名链接改为对象存储的预签名 URL 或保留现有 HMAC 方案（二选一，
      不要两套并存）。
@@ -264,8 +324,10 @@ Body：`{}`（签当前版）或 `{"contract_version_id": 2}`（明确指定版�
   4. 合约正文 v1 为占位文本（迁移与种子数据预置，明确标注
      「待法务确认」）；法务定稿后由 admin 发新版本，商户须重签当前版
      才能批准——旧版签署不顶用（批准门禁第 1 条）。
-  5. 客户端 IP 目前取直连 `request.client.host`；上生产若在反向代理后，
-     须按部署的受信代理配置取 `X-Forwarded-For`，否则记的是代理 IP。
+  5. ~~客户端 IP 目前取直连 `request.client.host`；上生产若在反向代理后，
+     须按部署的受信代理配置取 `X-Forwarded-For`，否则记的是代理 IP。~~
+     已改为 `FORWARDED_ALLOW_IPS` 受信代理配置（见 §3）：路由仍读
+     `request.client.host`，配好受信代理后它就是真实客户端 IP。
 
 ## 5. 与 P1-B（Stripe Connect Express 开户）的衔接
 
