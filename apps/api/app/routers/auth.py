@@ -10,11 +10,15 @@ import secrets
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
-from .. import config, legal, models, schemas, security
+from .. import cashback_service as cashback_svc, config, legal, models, schemas, security
 from ..database import get_db
-from ..deps import get_current_user, get_identity_user, get_session_identity
+from ..deps import (
+    add_points, get_current_user, get_identity_user, get_session_identity,
+    points_balance,
+)
 
 router = APIRouter()
 
@@ -233,12 +237,43 @@ def update_profile(body: schemas.ProfileUpdateIn, user: models.User = Depends(ge
 @router.post("/delete-account")
 def delete_account(body: schemas.DeleteAccountIn, user: models.User = Depends(get_identity_user),
                    db: Session = Depends(get_db)):
+    """M9-7: true account deletion (soft delete, never hard-delete).
+
+    - Fail closed on money: sweep first (like GET /cashback), then
+      refuse with 409 + withdrawable_balance while any withdrawable
+      cashback remains, so the user is sent to withdraw instead of
+      silently losing it. Pending (not yet withdrawable) cashback
+      does not block; its rows stay in the ledger untouched.
+    - Voids unused wallet coupons (status 1 -> 3, expired) and zeroes
+      points with a negative PointTransaction (reason account_delete);
+      the ledger is kept for audit. Already-used coupons are untouched.
+    - Deactivates the account (is_active=False, deleted_at + optional
+      reason recorded); all audit/settlement rows are kept. A deleted
+      account can no longer log in (login 403) or call authed
+      endpoints (identity 401).
+    - reason is optional: the app currently posts {}.
+    """
+    cashback_svc.sweep_user(db, user.id)
+    withdrawable = float(cashback_svc.balances(db, user.id)["withdrawable_balance"])
+    if withdrawable > 0:
+        return JSONResponse(
+            status_code=409,
+            content={"detail": f"仍有可提現返現 HK${withdrawable:g}，請先提現",
+                     "withdrawable_balance": withdrawable})
+    db.query(models.WalletItem).filter(
+        models.WalletItem.user_id == user.id,
+        models.WalletItem.status == 1).update({"status": 3})
+    balance = points_balance(db, user.id)
+    if balance > 0:
+        add_points(db, user.id, -balance, "account_delete")
     # Reason is recorded in the notification log for audit; account is deactivated.
     db.add(models.Notification(
         user_id=user.id, title="帳戶刪除",
         body=f"刪除原因：{body.reason or '未填寫'}", notification_type="account",
     ))
     user.is_active = False
+    user.deleted_at = _now()
+    user.delete_reason = body.reason or None
     db.commit()
     return {"message": "帳戶已刪除"}
 

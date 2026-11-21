@@ -33,6 +33,8 @@ class User(Base):
     locale = Column(String(10), default="zh-Hant")
     limited_time_notify = Column(Boolean, default=True)  # 限時搶購推送開關
     is_active = Column(Boolean, default=True)
+    deleted_at = Column(DateTime, nullable=True)  # M9-7: soft-delete time
+    delete_reason = Column(String(500), nullable=True)  # M9-7: optional reason
     created_at = Column(DateTime, default=_now)
 
     shops = relationship("Shop", back_populates="vendor")
