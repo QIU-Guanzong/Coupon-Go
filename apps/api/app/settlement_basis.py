@@ -38,6 +38,49 @@ from . import models
 from .models_packages import Order
 
 
+def settlement_basis_note(db: Session, coupon: models.Coupon = None,
+                          redemption: models.Redemption = None,
+                          wallet_item: models.WalletItem = None) -> str:
+    """One-word reason why a redemption settles at its basis (§2.5).
+
+    Mirrors the settlement_basis branches so the merchant can see WHY
+    a line is what it is, without the basis itself changing:
+    - refunded_skip: its package order was refunded — never settles.
+    - cash_zero: cash coupon — a discount, not money collected.
+    - package_paid: package redemption — the order's paid_amount.
+    - price_coupon: price coupon — the coupon's discount_price.
+    - free_zero: gift / percentage-only / pure-threshold coupon — 0.
+    """
+    from .models_packages import Order
+
+    item = wallet_item
+    if item is None and redemption is not None:
+        item = db.query(models.WalletItem).filter(
+            models.WalletItem.id == redemption.wallet_item_id).first()
+    order = None
+    if item is not None and getattr(item, "order_id", None) is not None:
+        order = db.query(Order).filter(Order.id == item.order_id).first()
+    if order is not None and order.refund_status == "refunded":
+        return "refunded_skip"
+    if order is None:
+        if coupon is None and redemption is not None:
+            coupon = db.get(models.Coupon, redemption.coupon_id)
+        if coupon is not None and (coupon.coupon_type or "").strip().lower() == "cash":
+            return "cash_zero"
+    if order is not None:
+        return "package_paid"
+    if coupon is not None:
+        if getattr(coupon, "discount_price", None) is not None:
+            return "price_coupon"
+    return "free_zero"
+
+
+BASIS_EXPLAINER = (
+    "结算基数只认实付金额：套餐按订单实付金额，价格券按券面优惠价；"
+    "现金券、免费券、纯门槛券不进结算（0 元）；已退款订单不结算。"
+    "佣金按商户生效费率从基数中扣除。")
+
+
 def settlement_basis(db: Session, coupon: models.Coupon = None,
                      redemption: models.Redemption = None,
                      wallet_item: models.WalletItem = None):
