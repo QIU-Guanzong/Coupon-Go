@@ -25,6 +25,8 @@ jobs:
           cache: pip
           cache-dependency-path: apps/api/requirements.txt
       - run: pip install -r apps/api/requirements.txt
+      - name: CJK font for signed-contract PDFs
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq fonts-wqy-zenhei
       - name: API tests (SQLite)
         working-directory: apps/api
         run: python -m pytest -q -p no:cacheprovider

@@ -17,6 +17,7 @@
 | 密码强度 | 🟡 | 最少 6 位，改为最少 8 位并拒绝常见弱密码。 |
 | 会话 | 🟡 | 令牌 7 天有效，登出不作废。缩短到 24 小时并加刷新令牌，或服务端保存令牌版本以便改密码、删号时作废全部会话。 |
 | 依赖版本 | ❌ | `apps/api/requirements.txt` 全是 `>=` 且没有锁定文件，构建结果不可重复。生成并提交锁定文件，Docker 按锁定文件安装。（体验网站的 `requirements.lock` 已有。） |
+| **登录令牌库有已知漏洞** | ❌ | CI 的 `pip-audit` 报 `python-jose 3.5.0`（PYSEC-2026-4298）及其依赖 `ecdsa 0.19.2`（PYSEC-2026-1325）。换成 PyJWT，改动集中在 `app/security.py`。 |
 | 依赖漏洞提醒 | 本 PR | Dependabot 每周检查 pip、pub、Docker、GitHub Actions。CI 里 `pip-audit` 只提醒，不阻止合并。 |
 | 密钥扫描 | ❌ | 仓库里没有真实密钥（已查 .gitignore 和 `.env.example`）。请在 GitHub 仓库设置里打开 Secret scanning 和 Push protection（需仓库所有者操作）。 |
 | 传输与响应头 | 🟡 | 体验网站由 Nginx 提供 HTTPS。正式 API 前面也要有 Nginx/负载均衡并加 `Strict-Transport-Security`、`X-Content-Type-Options`、`Content-Security-Policy`（Web 版）。 |
