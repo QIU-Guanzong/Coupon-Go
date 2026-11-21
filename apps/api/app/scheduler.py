@@ -58,20 +58,22 @@ from .models_scheduler import SchedulerLock  # noqa: F401  (register table)
 logger = logging.getLogger(__name__)
 
 JOB_NAMES = ("expired-packages", "bargain-expire", "payment-timeouts",
-             "cashback-sweep", "coupon-expiry", "monthly-settlements")
+             "cashback-sweep", "coupon-expiry", "monthly-settlements",
+             "connect-transfers")
 
 # Fixed Postgres advisory-lock keys, one per job (arbitrary but stable;
 # changing them orphans nothing — advisory locks die with the session).
+# 2026111705 is claimed by P1-C (points-expire) and 2026111706 by #12
+# (coupon-expiry); connect-transfers takes the next free key.
+# The full table lives in docs/SCHEDULER.md — keep it in sync.
 ADVISORY_LOCK_KEYS = {
     "expired-packages": 2026111701,
     "bargain-expire": 2026111702,
     "payment-timeouts": 2026111703,
     "cashback-sweep": 2026111704,
-    # 2026111705 is claimed by TWO unmerged blocks (stats
-    # monthly-settlements AND listing listing-schedule); this job
-    # takes the next free key instead of joining the collision.
     "coupon-expiry": 2026111706,
-    "monthly-settlements": 2026111705,
+    "monthly-settlements": 2026111708,
+    "connect-transfers": 2026111707,
 }
 
 
@@ -249,6 +251,18 @@ def run_monthly_settlements(db, period=None):
                     mf.sweep_monthly_settlements, period=period)
 
 
+def run_connect_transfers(db, batch_size=None):
+    """P1-B queue §F item 3: move queued post-redemption transfers to
+    Stripe, oldest first, at most batch_size per run. The redemption
+    transaction never calls Stripe; this job (and the manual retry
+    endpoint) is the only transfer path."""
+    from . import connect_service as svc
+    size = (batch_size if batch_size is not None
+            else config.SCHEDULER_CONNECT_BATCH_SIZE)
+    return _run_job(db, "connect-transfers",
+                    svc.sweep_pending_transfers, batch_size=size)
+
+
 JOB_RUNNERS = {
     "expired-packages": run_expired_packages,
     "bargain-expire": run_bargain_expire,
@@ -256,11 +270,12 @@ JOB_RUNNERS = {
     "cashback-sweep": run_cashback_sweep,
     "coupon-expiry": run_coupon_expiry,
     "monthly-settlements": run_monthly_settlements,
+    "connect-transfers": run_connect_transfers,
 }
 
 
 def run_all_jobs(session_factory=None, batch_size=None):
-    """Run the five interval sweeps once; monthly settlement is calendar-triggered.
+    """Run the six interval sweeps once; monthly settlement is calendar-triggered.
 
     Use run-once --job monthly-settlements to run the monthly job explicitly.
     """
@@ -276,6 +291,12 @@ def run_all_jobs(session_factory=None, batch_size=None):
     db = factory()
     try:
         results["cashback-sweep"] = run_cashback_sweep(
+            db, batch_size=batch_size)
+    finally:
+        db.close()
+    db = factory()
+    try:
+        results["connect-transfers"] = run_connect_transfers(
             db, batch_size=batch_size)
     finally:
         db.close()
@@ -326,6 +347,10 @@ def create_scheduler(session_factory=None, interval_seconds=None):
                                       timezone="UTC"),
                   id="monthly-settlements", max_instances=1, coalesce=True,
                   misfire_grace_time=3600)
+    sched.add_job(lambda: _one(run_connect_transfers),
+                  trigger=IntervalTrigger(seconds=interval),
+                  id="connect-transfers", max_instances=1, coalesce=True,
+                  misfire_grace_time=60)
     return sched
 
 
@@ -375,8 +400,10 @@ def main(argv=None):
     p_once.add_argument("--job", choices=list(JOB_NAMES) + ["all"],
                         default="all")
     p_once.add_argument("--batch-size", type=int, default=None,
-                        help="Cashback sweep users per batch (default "
-                             "SCHEDULER_CASHBACK_BATCH_SIZE)")
+                        help="Cashback sweep users / Connect transfer "
+                             "entries per batch (defaults "
+                             "SCHEDULER_CASHBACK_BATCH_SIZE / "
+                             "SCHEDULER_CONNECT_BATCH_SIZE)")
     sub.add_parser("run", help="Start the foreground scheduler (Ctrl-C quits)")
     sub.add_parser("status", help="Print the resolved scheduler config")
     args = parser.parse_args(argv)
@@ -392,8 +419,8 @@ def main(argv=None):
         else:
             db = SessionLocal()
             try:
-                if args.job == "cashback-sweep":
-                    results = {args.job: run_cashback_sweep(
+                if args.job in ("cashback-sweep", "connect-transfers"):
+                    results = {args.job: JOB_RUNNERS[args.job](
                         db, batch_size=args.batch_size)}
                 else:
                     results = {args.job: JOB_RUNNERS[args.job](db)}

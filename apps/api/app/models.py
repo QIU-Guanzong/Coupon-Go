@@ -202,6 +202,9 @@ class Redemption(Base):
     # column existed; settlement_basis falls back to the live rows
     # for those rows only (migration 0014 backfills them).
     face_value = Column(Numeric(12, 2), nullable=True)
+    # New redemptions freeze the commission rate at scan time. NULL denotes
+    # legacy history: do not invent or backfill a past contractual rate.
+    commission_rate_snapshot = Column(Numeric(5, 4), nullable=True)
     # Line A (report §11.2): idempotency + prepare + revoke window.
     idempotency_key = Column(String(80), unique=True, nullable=True)
     prepared_at = Column(DateTime, nullable=True)   # pre-redeem check time
@@ -282,4 +285,6 @@ from .models_packages import Order, Package, Payment, Refund  # noqa: E402,F401
 from .models_line_f import (  # noqa: E402,F401
     CmsAnnouncement, CmsBanner, Invoice, ReconciliationDiscrepancy,
     ReconciliationReport, Settlement, SettlementItem, ShopMember,
-)
+)# P1-B models (Stripe Connect accounts + merchant balance ledger) live
+# in app/models_connect.py; same pattern as line B / line F.
+from .models_connect import ConnectAccount, ConnectLedgerEntry  # noqa: E402,F401

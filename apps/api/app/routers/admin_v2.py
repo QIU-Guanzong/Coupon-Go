@@ -44,7 +44,7 @@ from ..models_line_f import (
 )
 from ..models_packages import PAYMENT_STATUSES, Order, Package
 from ..serializers_packages import order_out
-from ..settlement_ledger import CENT, lock_shop, lock_statement, cash_totals
+from ..settlement_ledger import CENT, lock_shop, lock_statement, cash_totals, redemption_commission_rate
 from ..models_line_f import SettlementReversal, SettlementTransfer
 from ..settlement_basis import BASIS_EXPLAINER, settlement_basis, settlement_basis_note
 from ..shared import (audit_log as _log, csv_response, money as _money,
@@ -100,6 +100,14 @@ def _invoice_totals(db: Session, settlement: Settlement) -> dict:
 def _settlement_out(db: Session, s: Settlement) -> dict:
     shop = db.query(models.Shop).filter(models.Shop.id == s.shop_id).first()
     paid, balance = cash_totals(db, s)
+    # Keep the historical header rate for compatibility; mixed statements
+    # need an explicit signal that their lines use different scan-time rates.
+    line_rates = {
+        redemption_commission_rate(redemption, s.commission_rate)
+        for redemption in db.query(models.Redemption)
+        .join(SettlementItem, SettlementItem.redemption_id == models.Redemption.id)
+        .filter(SettlementItem.settlement_id == s.id)
+    }
     return {
         **_invoice_totals(db, s),
         "id": s.id, "shop_id": s.shop_id,
@@ -108,6 +116,8 @@ def _settlement_out(db: Session, s: Settlement) -> dict:
         "period": s.period, "redemption_count": s.redemption_count,
         "gross_amount": _money(s.gross_amount),
         "commission_rate": _money(s.commission_rate),
+        "commission_rate_mixed": len(line_rates) > 1,
+        "applied_commission_rate": _money(next(iter(line_rates))) if len(line_rates) == 1 else None,
         "commission": _money(s.commission),
         "net_amount": _money(s.net_amount),
         "status": s.status, "dispute_reason": s.dispute_reason or "",
@@ -317,6 +327,7 @@ def set_commission_rate(body: schemas_line_f.CommissionRateSetIn,
     the single source of truth generate_settlement reads from.
     """
     shop = get_shop_or_404(db, body.shop_id)
+    lock_shop(db, shop.id)
     rate = Decimal(str(body.rate))
     row = (db.query(MerchantCommissionRate)
            .filter(MerchantCommissionRate.shop_id == shop.id).first())
@@ -723,7 +734,8 @@ def run_reconciliation(body: schemas_line_f.ReconciliationRunIn,
     reversals = {rev.item_id: rev for rev in db.query(SettlementReversal).join(SettlementItem).filter(
         SettlementItem.settlement_id == settlement.id)} if settlement else {}
     for i in items:
-        correct_fee = (i.amount * settlement.commission_rate).quantize(CENT) + i.rounding_adjustment
+        item_rate = redemption_commission_rate(redemption_by_id.get(i.redemption_id), settlement.commission_rate)
+        correct_fee = (i.amount * item_rate).quantize(CENT) + i.rounding_adjustment
         if correct_fee != i.commission:
             found.append(("commission_mismatch", i.redemption_id, i.id, correct_fee, i.commission))
         if i.redemption_id not in redemption_by_id:

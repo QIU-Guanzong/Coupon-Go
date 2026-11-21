@@ -1,4 +1,4 @@
-# M1 后台定时任务：过期退款 / 砍价结算 / 超时关闭 / 返现 sweep
+# M1 后台定时任务：过期退款 / 砍价结算 / 超时关闭 / 返现 sweep / Connect 转帐
 
 ## 问题
 
@@ -35,6 +35,7 @@ python -m app.scheduler status # 打印当前调度配置
 （CronTrigger，misfire 宽限 1 小时），为上月有核销的每家门店生成结算单。
 它不在 `run_all_jobs()` / `run-once --job all` 里（那是 5 个间隔任务），
 手动跑用 `python -m app.scheduler run-once --job monthly-settlements`。
+| `connect-transfers` Connect 转帐（P1-B 队列 §F 第 3 项） | `connect_service.py: sweep_pending_transfers()`（`pending` 流水按 id 顺序，每批上限 `SCHEDULER_CONNECT_BATCH_SIZE` 默认 50 条；手动接口 `POST /merchant/connect/transfers/{id}/retry` 同调 `_attempt_transfer`） | 已转帐 / 已冲回 / 已 `needs_manual` 的流水不再入选；每条带幂等键 `transfer-{entry_id}`，重试不重复转帐 |
 
 单条失败不影响其他：每个 sweep 按条 try/except，失败写日志（`logger.exception`）、
 回滚该条、计入 `failed`，下一周期重试。网关失败的砍价退款仍保持 failed 状态，
@@ -60,6 +61,7 @@ python -m app.scheduler status # 打印当前调度配置
 | `SCHEDULER_ENABLED` | dev 默认开；非 dev 未设置 = 关 | `1` 开 / `0` 关；未设置时非 dev 启动打明确警告，绝不静默不跑 |
 | `SCHEDULER_INTERVAL_SECONDS` | `300` | 执行周期（秒） |
 | `SCHEDULER_CASHBACK_BATCH_SIZE` | `100` | 返现 sweep 每批用户数 |
+| `SCHEDULER_CONNECT_BATCH_SIZE` | `50` | `connect-transfers` 每批转帐条数上限 |
 | `SCHEDULER_LOCK_LEASE_SECONDS` | `600` | 非 Postgres 锁行租约（秒） |
 
 **非 dev 环境缺调度配置时**：启动日志出现明确警告
@@ -90,3 +92,11 @@ advisory lock / 锁行保证只有一个实例实际执行；单实例部署也�
 非 dev 未配置警告、Postgres advisory lock 分支（stub 会话）。
 `tests/test_dianping_stats.py` 另覆盖月度任务：上月有核销的两家店各生成
 一张、重跑零生成、调度器注册了 `monthly-settlements`（下次运行为 1 日 02:00）。
+
+`tests/test_p1b_connect_fixes.py`（P1-B 队列 §F）：核销不调 Stripe、
+待结算经 sweep 转帐、批量上限、同一幂等键重试只转一笔、失败 5 次进
+`needs_manual` 并通知 admin、提款先写 `processing` 再调 Stripe、
+提款失败变 `failed` 释放余额、负余额停提款并上 admin 看板、冲回失败
+计次并通知 admin、Pydantic 校验、Stripe v2 版本走配置；两个并发测试
+（同一商户两次提款、同一流水两次重试）只在真实 Postgres 上跑
+（`pg-run/p1b_pg_run.py`，pgserver），SQLite 下跳过。

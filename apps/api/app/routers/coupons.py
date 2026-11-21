@@ -15,11 +15,11 @@ from sqlalchemy import exists, text
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from .. import cashback_service, config, errors, models, points, schemas
+from .. import cashback_service, config, connect_service, errors, models, points, schemas
 from ..database import get_db
 from ..deps import get_current_user, require_role
 from ..serializers import coupon_out
-from ..settlement_ledger import add_scanned_sale
+from ..settlement_ledger import add_scanned_sale, lock_shop
 from ..settlement_basis import settlement_basis
 from ..shared import issue_wallet_item, vendor_shop_ids
 
@@ -190,6 +190,7 @@ def _redeem_item(db: Session, item: models.WalletItem,
         raise errors.qr_wrong_shop()
     ensure_paid_voucher(db, item)
     ensure_redeemable(coupon)
+    connect_service.ensure_prior_transfer_closed(db, item.id)
     today_start = _now().replace(hour=0, minute=0, second=0, microsecond=0)
     scans_today = db.query(models.Redemption).filter(
         models.Redemption.scanned_by_vendor_id == vendor.id,
@@ -216,10 +217,14 @@ def _redeem_item(db: Session, item: models.WalletItem,
     # refunded: snapshot 0, the redemption never settles anyway.
     _basis = settlement_basis(db, coupon, wallet_item=item)
     face_value = _basis if _basis is not None else Decimal("0")
+    # The shop lock also serializes commission updates with the snapshot.
+    lock_shop(db, coupon.shop_id)
+    commission_rate_snapshot = connect_service.effective_commission_rate(db, coupon.shop_id)
     red = models.Redemption(
         wallet_item_id=item.id, coupon_id=coupon.id, shop_id=coupon.shop_id,
         scanned_by_vendor_id=vendor.id, face_value=face_value,
         idempotency_key=idempotency_key or None,
+        commission_rate_snapshot=commission_rate_snapshot,
         prepared_at=prepared_at)
     db.add(red)
     points.award_redeem_points(db, item.user_id, item.id)
@@ -242,6 +247,10 @@ def _redeem_item(db: Session, item: models.WalletItem,
         except cashback_service.CashbackError as e:
             raise HTTPException(status_code=400, detail=str(e))
     add_scanned_sale(db, red)
+    # P1-B: post-redemption transfer to the merchant's Connect account
+    # (commission deducted, net transferred). A prior unresolved transfer
+    # is rejected before consuming the wallet item; provider work is queued.
+    connect_block = connect_service.record_redemption(db, red)
     db.commit()
     db.refresh(red)
     return red
