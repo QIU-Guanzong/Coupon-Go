@@ -1028,3 +1028,42 @@ subtitle, has_branch: 0|1}], keyword}`（券與商户各最多 5 條）。
 | 出示頁二維碼倒計時與換碼 | 已寫清 | `expires_in_seconds=900`；到期重新調 `POST /store-scaned-qr-values` 換碼 |
 | 商户返現比例 X% | **未確認** | 無接口返回該字段；服務端默認線下比例 5% 未經接口暴露，商户詳情頁暫不顯示，待後端補字段 |
 | 提現 `failed` 的標記接口 | **未確認** | 無公開接口可把提現標記為失敗；`failure_reason` 由運營側服務端函數寫入，客戶端只讀 |
+## 統計系統（Dianping §2，對標大眾點評商家後台）
+
+完整接口清單與請求 / 返回示例見 `docs/DIANPING_STATS_API.md`。本節只記
+對既有接口的字段變更（Dot 對接時注意）。
+
+### 字段變更
+
+| 位置 | 變更 | 說明 |
+|---|---|---|
+| `GET /admin/settlements/{id}` 的 `settlement.items[]` | 新增 `basis_note`、`coupon_name` | 逐行口徑說明：`package_paid` / `price_coupon` / `cash_zero` / `free_zero` / `refunded_skip`（見 DIANPING_STATS_API.md §2.5）；口徑本身不變，仍是 `settlement_basis()` |
+| `GET /admin/settlements/{id}` 的 `settlement` | 新增 `basis_explainer` | 一句口徑說明文案，前端可直接展示在結算頁頂部 |
+| `POST /admin/settlements/generate` 的 `settlement.items[]` | 新增 `basis_note`、`coupon_name` | 同上 |
+| `GET /admin/settlements`、`GET /merchant/shops/{shop_id}/settlements`、`GET /merchant/settlements` | 新增 `?format=csv` | 結算單列表 CSV 導出（與核銷導出同一寫法） |
+| `GET /admin/settlements/{id}` | 新增 `?format=csv` | 單張結算單逐行明細 CSV（含 `basis_note` 列） |
+
+### 新增接口（摘要）
+
+| 方法 | 路徑 | 說明 |
+|---|---|---|
+| GET | `/merchant/balance`、`/merchant/shops/{shop_id}/balance` | 實時餘額：`pending_settlement` / `withdrawable` / `reserved` / `withdrawn` |
+| GET | `/merchant/shops/{shop_id}/balance/entries` | 餘額按單明細 |
+| GET | `/merchant/shops/{shop_id}/dashboard`、`/merchant/dashboard` | 經營看板：核銷趨勢、收入、客單、按券轉化、按店對比 |
+| POST / GET | `/merchant/withdrawals`、`/merchant/withdrawals/{id}`、`/merchant/withdrawals/{id}/cancel` | 商户提款申請（僅針對已確認結算單） |
+| GET / POST | `/admin/merchant-withdrawals`、`/admin/merchant-withdrawals/{id}/approve|reject|execute-payout|reverse` | 平台提款審核與打款。注意：`/admin/withdrawals` 仍是用戶返現提款隊列，不要混用 |
+| POST | `/merchant/settlements/{id}/dispute` | 商户側結算單異議入口（與平台側 `dispute` 同一狀態機） |
+
+### 打款執行（P1-B 依賴）
+
+`POST /admin/merchant-withdrawals/{id}/execute-payout` 只調
+`app/payouts.execute_merchant_payout()`。P1-B Stripe Connect 未接通前
+返回 **503**，提款單保持 `approved`，不產生任何打款記錄（fail closed，
+絕不退回成「標記已付」）。P1-B 接入點見 `app/payouts.py`。
+
+### 對賬變化
+
+`payment_entry_count`（打款行數校驗）改為金額校驗：已付清結算單打款
+總額須等於淨額，未付清不得超付；新差異類型
+`payment_amount_mismatch` / `payment_over_settlement`（部分提款不再
+誤報）。其餘對賬邏輯不變。
