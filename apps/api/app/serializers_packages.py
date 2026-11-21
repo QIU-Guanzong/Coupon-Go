@@ -8,6 +8,7 @@ from . import config, models
 from .models_line_b import Review, ShopRating
 from .models_line_f import Settlement, SettlementItem, SettlementReversal
 from .models_packages import Order, Package, Payment, Refund
+from .order_allocation import wallet_order_consistent
 
 REFUND_POLICY_TEXT = {
     "anytime": "未使用隨時退，過期自動退",
@@ -183,7 +184,7 @@ def order_wallet_refundable(db: Session, order: Order, items=None, payments=None
         return False
     if items is None:
         items = db.query(models.WalletItem).filter_by(order_id=order.id).all()
-    if not items or (len(items) > 1 and len(items) != (order.quantity or 1)):
+    if not wallet_order_consistent(order, items):
         return False
     if any(i.status != 1 or i.used_at is not None or
                         i.refund_hold_previous_status is not None for i in items):
@@ -313,7 +314,7 @@ def order_out(db: Session, o: Order) -> dict:
         "net_amount": float(net or 0),
         "wallet_item_id": wallet_item_id,
         "wallet_item_ids": [i.id for i in wallet_items],
-        "wallet_quantity_status": ("needs_review" if len(wallet_items) > 1 and len(wallet_items) != (o.quantity or 1) else "ok"),
+        "wallet_quantity_status": ("needs_review" if wallet_items and not wallet_order_consistent(o, wallet_items) else "ok"),
         "created_at": o.created_at,
         "paid_at": o.paid_at,
         "payments": [payment_out(p) for p in payments],

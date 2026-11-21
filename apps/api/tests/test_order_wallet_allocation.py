@@ -256,7 +256,7 @@ def test_order_and_wallet_refundability_follow_every_voucher(client):
 
 
 def test_single_wallet_keeps_actual_purchase_quantity(client):
-    user = base._register_and_login(client, 'allocation-single-three@example.com')
+    user = base._register_and_login(client, 'allocation-actual-purchase-three@example.com')
     package = base._create_package(client, name='Single voucher three portions', stock=5)
     result = client.post(f"/api/v3/packages/{package['id']}/purchase", json={
         'payment_method': 'fps', 'quantity': 3}, headers=user)
@@ -368,3 +368,22 @@ def test_pending_refund_with_changed_quantity_does_not_retry_gateway(client, mon
         assert exc.value.status_code == 409
     assert calls == []
     assert base._stock_left(client, pkg['id']) == before
+
+
+def test_inconsistent_voucher_identity_is_reported_to_both_clients(client):
+    from app.serializers import wallet_out
+    from app.serializers_packages import order_out
+
+    _, _, order, ids = make_order(client, 'projection-bad-identity', count=2)
+    with base.TestingSession() as db:
+        stored = db.get(Order, order['id'])
+        db.get(models.WalletItem, ids[1]).source = 'claim'
+        db.flush()
+        projection = order_out(db, stored)
+        wallet = wallet_out(db, db.get(models.WalletItem, ids[0]))
+        bad_wallet = wallet_out(db, db.get(models.WalletItem, ids[1]))
+        assert bad_wallet['order_wallet_quantity_status'] == 'needs_review'
+        assert projection['wallet_quantity_status'] == 'needs_review'
+        assert projection['refundable'] is False
+        assert wallet['order_wallet_quantity_status'] == 'needs_review'
+        assert wallet['order_refundable'] is False
