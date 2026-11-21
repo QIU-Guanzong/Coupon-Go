@@ -252,3 +252,20 @@ def test_order_and_wallet_refundability_follow_every_voucher(client):
     restored, wallets = projections()
     assert restored['voucher_redeemed'] is False and restored['refundable'] is True
     assert all(w['order_refundable'] is True for w in wallets)
+
+
+def test_single_wallet_keeps_actual_purchase_quantity(client):
+    user = base._register_and_login(client, 'allocation-single-three@example.com')
+    package = base._create_package(client, name='Single voucher three portions', stock=5)
+    result = client.post(f"/api/v3/packages/{package['id']}/purchase", json={
+        'payment_method': 'fps', 'quantity': 3}, headers=user)
+    assert result.status_code == 200, result.text
+    order = base._pay(client, user, result.json()['order']['id'])
+    rows = client.get('/api/v3/get-favorite-coupons-list', headers=user).json()['items']
+    wallet = next(row for row in rows if row['id'] == order['wallet_item_id'])
+    assert wallet['quantity'] == 3 and wallet['order_quantity'] == 3
+    assert wallet['order_wallet_quantity_status'] == 'ok' and wallet['order_refundable'] is True
+    assert base._stock_left(client, package['id']) == 2
+    refund = client.post(f"/api/v3/orders/{order['id']}/refund", json={}, headers=user)
+    assert refund.status_code == 200, refund.text
+    assert base._stock_left(client, package['id']) == 5
