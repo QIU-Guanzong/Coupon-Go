@@ -8,7 +8,10 @@ Design
 * In-process APScheduler (BackgroundScheduler) started from
   app.main's startup hook; one job per sweep, every
   SCHEDULER_INTERVAL_SECONDS (default 300s). Each job is independent:
-  its own lock, its own session, its own failure log.
+  its own lock, its own session, its own failure log. The monthly
+  settlement job is the exception: it runs on a calendar trigger
+  (1st of month 02:00 UTC), not on the interval.
+* Single-runner across instances: on Postgres the job takes
 * Single-runner across instances: on Postgres the job takes
   pg_try_advisory_lock (fixed key per job, released when the job
   ends); on any other dialect it claims a row in scheduler_locks
@@ -44,6 +47,7 @@ from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
 from apscheduler.schedulers.background import BackgroundScheduler
+from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 from sqlalchemy import text
 
@@ -54,7 +58,7 @@ from .models_scheduler import SchedulerLock  # noqa: F401  (register table)
 logger = logging.getLogger(__name__)
 
 JOB_NAMES = ("expired-packages", "bargain-expire", "payment-timeouts",
-             "cashback-sweep", "coupon-expiry")
+             "cashback-sweep", "coupon-expiry", "monthly-settlements")
 
 # Fixed Postgres advisory-lock keys, one per job (arbitrary but stable;
 # changing them orphans nothing — advisory locks die with the session).
@@ -67,6 +71,7 @@ ADVISORY_LOCK_KEYS = {
     # monthly-settlements AND listing listing-schedule); this job
     # takes the next free key instead of joining the collision.
     "coupon-expiry": 2026111706,
+    "monthly-settlements": 2026111705,
 }
 
 
@@ -233,6 +238,15 @@ def run_coupon_expiry(db):
     unredeemed items -> expired (GAP §5.6)."""
     from .routers import coupons as cp
     return _run_job(db, "coupon-expiry", cp.sweep_coupon_expiry)
+def run_monthly_settlements(db, period=None):
+    """Dianping §2.3: monthly settlement auto-generation — 1st of
+    month 02:00 UTC, last month's settlement for every shop with
+    redemptions in that period. Reuses the same generation logic as
+    POST /admin/settlements/generate (merchant_finance), so a manual
+    generate and the sweep can never disagree on amounts."""
+    from . import merchant_finance as mf
+    return _run_job(db, "monthly-settlements",
+                    mf.sweep_monthly_settlements, period=period)
 
 
 JOB_RUNNERS = {
@@ -241,12 +255,15 @@ JOB_RUNNERS = {
     "payment-timeouts": run_payment_timeouts,
     "cashback-sweep": run_cashback_sweep,
     "coupon-expiry": run_coupon_expiry,
+    "monthly-settlements": run_monthly_settlements,
 }
 
 
 def run_all_jobs(session_factory=None, batch_size=None):
-    """Run all sweeps once, each in its own session. Returns
-    {job_name: sweep result}."""
+    """Run the five interval sweeps once; monthly settlement is calendar-triggered.
+
+    Use run-once --job monthly-settlements to run the monthly job explicitly.
+    """
     factory = session_factory or SessionLocal
     results = {}
     for name in ("expired-packages", "bargain-expire", "payment-timeouts",
@@ -269,7 +286,9 @@ def create_scheduler(session_factory=None, interval_seconds=None):
     """Build (but do not start) the in-process scheduler. One job per
     sweep; max_instances=1 + coalesce so a slow run never overlaps
     itself, misfire_grace_time=60s so a briefly-blocked trigger still
-    fires once instead of piling up."""
+    fires once instead of piling up. The monthly-settlements job runs
+    on a calendar trigger (1st of month 02:00 UTC, grace 1h) instead
+    of the interval."""
     interval = (interval_seconds if interval_seconds is not None
                 else config.SCHEDULER_INTERVAL_SECONDS)
     factory = session_factory or SessionLocal
@@ -302,6 +321,11 @@ def create_scheduler(session_factory=None, interval_seconds=None):
                   trigger=IntervalTrigger(seconds=interval),
                   id="coupon-expiry", max_instances=1, coalesce=True,
                   misfire_grace_time=60)
+    sched.add_job(lambda: _one(run_monthly_settlements),
+                  trigger=CronTrigger(day=1, hour=2, minute=0,
+                                      timezone="UTC"),
+                  id="monthly-settlements", max_instances=1, coalesce=True,
+                  misfire_grace_time=3600)
     return sched
 
 
@@ -315,7 +339,7 @@ def validate_scheduler_config():
         logger.warning(
             "Scheduler disabled: %s. Expired-package refunds, bargain "
             "settlement, payment-timeout close, cashback sweep and "
-            "coupon-expiry reminders will "
+            "coupon-expiry reminders and monthly settlement generation will "
             "NOT run automatically; only the admin manual endpoints "
             "can backfill them.", status["reason"])
     else:
@@ -342,7 +366,7 @@ def main(argv=None):
         prog="app.scheduler",
         description="M1 background jobs: expired refunds, bargain "
                     "settlement, payment-timeout close, cashback sweep, "
-                    "coupon-expiry reminders "
+                    "coupon-expiry reminders, monthly settlement generation "
                     "(same logic as the admin manual endpoints).")
     sub = parser.add_subparsers(dest="command", required=True)
     p_once = sub.add_parser(

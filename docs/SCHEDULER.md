@@ -11,16 +11,16 @@
 
 - **进程内调度器**：`app/scheduler.py`，FastAPI 启动时（`app/main.py` startup）
 启动 `BackgroundScheduler`，每 `SCHEDULER_INTERVAL_SECONDS`（默认 300 秒）
-执行 4 个任务，各自独立的锁、会话与失败日志。
+执行 4 个间隔任务，另有 1 个月度任务（每月 1 日 02:00 UTC），各自独立的锁、会话与失败日志。
 - **run-once CLI**（运维 / cron / 测试手动跑，不受 `SCHEDULER_ENABLED` 开关影响）：
 ```bash
 cd apps/api
-python -m app.scheduler run-once [--job expired-packages|bargain-expire|payment-timeouts|cashback-sweep|all] [--batch-size N]
+python -m app.scheduler run-once [--job expired-packages|bargain-expire|payment-timeouts|cashback-sweep|monthly-settlements|all] [--batch-size N]
 python -m app.scheduler run # 前台常驻调度器
 python -m app.scheduler status # 打印当前调度配置
 ```
 
-## 5 个任务（与手动接口共用同一份逻辑）
+## 6 个任务（与手动接口共用同一份逻辑）
 
 | 任务 | 共用逻辑 | 幂等保证 |
 |---|---|---|
@@ -29,6 +29,12 @@ python -m app.scheduler status # 打印当前调度配置
 | `payment-timeouts` 超时 pending 关闭 | `routers/packages.py: sweep_payment_timeouts()`（与读订单时懒触发的 `_refresh_payment_timeout` 同逻辑） | 超时后订单不再是 pending，不再入选；库存按份数释放 |
 | `cashback-sweep` 返现 sweep | `cashback_service.py: sweep_all_users()`（全体用户，按 user id 游标分批，默认每批 100 人；单用户逻辑仍是 `sweep_user()`） | 已确认/已作废的交易不再是 pending，不再入选 |
 | `coupon-expiry` 券到期提醒与自动过期（dianping/unify） | `routers/coupons.py: sweep_coupon_expiry()`，手动接口 `POST /admin/coupon-expiry-sweep` 同调它 | 同一（用户，券）24 小时内只提醒一次；过期翻转只对 `status == 1` 的行生效 |
+| `monthly-settlements` 月结算单自动生成（Dianping §2.3） | `merchant_finance.py: sweep_monthly_settlements()`，手动接口 `POST /admin/settlements/generate` 同调 `generate_settlement_for_shop()` | 同一商户同一周期重复生成撞 `uq_settlement_shop_period` 计 skipped；单店失败不阻塞其他店，下一周期重试 |
+
+`monthly-settlements` 是唯一不走间隔触发的任务：每月 1 日 02:00 UTC
+（CronTrigger，misfire 宽限 1 小时），为上月有核销的每家门店生成结算单。
+它不在 `run_all_jobs()` / `run-once --job all` 里（那是 5 个间隔任务），
+手动跑用 `python -m app.scheduler run-once --job monthly-settlements`。
 
 单条失败不影响其他：每个 sweep 按条 try/except，失败写日志（`logger.exception`）、
 回滚该条、计入 `failed`，下一周期重试。网关失败的砍价退款仍保持 failed 状态，
@@ -82,3 +88,5 @@ advisory lock / 锁行保证只有一个实例实际执行；单实例部署也�
 1 秒间隔调度器自动跑、两个真实子进程同时 `run-once` 只退一次、
 锁被占时跳过、单条失败不阻塞其他且下一周期重试、手动接口与调度器共用逻辑、
 非 dev 未配置警告、Postgres advisory lock 分支（stub 会话）。
+`tests/test_dianping_stats.py` 另覆盖月度任务：上月有核销的两家店各生成
+一张、重跑零生成、调度器注册了 `monthly-settlements`（下次运行为 1 日 02:00）。

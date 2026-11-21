@@ -16,8 +16,9 @@ from . import config
 from .database import init_db
 from .errors import ApiError
 from .routers import (admin, admin_v2, auth, bargain, cashback, coupons,
-                      home, nearby, notifications, packages, qbot, redemption,
-                      reviews, search, uploads, vendor, wallet)
+                      home, merchant_stats, nearby, notifications, packages,
+                      qbot, redemption, reviews, search, uploads, vendor,
+                      wallet)
 from .scheduler import start_scheduler, validate_scheduler_config  # noqa: F401  (M1: also registers models_scheduler.scheduler_locks)
 
 from . import models_cashback  # noqa: F401  (Line D: register cashback tables)
@@ -45,7 +46,8 @@ for router in (auth.router, home.router, coupons.router, wallet.router,
                search.router, notifications.router, vendor.router,
                redemption.router, nearby.router, reviews.router,
                admin.router, admin_v2.router, uploads.router,
-               cashback.router, bargain.router, packages.router, qbot.router):
+               cashback.router, bargain.router, packages.router, qbot.router,
+               merchant_stats.router):
     app.include_router(router, prefix="/api/v3")
 
 # Line F: serve locally uploaded review images (placeholder storage;
