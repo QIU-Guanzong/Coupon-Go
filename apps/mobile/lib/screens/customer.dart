@@ -280,7 +280,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   const Icon(Icons.info_outline, size: 18, color: Color(0xFF785324)),
                   const SizedBox(width: 8),
                   Expanded(child: Text(
-                    context.tr('商戶及優惠為示例。毋須登入，可瀏覽優惠及使用 Q仔；領券及付款暫未開放。', 'Shops and offers are examples. Browse offers and use Q仔 without signing in; claiming and payments are unavailable.'),
+                    context.tr('以下商戶及優惠為範例資料，僅供瀏覽。', 'The shops and offers below are sample data for browsing only.'),
                     style: const TextStyle(color: Color(0xFF604317), fontSize: 13),
                   )),
                 ]),

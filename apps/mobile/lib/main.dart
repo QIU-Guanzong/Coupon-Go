@@ -595,7 +595,7 @@ class _HomeShellState extends State<HomeShell> {
           if (kIsWeb && const bool.fromEnvironment('PUBLIC_DEMO'))
             ListTile(
               leading: const Icon(Icons.android, color: CgColors.primary),
-              title: Text(context.tr('下載 Android 示範版', 'Download Android demo')),
+              title: Text(context.tr('下載 Android 版', 'Download Android app')),
               onTap: () async {
                 const publicUrl = String.fromEnvironment('PUBLIC_WEB_URL');
                 final base = publicUrl.isNotEmpty
