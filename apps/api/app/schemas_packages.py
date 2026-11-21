@@ -110,6 +110,8 @@ class OrderOut(BaseModel):
     user_id: int
     order_type: str
     package_id: Optional[int] = None
+    coupon_id: Optional[int] = None  # P1-A: paid-coupon orders only
+    coupon_name: str = ""  # P1-A: paid-coupon orders only
     package_name: str = ""
     shop_name: str = ""
     amount: float

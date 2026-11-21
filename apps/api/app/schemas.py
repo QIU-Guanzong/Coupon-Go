@@ -6,7 +6,12 @@ from pydantic import BaseModel, EmailStr, Field
 
 
 # ---------- auth ----------
-class RegisterIn(BaseModel):
+class LegalVersionsIn(BaseModel):
+    accepted_terms_version: Optional[str] = Field(default=None, max_length=64)
+    accepted_privacy_version: Optional[str] = Field(default=None, max_length=64)
+
+
+class RegisterIn(LegalVersionsIn):
     email: EmailStr
     password: str = Field(min_length=6)
     name: str = ""
@@ -19,7 +24,7 @@ class LoginIn(BaseModel):
     password: str
 
 
-class OtpVerifyIn(BaseModel):
+class OtpVerifyIn(LegalVersionsIn):
     email: EmailStr
     code: str
     purpose: str = "register"  # register | forgot
@@ -154,6 +159,10 @@ class CouponCreateIn(BaseModel):
     gift: str = ""
     discount_price: Optional[float] = None
     regular_price: Optional[float] = None
+    # P1-A: sale_price > 0 = paid coupon (buy only); None / 0 = free.
+    sale_price: Optional[float] = Field(default=None, ge=0)
+    # P1-A: refund policy for paid coupons (same 3 values as packages).
+    refund_policy: str = "anytime"
     min_spend: float = 0
     image: str = ""
     valid_from: datetime

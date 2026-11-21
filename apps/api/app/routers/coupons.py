@@ -79,6 +79,9 @@ def claim_coupon(coupon_id: int, user: models.User = Depends(get_current_user),
     if coupon.kind == "package":
         # Line C: package vouchers are bought, not claimed for free.
         raise HTTPException(status_code=400, detail="套餐券請購買，不可免費領取")
+    if coupon.sale_price is not None and float(coupon.sale_price) > 0:
+        # P1-A: paid coupons are bought, not claimed for free.
+        raise HTTPException(status_code=400, detail="付費券請購買，不可免費領取")
     if coupon.is_points_exchange:
         raise HTTPException(status_code=400, detail="積分券請用積分兌換")
     existing = db.query(models.WalletItem).filter(
@@ -233,10 +236,10 @@ def scan_coupon(body: schemas.ScanIn,
     coupon.used_count = models.Coupon.used_count + 1
     # M6: snapshot the settlement basis at scan time via the one
     # shared function (see app.settlement_basis) — package = order
-    # paid_amount, price coupon = discount_price, cash coupon =
-    # cash_amount, free / gift / percentage-only / pure-threshold = 0.
-    # Settlement generation and reconciliation read this snapshot,
-    # never the live coupon row. None means the order was already
+    # paid_amount, price coupon = discount_price. Cash / free / gift /
+    # percentage-only / pure-threshold coupons contribute 0.
+    # Settlement and reconciliation prefer the snapshot, except for
+    # refunded orders and old cash-coupon snapshots. None means the order was already
     # refunded: snapshot 0, the redemption never settles anyway.
     _basis = settlement_basis(db, coupon, wallet_item=item)
     face_value = _basis if _basis is not None else Decimal("0")

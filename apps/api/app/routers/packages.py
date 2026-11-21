@@ -24,6 +24,14 @@ net (commission rate is unset — report §8: fee is negotiated per
 merchant, default 0) with settlement_status='pending'. Reconciliation
 is line F; this line only records the ledger fields. A refund voids
 the settlement (settlement_status='void', net 0).
+
+P1-A (paid coupons, route b): an Order gains a coupon type
+(order_type='coupon', orders.coupon_id) instead of routing paid
+coupons through Package. The purchase / confirm / webhook / retry /
+cancel / refund / timeout machinery below is order-generic; only the
+stock, voucher-issue and reservation helpers branch on package vs
+coupon. Settlement needs no change: a wallet item that links an
+order settles at order.paid_amount via settlement_basis().
 """
 import json
 import logging
@@ -87,6 +95,19 @@ def _get_package_locked(db: Session, package_id: int) -> Package:
     return pkg
 
 
+def _get_coupon_locked(db: Session, coupon_id: int) -> models.Coupon:
+    """P1-A: same FIX-3 row lock as _get_package_locked, but for the
+    coupon row whose `remaining` is the paid coupon's stock."""
+    if db.get_bind().dialect.name == "sqlite":
+        db.query(models.Coupon).filter_by(id=coupon_id).update(
+            {"remaining": models.Coupon.remaining}, synchronize_session=False)
+    coupon = (db.query(models.Coupon).filter(models.Coupon.id == coupon_id)
+              .with_for_update().populate_existing().first())
+    if coupon is None:
+        raise HTTPException(status_code=404, detail="找不到此優惠券")
+    return coupon
+
+
 def _package_coupon(db: Session, package: Package):
     return (db.query(models.Coupon)
             .filter(models.Coupon.package_id == package.id,
@@ -115,7 +136,36 @@ def _check_reservation(db, pkg, user_id, quantity):
         raise HTTPException(400, "超出此套餐每人限購份數")
 
 
+def _check_coupon_reservation(db, coupon, quantity=1):
+    """P1-A: paid-coupon reservation check. The coupon itself is the
+    voucher, so its `remaining` is the stock; there is no per-user
+    limit (one coupon per order, repeat purchase = a new order)."""
+    if coupon.kind == "package":
+        raise HTTPException(400, "套餐券請購買套餐，不可直接購買")
+    if coupon.sale_price is None or float(coupon.sale_price) <= 0:
+        raise HTTPException(400, "免費券請直接領取，不可購買")
+    if coupon.remaining < quantity:
+        raise HTTPException(400, "此優惠券已售罄")
+    if coupon.status != "active" or not coupon.valid_from <= _now() < coupon.valid_to:
+        raise HTTPException(400, "此優惠券暫停發售或不在有效期內")
+
+
 def _release_stock(db: Session, order: Order):
+    if order.coupon_id is not None:
+        # P1-A: return the reserved unit(s) to the coupon's remaining,
+        # capped by what is not already promised to other live orders
+        # (same formula as the package branch below).
+        coupon = (db.query(models.Coupon)
+                  .filter(models.Coupon.id == order.coupon_id)
+                  .with_for_update().populate_existing().first())
+        if coupon is not None:
+            qty = order.quantity or 1
+            reserved = db.query(func.coalesce(func.sum(Order.quantity), 0)).filter(
+                Order.coupon_id == coupon.id, Order.id != order.id,
+                Order.payment_status.in_(("pending", "paid")), Order.refund_status != "refunded", Order.settlement_status != "void").scalar()
+            available = max(0, (coupon.total or 0) - reserved)
+            coupon.remaining = min(available, (coupon.remaining or 0) + qty)
+        return
     if order.package_id is None:
         return
     # FIX-3: lock the package row so a release cannot lose an update
@@ -189,13 +239,26 @@ def _refresh_payment_timeout(db: Session, order: Order):
     return order
 
 
-def _issue_voucher(db: Session, order: Order, package: Package):
-    """Payment succeeded → package voucher into Q Wallet (status 1).
-    Idempotent: a second confirm of the same order returns the voucher."""
+def _issue_voucher(db: Session, order: Order, package: Package = None):
+    """Payment succeeded → voucher into Q Wallet (status 1).
+    Idempotent: a second confirm of the same order returns the voucher.
+    Package orders issue the package's coupon template; P1-A coupon
+    orders issue the coupon itself."""
     existing = (db.query(models.WalletItem)
                 .filter(models.WalletItem.order_id == order.id).first())
     if existing is not None:
         return existing
+    if order.coupon_id is not None:
+        coupon = db.query(models.Coupon).filter(
+            models.Coupon.id == order.coupon_id).first()
+        if coupon is None:
+            raise HTTPException(status_code=500, detail="優惠券缺失，請聯繫客服")
+        item = models.WalletItem(
+            user_id=order.user_id, coupon_id=coupon.id, status=1,
+            source="purchase", order_id=order.id)
+        db.add(item)
+        db.flush()
+        return item
     coupon = _package_coupon(db, package)
     if coupon is None:
         raise HTTPException(status_code=500, detail="套餐券模板缺失，請聯繫客服")
@@ -226,7 +289,7 @@ def _apply_payment_result(db: Session, order: Order, attempt: Payment,
         order.commission_amount = 0
         order.net_amount = order.paid_amount
         order.settlement_status = "pending"
-        if package is not None:
+        if package is not None or order.coupon_id is not None:
             _issue_voucher(db, order, package)
         db.commit()
     elif outcome == "failed":
@@ -355,8 +418,10 @@ def _settle_expired(db, order_id):
 
 def sweep_expired_packages(db: Session, user_id=None) -> dict:
     # Older versions committed a successful payment separately from its voucher.
+    # P1-A: the same sweep covers paid-coupon orders (order_type='coupon').
     missing = (db.query(Order.id).outerjoin(models.WalletItem, models.WalletItem.order_id == Order.id)
-               .filter(Order.order_type == "package", Order.package_id.isnot(None),
+               .filter(Order.order_type.in_(("package", "coupon")),
+                       (Order.package_id.isnot(None)) | (Order.coupon_id.isnot(None)),
                        Order.payment_status == "paid", Order.refund_status == "none",
                        Order.settlement_status != "void", models.WalletItem.id.is_(None)))
     if user_id is not None:
@@ -367,7 +432,8 @@ def sweep_expired_packages(db: Session, user_id=None) -> dict:
             order = _lock_order(db, oid)
             if order.payment_status == "paid" and order.refund_status == "none" and order.settlement_status != "void":
                 _paid_attempt(db, order)
-                _issue_voucher(db, order, _get_package(db, order.package_id))
+                _issue_voucher(db, order,
+                               _get_package(db, order.package_id) if order.package_id else None)
             db.commit()
         except Exception:
             db.rollback()
@@ -376,7 +442,7 @@ def sweep_expired_packages(db: Session, user_id=None) -> dict:
     # Include legacy expired vouchers marked status 3 by an earlier wallet read.
     q = (db.query(Order.id).join(models.WalletItem, models.WalletItem.order_id == Order.id)
          .join(models.Coupon, models.Coupon.id == models.WalletItem.coupon_id)
-         .filter(Order.order_type == "package", Order.payment_status == "paid",
+         .filter(Order.order_type.in_(("package", "coupon")), Order.payment_status == "paid",
                  (Order.refund_status == "requested") | (
                      (Order.refund_status.in_(("none", "rejected"))) & (Order.settlement_status != "void") &
                      models.WalletItem.status.in_((1, 3)) & (models.Coupon.valid_to <= _now()))))
@@ -596,6 +662,94 @@ def purchase_package(package_id: int, body: sp.PurchaseIn,
         "訂單已建立，請完成支付")
 
 
+# ---------- paid coupons (P1-A) ----------
+@router.post("/coupons/{coupon_id}/purchase")
+def purchase_coupon(coupon_id: int, body: sp.PurchaseIn,
+                    user: models.User = Depends(get_current_user),
+                    db: Session = Depends(get_db)):
+    """Buy a paid coupon (order_type='coupon'). Reuses the package
+    order / payment chain: reserve 1 unit of the coupon's `remaining`,
+    create the order + payment attempt; confirm via
+    /orders/{id}/confirm-payment or the Stripe webhook and the voucher
+    lands in Q Wallet on success. One coupon per order (quantity > 1
+    → 400); buying again = a new order. Free coupons are rejected
+    here — claim them instead."""
+    if body.payment_method not in PAYMENT_METHODS:
+        raise HTTPException(status_code=400, detail="支付方式須為 fps 或 card")
+    if body.quantity != 1:
+        raise HTTPException(status_code=400, detail="付費券每次限購一張")
+    # FIX-3: lock the coupon row; the stock check below then reads
+    # the locked row, and a concurrent purchase blocks until commit.
+    coupon = _get_coupon_locked(db, coupon_id)
+    # Idempotent replay: same client_ref returns the original order.
+    if body.client_ref:
+        existing = (db.query(Order)
+                    .filter(Order.user_id == user.id,
+                            Order.coupon_id == coupon.id,
+                            Order.order_type == "coupon",
+                            Order.client_ref == body.client_ref,
+                            Order.payment_status != "cancelled")
+                    .order_by(Order.id.desc()).first())
+        if existing is not None:
+            if existing.payment_method != body.payment_method:
+                raise HTTPException(409, "付款方式與原訂單不同")
+            # Timeout and retry both acquire order before coupon. Release the
+            # read-only reservation lock before following that order here.
+            db.rollback()
+            _refresh_payment_timeout(db, existing)
+            attempt = _latest_payment(db, existing.id)
+            return _purchase_response(
+                db, existing, attempt,
+                attempt.client_secret if attempt else "",
+                "訂單已存在，返回原訂單")
+    _check_coupon_reservation(db, coupon, 1)
+    total = coupon.sale_price
+    try:
+        order = Order(
+            user_id=user.id, order_type="coupon", coupon_id=coupon.id,
+            quantity=1,
+            amount=total, paid_amount=0,
+            payment_method=body.payment_method, payment_status="pending",
+            refund_status="none", settlement_status="pending",
+            commission_amount=0, net_amount=0, client_ref=body.client_ref or "")
+        db.add(order)
+        # Reserve 1 unit until the payment settles / fails / times out.
+        coupon.remaining -= 1
+        db.flush()
+        try:
+            intent = create_payment_intent(order.id, float(total),
+                                           body.payment_method)
+        except GatewayError as exc:
+            # Gateway unreachable before any attempt existed: drop the
+            # half-made order and release the reservation so a retry is clean.
+            db.delete(order)
+            coupon.remaining += 1
+            db.commit()
+            logger.exception("coupon purchase gateway failed coupon_id=%s: %s",
+                             coupon_id, exc)
+            raise HTTPException(status_code=502,
+                                detail=GATEWAY_FAILURE_MESSAGE)
+        attempt = Payment(
+            order_id=order.id, gateway="stripe",
+            gateway_ref=intent.get("gateway_ref", ""),
+            client_secret=intent.get("client_secret", ""),
+            method=body.payment_method, amount=total,
+            currency=intent.get("currency", "HKD"), status="requires_payment")
+        db.add(attempt)
+        db.commit()
+    except IntegrityError:
+        # FIX-3 backstop: the CHECK (remaining >= 0) fired — the row
+        # lock did not serialise (SQLite ignores FOR UPDATE). The
+        # reservation never landed; report sold out instead of a 500.
+        db.rollback()
+        raise HTTPException(status_code=400, detail="此優惠券已售罄")
+    db.refresh(order)
+    db.refresh(attempt)
+    return _purchase_response(
+        db, order, attempt, intent.get("client_secret", ""),
+        "訂單已建立，請完成支付")
+
+
 # ---------- orders ----------
 @router.get("/orders")
 def list_orders(user: models.User = Depends(get_current_user),
@@ -681,8 +835,10 @@ def confirm_payment(order_id: int, body: sp.ConfirmPaymentIn,
     _apply_payment_result(db, order, attempt, outcome,
                           body.failure_message)
     db.refresh(order)
+    # P1-A: coupon orders name the voucher 優惠券, package orders keep 套餐券.
+    voucher = "優惠券" if order.coupon_id is not None else "套餐券"
     messages = {
-        "succeeded": "支付成功，套餐券已存入 Q Wallet",
+        "succeeded": f"支付成功，{voucher}已存入 Q Wallet",
         "failed": "支付失敗，可重試或取消訂單",
         "timeout": "支付逾時，可重試或取消訂單",
     }
@@ -695,22 +851,34 @@ def retry_payment(order_id: int, body: sp.RetryPaymentIn,
                   user: models.User = Depends(get_current_user),
                   db: Session = Depends(get_db)):
     # FIX-3: lock the order row (one retry at a time per order) and
-    # the package row (stock decrement below) before re-checking.
+    # the package / coupon row (stock decrement below) before re-checking.
     order = _get_order_for_user_locked(db, order_id, user.id)
     if order.payment_status not in ("failed", "timeout"):
         raise HTTPException(status_code=400, detail="只有支付失敗或逾時的訂單可以重試")
     method = body.payment_method or order.payment_method
     if method not in PAYMENT_METHODS:
         raise HTTPException(status_code=400, detail="支付方式須為 fps 或 card")
-    pkg = _get_package_locked(db, order.package_id) if order.package_id else None
-    if pkg is None:
-        raise HTTPException(status_code=400, detail="此套餐已售罄，無法重試")
+    # P1-A: coupon orders re-reserve the coupon's remaining instead.
+    pkg = coupon = None
+    if order.package_id:
+        pkg = _get_package_locked(db, order.package_id)
+    elif order.coupon_id is not None:
+        coupon = _get_coupon_locked(db, order.coupon_id)
+    else:
+        raise HTTPException(status_code=400, detail="此訂單無法重試")
+    sold_out_msg = "此套餐已售罄，無法重試" if pkg is not None else "此優惠券已售罄，無法重試"
     quantity = order.quantity or 1
-    _check_reservation(db, pkg, user.id, quantity)
+    if pkg is not None:
+        _check_reservation(db, pkg, user.id, quantity)
+    else:
+        _check_coupon_reservation(db, coupon, quantity)
     order.payment_status = "pending"
     order.payment_method = method
-    pkg.stock_left -= quantity
-    _sync_coupon_stock(db, pkg)
+    if pkg is not None:
+        pkg.stock_left -= quantity
+        _sync_coupon_stock(db, pkg)
+    else:
+        coupon.remaining -= quantity
     try:
         db.flush()
         try:
@@ -734,7 +902,7 @@ def retry_payment(order_id: int, body: sp.RetryPaymentIn,
         # FIX-3 backstop: the CHECK (stock_left >= 0) fired — the row
         # lock did not serialise (SQLite ignores FOR UPDATE).
         db.rollback()
-        raise HTTPException(status_code=400, detail="此套餐已售罄，無法重試")
+        raise HTTPException(status_code=400, detail=sold_out_msg)
     db.refresh(order)
     db.refresh(attempt)
     return _purchase_response(db, order, attempt,
@@ -760,6 +928,9 @@ def cancel_order(order_id: int, user: models.User = Depends(get_current_user),
 
 # ---------- refunds ----------
 def _refund_order_checked(db: Session, order: Order, reason: str) -> dict:
+    # P1-A: the same gate serves package and paid-coupon orders; only
+    # the voucher noun in the messages differs.
+    voucher = "優惠券" if order.coupon_id is not None else "套餐券"
     if order.payment_status != "paid":
         raise HTTPException(status_code=400, detail="只有已支付的訂單可以退款")
     if order.refund_status not in ("none", "rejected"):
@@ -767,11 +938,11 @@ def _refund_order_checked(db: Session, order: Order, reason: str) -> dict:
     item = (db.query(models.WalletItem)
             .filter(models.WalletItem.order_id == order.id).first())
     if item is None:
-        raise HTTPException(status_code=400, detail="找不到此訂單的套餐券")
+        raise HTTPException(status_code=400, detail=f"找不到此訂單的{voucher}")
     if item.status == 2:
-        raise HTTPException(status_code=400, detail="已核銷的套餐券不可退款")
+        raise HTTPException(status_code=400, detail=f"已核銷的{voucher}不可退款")
     if item.status == 3:
-        raise HTTPException(status_code=400, detail="套餐券已失效，不可退款")
+        raise HTTPException(status_code=400, detail=f"{voucher}已失效，不可退款")
     coupon = db.query(models.Coupon).filter(
         models.Coupon.id == item.coupon_id).first()
     policy = (coupon.refund_policy if coupon else None) or "anytime"
@@ -783,7 +954,7 @@ def _refund_order_checked(db: Session, order: Order, reason: str) -> dict:
     refund = _process_refund(db, order, reason or "用戶申請退款")
     return {"refund": refund_out(refund),
             "order": order_out(db, order),
-            "message": {"refunded": "退款成功，套餐券已作廢", "requested": "退款處理中，套餐券已暫停使用",
+            "message": {"refunded": f"退款成功，{voucher}已作廢", "requested": f"退款處理中，{voucher}已暫停使用",
                         "rejected": "退款未成功，請查看訂單"}[refund.status]}
 
 
@@ -808,6 +979,31 @@ def refund_package(package_id: int, body: sp.RefundIn,
     order = (db.query(Order).join(models.WalletItem, models.WalletItem.order_id == Order.id)
              .filter(models.WalletItem.status == 1, models.WalletItem.used_at.is_(None),
                      Order.user_id == user.id, Order.package_id == pkg.id,
+                     Order.payment_status == "paid",
+                     Order.refund_status.in_(("none", "rejected")))
+             .order_by(Order.id.desc())
+             .with_for_update().first())
+    if order is None:
+        raise HTTPException(status_code=404, detail="沒有可退款的已支付訂單")
+    return _refund_order_checked(db, _lock_order(db, order.id), body.reason)
+
+
+@router.post("/coupons/{coupon_id}/refund")
+def refund_coupon(coupon_id: int, body: sp.RefundIn,
+                  user: models.User = Depends(get_current_user),
+                  db: Session = Depends(get_db)):
+    """P1-A: refund the newest refundable paid-coupon order of this
+    coupon — the coupon-side mirror of /packages/{id}/refund. Same
+    gate as /orders/{id}/refund (paid + unused + policy)."""
+    coupon = db.query(models.Coupon).filter(models.Coupon.id == coupon_id).first()
+    if coupon is None:
+        raise HTTPException(status_code=404, detail="找不到此優惠券")
+    # FIX-3: lock the newest paid, unrefunded order of this coupon so
+    # a concurrent refund of the same order blocks here.
+    order = (db.query(Order).join(models.WalletItem, models.WalletItem.order_id == Order.id)
+             .filter(models.WalletItem.status == 1, models.WalletItem.used_at.is_(None),
+                     Order.user_id == user.id, Order.coupon_id == coupon.id,
+                     Order.order_type == "coupon",
                      Order.payment_status == "paid",
                      Order.refund_status.in_(("none", "rejected")))
              .order_by(Order.id.desc())

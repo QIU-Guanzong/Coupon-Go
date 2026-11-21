@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from .. import models, schemas
 from ..database import get_db
 from ..deps import get_current_user, require_role
+from ..models_packages import REFUND_POLICIES
 from ..serializers import amount_text, coupon_out, shop_out
 
 router = APIRouter()
@@ -66,6 +67,8 @@ def coupon_create(body: schemas.CouponCreateIn,
         raise HTTPException(status_code=404, detail="找不到此商店")
     if body.valid_to <= body.valid_from:
         raise HTTPException(status_code=400, detail="到期日期必須晚於生效日期")
+    if body.refund_policy not in REFUND_POLICIES:
+        raise HTTPException(status_code=400, detail="refund_policy 不正確")
     coupon = models.Coupon(
         shop_id=body.shop_id, vendor_id=vendor.id,
         coupon_type=body.coupon_type, coupon_name=body.coupon_name,
@@ -73,6 +76,8 @@ def coupon_create(body: schemas.CouponCreateIn,
         cash_amount=body.cash_amount, percentage=body.percentage,
         gift=body.gift, discount_price=body.discount_price,
         regular_price=body.regular_price, min_spend=body.min_spend,
+        # P1-A: sale_price > 0 = paid coupon; refund_policy rides along.
+        sale_price=body.sale_price, refund_policy=body.refund_policy,
         image=body.image, valid_from=body.valid_from, valid_to=body.valid_to,
         total=body.total, remaining=body.total, status="pending_review",
         additional_terms=body.additional_terms,
