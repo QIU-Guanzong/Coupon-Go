@@ -14,7 +14,7 @@ from sqlalchemy import exists, text
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from .. import cashback_service, config, models, schemas
+from .. import cashback_service, config, connect_service, models, schemas
 from ..database import get_db
 from ..deps import add_points, get_current_user, require_role
 from ..serializers import coupon_out
@@ -266,12 +266,18 @@ def scan_coupon(body: schemas.ScanIn,
         except cashback_service.CashbackError as e:
             raise HTTPException(status_code=400, detail=str(e))
     add_scanned_sale(db, red)
+    # P1-B: post-redemption transfer to the merchant's Connect account
+    # (commission deducted, net transferred). Never raises: a failed
+    # transfer leaves a pending ledger entry for the retry endpoint,
+    # and the redemption itself must not fail because of it.
+    connect_block = connect_service.record_redemption(db, red)
     db.commit()
     db.refresh(red)
     return {"message": "您的優惠券已成功使用", "coupon_name": coupon.coupon_name,
             "shop_id": coupon.shop_id, "redemption_id": red.id,
             "revoke_window_minutes": config.REVOKE_WINDOW_MINUTES,
-            "scanned_at": red.scanned_at.replace(tzinfo=timezone.utc), "duplicate": False}
+            "scanned_at": red.scanned_at.replace(tzinfo=timezone.utc), "duplicate": False,
+            "connect": connect_block}
 
 
 @router.get("/get-vendor-usage-data-new")

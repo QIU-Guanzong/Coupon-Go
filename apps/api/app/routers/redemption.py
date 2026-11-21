@@ -26,7 +26,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import PlainTextResponse
 from sqlalchemy.orm import Session
 
-from .. import config, models, prepare_token
+from .. import config, connect_service, models, prepare_token
 from ..cashback_service import lock_account, void_for_revocation
 from ..settlement_ledger import reverse_sale
 from ..database import get_db
@@ -177,6 +177,11 @@ def revoke_redemption(redemption_id: int, acknowledge_existing: bool = False,
     # points (if any) are clawed back; no review -> None.
     review = hide_reviews_for_revoked_redemption(db, red)
     reverse_sale(db, red, "revoked")
+    # P1-B: reverse the Connect transfer for this redemption (pending
+    # entries reverse locally; transferred entries via Transfer
+    # Reversal). Idempotent; a gateway failure flags the entry for the
+    # retry endpoint instead of failing the revoke.
+    connect_reversal = connect_service.reverse_redemption(db, red, "revoked")
     db.commit()
     return {"message": "核銷已撤銷，優惠券已到期" if item.status == 3 else "核銷已撤銷，優惠券已退回未使用",
             "wallet_status": item.status,
@@ -185,7 +190,8 @@ def revoke_redemption(redemption_id: int, acknowledge_existing: bool = False,
             "revoked_at": red.revoked_at,
             "revoke_window_minutes": config.REVOKE_WINDOW_MINUTES,
             "cashback": cashback,
-            "review": review}
+            "review": review,
+            "connect": connect_reversal}
 
 
 @router.get("/vendor/redemptions/export")

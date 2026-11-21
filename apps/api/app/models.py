@@ -283,4 +283,6 @@ from .models_packages import Order, Package, Payment, Refund  # noqa: E402,F401
 from .models_line_f import (  # noqa: E402,F401
     CmsAnnouncement, CmsBanner, Invoice, ReconciliationDiscrepancy,
     ReconciliationReport, Settlement, SettlementItem, ShopMember,
-)
+)# P1-B models (Stripe Connect accounts + merchant balance ledger) live
+# in app/models_connect.py; same pattern as line B / line F.
+from .models_connect import ConnectAccount, ConnectLedgerEntry  # noqa: E402,F401

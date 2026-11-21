@@ -35,7 +35,7 @@ from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from .. import cashback_service, config, models
+from .. import cashback_service, config, connect_service, models
 from ..settlement_ledger import reverse_sale
 from ..database import get_db
 from ..deps import get_current_user, get_optional_user, require_role
@@ -303,6 +303,9 @@ def _resume_refund(db, order_id):
             if red.revoked_at is not None:
                 cashback_service.void_for_revocation(db, red)
             reverse_sale(db, red, "refunded")
+            # P1-B: reverse the Connect transfer for this redemption too
+            # (idempotent — an already-reversed entry is a no-op).
+            connect_service.reverse_redemption(db, red, "refunded")
         attempt.status = "refunded"
         order.settlement_status = "void"
         order.commission_amount = order.net_amount = 0
