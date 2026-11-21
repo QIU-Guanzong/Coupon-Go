@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from .. import config, models, schemas
+from .. import config, models, points_service, schemas
 from ..database import get_db
 from ..deps import add_points, get_current_user, points_balance
 from ..models_cashback import WithdrawalEvent
@@ -102,8 +102,13 @@ def get_points(user: models.User = Depends(get_current_user),
            .filter(models.PointTransaction.user_id == user.id)
            .order_by(models.PointTransaction.id.desc()).limit(50).all())
     return {"balance": points_balance(db, user.id),
+            "expiring_soon": points_service.expiring_soon_points(db, user.id),
+            "expiring_soon_days": config.POINTS_EXPIRE_SOON_DAYS,
             "transactions": [{"id": t.id, "delta": t.delta, "reason": t.reason,
-                              "created_at": t.created_at.isoformat()} for t in txs]}
+                              "created_at": t.created_at.isoformat(),
+                              "expires_at": (t.expires_at.isoformat()
+                                             if t.expires_at is not None
+                                             else None)} for t in txs]}
 
 
 @router.post("/review")
@@ -135,6 +140,9 @@ def exchange_points(coupon_id: int, user: models.User = Depends(get_current_user
     coupon = db.query(models.Coupon).filter(models.Coupon.id == coupon_id).first()
     if coupon is None or not coupon.is_points_exchange:
         raise HTTPException(status_code=404, detail="找不到此積分券")
+    # P1-C: a negative balance (refund clawback) blocks exchange
+    # outright, with an explicit error, before the generic check.
+    points_service.require_spendable_balance(db, user.id)
     if points_balance(db, user.id) < POINTS_EXCHANGE_COST:
         raise HTTPException(status_code=400, detail="積分不足")
     existing = db.query(models.WalletItem).filter(

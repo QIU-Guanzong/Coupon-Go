@@ -29,8 +29,15 @@ REDIS_URL = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
 
 # Points rules (demo rules from the MVP; configurable, not hard-coded business law)
 POINTS_CLAIM = int(os.environ.get("POINTS_CLAIM", "10"))       # 領券 +10
-POINTS_REDEEM = int(os.environ.get("POINTS_REDEEM", "20"))     # 核銷 +20
+POINTS_REDEEM = int(os.environ.get("POINTS_REDEEM", "20"))     # 免費券核銷 +20
 POINTS_REVIEW = int(os.environ.get("POINTS_REVIEW", "15"))     # 評價 +15
+# P1-C: paid voucher redeem earns per-HKD-spent points (Order.paid_amount
+# x POINTS_PER_HKD, floored); every grant expires after
+# POINTS_EXPIRE_MONTHS months; /points reports points expiring within
+# POINTS_EXPIRE_SOON_DAYS days.
+POINTS_PER_HKD = float(os.environ.get("POINTS_PER_HKD", "1"))
+POINTS_EXPIRE_MONTHS = int(os.environ.get("POINTS_EXPIRE_MONTHS", "12"))
+POINTS_EXPIRE_SOON_DAYS = int(os.environ.get("POINTS_EXPIRE_SOON_DAYS", "30"))
 
 # Google services (Places API + Google sign-in).
 # 【待更换】凭据在本地 infra/.env 配置（不进仓库、不推送），
@@ -136,7 +143,7 @@ def scheduler_status() -> dict:
                   f"{SCHEDULER_INTERVAL_SECONDS} 秒执行一次"
                   if enabled else
                   "SCHEDULER_ENABLED=0：调度器已显式关闭，过期退款 / 砍价结算 / "
-                  "超时关闭 / 返现 sweep 不会自动执行，只能手动接口补跑")
+                  "超时关闭 / 返现 sweep / 积分过期不会自动执行，只能手动接口补跑")
         return {"enabled": enabled, "configured_explicitly": True,
                 "interval_seconds": SCHEDULER_INTERVAL_SECONDS,
                 "cashback_batch_size": SCHEDULER_CASHBACK_BATCH_SIZE,
@@ -151,5 +158,5 @@ def scheduler_status() -> dict:
             "interval_seconds": SCHEDULER_INTERVAL_SECONDS,
             "cashback_batch_size": SCHEDULER_CASHBACK_BATCH_SIZE,
             "reason": "非开发环境未配置 SCHEDULER_ENABLED，调度器未启动："
-                      "过期套餐退款 / 砍价到期结算 / 超时订单关闭 / 返现 sweep "
-                      "不会自动执行。请设置 SCHEDULER_ENABLED=1 再启动"}
+                      "过期套餐退款 / 砍价到期结算 / 超时订单关闭 / 返现 sweep / "
+                      "积分过期不会自动执行。请设置 SCHEDULER_ENABLED=1 再启动"}

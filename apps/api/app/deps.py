@@ -1,9 +1,12 @@
 """Auth dependencies: current user / roles."""
+from calendar import monthrange
+from datetime import datetime, timezone
+
 from fastapi import Depends, HTTPException
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.orm import Session
 
-from . import legal, models, security
+from . import config, legal, models, security
 from .database import get_db
 
 bearer = HTTPBearer(auto_error=False)
@@ -84,6 +87,25 @@ def points_balance(db: Session, user_id: int) -> int:
     return int(total or 0)
 
 
-def add_points(db: Session, user_id: int, delta: int, reason: str, ref_id=None):
-    db.add(models.PointTransaction(user_id=user_id, delta=delta, reason=reason, ref_id=ref_id))
+def add_months(dt: datetime, months: int) -> datetime:
+    """Calendar month addition (clamped to the target month's last
+    day, e.g. Jan 31 + 1 month -> Feb 28). P1-C: points expiry."""
+    month = dt.month - 1 + months
+    year = dt.year + month // 12
+    month = month % 12 + 1
+    day = min(dt.day, monthrange(year, month)[1])
+    return dt.replace(year=year, month=month, day=day)
+
+
+def add_points(db: Session, user_id: int, delta: int, reason: str, ref_id=None,
+               expires_at=None):
+    # P1-C: every positive grant expires POINTS_EXPIRE_MONTHS after it
+    # is earned unless the caller pins an explicit expiry. Negative /
+    # reversal rows never expire themselves (expires_at stays NULL).
+    if expires_at is None and delta > 0:
+        expires_at = add_months(
+            datetime.now(timezone.utc).replace(tzinfo=None),
+            config.POINTS_EXPIRE_MONTHS)
+    db.add(models.PointTransaction(user_id=user_id, delta=delta, reason=reason,
+                                   ref_id=ref_id, expires_at=expires_at))
     db.flush()

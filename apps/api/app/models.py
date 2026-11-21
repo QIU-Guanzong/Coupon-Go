@@ -215,8 +215,12 @@ class PointTransaction(Base):
     id = Column(Integer, primary_key=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     delta = Column(Integer, nullable=False)                 # +10 / +20 / +15 / -9 ...
-    reason = Column(String(60), nullable=False)            # claim | redeem | review | exchange
+    reason = Column(String(60), nullable=False)            # claim | redeem | review | exchange | expire | refund_clawback | revoke
     ref_id = Column(Integer, nullable=True)
+    # P1-C: every positive grant expires POINTS_EXPIRE_MONTHS after it
+    # is earned (migration 0021 backfills legacy rows). NULL = no
+    # expiry (negative / reversal rows, which never expire themselves).
+    expires_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=_now)
 
     user = relationship("User", back_populates="points")

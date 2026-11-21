@@ -219,6 +219,10 @@ class PrepareIn(BaseModel):
 class PointsOut(BaseModel):
     balance: int
     transactions: List[dict] = []
+    # P1-C: unspent points expiring within POINTS_EXPIRE_SOON_DAYS,
+    # and the window itself (days) so clients can label it.
+    expiring_soon: int = 0
+    expiring_soon_days: int = 30
 
 
 # ---------- misc ----------

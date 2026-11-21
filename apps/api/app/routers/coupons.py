@@ -14,7 +14,7 @@ from sqlalchemy import exists, text
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from .. import cashback_service, config, models, schemas
+from .. import cashback_service, config, models, points_service, schemas
 from ..database import get_db
 from ..deps import add_points, get_current_user, require_role
 from ..serializers import coupon_out
@@ -246,7 +246,11 @@ def scan_coupon(body: schemas.ScanIn,
         idempotency_key=body.idempotency_key or None,
         prepared_at=prepared_at)
     db.add(red)
-    add_points(db, item.user_id, config.POINTS_REDEEM, "redeem", ref_id=item.id)
+    # P1-C: paid voucher -> floor(paid_amount * POINTS_PER_HKD), free
+    # coupon -> POINTS_REDEEM (award_redeem_points decides from the
+    # wallet item's order). Revoke already reverses the actual award,
+    # so no change is needed there.
+    points_service.award_redeem_points(db, item.user_id, item, coupon)
     # FIX-2: cashback is credited here, server-side, from this redemption
     # only — amount basis and rate come from the coupon row / server
     # config, never from the client. Same transaction as the redemption,
