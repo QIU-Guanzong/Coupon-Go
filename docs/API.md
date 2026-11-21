@@ -25,6 +25,14 @@ Endpoint 名稱沿用 Coupon GO! 1.2.6 APK 逆向出的原始名稱（含原始�
 | POST | `/delete-account` | 刪除帳戶（填原因，停用帳戶） |
 | GET | `/_dev/otp` | **僅 dev**：讀取最新未用 OTP（手動測試用） |
 
+### 安全基線（階段 0）
+
+- 令牌：HS256 JWT（PyJWT）；舊令牌格式不變，仍可解碼。過期、篡改、`alg=none` 一律拒絕。
+- 密碼：最少 8 位，拒絕常見弱密碼（註冊、重設、驗證時改密碼三處都校驗）。
+- 驗證碼：`secrets` 生成；同一郵箱+用途錯 5 次，該驗證碼作廢並鎖 15 分鐘（期間驗證、重發都回 429）。
+- 限流（按郵箱+IP，Redis 計數，Redis 不可用時走本機計數）：登錄連續失敗 10 次鎖 15 分鐘；`/new-resent-otp`、`/password/forgot` 各 15 分鐘內最多 5 次；超限回 429（`Retry-After`）。
+- 依賴：`apps/api/requirements.lock` 為鎖定版本，Dockerfile 按它安裝。
+
 ## 首頁 / 發現（部分遊客可調）
 
 | 方法 | 路徑 | 說明 |
