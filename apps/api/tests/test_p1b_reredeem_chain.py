@@ -173,22 +173,22 @@ def test_inflight_transfer_then_revoke_blocks_rescan_without_deadlock(client, mo
 
 @pytest.mark.parametrize('legacy', [False, True])
 def test_dispatch_marker_migration_preserves_legacy_unknown(legacy, tmp_path):
-    """Fresh and preexisting tables both gain a nullable dispatch marker."""
+    """Forward bridge adds a marker without rewriting old dispatch history."""
     import importlib.util
     from pathlib import Path
     from alembic.migration import MigrationContext
     from alembic.operations import Operations
     from sqlalchemy import create_engine, inspect, text
 
-    path = Path(__file__).resolve().parents[1] / 'alembic/versions/0021_p1b_stripe_connect.py'
+    path = Path(__file__).resolve().parents[1] / 'alembic/versions/0022_p1b_forward_bridge.py'
     spec = importlib.util.spec_from_file_location('reredeem_migration', path)
     migration = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(migration)
     engine = create_engine(f'sqlite:///{tmp_path}/migration.db')
     with engine.begin() as conn:
-        conn.execute(text('CREATE TABLE redemptions (id INTEGER PRIMARY KEY)'))
+        for table in ('redemptions', 'connect_ledger_entries', 'orders', 'wallet_items'):
+            conn.execute(text(f'CREATE TABLE {table} (id INTEGER PRIMARY KEY)'))
         if legacy:
-            conn.execute(text('CREATE TABLE connect_ledger_entries (id INTEGER PRIMARY KEY)'))
             conn.execute(text('INSERT INTO connect_ledger_entries (id) VALUES (1)'))
         with Operations.context(MigrationContext.configure(conn)):
             migration.upgrade()

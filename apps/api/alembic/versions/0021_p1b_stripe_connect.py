@@ -19,10 +19,6 @@ depends_on = None
 
 
 def upgrade():
-    # Legacy redemptions keep NULL; their historical rate is not known.
-    columns = {column['name'] for column in sa.inspect(op.get_bind()).get_columns('redemptions')}
-    if 'commission_rate_snapshot' not in columns:
-        op.add_column('redemptions', sa.Column('commission_rate_snapshot', sa.Numeric(5, 4), nullable=True))
     if not sa.inspect(op.get_bind()).has_table("connect_accounts"):
         op.create_table(
             "connect_accounts",
@@ -52,12 +48,7 @@ def upgrade():
             sa.Column("stripe_transfer_id", sa.String(60), nullable=False, server_default=""),
             sa.Column("stripe_reversal_id", sa.String(60), nullable=False, server_default=""),
             sa.Column("stripe_payout_id", sa.String(60), nullable=False, server_default=""),
-            sa.Column("dispatch_started", sa.Boolean, nullable=True),
             sa.Column("pending_reversal", sa.Boolean, nullable=False, server_default="0"),
-            # Queue §F items 2–3: failed transfer / reversal attempts
-            # and the once-only admin notification for needs_manual.
-            sa.Column("retry_count", sa.Integer, nullable=False, server_default="0"),
-            sa.Column("manual_notified", sa.Boolean, nullable=False, server_default="0"),
             sa.Column("note", sa.String(255), nullable=False, server_default=""),
             sa.Column("created_at", sa.DateTime, nullable=True),
             sa.Column("updated_at", sa.DateTime, nullable=True),
@@ -65,15 +56,9 @@ def upgrade():
         )
         op.create_index("ix_connect_ledger_entries_shop_id",
                         "connect_ledger_entries", ["shop_id"])
-    # Existing unversioned/test tables must preserve NULL as unknown history.
-    columns = {col["name"] for col in sa.inspect(op.get_bind()).get_columns("connect_ledger_entries")}
-    if "dispatch_started" not in columns:
-        op.add_column("connect_ledger_entries", sa.Column("dispatch_started", sa.Boolean, nullable=True))
 
 
 def downgrade():
-    if op.get_bind().execute(sa.text('SELECT count(*) FROM redemptions WHERE commission_rate_snapshot IS NOT NULL')).scalar():
-        raise RuntimeError('Commission snapshots require a coordinated data restore')
     if op.get_bind().execute(sa.text("SELECT count(*) FROM connect_ledger_entries")).scalar():
         raise RuntimeError("A populated Connect ledger requires a coordinated data restore")
     if op.get_bind().execute(sa.text("SELECT count(*) FROM connect_accounts")).scalar():
@@ -81,4 +66,3 @@ def downgrade():
     op.drop_index("ix_connect_ledger_entries_shop_id", table_name="connect_ledger_entries")
     op.drop_table("connect_ledger_entries")
     op.drop_table("connect_accounts")
-    op.drop_column('redemptions', 'commission_rate_snapshot')
