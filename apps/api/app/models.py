@@ -183,6 +183,11 @@ class WalletItem(Base):
     # orders.id (FK); line E created the columns without the FK.
     source = Column(String(20), default="claim", nullable=False)
     order_id = Column(Integer, ForeignKey("orders.id"), nullable=True)
+    # Immutable portion of the paid order, frozen for the entire voucher set.
+    settlement_allocated_amount = Column(Numeric(12, 2), nullable=True)
+    # Durable refund hold, so rejected/asynchronous refunds can restore each
+    # individual voucher's original state rather than inventing a state.
+    refund_hold_previous_status = Column(Integer, nullable=True)
     user = relationship("User", back_populates="wallet_items")
     coupon = relationship("Coupon")
 

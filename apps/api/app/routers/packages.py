@@ -195,6 +195,8 @@ def _issue_voucher(db: Session, order: Order, package: Package):
                 .filter(models.WalletItem.order_id == order.id).first())
     if existing is not None:
         return existing
+    if order.wallet_allocation_fingerprint is not None:
+        raise HTTPException(409, "已凍結的訂單券集合需要人工核對")
     coupon = _package_coupon(db, package)
     if coupon is None:
         raise HTTPException(status_code=500, detail="套餐券模板缺失，請聯繫客服")
@@ -244,13 +246,19 @@ def _apply_payment_result(db: Session, order: Order, attempt: Payment,
 def _claim_unused_voucher(db, order, *, expired=False):
     # Same conditional wallet transition as the merchant scanner. A refund
     # must win this write before contacting the gateway or returning stock.
-    q = db.query(models.WalletItem).filter_by(order_id=order.id).filter(
-        models.WalletItem.used_at.is_(None),
-        ~models.WalletItem.id.in_(db.query(models.Redemption.wallet_item_id).filter(
-            models.Redemption.revoked_at.is_(None))))
-    q = q.filter(models.WalletItem.status.in_((1, 3) if expired else (1,)))
-    if q.update({"status": 3, "code": "", "qr_expires_at": None}, synchronize_session=False) != 1:
+    items = (db.query(models.WalletItem).filter_by(order_id=order.id)
+             .order_by(models.WalletItem.id).with_for_update().populate_existing().all())
+    active = (db.query(models.Redemption.id).filter(
+        models.Redemption.wallet_item_id.in_([i.id for i in items]),
+        models.Redemption.revoked_at.is_(None)).first())
+    if (not items or active or any(i.used_at is not None or
+            i.status not in ((1, 3) if expired else (1,)) or
+            i.refund_hold_previous_status is not None for i in items)):
         raise HTTPException(400, "套餐券已使用或已失效，不可退款")
+    for item in items:
+        item.refund_hold_previous_status = item.status
+        item.status, item.code, item.qr_expires_at = 3, "", None
+    db.flush()
 
 
 def _paid_attempt(db, order):
@@ -305,11 +313,22 @@ def _resume_refund(db, order_id):
         order.settlement_status = "void"
         order.commission_amount = order.net_amount = 0
         _release_stock(db, order)
+        for item in db.query(models.WalletItem).filter_by(order_id=order.id).all():
+            item.refund_hold_previous_status = None
     elif status in ("failed", "canceled"):
+        items = (db.query(models.WalletItem).filter_by(order_id=order.id)
+                 .order_by(models.WalletItem.id).with_for_update().populate_existing().all())
+        if not items or (len(items) > 1 and any(i.refund_hold_previous_status not in (1, 3) for i in items)):
+            raise HTTPException(409, "歷史退款狀態需要人工核對，請聯絡客服")
         order.refund_status = refund.status = "rejected"
-        item = db.query(models.WalletItem).filter_by(order_id=order.id).one()
-        if item.coupon.valid_to > _now():
-            item.status = 1
+        for item in items:
+            previous = item.refund_hold_previous_status
+            if previous is None:  # single-voucher hold created by older releases
+                previous = 1
+            if previous not in (1, 3):
+                raise HTTPException(409, "歷史退款狀態需要人工核對，請聯絡客服")
+            item.status = 3 if previous == 3 or item.coupon.valid_to <= _now() else 1
+            item.refund_hold_previous_status = None
     db.commit()
     return refund
 
@@ -334,15 +353,26 @@ def _settle_expired(db, order_id):
         return _resume_refund(db, order_id).status
     if order.payment_status != "paid" or order.refund_status not in ("none", "rejected") or order.settlement_status == "void":
         return None
-    item = db.query(models.WalletItem).filter_by(order_id=order_id).populate_existing().first()
-    if not item or item.status not in (1, 3) or item.coupon.valid_to > _now():
+    items = (db.query(models.WalletItem).filter_by(order_id=order_id)
+             .order_by(models.WalletItem.id).with_for_update().populate_existing().all())
+    if (not items or any(i.status not in (1, 3) or i.used_at is not None or
+                         i.coupon.valid_to > _now() for i in items)):
+        return None
+    if db.query(models.Redemption.id).filter(
+            models.Redemption.wallet_item_id.in_([i.id for i in items]),
+            models.Redemption.revoked_at.is_(None)).first():
         return None
     if order.refund_status == "rejected":
         last = db.query(Refund).filter_by(order_id=order_id).order_by(Refund.id.desc()).first()
         if last and last.created_at > _now() - timedelta(days=1):
             return None
-    if item.coupon.refund_policy == "non_refundable":
+    policies = {i.coupon.refund_policy for i in items}
+    if "non_refundable" in policies and len(policies) > 1:
+        raise HTTPException(409, "訂單退款規則需要人工核對")
+    if "non_refundable" in policies:
         _claim_unused_voucher(db, order, expired=True)
+        for item in items:
+            item.refund_hold_previous_status = None
         order.settlement_status = "void"
         order.net_amount = 0
         _release_stock(db, order)
@@ -381,7 +411,7 @@ def sweep_expired_packages(db: Session, user_id=None) -> dict:
     if user_id is not None:
         q = q.filter(Order.user_id == user_id)
     stats = {"refunded": 0, "voided": 0, "failed": recovery_failures, "skipped": 0}
-    for (oid,) in q.all():
+    for (oid,) in q.distinct().all():
         try:
             status = _settle_expired(db, oid)
             db.commit()
@@ -762,22 +792,20 @@ def _refund_order_checked(db: Session, order: Order, reason: str) -> dict:
         raise HTTPException(status_code=400, detail="只有已支付的訂單可以退款")
     if order.refund_status not in ("none", "rejected"):
         raise HTTPException(status_code=400, detail="此訂單已有退款記錄")
-    item = (db.query(models.WalletItem)
-            .filter(models.WalletItem.order_id == order.id).first())
-    if item is None:
+    items = (db.query(models.WalletItem).filter_by(order_id=order.id)
+             .order_by(models.WalletItem.id).with_for_update().populate_existing().all())
+    if not items:
         raise HTTPException(status_code=400, detail="找不到此訂單的套餐券")
-    if item.status == 2:
-        raise HTTPException(status_code=400, detail="已核銷的套餐券不可退款")
-    if item.status == 3:
-        raise HTTPException(status_code=400, detail="套餐券已失效，不可退款")
-    coupon = db.query(models.Coupon).filter(
-        models.Coupon.id == item.coupon_id).first()
-    policy = (coupon.refund_policy if coupon else None) or "anytime"
-    if policy == "non_refundable":
-        raise HTTPException(status_code=400, detail="此為特價券，不設退款")
-    if policy == "expiry_only":
-        raise HTTPException(status_code=400,
-                            detail="此券僅支持過期自動退，過期前不設手動退款")
+    for item in items:
+        if item.status != 1 or item.used_at is not None:
+            raise HTTPException(status_code=400, detail="訂單含已使用或失效的券，不可整單退款")
+        coupon = db.get(models.Coupon, item.coupon_id)
+        policy = (coupon.refund_policy if coupon else None) or "anytime"
+        if policy == "non_refundable":
+            raise HTTPException(status_code=400, detail="此為特價券，不設退款")
+        if policy == "expiry_only":
+            raise HTTPException(status_code=400,
+                                detail="此券僅支持過期自動退，過期前不設手動退款")
     refund = _process_refund(db, order, reason or "用戶申請退款")
     return {"refund": refund_out(refund),
             "order": order_out(db, order),

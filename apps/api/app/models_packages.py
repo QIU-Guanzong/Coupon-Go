@@ -96,6 +96,8 @@ class Order(Base):
     commission_amount = Column(Numeric(10, 2), default=0)  # 佣金（费率未定，默认 0）
     net_amount = Column(Numeric(10, 2), default=0)         # 应结算净额
     client_ref = Column(String(64), default="")  # 客户端幂等键（下单重试去重）
+    # NULL until the paid amount and complete wallet item set are frozen.
+    wallet_allocation_fingerprint = Column(String(64), nullable=True)
     created_at = Column(DateTime, default=_now)
     paid_at = Column(DateTime, nullable=True)
 

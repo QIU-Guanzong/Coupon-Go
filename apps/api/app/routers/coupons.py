@@ -61,7 +61,7 @@ def presented_item(db, code, *, lock=False):
         models.WalletItem.code == code, models.WalletItem.status == 1,
         models.WalletItem.qr_expires_at.is_not(None))
     if lock:
-        query = query.with_for_update()
+        query = query.with_for_update().populate_existing()
     # Older releases could issue the same number to two items.
     live = query.filter(models.WalletItem.qr_expires_at > _now()).limit(2).all()
     if live:
@@ -289,7 +289,16 @@ def scan_coupon(body: schemas.ScanIn,
     replay = prior_result()
     if replay:
         return replay
+    # Acquire the order and every voucher in stable order before locking
+    # the presented voucher, matching the whole-order refund lock order.
+    item = presented_item(db, body.code)
+    presented_id = item.id if item is not None else None
+    if item is not None and item.order_id is not None:
+        from ..order_allocation import ensure_order_allocations
+        ensure_order_allocations(db, item.order_id)
     item = presented_item(db, body.code, lock=True)
+    if item is not None and item.id != presented_id:
+        raise errors.qr_invalid()
     if item is None:
         replay = prior_result()
         if replay:
