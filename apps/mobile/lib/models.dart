@@ -138,6 +138,7 @@ class WalletItem {
         orderId = j['order_id'] as int?,
         quantity = j['quantity'] as int? ?? 1,
         orderQuantity = j['order_quantity'] as int? ?? j['quantity'] as int? ?? 1,
+        orderPaidAmount = (j['order_paid_amount'] as num?)?.toDouble(),
         orderRefundable = j['order_refundable'] as bool?,
         orderWalletQuantityStatus = j['order_wallet_quantity_status'] as String?,
         refundStatus = j['refund_status'] as String? ?? 'none',
@@ -158,6 +159,7 @@ class WalletItem {
   final int? orderId;
   final int quantity;
   final int orderQuantity;
+  final double? orderPaidAmount;
   final bool? orderRefundable;
   final String? orderWalletQuantityStatus;
   bool get orderNeedsReview => orderWalletQuantityStatus == 'needs_review';

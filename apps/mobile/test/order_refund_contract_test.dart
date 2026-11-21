@@ -18,6 +18,7 @@ class ContractApi extends ApiClient {
       return {'items': [
         {'id': 1, 'coupon_name': '套餐券', 'shop_name': '商店', 'status': 1,
          'is_package': true, 'order_id': 13, 'quantity': 1, 'order_quantity': 2,
+         'order_paid_amount': 100.0,
          'order_refundable': refundable, 'order_wallet_quantity_status': needsReview ? 'needs_review' : 'ok'}
       ], 'total_pages': 1};
     }
@@ -61,6 +62,8 @@ void main() {
       'order_wallet_quantity_status': 'needs_review'}).canRefund, isFalse);
     expect(WalletItem.fromJson({...base, 'order_refundable': true}).orderQuantity, 2);
     expect(WalletItem.fromJson({'quantity': 2}).orderQuantity, 2);
+    expect(WalletItem.fromJson({'order_paid_amount': 0}).orderPaidAmount, 0);
+    expect(WalletItem.fromJson({}).orderPaidAmount, isNull);
     expect(PackageOrder.fromJson({'payment_status': 'paid'}).canRefund, isFalse);
     expect(PackageOrder.fromJson({'payment_status': 'paid', 'refundable': false,
       'voucher_redeemed': true}).canRefund, isFalse);
@@ -75,6 +78,7 @@ void main() {
     await tester.tap(find.text('退款'));
     await tester.pumpAndSettle();
     expect(find.textContaining('訂單共 2 份'), findsOneWidget);
+    expect(find.textContaining('整單實付 HK\$100.00'), findsOneWidget);
     expect(find.textContaining('整筆訂單及其所有券'), findsOneWidget);
     await tester.tap(find.text('確認退款'));
     await tester.pumpAndSettle();

@@ -332,7 +332,7 @@ class _WalletScreenState extends State<WalletScreen>
                                                           context: context,
                                                           builder: (ctx) => AlertDialog(
                                                             title: const Text('申請退款'),
-                                                            content: Text('${item.couponName} · 訂單共 ${item.orderQuantity} 份\n將退款整筆訂單及其所有券，只有全部符合退款條件時才可申請。確定嗎？'),
+                                                            content: Text('${item.couponName} · 訂單共 ${item.orderQuantity} 份${item.orderPaidAmount == null ? '' : '\n整單實付 ${formatHkd(item.orderPaidAmount!)}'}\n將退款整筆訂單及其所有券，只有全部符合退款條件時才可申請。確定嗎？'),
                                                             actions: [
                                                               TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('取消')),
                                                               ElevatedButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('確認退款')),
