@@ -5,14 +5,14 @@ and password reset, remember-me + token refresh on the client, social login
 (Google / Facebook / Apple), customer and vendor as separate accounts.
 """
 import hashlib
-import random
+import hmac
 import secrets
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 
-from .. import config, legal, models, schemas, security
+from .. import config, legal, models, rate_limit, schemas, security
 from ..database import get_db
 from ..deps import get_current_user, get_identity_user, get_session_identity
 
@@ -24,7 +24,8 @@ def _now():
 
 
 def _issue_otp(db: Session, email: str, purpose: str, role: str = "customer") -> str:
-    code = "".join(random.choices("0123456789", k=config.OTP_LENGTH))
+    # Stage-0: cryptographically secure randomness (was random.choices).
+    code = "".join(secrets.choice("0123456789") for _ in range(config.OTP_LENGTH))
     db.add(models.OtpCode(
         email=email, code=code, purpose=purpose, role=role,
         expires_at=_now() + timedelta(seconds=config.OTP_TTL_SECONDS),
@@ -34,20 +35,37 @@ def _issue_otp(db: Session, email: str, purpose: str, role: str = "customer") ->
 
 
 def _check_otp(db: Session, email: str, code: str, purpose: str) -> models.OtpCode:
-    otp = (
+    """Stage-0: at most 5 wrong guesses per email+purpose; the 5th voids
+    the code and locks verification for 15 minutes. An older unused code
+    still verifies (resends do not invalidate earlier codes)."""
+    if rate_limit.is_otp_locked(email, purpose):
+        raise HTTPException(status_code=429,
+                            detail="驗證碼錯誤次數過多，請 15 分鐘後再試",
+                            headers={"Retry-After": "900"})
+    otps = (
         db.query(models.OtpCode)
         .filter(models.OtpCode.email == email,
-                models.OtpCode.code == code,
                 models.OtpCode.purpose == purpose,
                 models.OtpCode.used.is_(False))
         .order_by(models.OtpCode.id.desc())
-        .first()
+        .all()
     )
-    if otp is None:
+    if not otps:
         raise HTTPException(status_code=400, detail="驗證碼錯誤，請重新輸入")
-    if otp.expires_at < _now():
+    matched = next((o for o in otps if hmac.compare_digest(o.code, code)), None)
+    if matched is None:
+        if rate_limit.record_otp_failure(email, purpose):
+            latest = otps[0]
+            latest.used = True  # void the code under attack
+            db.commit()
+            raise HTTPException(status_code=429,
+                                detail="驗證碼錯誤次數過多，驗證碼已作廢，請 15 分鐘後重新發送",
+                                headers={"Retry-After": "900"})
+        raise HTTPException(status_code=400, detail="驗證碼錯誤，請重新輸入")
+    if matched.expires_at < _now():
         raise HTTPException(status_code=400, detail="驗證碼已過期，請重新發送")
-    return otp
+    rate_limit.clear_otp_attempts(email, purpose)
+    return matched
 
 
 def _token_for(user: models.User, db: Session, docs=None):
@@ -115,21 +133,40 @@ def verify_otp_password(body: schemas.OtpVerifyIn, db: Session = Depends(get_db)
 
 
 @router.post("/new-resent-otp")
-def resend_otp(body: schemas.OtpRequestIn, db: Session = Depends(get_db)):
+def resend_otp(body: schemas.OtpRequestIn, request: Request,
+               db: Session = Depends(get_db)):
+    # Stage-0: per email+IP cap, and a locked email+purpose cannot get a
+    # fresh code to dodge the lock.
+    rate_limit.check_fixed_window(
+        "resend", f"{body.email}|{rate_limit.client_ip(request)}",
+        rate_limit.RESEND_MAX_PER_WINDOW, rate_limit.RESEND_WINDOW_SECONDS)
+    if rate_limit.is_otp_locked(body.email, body.purpose):
+        raise HTTPException(status_code=429, detail="驗證碼錯誤次數過多，請 15 分鐘後再試",
+                            headers={"Retry-After": "900"})
     _issue_otp(db, body.email, body.purpose)
     return {"message": "驗證碼已重新發送"}
 
 
 @router.post("/resent-otp")
-def resend_otp_forgot(body: schemas.OtpRequestIn, db: Session = Depends(get_db)):
-    return resend_otp(body, db)
+def resend_otp_forgot(body: schemas.OtpRequestIn, request: Request,
+                      db: Session = Depends(get_db)):
+    return resend_otp(body, request, db)
 
 
 @router.post("/login")
-def login(body: schemas.LoginIn, db: Session = Depends(get_db)):
+def login(body: schemas.LoginIn, request: Request, db: Session = Depends(get_db)):
+    # Stage-0: 10 consecutive failures per email+IP lock login 15 min.
+    identity = f"{body.email}|{rate_limit.client_ip(request)}"
+    if rate_limit.is_login_locked(identity):
+        raise HTTPException(status_code=429, detail="登錄失敗次數過多，請 15 分鐘後再試",
+                            headers={"Retry-After": "900"})
     user = db.query(models.User).filter(models.User.email == body.email).first()
     if user is None or not security.verify_password(body.password, user.password_hash):
+        if rate_limit.record_login_failure(identity):
+            raise HTTPException(status_code=429, detail="登錄失敗次數過多，請 15 分鐘後再試",
+                                headers={"Retry-After": "900"})
         raise HTTPException(status_code=401, detail="電郵或密碼錯誤")
+    rate_limit.reset_login_failures(identity)
     if not user.is_active:
         raise HTTPException(status_code=403, detail="請先完成驗證碼驗證")
     return _token_for(user, db)
@@ -166,7 +203,11 @@ def social_login(body: schemas.SocialLoginIn, db: Session = Depends(get_db)):
 
 
 @router.post("/password/forgot")
-def forgot(body: schemas.ForgotIn, db: Session = Depends(get_db)):
+def forgot(body: schemas.ForgotIn, request: Request, db: Session = Depends(get_db)):
+    # Stage-0: per email+IP cap (same reply whether the account exists).
+    rate_limit.check_fixed_window(
+        "forgot", f"{body.email}|{rate_limit.client_ip(request)}",
+        rate_limit.FORGOT_MAX_PER_WINDOW, rate_limit.FORGOT_WINDOW_SECONDS)
     if db.query(models.User).filter(models.User.email == body.email).first():
         _issue_otp(db, body.email, "forgot")
     return {"message": "如帳戶存在，我們已發送重設密碼的驗證碼"}

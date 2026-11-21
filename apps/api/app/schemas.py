@@ -2,7 +2,15 @@
 from datetime import datetime
 from typing import List, Optional
 
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, field_validator
+
+from .security import validate_password
+
+
+def _check_password(value: Optional[str]) -> Optional[str]:
+    if value is not None:
+        validate_password(value)
+    return value
 
 
 # ---------- auth ----------
@@ -18,6 +26,11 @@ class RegisterIn(LegalVersionsIn):
     phone: str = ""
     role: str = "customer"  # customer | vendor
 
+    @field_validator("password")
+    @classmethod
+    def _password_policy(cls, v: str) -> str:
+        return _check_password(v)
+
 
 class LoginIn(BaseModel):
     email: EmailStr
@@ -29,6 +42,11 @@ class OtpVerifyIn(LegalVersionsIn):
     code: str
     purpose: str = "register"  # register | forgot
     new_password: Optional[str] = None
+
+    @field_validator("new_password")
+    @classmethod
+    def _password_policy(cls, v: Optional[str]) -> Optional[str]:
+        return _check_password(v)
 
 
 class OtpRequestIn(BaseModel):
@@ -44,6 +62,11 @@ class ResetIn(BaseModel):
     email: EmailStr
     code: str
     new_password: str = Field(min_length=6)
+
+    @field_validator("new_password")
+    @classmethod
+    def _password_policy(cls, v: str) -> str:
+        return _check_password(v)
 
 
 class SocialLoginIn(BaseModel):
