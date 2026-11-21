@@ -6,6 +6,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../api_client.dart';
+import '../feature_flags.dart';
 import '../language.dart';
 import 'discovery.dart';
 import 'guest_auth.dart' show guestLoginPrompt;
@@ -1249,7 +1250,8 @@ class LimitedTimeScreen extends StatelessWidget {
       appBar: AppBar(title: Text(context.tr('限時','Limited Time'))),
       body: Column(children: [
         _LimitedBargainPreview(api: api),
-        _LimitedNotification(key: ValueKey(api.isLoggedIn), api: api),
+        if (!publicPreview)
+          _LimitedNotification(key: ValueKey(api.isLoggedIn), api: api),
         Expanded(child: CouponResults(api: api, load: api.limitedTime, onOpenCoupon: onOpenCoupon)),
       ]),
     );
