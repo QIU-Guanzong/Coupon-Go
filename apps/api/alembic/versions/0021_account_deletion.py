@@ -9,7 +9,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = "0021_account_deletion"
-down_revision = "0020_legal_consent"
+down_revision = "0020_m92_legal_consents"
 branch_labels = None
 depends_on = None
 
