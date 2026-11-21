@@ -64,7 +64,7 @@ def merchant_balance(db: Session, shop_id: int) -> dict:
     entries = db.query(ConnectLedgerEntry).filter_by(shop_id=shop_id).all()
     simulator = config.APP_ENV == "dev" and config.STRIPE_CONNECT_SIMULATOR and not config.STRIPE_SECRET_KEY
     pending = sum((Decimal(str(e.net_amount)) for e in entries
-                   if e.kind == "transfer" and e.status in ("pending", "processing", "unknown")),
+                   if e.kind == "transfer" and e.status in ("pending", "processing", "unknown", "payment_verification_required")),
                   Decimal("0"))
     transferred = sum((Decimal(str(e.net_amount)) for e in entries
                        if e.kind == "transfer" and e.status in ("transferred", "reversal_processing", "reversal_unknown")
@@ -192,7 +192,10 @@ def reverse_redemption(db: Session, red: models.Redemption, reason: str) -> dict
     if entry.status == "reversed":
         return {"reversed": True, "reason": "already_reversed",
                 "stripe_reversal_id": entry.stripe_reversal_id or None}
-    if entry.status == "pending":
+    never_dispatched = (entry.status == "payment_verification_required"
+                        and not entry.first_attempt_at and not entry.last_attempt_at
+                        and not entry.attempt_count and not entry.stripe_transfer_id)
+    if entry.status == "pending" or never_dispatched:
         entry.status = "reversed"  # no Stripe call was ever started
         entry.note = reason
         return {"reversed": True, "reason": reason, "stripe_reversal_id": None}

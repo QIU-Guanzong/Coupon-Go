@@ -520,3 +520,85 @@ def test_fee_change_between_redemption_and_statement_uses_same_snapshot(factory,
         rate.rate = Decimal('0.20'); db.commit()
         statement = generate_settlement(SettlementGenerateIn(shop_id=shop_id, period=datetime.utcnow().strftime('%Y-%m')), user=user, db=db)
         assert Decimal(str(statement['settlement']['commission'])) == Decimal('10.00')
+
+@pytest.mark.parametrize('reason', ['merchant_revoked', 'customer_refund'])
+def test_unverified_receipt_stays_visible_then_reversal_closes_without_stripe(factory, shop_id, monkeypatch, reason):
+    monkeypatch.setattr(config, 'STRIPE_SECRET_KEY', 'sk_test_fake_only')
+    monkeypatch.setattr(connect_gateway, 'create_transfer', lambda *a, **k: pytest.fail('unverified transfer dispatched'))
+    monkeypatch.setattr(connect_gateway, 'reverse_transfer', lambda *a, **k: pytest.fail('undispatched transfer reversed externally'))
+    with factory() as db:
+        user = db.query(models.User).join(models.Shop).filter(models.Shop.id == shop_id).one()
+        coupon = models.Coupon(shop_id=shop_id, vendor_id=user.id, coupon_name='verification hold',
+            valid_from=datetime.now(), valid_to=datetime.now()+timedelta(days=1))
+        db.add(coupon); db.flush()
+        order = models.Order(user_id=user.id, amount=100, paid_amount=100, payment_status='paid', refund_status='none')
+        db.add(order); db.flush()
+        db.add(models.Payment(order_id=order.id, gateway='stripe', gateway_ref='pi_example_valid_shape',
+            amount=100, currency='HKD', status='succeeded'))
+        item = models.WalletItem(user_id=user.id, coupon_id=coupon.id, source='purchase', order_id=order.id)
+        db.add(item); db.flush()
+        red = models.Redemption(wallet_item_id=item.id, coupon_id=coupon.id, shop_id=shop_id, scanned_by_vendor_id=user.id)
+        db.add(red); db.flush()
+        result = connect_service.record_redemption(db, red)
+        db.commit(); entry_id, red_id = result['entry_id'], red.id
+        assert connect_service.merchant_balance(db, shop_id)['pending'] == Decimal('90')
+        assert connect_service.merchant_balance(db, shop_id)['available'] == Decimal('0')
+        assert connect_service.retry_entry(db, db.get(ConnectLedgerEntry, entry_id))['status'] == 'payment_verification_required'
+    with factory() as db:
+        assert connect_service.merchant_balance(db, shop_id)['pending'] == Decimal('90')
+        assert connect_service.merchant_balance(db, shop_id)['available'] == Decimal('0')
+        assert connect_service.reverse_redemption(db, db.get(models.Redemption, red_id), reason)['reversed'] is True
+        db.rollback()  # caller's failed transaction must not close the intent
+    with factory() as db:
+        assert db.get(ConnectLedgerEntry, entry_id).status == 'payment_verification_required'
+        assert connect_service.reverse_redemption(db, db.get(models.Redemption, red_id), reason)['reversed'] is True
+        db.commit()
+    with factory() as db:
+        entry = db.get(ConnectLedgerEntry, entry_id)
+        assert entry.status == 'reversed' and not entry.pending_reversal
+        assert connect_service.merchant_balance(db, shop_id)['pending'] == Decimal('0')
+        assert connect_service.merchant_balance(db, shop_id)['available'] == Decimal('0')
+        assert connect_service.reverse_redemption(db, db.get(models.Redemption, red_id), reason)['reason'] == 'already_reversed'
+
+
+def test_unverified_row_with_attempt_evidence_never_assumes_no_transfer(factory, shop_id):
+    with factory() as db:
+        user = db.query(models.User).join(models.Shop).filter(models.Shop.id == shop_id).one()
+        coupon = models.Coupon(shop_id=shop_id, vendor_id=user.id, coupon_name='inconsistent history',
+            valid_from=datetime.now(), valid_to=datetime.now()+timedelta(days=1))
+        db.add(coupon); db.flush()
+        item = models.WalletItem(user_id=user.id, coupon_id=coupon.id); db.add(item); db.flush()
+        red = models.Redemption(wallet_item_id=item.id, coupon_id=coupon.id, shop_id=shop_id, scanned_by_vendor_id=user.id)
+        db.add(red); db.flush()
+        entry = ConnectLedgerEntry(shop_id=shop_id, redemption_id=red.id, kind='transfer',
+            status='payment_verification_required', gross_amount=10, commission=0, net_amount=10,
+            first_attempt_at=datetime.utcnow(), attempt_count=1)
+        db.add(entry); db.commit()
+        assert connect_service.reverse_redemption(db, red, 'refunded')['reason'] == 'pending_reversal'
+        db.commit()
+        assert entry.status == 'payment_verification_required' and entry.pending_reversal
+
+
+@pytest.mark.xfail(strict=True, reason='BLOCKER: order uniqueness prevents re-redemption after a completed cancellation')
+def test_cancelled_paid_coupon_can_be_redeemed_again_without_duplicate_active_transfer(factory, shop_id):
+    with factory() as db:
+        user = db.query(models.User).join(models.Shop).filter(models.Shop.id == shop_id).one()
+        coupon = models.Coupon(shop_id=shop_id, vendor_id=user.id, coupon_name='redeem again',
+            valid_from=datetime.now(), valid_to=datetime.now()+timedelta(days=1))
+        db.add(coupon); db.flush()
+        order = models.Order(user_id=user.id, amount=100, paid_amount=100, payment_status='paid', refund_status='none')
+        db.add(order); db.flush()
+        db.add(models.Payment(order_id=order.id, gateway='stripe', gateway_ref='pi_test_reredeem', amount=100, currency='HKD', status='succeeded'))
+        item = models.WalletItem(user_id=user.id, coupon_id=coupon.id, source='purchase', order_id=order.id)
+        db.add(item); db.flush()
+        first = models.Redemption(wallet_item_id=item.id, coupon_id=coupon.id, shop_id=shop_id, scanned_by_vendor_id=user.id)
+        db.add(first); db.flush()
+        assert connect_service.record_redemption(db, first)['transfer'] == 'pending'
+        assert connect_service.reverse_redemption(db, first, 'merchant_revoked')['reversed'] is True
+        first.revoked_at = datetime.utcnow(); db.commit()
+        second = models.Redemption(wallet_item_id=item.id, coupon_id=coupon.id, shop_id=shop_id, scanned_by_vendor_id=user.id)
+        db.add(second); db.flush()
+        assert connect_service.record_redemption(db, second)['transfer'] == 'pending'
+        db.commit()
+        active = db.query(ConnectLedgerEntry).filter_by(order_id=order.id).filter(ConnectLedgerEntry.status != 'reversed').all()
+        assert len(active) == 1 and active[0].redemption_id == second.id
