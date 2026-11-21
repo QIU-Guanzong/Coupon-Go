@@ -208,6 +208,13 @@ class Redemption(Base):
     prepared_at = Column(DateTime, nullable=True)   # pre-redeem check time
     revoked_at = Column(DateTime, nullable=True)    # revoke time (10-min window)
     revoked_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+    # Dianping §4.4: how this redemption was made — "scan" (QR scanned),
+    # "manual" (6 digits typed in), "supplementary" (§4.1 after-the-fact
+    # scan, no code presented), "batch" (§4.3 multi-item scan). The
+    # single consume chain writes it; the vendor export surfaces it.
+    method = Column(String(20), default="scan", nullable=False)
+    # Dianping §4.4: operator note (e.g. supplementary-scan reason).
+    note = Column(Text, nullable=True)
 
 
 class PointTransaction(Base):
