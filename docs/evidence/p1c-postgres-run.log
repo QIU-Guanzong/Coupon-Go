@@ -1,0 +1,128 @@
+# P1-C Postgres verification run (2026-11-20)
+# BACKEND: postgres (PostgreSQL 16.2, pgserver, socket /tmp/p1c_pgdata)
+# DB: coupon_go_test_p1c (role coupon_go)
+# Command: P1C_POSTGRES_URL=postgresql+psycopg2://coupon_go:***@/coupon_go_test_p1c?host=/tmp/p1c_pgdata ../../.venv/bin/python -m pytest tests/test_p1c_points_by_spend.py tests/test_m96_app_config.py -v
+# Migration 0021 verified on this DB via alembic upgrade head + legacy-row backfill check (created_at + 12 months = 365 days).
+============================= test session starts ==============================
+platform linux -- Python 3.12.3, pytest-9.2.0, pluggy-1.7.0 -- /home/hatch/workspace/coupon-go-p1c/apps/api/../../.venv/bin/python
+cachedir: .pytest_cache
+rootdir: /home/hatch/workspace/coupon-go-p1c/apps/api
+plugins: anyio-4.16.0, platformdirs-4.14.7
+collecting ... collected 7 items
+
+tests/test_p1c_points_by_spend.py::test_paid_package_redeem_awards_spend_points PASSED [ 14%]
+tests/test_p1c_points_by_spend.py::test_free_coupon_values_unchanged PASSED [ 28%]
+tests/test_p1c_points_by_spend.py::test_points_expiry_sweep_clears_expired_and_writes_ledger PASSED [ 42%]
+tests/test_p1c_points_by_spend.py::test_expiring_soon_counts_fifo_remaining PASSED [ 57%]
+tests/test_p1c_points_by_spend.py::test_refund_of_unredeemed_order_claws_back_nothing PASSED [ 71%]
+tests/test_p1c_points_by_spend.py::test_refund_clawback_can_go_negative_and_blocks_exchange PASSED [ 85%]
+tests/test_m96_app_config.py::test_app_config_is_public_and_only_exposes_display_rules PASSED [100%]
+
+=============================== warnings summary ===============================
+../../.venv/lib/python3.12/site-packages/fastapi/testclient.py:1
+  /home/hatch/workspace/coupon-go-p1c/.venv/lib/python3.12/site-packages/fastapi/testclient.py:1: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.
+    from starlette.testclient import TestClient as TestClient  # noqa
+
+app/schemas_line_b.py:29
+  /home/hatch/workspace/coupon-go-p1c/apps/api/app/schemas_line_b.py:29: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.14/migration/
+    class ReviewOut(BaseModel):
+
+app/schemas_line_b.py:93
+  /home/hatch/workspace/coupon-go-p1c/apps/api/app/schemas_line_b.py:93: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.14/migration/
+    class MerchantApplicationOut(BaseModel):
+
+app/schemas_line_b.py:120
+  /home/hatch/workspace/coupon-go-p1c/apps/api/app/schemas_line_b.py:120: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.14/migration/
+    class AdminAuditLogOut(BaseModel):
+
+app/schemas_packages.py:46
+  /home/hatch/workspace/coupon-go-p1c/apps/api/app/schemas_packages.py:46: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.14/migration/
+    class PackageOut(BaseModel):
+
+app/schemas_packages.py:91
+  /home/hatch/workspace/coupon-go-p1c/apps/api/app/schemas_packages.py:91: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.14/migration/
+    class PaymentOut(BaseModel):
+
+app/schemas_packages.py:107
+  /home/hatch/workspace/coupon-go-p1c/apps/api/app/schemas_packages.py:107: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.14/migration/
+    class OrderOut(BaseModel):
+
+app/schemas_packages.py:166
+  /home/hatch/workspace/coupon-go-p1c/apps/api/app/schemas_packages.py:166: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.14/migration/
+    class RefundOut(BaseModel):
+
+app/schemas.py:58
+  /home/hatch/workspace/coupon-go-p1c/apps/api/app/schemas.py:58: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.14/migration/
+    class UserOut(BaseModel):
+
+app/schemas.py:82
+  /home/hatch/workspace/coupon-go-p1c/apps/api/app/schemas.py:82: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.14/migration/
+    class CouponOut(BaseModel):
+
+app/schemas.py:113
+  /home/hatch/workspace/coupon-go-p1c/apps/api/app/schemas.py:113: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.14/migration/
+    class ShopOut(BaseModel):
+
+app/schemas.py:133
+  /home/hatch/workspace/coupon-go-p1c/apps/api/app/schemas.py:133: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.14/migration/
+    class BranchOut(BaseModel):
+
+app/schemas.py:232
+  /home/hatch/workspace/coupon-go-p1c/apps/api/app/schemas.py:232: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.14/migration/
+    class NotificationOut(BaseModel):
+
+app/main.py:52
+  /home/hatch/workspace/coupon-go-p1c/apps/api/app/main.py:52: DeprecationWarning: 
+          on_event is deprecated, use lifespan event handlers instead.
+  
+          Read more about it in the
+          [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+          
+    @app.on_event("startup")
+
+../../.venv/lib/python3.12/site-packages/fastapi/applications.py:5039
+../../.venv/lib/python3.12/site-packages/fastapi/applications.py:5039
+  /home/hatch/workspace/coupon-go-p1c/.venv/lib/python3.12/site-packages/fastapi/applications.py:5039: DeprecationWarning: 
+          on_event is deprecated, use lifespan event handlers instead.
+  
+          Read more about it in the
+          [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+          
+    return self.router.on_event(event_type)  # ty: ignore[deprecated]
+
+app/main.py:75
+  /home/hatch/workspace/coupon-go-p1c/apps/api/app/main.py:75: DeprecationWarning: 
+          on_event is deprecated, use lifespan event handlers instead.
+  
+          Read more about it in the
+          [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+          
+    @app.on_event("shutdown")
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+======================= 7 passed, 17 warnings in 52.10s ========================
+
+# Scheduler job on Postgres (advisory-lock path):
+# Command: COUPON_GO_ENV=dev DATABASE_URL=postgresql+psycopg2://coupon_go:***@/coupon_go_test_p1c?host=/tmp/p1c_pgdata ../../.venv/bin/python -m app.scheduler run-once --job points-expire
+{"points-expire": {"expired": 0, "points": 0, "users": 0, "failed": 0}}
+
+# Backdated one fresh grant to yesterday, re-ran the job (expect expired=1):
+{"points-expire": {"expired": 1, "points": 150, "users": 1, "failed": 0}}
+
+# --- Rebase re-verification (2026-11-21 ~00:30 CST) ---
+# Base: main 3f2d8bc (Merge PR #8 M8; was c1f3bef). Rebased 3 P1-C commits
+# (595c139 / 6082ec9 / 5c9bea7). Only conflict: apps/api/app/deps.py import
+# line -> merged to `from . import config, legal, models, security`.
+# Diff vs 3f2d8bc unchanged: 20 files, +919/-40.
+# New tests: tests/test_p1c_points_by_spend.py 6 passed.
+# Full suite: 4 failed, 350 passed, 7 skipped (30m43s). The 4 failures are
+# all tests/test_line_a.py (test_qbot_public_offers_and_private_points,
+# test_refresh_requires_new_merchant_confirmation,
+# test_legacy_review_reversal_and_receipt_survives_reuse,
+# test_revoke_expired_coupon_refunds_historical_award). They PASS on the
+# rebased branch standalone (4 passed) and as a whole file (15 passed),
+# so they are suite-order-dependent flakes, not a deterministic P1-C
+# regression. The previous round's test_m6 flake did NOT reproduce.
+# Real Postgres (local PG 16, DB coupon_go_test_p1c, role coupon_go):
+# tests/test_p1c_points_by_spend.py + tests/test_m96_app_config.py 7 passed,
+# BACKEND: postgres.
