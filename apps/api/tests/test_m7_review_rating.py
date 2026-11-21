@@ -48,7 +48,9 @@ from app.main import app  # noqa: E402
 from app.models_line_b import Review  # noqa: E402
 from app.seed import seed  # noqa: E402
 
-TEST_DB = "/tmp/coupon_go_test_m7.db"
+from tests.db_isolation import sqlite_test_path  # noqa: E402
+
+TEST_DB = sqlite_test_path("coupon_go_test_m7.db")
 
 engine = create_engine(f"sqlite:///{TEST_DB}",
                        connect_args={"check_same_thread": False})

@@ -21,11 +21,10 @@ from app.database import Base, get_db  # noqa: E402
 from app.main import app  # noqa: E402
 from app.seed import seed  # noqa: E402
 
-# Merged main-workspace path: distinct from test_line_a.py
-# (/tmp/coupon_go_test_line_a.db) and test_line_b.py
-# (/tmp/coupon_go_test_line_b.db), so the three pytest modules never
-# delete each other's throwaway DB (the parallel-lines "disk I/O error").
-TEST_DB = "/tmp/coupon_go_test_main.db"
+# Separate per-process root and per-module filename, including parallel runs.
+from tests.db_isolation import sqlite_test_path  # noqa: E402
+
+TEST_DB = sqlite_test_path("coupon_go_test_main.db")
 engine = create_engine(f"sqlite:///{TEST_DB}", connect_args={"check_same_thread": False})
 TestingSession = sessionmaker(bind=engine)
 
