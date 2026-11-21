@@ -75,6 +75,45 @@ STRIPE_WEBHOOK_SECRET = os.environ.get("STRIPE_WEBHOOK_SECRET", "")
 STRIPE_WEBHOOK_TOLERANCE_SECONDS = int(
     os.environ.get("STRIPE_WEBHOOK_TOLERANCE_SECONDS", "300"))
 
+# --- P1-B: Stripe Connect (Accounts v2) ---
+# Total switch, tri-state like the M1 scheduler: "1" = on, "0" = off,
+# unset = dev default on, non-dev off WITH an explicit reason (never
+# silent). Off means fail closed: onboarding / transfer / payout refuse
+# with 503 and redemptions only ever leave a pending ledger entry —
+# money is never marked paid without Stripe (see connect_service).
+STRIPE_CONNECT_ENABLED_RAW = os.environ.get("STRIPE_CONNECT_ENABLED")
+# Onboarding link targets (Stripe Account Links need both). The request
+# body may override them per call; when neither body nor env supplies
+# them the onboarding endpoint returns 400.
+STRIPE_CONNECT_RETURN_URL = os.environ.get("STRIPE_CONNECT_RETURN_URL", "")
+STRIPE_CONNECT_REFRESH_URL = os.environ.get("STRIPE_CONNECT_REFRESH_URL", "")
+# Hong Kong manual-payout holding cap, from Stripe docs
+# (docs.stripe.com/connect/manual-payouts): Thailand 10 days, US 2
+# years, all other countries 90 days. Surfaced in the status endpoint
+# so the app can warn merchants; not enforced by code.
+STRIPE_CONNECT_PAYOUT_HOLD_DAYS = int(
+    os.environ.get("STRIPE_CONNECT_PAYOUT_HOLD_DAYS", "90"))
+
+
+def connect_enabled() -> dict:
+    """Resolve the Connect switch. Reads the module global at call time
+    so tests can monkeypatch it. Never silently off: the reason string
+    always says why."""
+    raw = STRIPE_CONNECT_ENABLED_RAW
+    if raw is not None:
+        enabled = raw.strip().lower() in ("1", "true", "yes", "on")
+        return {"enabled": enabled, "configured_explicitly": True,
+                "reason": ("STRIPE_CONNECT_ENABLED=1：Stripe Connect 已启用"
+                           if enabled else
+                           "STRIPE_CONNECT_ENABLED=0：Stripe Connect 已显式关闭，"
+                           "开户 / 转帐 / 提款一律拒绝，核销只留待结算流水")}
+    if APP_ENV == "dev":
+        return {"enabled": True, "configured_explicitly": False,
+                "reason": "开发环境默认启用 Stripe Connect（模拟器，未配密钥）"}
+    return {"enabled": False, "configured_explicitly": False,
+            "reason": "非开发环境未配置 STRIPE_CONNECT_ENABLED，"
+                      "Stripe Connect 未启用：开户 / 转帐 / 提款一律拒绝"}
+
 
 def cors_origins() -> list:
     """P1-2: CORS allow-list from the CORS_ORIGINS env var
