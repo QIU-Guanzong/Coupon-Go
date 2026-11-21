@@ -22,9 +22,8 @@ queue §F 2026-11-21):
   reports ``pending`` (queued) even when the account is ready — the
   transfer lands shortly after, not inside the scan request.
 - Every Stripe money call carries an idempotency key derived from the
-  ledger entry id (transfer- / reversal- / payout-{entry_id}); a
-  retry reuses the same key, so a first request that timed out at
-  Stripe but already executed never moves money twice.
+  ledger entry id. A transfer whose result is unknown is frozen for
+  reconciliation rather than automatically retried.
 - Payouts lock the merchant account row first, re-read the balance
   inside the lock, write a ``processing`` entry (balance already
   deducted) and COMMIT it, and only then call Stripe. A concurrent
@@ -38,7 +37,8 @@ queue §F 2026-11-21):
   CONNECT_MAX_TRANSFER_RETRIES (default 5) the entry goes
   ``needs_manual`` and an admin notification is raised once. The
   manual retry endpoint is the recovery path.
-- The scan hook (record_redemption) must never fail a redemption.
+- A later scan of the same voucher is held while its previous transfer
+  or reversal remains unresolved; a confirmed reversal permits retry.
 """
 import logging
 from decimal import Decimal
@@ -92,10 +92,12 @@ def merchant_balance(db: Session, shop_id: int) -> dict:
     entries = db.query(ConnectLedgerEntry).filter_by(shop_id=shop_id).all()
     pending = sum((Decimal(str(e.net_amount)) for e in entries
                    if e.kind == "transfer"
-                   and e.status in ("pending", "needs_manual")),
+                   and e.status in ("pending", "needs_manual", "transferring", "transfer_unknown")
+                   and not e.pending_reversal),
                   Decimal("0"))
     transferred = sum((Decimal(str(e.net_amount)) for e in entries
-                       if e.kind == "transfer" and e.status == "transferred"),
+                       if e.kind == "transfer" and e.status == "transferred"
+                       and not e.pending_reversal),
                       Decimal("0"))
     paid_out = sum((-Decimal(str(e.net_amount)) for e in entries
                     if e.kind == "payout" and e.status == "paid_out"),
@@ -174,15 +176,37 @@ def _maybe_notify_manual(db: Session, entry: ConnectLedgerEntry,
         target_shop_id=entry.shop_id))
 
 
+def ensure_prior_transfer_closed(db: Session, wallet_item_id: int) -> None:
+    """Check earlier settlements after the caller locks this wallet item.
+
+    A closed prior transfer is either proven never sent, or has both a
+    provider transfer and a provider reversal. NULL dispatch markers are
+    legacy history and cannot establish that money never left the platform.
+    """
+    entries = (db.query(ConnectLedgerEntry)
+               .join(models.Redemption, models.Redemption.id == ConnectLedgerEntry.redemption_id)
+               .filter(models.Redemption.wallet_item_id == wallet_item_id,
+                       ConnectLedgerEntry.kind == "transfer")
+               .with_for_update(of=ConnectLedgerEntry).all())
+    for entry in entries:
+        cancelled_unsent = (entry.status == "reversed" and entry.dispatch_started is False
+                            and not entry.stripe_transfer_id and not entry.pending_reversal)
+        confirmed_reversal = (entry.status == "reversed" and entry.stripe_transfer_id
+                              and entry.stripe_reversal_id and not entry.pending_reversal)
+        if not (cancelled_unsent or confirmed_reversal):
+            raise HTTPException(409, "上一筆核銷的商戶結算仍待確認，請聯絡平台處理後再試")
+
+
 def record_redemption(db: Session, red: models.Redemption) -> dict:
     """Post-redemption hook (called from scan_coupon, same transaction).
 
     Writes the pending ledger entry ONLY — it never calls Stripe
     (queue §F item 3). The scheduler job ``connect-transfers`` (or
     the manual retry endpoint) moves the money afterwards, so a slow
-    or failing Stripe can never delay or fail the redemption itself.
-    Never raises.
+    or failing Stripe can never delay the redemption itself. A prior
+    unresolved transfer raises 409 rather than creating duplicate dues.
     """
+    ensure_prior_transfer_closed(db, red.wallet_item_id)
     coupon = db.query(models.Coupon).filter(
         models.Coupon.id == red.coupon_id).first()
     basis = settlement_basis(db, coupon, redemption=red)
@@ -198,7 +222,7 @@ def record_redemption(db: Session, red: models.Redemption) -> dict:
     entry = ConnectLedgerEntry(
         shop_id=red.shop_id, redemption_id=red.id, kind="transfer",
         status="pending", gross_amount=basis, commission=commission,
-        net_amount=net)
+        net_amount=net, dispatch_started=False)
     db.add(entry)
     db.flush()
     result = {"transfer": "pending", "entry_id": entry.id,
@@ -227,10 +251,9 @@ def _attempt_transfer(db: Session, entry: ConnectLedgerEntry) -> dict:
     the scheduler sweep and the manual retry endpoint, so both use
     the same idempotency key and the same failure accounting.
 
-    Only a real gateway failure counts toward retry_count; waiting
-    states (not_configured / no_account / account_not_ready) do not.
-    After CONNECT_MAX_TRANSFER_RETRIES failures the entry goes
-    needs_manual and an admin notification is raised once.
+    Waiting states do not count as attempts. A provider exception can
+    mean that funds moved, so freeze it and notify the admin instead of
+    assuming a retry is safe after the idempotency retention window.
     Returns {"transferred": bool, "reason": str, ...}. Never raises.
     """
     if not connect_configured():
@@ -243,25 +266,47 @@ def _attempt_transfer(db: Session, entry: ConnectLedgerEntry) -> dict:
     if not account_ready(account):
         entry.note = "account_not_ready"
         return {"transferred": False, "reason": "account_not_ready"}
+    if entry.dispatch_started is not False:
+        # Legacy pending records cannot prove that no provider request
+        # succeeded before its original transaction was lost.
+        entry.status = "transfer_unknown"
+        entry.note = "legacy_transfer_result_unknown"
+        _maybe_notify_manual(db, entry, "Connect 旧转帐结果待对账")
+        return {"transferred": False, "reason": "transfer_unknown"}
+    # Commit evidence that the dispatch has started before crossing the
+    # provider boundary. A crash after this commit remains ambiguous and
+    # must never be mistaken for a transfer that was never sent.
+    entry_id, redemption_id = entry.id, entry.redemption_id
+    amount, account_id = entry.net_amount, account.stripe_account_id
+    entry.dispatch_started = True
+    entry.status = "transferring"
+    entry.note = "transfer_started"
+    db.commit()
     try:
         transfer = connect_gateway.create_transfer(
-            account.stripe_account_id, entry.net_amount,
-            transfer_group=f"coupon-go-redemption-{entry.redemption_id}",
-            idempotency_key=f"transfer-{entry.id}")
-    except Exception as exc:  # noqa: BLE001 — caller decides, never crash
-        entry.retry_count = (entry.retry_count or 0) + 1
-        entry.note = f"failed: {exc}"[:255]
-        logger.warning("Connect transfer failed for entry %s: %s",
-                       entry.id, exc)
-        if entry.retry_count >= _max_retries():
-            entry.status = "needs_manual"
-            entry.note = f"needs_manual: {exc}"[:255]
-            _maybe_notify_manual(db, entry, "Connect 转帐多次失败，需人工处理")
-        return {"transferred": False, "reason": "failed"}
+            account_id, amount,
+            transfer_group=f"coupon-go-redemption-{redemption_id}",
+            idempotency_key=f"transfer-{entry_id}")
+        transfer_id = transfer.get("transfer_id")
+        if not transfer_id:
+            raise ValueError("provider response omitted transfer id")
+    except Exception:  # An error can occur after the provider moved funds.
+        db.rollback()
+        current = (db.query(ConnectLedgerEntry).filter_by(id=entry_id)
+                   .with_for_update().populate_existing().one())
+        current.status = "transfer_unknown"
+        current.retry_count = (current.retry_count or 0) + 1
+        current.note = "transfer_result_unknown"
+        _maybe_notify_manual(db, current, "Connect 转帐结果待对账")
+        db.flush()
+        return {"transferred": False, "reason": "transfer_unknown"}
+    entry = (db.query(ConnectLedgerEntry).filter_by(id=entry_id)
+             .with_for_update().populate_existing().one())
     entry.status = "transferred"
-    entry.stripe_transfer_id = transfer.get("transfer_id", "")
+    entry.stripe_transfer_id = transfer_id
     entry.retry_count = 0
-    entry.note = ""
+    entry.note = "reversal_pending" if entry.pending_reversal else ""
+    db.flush()
     return {"transferred": True, "reason": "transferred",
             "stripe_transfer_id": entry.stripe_transfer_id}
 
@@ -351,17 +396,25 @@ def reverse_redemption(db: Session, red: models.Redemption,
     loop, same transaction). Idempotent: an already-reversed entry is
     a no-op. Returns {"reversed": bool, ...}."""
     entry = (db.query(ConnectLedgerEntry)
-             .filter_by(redemption_id=red.id, kind="transfer").first())
+             .filter_by(redemption_id=red.id, kind="transfer")
+             .with_for_update().populate_existing().first())
     if entry is None:
         return {"reversed": False, "reason": "no_entry"}
     if entry.status == "reversed":
         return {"reversed": True, "reason": "already_reversed",
                 "stripe_reversal_id": entry.stripe_reversal_id or None}
-    if entry.status == "pending":
+    if entry.status == "pending" and entry.dispatch_started is False:
         entry.status = "reversed"
         entry.note = reason
         return {"reversed": True, "reason": reason,
                 "stripe_reversal_id": None}
+    if entry.status in ("pending", "needs_manual", "transferring", "transfer_unknown"):
+        # Legacy rows and in-flight/failed calls lack a proven outcome.
+        entry.pending_reversal = True
+        if entry.status in ("pending", "needs_manual"):
+            entry.status = "transfer_unknown"
+        entry.note = "transfer_result_unknown_reversal_requested"
+        return {"reversed": False, "reason": "transfer_result_unknown"}
     out = _attempt_reversal(db, entry)
     if out["reversed"]:
         entry.note = reason
@@ -382,6 +435,8 @@ def retry_entry(db: Session, entry_id: int) -> dict:
         raise HTTPException(status_code=404, detail="找不到此流水")
     if entry.kind != "transfer":
         raise HTTPException(status_code=409, detail="提款流水无需重试")
+    if entry.status in ("transferring", "transfer_unknown"):
+        raise HTTPException(status_code=409, detail="上次转帐结果待确认，请先对账")
     if entry.status == "reversed":
         raise HTTPException(status_code=409, detail="此笔已冲回，无需重试")
     if entry.pending_reversal:

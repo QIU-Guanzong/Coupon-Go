@@ -89,6 +89,9 @@ class ConnectLedgerEntry(Base):
     stripe_transfer_id = Column(String(60), default="")
     stripe_reversal_id = Column(String(60), default="")
     stripe_payout_id = Column(String(60), default="")
+    # None marks a legacy entry whose dispatch history is not provable.
+    # New transfer intents start False and become True before provider I/O.
+    dispatch_started = Column(Boolean, nullable=True)
     pending_reversal = Column(Boolean, default=False, nullable=False)
     retry_count = Column(Integer, default=0, nullable=False)
     manual_notified = Column(Boolean, default=False, nullable=False)

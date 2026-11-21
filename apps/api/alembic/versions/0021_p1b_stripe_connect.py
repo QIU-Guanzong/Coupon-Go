@@ -48,6 +48,7 @@ def upgrade():
             sa.Column("stripe_transfer_id", sa.String(60), nullable=False, server_default=""),
             sa.Column("stripe_reversal_id", sa.String(60), nullable=False, server_default=""),
             sa.Column("stripe_payout_id", sa.String(60), nullable=False, server_default=""),
+            sa.Column("dispatch_started", sa.Boolean, nullable=True),
             sa.Column("pending_reversal", sa.Boolean, nullable=False, server_default="0"),
             # Queue §F items 2–3: failed transfer / reversal attempts
             # and the once-only admin notification for needs_manual.
@@ -60,6 +61,10 @@ def upgrade():
         )
         op.create_index("ix_connect_ledger_entries_shop_id",
                         "connect_ledger_entries", ["shop_id"])
+    # Existing unversioned/test tables must preserve NULL as unknown history.
+    columns = {col["name"] for col in sa.inspect(op.get_bind()).get_columns("connect_ledger_entries")}
+    if "dispatch_started" not in columns:
+        op.add_column("connect_ledger_entries", sa.Column("dispatch_started", sa.Boolean, nullable=True))
 
 
 def downgrade():

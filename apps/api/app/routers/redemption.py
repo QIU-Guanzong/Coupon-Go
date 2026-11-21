@@ -64,6 +64,7 @@ def _check_item(db: Session, item: models.WalletItem, vendor: models.User):
     try:
         ensure_paid_voucher(db, item)
         ensure_redeemable(coupon)
+        connect_service.ensure_prior_transfer_closed(db, item.id)
     except HTTPException as exc:
         return coupon, exc.detail
     return coupon, None

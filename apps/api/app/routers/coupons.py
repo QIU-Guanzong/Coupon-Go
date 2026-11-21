@@ -211,6 +211,7 @@ def scan_coupon(body: schemas.ScanIn,
         raise HTTPException(status_code=400, detail="無效的 QR 碼！此碼屬於其他商店。")
     ensure_paid_voucher(db, item)
     ensure_redeemable(coupon)
+    connect_service.ensure_prior_transfer_closed(db, item.id)
     today_start = _now().replace(hour=0, minute=0, second=0, microsecond=0)
     scans_today = db.query(models.Redemption).filter(
         models.Redemption.scanned_by_vendor_id == vendor.id,
@@ -261,9 +262,8 @@ def scan_coupon(body: schemas.ScanIn,
         raise HTTPException(status_code=400, detail=str(e))
     add_scanned_sale(db, red)
     # P1-B: post-redemption transfer to the merchant's Connect account
-    # (commission deducted, net transferred). Never raises: a failed
-    # transfer leaves a pending ledger entry for the retry endpoint,
-    # and the redemption itself must not fail because of it.
+    # (commission deducted, net transferred). A prior unresolved transfer
+    # is rejected before consuming the wallet item; provider work is queued.
     connect_block = connect_service.record_redemption(db, red)
     db.commit()
     db.refresh(red)

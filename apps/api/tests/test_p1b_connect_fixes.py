@@ -381,69 +381,33 @@ def test_sweep_batch_limit(client):
     assert all(_entry(e)["status"] == "transferred" for e in ids)
 
 
-def test_sweep_retries_with_same_idempotency_key(client, monkeypatch):
-    """First sweep attempt times out at Stripe (already executed);
-    the retry uses the SAME key, so only one transfer exists."""
-    _sweep()  # drain pendings earlier tests left behind
+def test_sweep_unknown_transfer_is_not_sent_again(client, monkeypatch):
+    """A timeout may mean money moved. Keep its identity for reconciliation."""
+    _sweep()
     _onboard_sync(client, shop_id=6)
     scan, _ = _scan_package(client, "p1bf-key@example.com", shop_id=6)
     entry_id = scan["connect"]["entry_id"]
     keys = []
-    calls = {"n": 0}
-    real = connect_gateway.create_transfer
 
-    def flaky(*args, **kwargs):
+    def uncertain(*args, **kwargs):
         keys.append(kwargs.get("idempotency_key"))
-        calls["n"] += 1
-        if calls["n"] == 1:
-            raise GatewayError("Stripe 超時（已執行）")
-        return real(*args, **kwargs)
+        raise GatewayError("Stripe 超時（可能已執行）")
 
-    monkeypatch.setattr(connect_gateway, "create_transfer", flaky)
-    out = _sweep()
-    assert out["transferred"] == 0
-    assert _entry(entry_id)["status"] == "pending"
-    assert _entry(entry_id)["retry_count"] == 1
-    out = _sweep()
-    assert out["transferred"] == 1
-    assert _entry(entry_id)["status"] == "transferred"
-    assert keys == [f"transfer-{entry_id}", f"transfer-{entry_id}"]
-    assert _entry(entry_id)["stripe_transfer_id"].startswith("tr_test_")
-    monkeypatch.undo()
-
-
-def test_sweep_exhausted_goes_needs_manual_and_notifies_admin(client, monkeypatch):
-    _sweep()  # drain pendings earlier tests left behind
-    _onboard_sync(client, shop_id=11)
-    scan, _ = _scan_package(client, "p1bf-manual@example.com", shop_id=11)
-    entry_id = scan["connect"]["entry_id"]
-
-    def always_fail(*args, **kwargs):
-        raise GatewayError("Stripe 持續失敗")
-
-    monkeypatch.setattr(connect_gateway, "create_transfer", always_fail)
+    monkeypatch.setattr(connect_gateway, "create_transfer", uncertain)
+    assert _sweep()["transferred"] == 0
+    assert _entry(entry_id)["status"] == "transfer_unknown"
     for _ in range(5):
         _sweep()
-    row = _entry(entry_id)
-    assert row["status"] == "needs_manual"
-    assert row["retry_count"] == 5
-    assert row["manual_notified"] is True
+    assert keys == [f"transfer-{entry_id}"]
+    assert _entry(entry_id)["manual_notified"] is True
     with _db() as db:
         notes = db.query(models.Notification).filter_by(
-            notification_type="connect_manual_review",
-            target_shop_id=11).all()
+            notification_type="connect_manual_review", target_shop_id=6).all()
     assert len(notes) == 1
-    assert str(entry_id) in notes[0].body
-    # The sweep does not retry needs_manual entries on its own.
-    out = _sweep()
-    assert out["transferred"] == 0 and out["still_pending"] == 0
-    monkeypatch.undo()
-    # Manual retry recovers it.
     vh = _vendor_headers(client)
-    r = client.post(
-        f"/api/v3/merchant/connect/transfers/{entry_id}/retry", headers=vh)
-    assert r.status_code == 200, r.text
-    assert r.json()["status"] == "transferred"
+    r = client.post(f"/api/v3/merchant/connect/transfers/{entry_id}/retry", headers=vh)
+    assert r.status_code == 409
+    assert keys == [f"transfer-{entry_id}"]
 
 
 # ---------- F2: payout concurrency ----------
