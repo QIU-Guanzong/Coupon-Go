@@ -305,4 +305,10 @@ def app_config():
         "points_review": config.POINTS_REVIEW,
         "qr_ttl_seconds": config.QR_TTL_SECONDS,
         "cashback_unlock_days": config.CASHBACK_DINEIN_UNLOCK_DAYS,
+        # M10: cashback_enabled follows the CASHBACK_ENABLED switch;
+        # points_exchange_cost is the single-source 9-points voucher
+        # cost; open_login is field-only for now (no behaviour change).
+        "cashback_enabled": config.CASHBACK_ENABLED,
+        "points_exchange_cost": config.POINTS_EXCHANGE_COST,
+        "open_login": config.OPEN_LOGIN,
     }
