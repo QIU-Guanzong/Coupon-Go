@@ -62,6 +62,7 @@ This module never touches FIX-1 webhook verification.
 """
 import hashlib
 import uuid
+from decimal import Decimal, ROUND_HALF_UP
 
 import httpx
 
@@ -70,10 +71,45 @@ from .payments_gateway import GatewayError
 
 STRIPE_API = "https://api.stripe.com/v1"
 STRIPE_API_V2 = "https://api.stripe.com/v2"
-# Newest preview version in the official docs at migration time
-# (2026-11-20): docs.stripe.com/connect/accounts-v2 and
-# docs.stripe.com/connect/embedded-onboarding both use it.
-STRIPE_V2_VERSION = "2026-11-18.preview"
+# Accounts v2 API version: read from config at call time
+# (config.STRIPE_V2_VERSION, env STRIPE_V2_VERSION, default
+# "2026-11-18.preview"). Still a preview per Stripe's own docs
+# (2026-11-21) — see docs/P1B_API.md §F5 for the risk + upgrade flow.
+CENT = Decimal("0.01")
+
+# Idempotency store for the local simulator only: Stripe dedupes on
+# Idempotency-Key server-side; the simulator has no server, so it
+# remembers {key: first result} in-process. Real Stripe calls never
+# touch this. Tests reset it via _reset_simulator_idempotency().
+_SIM_IDEMPOTENCY: dict = {}
+
+
+def _reset_simulator_idempotency():
+    """Test helper: clear the simulator's idempotency memory."""
+    _SIM_IDEMPOTENCY.clear()
+
+
+def _to_cents(amount) -> int:
+    """HKD -> integer cents, Decimal only, never float. Amounts are
+    already quantized to cents by the service layer; HALF_UP only
+    matters for a stray sub-cent value, where it must not silently
+    truncate (float 1.005 * 100 is 100.4999… -> 100)."""
+    dec = amount if isinstance(amount, Decimal) else Decimal(str(amount))
+    return int((dec * 100).to_integral_value(rounding=ROUND_HALF_UP))
+
+
+def _sim_idempotent(key, prefix, seed, build):
+    """Simulator-side idempotency: same key -> the first result,
+    exactly like Stripe (same key + same params returns the original
+    response instead of executing again)."""
+    if key is not None:
+        hit = _SIM_IDEMPOTENCY.get(key)
+        if hit is not None:
+            return dict(hit)
+    result = build()
+    if key is not None:
+        _SIM_IDEMPOTENCY[key] = dict(result)
+    return result
 
 # Configurations applied to every merchant account: merchant (accept
 # payments + payouts) and recipient (receive platform transfers).
@@ -124,8 +160,10 @@ def _get(key, path, headers=None):
 
 def _v2_headers(key: str) -> dict:
     # v2 uses Bearer auth + an explicit preview API version header.
+    # The version comes from config (env STRIPE_V2_VERSION), never
+    # hard-coded here — see config.STRIPE_V2_VERSION.
     return {"Authorization": f"Bearer {key}",
-            "Stripe-Version": STRIPE_V2_VERSION}
+            "Stripe-Version": config.STRIPE_V2_VERSION}
 
 
 def _post_v2(key, path, payload):
@@ -305,62 +343,90 @@ def set_manual_payouts(account_id: str) -> dict:
     return {"manual": True, "simulated": False}
 
 
-def create_transfer(account_id: str, amount_hkd: float,
-                    transfer_group: str, currency: str = "HKD") -> dict:
+def create_transfer(account_id: str, amount_hkd,
+                    transfer_group: str, currency: str = "HKD",
+                    idempotency_key: str = None) -> dict:
     """Transfer funds from the platform balance to a connected account
     (separate charges and transfers). v1 Transfers API with the v2
     account id as destination (Stripe v2/v1 interop). Returns
-    {transfer_id, status, amount, currency, simulated}."""
+    {transfer_id, status, amount, currency, simulated}.
+
+    Idempotency (queue §F item 1): callers pass a stable key derived
+    from the ledger entry id (``transfer-{entry_id}``); the same key
+    is reused on every retry, so a first request that timed out at
+    Stripe but already executed never transfers twice. The real path
+    sends ``Idempotency-Key``; the simulator dedupes in-process."""
     key = _require_test_key()
+    amount_dec = (amount_hkd if isinstance(amount_hkd, Decimal)
+                  else Decimal(str(amount_hkd)))
     if not key:
-        return {"transfer_id": _sim_ref("tr", f"{account_id}:{transfer_group}"),
-                "status": "paid", "amount": round(float(amount_hkd), 2),
-                "currency": currency, "simulated": True}
+        return _sim_idempotent(
+            idempotency_key, "tr", f"{account_id}:{transfer_group}",
+            lambda: {"transfer_id": _sim_ref(
+                "tr", f"{account_id}:{transfer_group}"),
+                "status": "paid", "amount": float(amount_dec),
+                "currency": currency, "simulated": True})
     data = _post(key, "/transfers", {
-        "amount": int(round(float(amount_hkd) * 100)),
+        "amount": _to_cents(amount_dec),
         "currency": currency.lower(),
         "destination": account_id,
         "transfer_group": transfer_group,
-    })
+    }, headers=({"Idempotency-Key": idempotency_key}
+                if idempotency_key else None))
     return {"transfer_id": data.get("id", ""), "status": data.get("status", ""),
             "amount": (data.get("amount") or 0) / 100,
             "currency": (data.get("currency") or currency).upper(),
             "simulated": False}
 
 
-def reverse_transfer(transfer_id: str, amount_hkd: float,
-                     currency: str = "HKD") -> dict:
+def reverse_transfer(transfer_id: str, amount_hkd,
+                     currency: str = "HKD",
+                     idempotency_key: str = None) -> dict:
     """Reverse a transfer (full or partial). v1 Transfer Reversals API.
-    Returns {reversal_id, status, amount, currency, simulated}."""
+    Returns {reversal_id, status, amount, currency, simulated}.
+    Idempotency key: ``reversal-{entry_id}`` (see create_transfer)."""
     key = _require_test_key()
+    amount_dec = (amount_hkd if isinstance(amount_hkd, Decimal)
+                  else Decimal(str(amount_hkd)))
     if not key:
-        return {"reversal_id": _sim_ref("trr", f"{transfer_id}:{amount_hkd}"),
-                "status": "succeeded", "amount": round(float(amount_hkd), 2),
-                "currency": currency, "simulated": True}
+        return _sim_idempotent(
+            idempotency_key, "trr", f"{transfer_id}:{amount_dec}",
+            lambda: {"reversal_id": _sim_ref(
+                "trr", f"{transfer_id}:{amount_dec}"),
+                "status": "succeeded", "amount": float(amount_dec),
+                "currency": currency, "simulated": True})
     data = _post(key, f"/transfers/{transfer_id}/reversals", {
-        "amount": int(round(float(amount_hkd) * 100)),
-    })
+        "amount": _to_cents(amount_dec),
+    }, headers=({"Idempotency-Key": idempotency_key}
+                if idempotency_key else None))
     return {"reversal_id": data.get("id", ""), "status": data.get("status", ""),
             "amount": (data.get("amount") or 0) / 100,
             "currency": (data.get("currency") or currency).upper(),
             "simulated": False}
 
 
-def create_payout(account_id: str, amount_hkd: float,
-                  currency: str = "HKD") -> dict:
+def create_payout(account_id: str, amount_hkd,
+                  currency: str = "HKD",
+                  idempotency_key: str = None) -> dict:
     """Pay out from a connected account's balance to its external
     (bank) account. v1 Payouts API with the v2 account id as
     Stripe-Account. Returns {payout_id, status, amount, currency,
-    simulated}."""
+    simulated}. Idempotency key: ``payout-{entry_id}``."""
     key = _require_test_key()
+    amount_dec = (amount_hkd if isinstance(amount_hkd, Decimal)
+                  else Decimal(str(amount_hkd)))
     if not key:
-        return {"payout_id": _sim_ref("po", f"{account_id}:{amount_hkd}"),
-                "status": "paid", "amount": round(float(amount_hkd), 2),
-                "currency": currency, "simulated": True}
+        return _sim_idempotent(
+            idempotency_key, "po", f"{account_id}:{amount_dec}",
+            lambda: {"payout_id": _sim_ref(
+                "po", f"{account_id}:{amount_dec}"),
+                "status": "paid", "amount": float(amount_dec),
+                "currency": currency, "simulated": True})
     data = _post(key, "/payouts", {
-        "amount": int(round(float(amount_hkd) * 100)),
+        "amount": _to_cents(amount_dec),
         "currency": currency.lower(),
-    }, headers={"Stripe-Account": account_id})
+    }, headers={"Stripe-Account": account_id, **(
+        {"Idempotency-Key": idempotency_key} if idempotency_key else {})})
     return {"payout_id": data.get("id", ""), "status": data.get("status", ""),
             "amount": (data.get("amount") or 0) / 100,
             "currency": (data.get("currency") or currency).upper(),

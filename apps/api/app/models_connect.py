@@ -11,12 +11,22 @@ Ledger semantics (docs/P1B_API.md):
   unique when set). status pending (待结算) -> transferred (已转帐)
   -> reversed (已冲回). A pending entry reversed before any Stripe
   transfer has no stripe_reversal_id; a transferred entry reversed
-  via the Transfer Reversal API records it.
-- kind="payout": one row per merchant withdrawal, status paid_out,
-  net_amount negative, redemption_id NULL.
-- Balances are derived, never stored: pending = sum of pending
-  transfer nets; available = sum of transferred transfer nets minus
-  paid-out totals; paid_out = sum of payout magnitudes.
+  via the Transfer Reversal API records it. After
+  CONNECT_MAX_TRANSFER_RETRIES (default 5) failed transfer attempts
+  the entry goes needs_manual (需人工) and an admin notification is
+  raised once (manual_notified); the manual retry endpoint is the
+  recovery path. retry_count counts failed transfer AND reversal
+  attempts on the entry (reset on success).
+- kind="payout": one row per merchant withdrawal, status processing
+  (处理中, balance already deducted at write time) -> paid_out, or
+  failed (gateway failed, balance released). net_amount negative,
+  redemption_id NULL.
+- Balances are derived, never stored: pending = sum of pending AND
+  needs_manual transfer nets; available = sum of transferred transfer
+  nets minus paid-out totals minus processing payouts; paid_out =
+  sum of payout magnitudes. Available MAY go negative (a transfer
+  reversed after the money was paid out); while negative, new
+  payouts are refused — see docs/P1B_API.md §F6.
 - pending_reversal: a transferred entry whose reversal was requested
   but the gateway call failed — the retry endpoint picks it up.
 """
@@ -80,6 +90,8 @@ class ConnectLedgerEntry(Base):
     stripe_reversal_id = Column(String(60), default="")
     stripe_payout_id = Column(String(60), default="")
     pending_reversal = Column(Boolean, default=False, nullable=False)
+    retry_count = Column(Integer, default=0, nullable=False)
+    manual_notified = Column(Boolean, default=False, nullable=False)
     note = Column(String(255), default="")
     created_at = Column(DateTime, default=_now)
     updated_at = Column(DateTime, default=_now, onupdate=_now)

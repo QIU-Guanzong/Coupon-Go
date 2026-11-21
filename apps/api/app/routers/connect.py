@@ -5,14 +5,28 @@ Fail-closed throughout: when Connect is not configured the onboarding /
 sync / payout / retry endpoints refuse with 503 and no money state
 changes. The monthly Settlement is untouched here — it stays the
 reconciliation record; Connect ledger entries are a separate book.
+
+Roles (queue §F item 4): request bodies are Pydantic models, never
+bare dicts. Payouts and transfer retries are limited to the shop
+OWNER (role ``vendor`` — the seed vendor owns the shop — plus
+``admin``). The finer staff roles (``merchant-admin`` / ``manager`` /
+``cashier`` / ``finance``) do not exist in this codebase yet (#17
+merchant-mgmt is unmerged): a cashier or manager cannot exist as a
+user today, so there is nothing further to exclude. When #17 lands,
+narrow the payout / retry endpoints to ``merchant-admin`` + ``finance``
+only — see docs/P1B_API.md §F4 for the handover note.
 """
+from decimal import Decimal
+from typing import Annotated
+
 from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from .. import config, connect_gateway, connect_service, models
 from ..connect_service import (
     account_out, connect_configured, get_account, merchant_balance,
-    request_payout, retry_entry, sync_account,
+    recoveries, request_payout, retry_entry, sync_account,
 )
 from ..database import get_db
 from ..deps import require_role
@@ -20,6 +34,21 @@ from ..models_connect import ConnectAccount, ConnectLedgerEntry
 from ..payments_gateway import GatewayError
 
 router = APIRouter()
+
+
+class OnboardingBody(BaseModel):
+    shop_id: int
+    return_url: str | None = None
+    refresh_url: str | None = None
+
+
+class SyncBody(BaseModel):
+    shop_id: int
+
+
+class PayoutBody(BaseModel):
+    shop_id: int
+    amount: Annotated[Decimal, Field(gt=0)]
 
 
 def _money(value) -> float:
@@ -47,23 +76,25 @@ def _entry_out(entry: ConnectLedgerEntry) -> dict:
         "stripe_transfer_id": entry.stripe_transfer_id or None,
         "stripe_reversal_id": entry.stripe_reversal_id or None,
         "stripe_payout_id": entry.stripe_payout_id or None,
+        "retry_count": entry.retry_count or 0,
+        "manual_notified": bool(entry.manual_notified),
         "note": entry.note or "",
         "created_at": entry.created_at.isoformat() if entry.created_at else None,
     }
 
 
 @router.post("/merchant/connect/onboarding")
-def start_onboarding(body: dict,
+def start_onboarding(body: OnboardingBody,
                      vendor: models.User = Depends(require_role("vendor", "admin")),
                      db: Session = Depends(get_db)):
-    shop = _shop_or_404(db, (body or {}).get("shop_id"), vendor)
+    shop = _shop_or_404(db, body.shop_id, vendor)
     if not connect_configured():
         raise HTTPException(
             status_code=503,
             detail="Stripe Connect 未配置：请先在部署环境开启 "
                    "STRIPE_CONNECT_ENABLED")
-    return_url = (body or {}).get("return_url") or config.STRIPE_CONNECT_RETURN_URL
-    refresh_url = (body or {}).get("refresh_url") or config.STRIPE_CONNECT_REFRESH_URL
+    return_url = body.return_url or config.STRIPE_CONNECT_RETURN_URL
+    refresh_url = body.refresh_url or config.STRIPE_CONNECT_REFRESH_URL
     if not return_url or not refresh_url:
         raise HTTPException(
             status_code=400,
@@ -96,10 +127,10 @@ def start_onboarding(body: dict,
 
 
 @router.post("/merchant/connect/sync")
-def sync_onboarding(body: dict,
+def sync_onboarding(body: SyncBody,
                     vendor: models.User = Depends(require_role("vendor", "admin")),
                     db: Session = Depends(get_db)):
-    shop = _shop_or_404(db, (body or {}).get("shop_id"), vendor)
+    shop = _shop_or_404(db, body.shop_id, vendor)
     account = get_account(db, shop.id)
     if account is None:
         raise HTTPException(status_code=404, detail="此商户尚未开户，请先调用 onboarding")
@@ -128,6 +159,7 @@ def connect_balance(shop_id: int = Query(...),
             "pending": _money(balance["pending"]),
             "available": _money(balance["available"]),
             "paid_out": _money(balance["paid_out"]),
+            "processing": _money(balance["processing"]),
             "connect_configured": connect_configured(),
             "account_ready": connect_service.account_ready(account)}
 
@@ -148,13 +180,22 @@ def connect_ledger(shop_id: int = Query(...),
 
 
 @router.post("/merchant/connect/payouts")
-def create_payout(body: dict,
+def create_payout(body: PayoutBody,
                   vendor: models.User = Depends(require_role("vendor", "admin")),
                   db: Session = Depends(get_db)):
-    shop = _shop_or_404(db, (body or {}).get("shop_id"), vendor)
-    out = request_payout(db, shop, (body or {}).get("amount"))
+    shop = _shop_or_404(db, body.shop_id, vendor)
+    out = request_payout(db, shop, body.amount)
     db.commit()
     return out
+
+
+@router.get("/admin/connect/recoveries")
+def admin_recoveries(
+        admin: models.User = Depends(require_role("admin")),
+        db: Session = Depends(get_db)):
+    """Admin board (queue §F item 6): negative balances to chase,
+    transfers stuck in needs_manual, reversals still pending."""
+    return recoveries(db)
 
 
 @router.post("/merchant/connect/transfers/{entry_id}/retry")
@@ -169,6 +210,6 @@ def retry_transfer(entry_id: int,
         raise HTTPException(status_code=404, detail="找不到商店")
     if vendor.role != "admin" and shop.vendor_id != vendor.id:
         raise HTTPException(status_code=403, detail="沒有權限")
-    out = retry_entry(db, entry)
+    out = retry_entry(db, entry.id)
     db.commit()
     return out

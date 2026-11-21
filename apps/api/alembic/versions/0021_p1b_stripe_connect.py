@@ -49,6 +49,10 @@ def upgrade():
             sa.Column("stripe_reversal_id", sa.String(60), nullable=False, server_default=""),
             sa.Column("stripe_payout_id", sa.String(60), nullable=False, server_default=""),
             sa.Column("pending_reversal", sa.Boolean, nullable=False, server_default="0"),
+            # Queue §F items 2–3: failed transfer / reversal attempts
+            # and the once-only admin notification for needs_manual.
+            sa.Column("retry_count", sa.Integer, nullable=False, server_default="0"),
+            sa.Column("manual_notified", sa.Boolean, nullable=False, server_default="0"),
             sa.Column("note", sa.String(255), nullable=False, server_default=""),
             sa.Column("created_at", sa.DateTime, nullable=True),
             sa.Column("updated_at", sa.DateTime, nullable=True),

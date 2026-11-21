@@ -1,4 +1,4 @@
-# M1 后台定时任务：过期退款 / 砍价结算 / 超时关闭 / 返现 sweep
+# M1 后台定时任务：过期退款 / 砍价结算 / 超时关闭 / 返现 sweep / Connect 转帐
 
 ## 问题
 
@@ -11,16 +11,16 @@
 
 - **进程内调度器**：`app/scheduler.py`，FastAPI 启动时（`app/main.py` startup）
 启动 `BackgroundScheduler`，每 `SCHEDULER_INTERVAL_SECONDS`（默认 300 秒）
-执行 4 个任务，各自独立的锁、会话与失败日志。
+执行 5 个任务，各自独立的锁、会话与失败日志。
 - **run-once CLI**（运维 / cron / 测试手动跑，不受 `SCHEDULER_ENABLED` 开关影响）：
 ```bash
 cd apps/api
-python -m app.scheduler run-once [--job expired-packages|bargain-expire|payment-timeouts|cashback-sweep|all] [--batch-size N]
+python -m app.scheduler run-once [--job expired-packages|bargain-expire|payment-timeouts|cashback-sweep|connect-transfers|all] [--batch-size N]
 python -m app.scheduler run # 前台常驻调度器
 python -m app.scheduler status # 打印当前调度配置
 ```
 
-## 4 个任务（与手动接口共用同一份逻辑）
+## 5 个任务（与手动接口共用同一份逻辑）
 
 | 任务 | 共用逻辑 | 幂等保证 |
 |---|---|---|
@@ -28,6 +28,7 @@ python -m app.scheduler status # 打印当前调度配置
 | `bargain-expire` 砍价到期结算 | `routers/bargain.py: sweep_expired_bargains()`，手动接口 `POST /bargain/expire-sweep` 同调它 | `settle_session` 只迁移 active/success 会话；`_add_refund` 每个 (session, reason) 只建一行 |
 | `payment-timeouts` 超时 pending 关闭 | `routers/packages.py: sweep_payment_timeouts()`（与读订单时懒触发的 `_refresh_payment_timeout` 同逻辑） | 超时后订单不再是 pending，不再入选；库存按份数释放 |
 | `cashback-sweep` 返现 sweep | `cashback_service.py: sweep_all_users()`（全体用户，按 user id 游标分批，默认每批 100 人；单用户逻辑仍是 `sweep_user()`） | 已确认/已作废的交易不再是 pending，不再入选 |
+| `connect-transfers` Connect 转帐（P1-B 队列 §F 第 3 项） | `connect_service.py: sweep_pending_transfers()`（`pending` 流水按 id 顺序，每批上限 `SCHEDULER_CONNECT_BATCH_SIZE` 默认 50 条；手动接口 `POST /merchant/connect/transfers/{id}/retry` 同调 `_attempt_transfer`） | 已转帐 / 已冲回 / 已 `needs_manual` 的流水不再入选；每条带幂等键 `transfer-{entry_id}`，重试不重复转帐 |
 
 单条失败不影响其他：每个 sweep 按条 try/except，失败写日志（`logger.exception`）、
 回滚该条、计入 `failed`，下一周期重试。网关失败的砍价退款仍保持 failed 状态，
@@ -35,9 +36,19 @@ python -m app.scheduler status # 打印当前调度配置
 
 ## 多实例只执行一次
 
-- **Postgres**：每任务一个固定 advisory lock key（`2026111701`–`2026111704`），
+- **Postgres**：每任务一个固定 advisory lock key，
 `pg_try_advisory_lock` 抢不到的实例直接跳过（结果 `skipped: true`），
-锁随会话结束自动释放。
+锁随会话结束自动释放。**锁号总表（新任务先查表再取号，不要撞号）：**
+
+| 任务 | 锁号 |
+|---|---|
+| `expired-packages` | 2026111701 |
+| `bargain-expire` | 2026111702 |
+| `payment-timeouts` | 2026111703 |
+| `cashback-sweep` | 2026111704 |
+| `points-expire`（P1-C #20，未合入） | 2026111705 |
+| `coupon-expiry`（#12 unify，未合入） | 2026111706 |
+| `connect-transfers`（P1-B #16） | 2026111707 |
 - **其他数据库（SQLite 等）**：抢 `scheduler_locks` 表的一行
 （`INSERT... ON CONFLICT DO NOTHING` + 租约过期回收，默认租约
 `SCHEDULER_LOCK_LEASE_SECONDS=600` 秒；迁移 `0013_m1_scheduler_locks`）。
@@ -50,6 +61,7 @@ python -m app.scheduler status # 打印当前调度配置
 | `SCHEDULER_ENABLED` | dev 默认开；非 dev 未设置 = 关 | `1` 开 / `0` 关；未设置时非 dev 启动打明确警告，绝不静默不跑 |
 | `SCHEDULER_INTERVAL_SECONDS` | `300` | 执行周期（秒） |
 | `SCHEDULER_CASHBACK_BATCH_SIZE` | `100` | 返现 sweep 每批用户数 |
+| `SCHEDULER_CONNECT_BATCH_SIZE` | `50` | `connect-transfers` 每批转帐条数上限 |
 | `SCHEDULER_LOCK_LEASE_SECONDS` | `600` | 非 Postgres 锁行租约（秒） |
 
 **非 dev 环境缺调度配置时**：启动日志出现明确警告
@@ -78,3 +90,11 @@ advisory lock / 锁行保证只有一个实例实际执行；单实例部署也�
 1 秒间隔调度器自动跑、两个真实子进程同时 `run-once` 只退一次、
 锁被占时跳过、单条失败不阻塞其他且下一周期重试、手动接口与调度器共用逻辑、
 非 dev 未配置警告、Postgres advisory lock 分支（stub 会话）。
+
+`tests/test_p1b_connect_fixes.py`（P1-B 队列 §F）：核销不调 Stripe、
+待结算经 sweep 转帐、批量上限、同一幂等键重试只转一笔、失败 5 次进
+`needs_manual` 并通知 admin、提款先写 `processing` 再调 Stripe、
+提款失败变 `failed` 释放余额、负余额停提款并上 admin 看板、冲回失败
+计次并通知 admin、Pydantic 校验、Stripe v2 版本走配置；两个并发测试
+（同一商户两次提款、同一流水两次重试）只在真实 Postgres 上跑
+（`pg-run/p1b_pg_run.py`，pgserver），SQLite 下跳过。

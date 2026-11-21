@@ -93,6 +93,19 @@ STRIPE_CONNECT_REFRESH_URL = os.environ.get("STRIPE_CONNECT_REFRESH_URL", "")
 # so the app can warn merchants; not enforced by code.
 STRIPE_CONNECT_PAYOUT_HOLD_DAYS = int(
     os.environ.get("STRIPE_CONNECT_PAYOUT_HOLD_DAYS", "90"))
+# Accounts v2 API version (queue §F item 5). Stripe's official docs
+# still use "2026-11-18.preview" for every v2 call (checked
+# 2026-11-21: docs.stripe.com/connect/accounts-v2 and the v2 API
+# reference all carry the .preview suffix; no GA version string for
+# Accounts v2 is published). It stays a preview until Stripe
+# announces GA — then bump this default (or the env var) and re-run
+# the v2 gateway tests. Never hard-code the version in the gateway.
+STRIPE_V2_VERSION = os.environ.get(
+    "STRIPE_V2_VERSION", "2026-11-18.preview")
+# Max failed transfer / reversal attempts per ledger entry before it
+# goes "needs_manual" and notifies admin (queue §F item 3).
+CONNECT_MAX_TRANSFER_RETRIES = int(
+    os.environ.get("CONNECT_MAX_TRANSFER_RETRIES", "5"))
 
 
 def connect_enabled() -> dict:
@@ -158,6 +171,8 @@ PAYMENT_TIMEOUT_MINUTES = int(os.environ.get("PAYMENT_TIMEOUT_MINUTES", "15"))
 SCHEDULER_ENABLED_RAW = os.environ.get("SCHEDULER_ENABLED")
 SCHEDULER_INTERVAL_SECONDS = int(os.environ.get("SCHEDULER_INTERVAL_SECONDS", "300"))
 SCHEDULER_CASHBACK_BATCH_SIZE = int(os.environ.get("SCHEDULER_CASHBACK_BATCH_SIZE", "100"))
+# P1-B queue §F item 3: pending-transfer sweep batch (entries per run).
+SCHEDULER_CONNECT_BATCH_SIZE = int(os.environ.get("SCHEDULER_CONNECT_BATCH_SIZE", "50"))
 # Row-claim lock lease (non-Postgres fallback): a crashed holder's
 # lock becomes reclaimable after this long.
 SCHEDULER_LOCK_LEASE_SECONDS = int(os.environ.get("SCHEDULER_LOCK_LEASE_SECONDS", "600"))
@@ -179,16 +194,19 @@ def scheduler_status() -> dict:
         return {"enabled": enabled, "configured_explicitly": True,
                 "interval_seconds": SCHEDULER_INTERVAL_SECONDS,
                 "cashback_batch_size": SCHEDULER_CASHBACK_BATCH_SIZE,
+                "connect_batch_size": SCHEDULER_CONNECT_BATCH_SIZE,
                 "reason": reason}
     if APP_ENV == "dev":
         return {"enabled": True, "configured_explicitly": False,
                 "interval_seconds": SCHEDULER_INTERVAL_SECONDS,
                 "cashback_batch_size": SCHEDULER_CASHBACK_BATCH_SIZE,
+                "connect_batch_size": SCHEDULER_CONNECT_BATCH_SIZE,
                 "reason": "开发环境默认启用调度器，"
                           f"每 {SCHEDULER_INTERVAL_SECONDS} 秒执行一次"}
     return {"enabled": False, "configured_explicitly": False,
             "interval_seconds": SCHEDULER_INTERVAL_SECONDS,
             "cashback_batch_size": SCHEDULER_CASHBACK_BATCH_SIZE,
+                "connect_batch_size": SCHEDULER_CONNECT_BATCH_SIZE,
             "reason": "非开发环境未配置 SCHEDULER_ENABLED，调度器未启动："
                       "过期套餐退款 / 砍价到期结算 / 超时订单关闭 / 返现 sweep "
                       "不会自动执行。请设置 SCHEDULER_ENABLED=1 再启动"}

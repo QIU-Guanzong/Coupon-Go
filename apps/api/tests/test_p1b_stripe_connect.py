@@ -30,7 +30,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 os.environ["COUPON_GO_ENV"] = "dev"
 os.environ["SEED_ON_STARTUP"] = "0"
 
-from app import config, models  # noqa: E402
+from app import config, connect_service, models  # noqa: E402
 from app.database import Base, get_db  # noqa: E402
 from app.main import app  # noqa: E402
 from app.seed import seed  # noqa: E402
@@ -194,6 +194,18 @@ def _ledger(client, vh, shop_id=1):
     return r.json()
 
 
+def _sweep():
+    """Run the connect-transfers sweep once (queue §F item 3: the
+    scheduler job is the transfer path now, not the scan)."""
+    db = TestingSession()
+    try:
+        out = connect_service.sweep_pending_transfers(db)
+        db.commit()
+        return out
+    finally:
+        db.close()
+
+
 # ---------- onboarding + sync ----------
 
 def test_onboarding_creates_account_and_link(client):
@@ -290,8 +302,16 @@ def test_scan_price_coupon_transfers_when_account_ready(client):
     _onboard(client, vh, shop_id=5)
     _sync(client, vh, shop_id=5)
     scan = _claim_and_scan(client, h, vh, coupon_id=10)
-    assert scan["connect"]["transfer"] == "transferred"
+    # Queue §F item 3: the scan only queues the transfer now; the
+    # scheduler job (or the manual retry endpoint) moves the money.
+    assert scan["connect"]["transfer"] == "pending"
     assert scan["connect"]["net_amount"] == 124.20  # 138 - 10%
+    _sweep()
+    with _db() as db:
+        row = db.query(models.ConnectLedgerEntry).filter_by(
+            redemption_id=scan["redemption_id"]).one()
+        assert row.status == "transferred"
+        assert (row.stripe_transfer_id or "").startswith("tr_test_")
     bal = _balance(client, vh, shop_id=5)
     assert bal["available"] == 124.20
 
@@ -348,7 +368,12 @@ def test_revoke_reverses_transferred_entry(client):
     pkg = _create_package(client, name="P1-B 撤销套餐", price=150)
     paid = _buy_paid(client, h, pkg["id"])
     scan = _qr_and_scan(client, h, vh, paid["wallet_item_id"])
-    assert scan["connect"]["transfer"] == "transferred"  # shop 1 ready now
+    assert scan["connect"]["transfer"] == "pending"  # queued, not yet moved
+    _sweep()  # the scheduler moves it before the revoke
+    with _db() as db:
+        row = db.query(models.ConnectLedgerEntry).filter_by(
+            redemption_id=scan["redemption_id"]).one()
+        assert row.status == "transferred"
     rid = scan["redemption_id"]
     r = client.post(f"/api/v3/redemptions/{rid}/revoke", headers=vh)
     assert r.status_code == 200, r.text
