@@ -105,7 +105,7 @@ void main() {
     expect(cashbackEnabled, hasOverride ? optedIn : false);
   });
   testWidgets(
-      'only a verified admin sees Administration; the application remains',
+      'only a verified non-preview admin sees Administration',
       (tester) async {
     for (final role in ['vendor', 'admin']) {
       final api = _NavApi(role: role)..pendingMe = Completer();
@@ -114,15 +114,18 @@ void main() {
       tester.state<ScaffoldState>(outer).openDrawer();
       await tester.pumpAndSettle();
       expect(find.text('Administration'), findsNothing);
-      await tester.scrollUntilVisible(find.text('Merchant application'), 150,
-          scrollable: find.descendant(
-              of: find.byType(Drawer), matching: find.byType(Scrollable)));
-      expect(find.text('Merchant application'), findsOneWidget);
+      if (!publicPreview) {
+        await tester.scrollUntilVisible(find.text('Merchant application'), 150,
+            scrollable: find.descendant(
+                of: find.byType(Drawer), matching: find.byType(Scrollable)));
+      }
+      expect(find.text('Merchant application'),
+          publicPreview ? findsNothing : findsOneWidget);
       expect(find.text('Invite Friends'), findsNothing);
       api.pendingMe!.complete({'role': role, 'name': 'Tea House'});
       await tester.pumpAndSettle();
       expect(find.text('Administration'),
-          role == 'admin' ? findsOneWidget : findsNothing);
+          !publicPreview && role == 'admin' ? findsOneWidget : findsNothing);
       await tester.pumpWidget(const SizedBox());
     }
   });
@@ -203,13 +206,16 @@ void main() {
     await tester.pump();
     final app = tester.widget<MaterialApp>(find.byType(MaterialApp));
     expect(app.onGenerateRoute!(const RouteSettings(name: '/cashback')),
-        cashbackEnabled ? isA<MaterialPageRoute>() : isNull);
+        cashbackEnabled && !publicPreview ? isA<MaterialPageRoute>() : isNull);
   });
 
   testWidgets('unavailable social options are hidden', (tester) async {
     await tester.pumpWidget(_app(AuthScreen(api: _NavApi(), onAuthed: () {})));
     await tester.pumpAndSettle();
-    expect(find.text('Continue with Email account'), findsOneWidget);
+    expect(find.text('Continue with Email account'),
+        publicPreview ? findsNothing : findsOneWidget);
+    expect(find.text('Enter preview'),
+        publicPreview ? findsOneWidget : findsNothing);
     expect(find.textContaining('Google'), findsNothing);
     expect(find.textContaining('Facebook'), findsNothing);
   });

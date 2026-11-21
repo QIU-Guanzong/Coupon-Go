@@ -16,6 +16,7 @@ import 'screens/admin_v2.dart';
 import 'screens/bargain.dart';
 import 'screens/cashback.dart';
 import 'screens/customer.dart';
+import 'screens/guest_auth.dart' show PreviewWelcomeScreen;
 import 'screens/nearby.dart';
 import 'screens/packages.dart';
 import 'screens/reviews_admin.dart';
@@ -50,7 +51,7 @@ class _CouponGoAppState extends State<CouponGoApp> {
     super.initState();
     _api.addListener(_sessionChanged);
     unawaited(_api.appConfig.load());
-    Future.wait([_api.loadToken(), _language.load()]).then((_) {
+    Future.wait([if (!publicPreview) _api.loadToken(), _language.load()]).then((_) {
       if (!mounted) return;
       setState(() {
         _ready = true;
@@ -93,6 +94,13 @@ class _CouponGoAppState extends State<CouponGoApp> {
                   setState(() => _vendorMode = !_vendorMode),
             ),
       onGenerateRoute: (settings) {
+        final route = settings.name ?? '';
+        if (publicPreview && (route == '/login' ||
+            route == '/admin' || route.startsWith('/admin/') ||
+            route.startsWith('/vendor/'))) {
+          return MaterialPageRoute(
+              settings: settings, builder: (_) => const PreviewWelcomeScreen());
+        }
         switch (settings.name) {
           case '/notifications':
             return MaterialPageRoute(
@@ -136,7 +144,7 @@ class _CouponGoAppState extends State<CouponGoApp> {
           case '/qbot':
             return MaterialPageRoute(builder: (_) => QBotScreen(api: _api));
           case '/cashback':
-            if (!cashbackEnabled) return null;
+            if (publicPreview || !cashbackEnabled) return null;
             return MaterialPageRoute(
                 builder: (_) => CashbackScreen(api: _api));
           case '/category':
@@ -261,7 +269,7 @@ class _HomeShellState extends State<HomeShell> {
   Future<void> _readRole() async {
     final request = ++_roleRequest;
     setState(() => _role = null);
-    if (!widget.api.isLoggedIn) return;
+    if (publicPreview || !widget.api.isLoggedIn) return;
     try {
       final role = (await widget.api.get('/me'))['role'];
       if (mounted && request == _roleRequest) {
@@ -511,10 +519,16 @@ class _HomeShellState extends State<HomeShell> {
           ),
           ListTile(
             leading: const Icon(Icons.person, color: CgColors.primary),
-            title: Text(widget.api.isLoggedIn ? context.tr('我的帳戶','Account') : context.tr('登錄','Login')),
+            title: Text(publicPreview
+                ? context.tr('進入體驗', 'Enter preview')
+                : widget.api.isLoggedIn
+                    ? context.tr('我的帳戶', 'Account')
+                    : context.tr('登錄', 'Login')),
             onTap: () {
               Navigator.of(context).pop();
-              if (!widget.api.isLoggedIn) {
+              if (publicPreview) {
+                setState(() => _index = 0);
+              } else if (!widget.api.isLoggedIn) {
                 _authenticate();
               } else {
                 Navigator.of(context).pushNamed('/settings');
@@ -563,7 +577,7 @@ class _HomeShellState extends State<HomeShell> {
               Navigator.of(context).pushNamed('/settings');
             },
           ),
-          ListTile(
+          if (!publicPreview) ListTile(
             leading: const Icon(Icons.store, color: CgColors.primary),
             title: Text(widget.vendorMode ? context.tr('切換到用戶版','Consumer') : context.tr('企業服務','Corporate')),
             onTap: () {
@@ -571,7 +585,7 @@ class _HomeShellState extends State<HomeShell> {
               _openCorporate();
             },
           ),
-          ListTile(
+          if (!publicPreview) ListTile(
             leading:
                 const Icon(Icons.storefront, color: CgColors.primary),
             title: Text(context.tr('商戶入駐申請','Merchant application')),

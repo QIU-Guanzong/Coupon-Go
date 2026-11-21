@@ -4,3 +4,6 @@ const cashbackEnabled = bool.fromEnvironment(
   'COUPON_CASHBACK_ENABLED',
   defaultValue: false,
 );
+
+/// The public MVP is a browse-only build, not an authenticated session.
+const publicPreview = bool.fromEnvironment('PUBLIC_DEMO');

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../api_client.dart';
+import '../feature_flags.dart';
 import '../language.dart';
 import '../theme.dart';
 
@@ -45,6 +46,43 @@ Future<bool> guestLoginPrompt(BuildContext context) async {
         ),
       ) ??
       false;
+}
+
+/// The public MVP never collects credentials or completes an auth callback.
+class PreviewWelcomeScreen extends StatelessWidget {
+  const PreviewWelcomeScreen({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tr;
+    return Scaffold(
+      appBar: AppBar(title: const Text('COUPON GO!')),
+      body: ListView(
+        padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
+        children: [
+          Container(
+            color: CgColors.primary,
+            alignment: Alignment.center,
+            child: Image.asset('assets/images/img_logo_cropped.png', height: 115),
+          ),
+          const SizedBox(height: 24),
+          Text(t('歡迎來到 Coupon GO!', 'Welcome to Coupon GO!'),
+              textAlign: TextAlign.center,
+              style: Theme.of(context).textTheme.titleLarge),
+          const SizedBox(height: 12),
+          Text(t('以訪客身分瀏覽範例優惠。毋須建立帳戶。',
+              'Browse sample offers as a guest. No account needed.'),
+              textAlign: TextAlign.center),
+          const SizedBox(height: 24),
+          FilledButton(
+            onPressed: () => Navigator.of(context)
+                .pushNamedAndRemoveUntil('/', (route) => false),
+            child: Text(t('進入體驗', 'Enter preview')),
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 enum _Step { chooser, login, register, verify, forgot, reset }
@@ -172,6 +210,7 @@ class _AuthScreenState extends State<AuthScreen> {
 
   @override
   Widget build(BuildContext context) {
+    if (publicPreview) return const PreviewWelcomeScreen();
     final t = context.tr;
     final accent = widget.vendor ? CgColors.vendorGold : CgColors.primary;
     final title = switch (step) {
