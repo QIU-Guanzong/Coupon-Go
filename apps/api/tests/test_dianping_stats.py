@@ -250,6 +250,7 @@ def test_balance_cash_coupon_contributes_zero(client):
     # must not move at all.
     assert after["pending_settlement"] == before["pending_settlement"]
     assert after["withdrawable"] == before["withdrawable"]
+    assert after["legacy_untracked_redemptions"] == before["legacy_untracked_redemptions"]
 
 
 def test_balance_entries_show_per_redemption_state(client):
@@ -505,7 +506,27 @@ def test_legacy_settlement_without_connect_keeps_manual_recording(client):
     fh = _finance_headers(client)
     settlement = _generate(client, fh, 12, "2026-07")
     assert settlement["payment_mode"] == "legacy_manual"
+    balance = _balance(client, 12)
+    assert balance["balance_complete"] is False
+    assert balance["legacy_untracked_redemptions"] >= 1
     _approve(client, settlement["id"])
     response = client.post(f"/api/v3/admin/settlements/{settlement['id']}/pay", headers=fh)
     assert response.status_code == 200, response.text
     assert response.json()["settlement"]["status"] == "paid"
+    balance = _balance(client, 12)
+    assert balance["balance_complete"] is True
+    assert balance["legacy_untracked_redemptions"] == 0
+
+
+def test_legacy_free_voucher_with_old_positive_snapshot_is_not_untracked(client):
+    from app.models_connect import ConnectLedgerEntry
+
+    before = _balance(client, GIFT_SHOP)
+    _, _, red = _redeem(client, 'stats-legacy-gift@example.com', GIFT_COUPON)
+    with TestingSession() as db:
+        # Reconstruct a legacy erroneous face-value snapshot for a free gift.
+        db.get(models.Redemption, red).face_value = 50
+        db.query(ConnectLedgerEntry).filter_by(redemption_id=red).delete()
+        db.commit()
+    after = _balance(client, GIFT_SHOP)
+    assert after['legacy_untracked_redemptions'] == before['legacy_untracked_redemptions']

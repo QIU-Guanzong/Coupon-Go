@@ -49,6 +49,8 @@ def merchant_balance(user: models.User = Depends(get_current_user),
         "withdrawable": sum(s["withdrawable"] for s in per_shop),
         "reserved": sum(s["reserved"] for s in per_shop),
         "withdrawn": sum(s["withdrawn"] for s in per_shop),
+        "balance_complete": all(s["balance_complete"] for s in per_shop),
+        "legacy_untracked_redemptions": sum(s["legacy_untracked_redemptions"] for s in per_shop),
         "shops": per_shop,
     }
 

@@ -13,7 +13,9 @@
 `withdrawable` 是已转入商户账户且扣除已提款及处理中提款的余额，
 `reserved` 是处理中提款，`withdrawn` 是已完成提款。结算单是对账记录，
 审核结算单不会直接改变可提款余额。旧核销若缺 Connect 流水，须另行核对，
-不能按结算单推断已转款。
+不能按结算单推断已转款。`balance_complete=false` 与
+`legacy_untracked_redemptions` 指示缺少 Connect 流水的历史核销数，
+此时所示余额仅代表已接入 Connect 的部分。
 
 ## 接口清单
 

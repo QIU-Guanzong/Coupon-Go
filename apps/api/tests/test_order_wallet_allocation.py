@@ -269,3 +269,19 @@ def test_single_wallet_keeps_actual_purchase_quantity(client):
     refund = client.post(f"/api/v3/orders/{order['id']}/refund", json={}, headers=user)
     assert refund.status_code == 200, refund.text
     assert base._stock_left(client, package['id']) == 5
+
+
+def test_refunded_legacy_redemption_does_not_create_untracked_balance(client):
+    from app.merchant_finance import shop_balance
+    from app.models_connect import ConnectLedgerEntry
+
+    user, _, order, ids = make_order(client, 'legacy-refunded', count=1)
+    vendor = base._vendor_headers(client)
+    red = scan(client, user, vendor, ids[0])
+    with base.TestingSession() as db:
+        shop = db.get(models.Shop, 1)
+        previous = shop_balance(db, shop)['legacy_untracked_redemptions']
+        db.query(ConnectLedgerEntry).filter_by(redemption_id=red).delete()
+        db.get(Order, order['id']).refund_status = 'refunded'
+        db.flush()
+        assert shop_balance(db, shop)['legacy_untracked_redemptions'] == previous

@@ -61,7 +61,37 @@ def effective_commission_rate(db: Session, shop_id: int) -> Decimal:
 def shop_balance(db: Session, shop: models.Shop) -> dict:
     """Connect is the single source of truth for payout balances."""
     from .connect_service import merchant_balance
+    from .models_connect import ConnectLedgerEntry
     balance = merchant_balance(db, shop.id)
+    recorded = db.query(ConnectLedgerEntry.redemption_id).filter(
+        ConnectLedgerEntry.shop_id == shop.id, ConnectLedgerEntry.kind == "transfer",
+        ConnectLedgerEntry.redemption_id.is_not(None))
+    candidates = db.query(models.Redemption).filter(
+        models.Redemption.shop_id == shop.id, models.Redemption.revoked_at.is_(None),
+        ~models.Redemption.id.in_(recorded)).all()
+    legacy_count = 0
+    for red in candidates:
+        item = db.get(models.WalletItem, red.wallet_item_id)
+        coupon = db.get(models.Coupon, red.coupon_id)
+        if item is None:
+            legacy_count += 1
+            continue
+        if coupon is None:
+            legacy_count += 1
+            continue
+        if item.order_id is None and (coupon.coupon_type or "").lower() != "price":
+            continue
+        statement = (db.query(Settlement).join(SettlementItem, SettlementItem.settlement_id == Settlement.id)
+                     .filter(SettlementItem.redemption_id == red.id).first())
+        if statement is not None and statement.status == "paid" and cash_totals(db, statement)[1] == 0:
+            continue  # prior manual payment fully recorded
+        try:
+            basis = settlement_basis(db, coupon=coupon, redemption=red)
+        except HTTPException:
+            legacy_count += 1  # unknown historical allocation needs review
+            continue
+        if basis is not None and basis > 0:
+            legacy_count += 1
     return {
         "shop_id": shop.id, "shop_name": shop.name,
         "pending_settlement": _money(balance["pending"]),
@@ -69,6 +99,8 @@ def shop_balance(db: Session, shop: models.Shop) -> dict:
         "reserved": _money(balance["processing"]),
         "withdrawn": _money(balance["paid_out"]),
         "commission_rate": float(effective_commission_rate(db, shop.id)),
+        "balance_complete": legacy_count == 0,
+        "legacy_untracked_redemptions": legacy_count,
     }
 
 
