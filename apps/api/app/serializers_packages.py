@@ -180,6 +180,14 @@ def order_out(db: Session, o: Order) -> dict:
     shop = None
     if pkg:
         shop = db.query(models.Shop).filter(models.Shop.id == pkg.shop_id).first()
+    # P1-A: a paid-coupon order names its coupon (and its shop) instead.
+    coupon = None
+    if getattr(o, "coupon_id", None):
+        coupon = db.query(models.Coupon).filter(
+            models.Coupon.id == o.coupon_id).first()
+        if coupon is not None and shop is None:
+            shop = db.query(models.Shop).filter(
+                models.Shop.id == coupon.shop_id).first()
     wallet_item = None
     if o.id:
         wallet_item = (db.query(models.WalletItem)
@@ -248,6 +256,8 @@ def order_out(db: Session, o: Order) -> dict:
         "user_id": o.user_id,
         "order_type": o.order_type,
         "package_id": o.package_id,
+        "coupon_id": getattr(o, "coupon_id", None),
+        "coupon_name": coupon.coupon_name if coupon else "",
         "quantity": o.quantity or 1,
         "package_name": pkg.name if pkg else "",
         "shop_name": shop.name if shop else "",
