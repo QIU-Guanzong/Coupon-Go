@@ -186,6 +186,7 @@ def test_dispatch_marker_migration_preserves_legacy_unknown(legacy, tmp_path):
     spec.loader.exec_module(migration)
     engine = create_engine(f'sqlite:///{tmp_path}/migration.db')
     with engine.begin() as conn:
+        conn.execute(text('CREATE TABLE redemptions (id INTEGER PRIMARY KEY)'))
         if legacy:
             conn.execute(text('CREATE TABLE connect_ledger_entries (id INTEGER PRIMARY KEY)'))
             conn.execute(text('INSERT INTO connect_ledger_entries (id) VALUES (1)'))
@@ -240,3 +241,17 @@ def test_rescan_waits_for_concurrent_successful_reversal(client, monkeypatch):
     assert result['scan'].status_code == 200, result['scan'].text
     rows = _entries(paid['wallet_item_id'])
     assert len(rows) == 2 and rows[0][1] == 'reversed' and rows[1][1] == 'pending'
+
+
+def test_refund_after_second_redeem_and_revoke_closes_both_entries(client):
+    user, vendor, paid, first = _fresh(client, 'p1b-reredeem-second-refund@example.com', 9)
+    assert client.post(f"/api/v3/redemptions/{first['redemption_id']}/revoke", headers=vendor).status_code == 200
+    second = _rescan(client, vendor, _code(client, user, paid['wallet_item_id']))
+    assert second.status_code == 200, second.text
+    assert client.post(f"/api/v3/redemptions/{second.json()['redemption_id']}/revoke", headers=vendor).status_code == 200
+    refunded = client.post(f"/api/v3/orders/{paid['id']}/refund", json={'reason': 'changed'}, headers=user)
+    assert refunded.status_code == 200, refunded.text
+    assert refunded.json()['order']['refund_status'] == 'refunded'
+    assert [row[1] for row in _entries(paid['wallet_item_id'])] == ['reversed', 'reversed']
+    qr = client.post('/api/v3/store-scaned-qr-values', params={'wallet_item_id': paid['wallet_item_id']}, headers=user)
+    assert qr.status_code == 400

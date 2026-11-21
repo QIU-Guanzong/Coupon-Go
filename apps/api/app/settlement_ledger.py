@@ -9,6 +9,12 @@ from .models_line_f import Settlement, SettlementItem, SettlementReversal, Settl
 CENT = Decimal("0.01")
 
 
+def redemption_commission_rate(redemption, fallback):
+    """Use the scan-time rate; NULL history keeps its statement's rate."""
+    snapshot = getattr(redemption, "commission_rate_snapshot", None)
+    return Decimal(str(snapshot if snapshot is not None else fallback))
+
+
 def lock_shop(db, shop_id):
     # A first statement and an in-flight scan must agree which side posts the sale.
     if db.get_bind().dialect.name == "sqlite":
@@ -39,7 +45,7 @@ def add_scanned_sale(db, red):
     if sid is None:
         return
     s = lock_statement(db, sid)
-    fee = (red.face_value * s.commission_rate).quantize(CENT)
+    fee = (red.face_value * redemption_commission_rate(red, s.commission_rate)).quantize(CENT)
     db.add(SettlementItem(settlement_id=s.id, redemption_id=red.id, coupon_id=red.coupon_id,
                           amount=red.face_value, commission=fee))
     post_amounts(s, red.face_value, fee, 1)

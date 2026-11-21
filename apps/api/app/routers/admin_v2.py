@@ -44,7 +44,7 @@ from ..models_line_f import (
 )
 from ..models_packages import PAYMENT_STATUSES, Order, Package
 from ..serializers_packages import order_out
-from ..settlement_ledger import CENT, lock_shop, lock_statement, cash_totals
+from ..settlement_ledger import CENT, lock_shop, lock_statement, cash_totals, redemption_commission_rate
 from ..models_line_f import SettlementReversal, SettlementTransfer
 from ..settlement_basis import settlement_basis
 from ..permissions_line_f import (
@@ -120,6 +120,14 @@ def _invoice_totals(db: Session, settlement: Settlement) -> dict:
 def _settlement_out(db: Session, s: Settlement) -> dict:
     shop = db.query(models.Shop).filter(models.Shop.id == s.shop_id).first()
     paid, balance = cash_totals(db, s)
+    # Keep the historical header rate for compatibility; mixed statements
+    # need an explicit signal that their lines use different scan-time rates.
+    line_rates = {
+        redemption_commission_rate(redemption, s.commission_rate)
+        for redemption in db.query(models.Redemption)
+        .join(SettlementItem, SettlementItem.redemption_id == models.Redemption.id)
+        .filter(SettlementItem.settlement_id == s.id)
+    }
     return {
         **_invoice_totals(db, s),
         "id": s.id, "shop_id": s.shop_id,
@@ -128,6 +136,8 @@ def _settlement_out(db: Session, s: Settlement) -> dict:
         "period": s.period, "redemption_count": s.redemption_count,
         "gross_amount": _money(s.gross_amount),
         "commission_rate": _money(s.commission_rate),
+        "commission_rate_mixed": len(line_rates) > 1,
+        "applied_commission_rate": _money(next(iter(line_rates))) if len(line_rates) == 1 else None,
         "commission": _money(s.commission),
         "net_amount": _money(s.net_amount),
         "status": s.status, "dispute_reason": s.dispute_reason or "",
@@ -324,6 +334,7 @@ def set_commission_rate(body: schemas_line_f.CommissionRateSetIn,
     the single source of truth generate_settlement reads from.
     """
     shop = get_shop_or_404(db, body.shop_id)
+    lock_shop(db, shop.id)
     rate = Decimal(str(body.rate))
     row = (db.query(MerchantCommissionRate)
            .filter(MerchantCommissionRate.shop_id == shop.id).first())
@@ -416,8 +427,9 @@ def generate_settlement(body: schemas_line_f.SettlementGenerateIn,
         if amount is None:
             continue
         gross += amount
-        items.append((r, amount))
-    commission = sum(((amount * rate).quantize(CENT) for _, amount in items), Decimal("0"))
+        item_rate = redemption_commission_rate(r, rate)
+        items.append((r, amount, item_rate))
+    commission = sum(((amount * item_rate).quantize(CENT) for _, amount, item_rate in items), Decimal("0"))
     net = gross - commission
     settlement = Settlement(
         shop_id=shop.id, period=body.period, period_start=start,
@@ -438,11 +450,11 @@ def generate_settlement(body: schemas_line_f.SettlementGenerateIn,
         raise HTTPException(
             status_code=409,
             detail="此商户此結算週期已有結算單（重複生成衝突），請查詢已有結算單")
-    for r, amount in items:
+    for r, amount, item_rate in items:
         db.add(SettlementItem(
             settlement_id=settlement.id, redemption_id=r.id,
             coupon_id=r.coupon_id, amount=amount,
-            commission=(amount * rate).quantize(Decimal("0.01"))))
+            commission=(amount * item_rate).quantize(Decimal("0.01"))))
     _log(db, user.id, "settlement.generate", "settlement", settlement.id,
          f"shop_id={shop.id}; period={body.period}; "
          f"redemptions={len(items)}; gross={gross}; rate={rate}"
@@ -452,7 +464,8 @@ def generate_settlement(body: schemas_line_f.SettlementGenerateIn,
     db.refresh(settlement)
     out = _settlement_out(db, settlement)
     out["items"] = [{"redemption_id": r.id, "coupon_id": r.coupon_id,
-                     "amount": _money(a)} for r, a in items]
+                     "amount": _money(a), "commission_rate": _money(item_rate)}
+                    for r, a, item_rate in items]
     return {"message": "結算單已生成", "settlement": out}
 
 
@@ -489,9 +502,12 @@ def get_settlement(settlement_id: int,
     for item, reversal in db.query(SettlementItem, SettlementReversal).outerjoin(
             SettlementReversal, SettlementReversal.item_id == SettlementItem.id).filter(
             SettlementItem.settlement_id == s.id).order_by(SettlementItem.id):
+        redemption = db.get(models.Redemption, item.redemption_id)
         out["items"].append({"id": item.id, "redemption_id": item.redemption_id,
                              "coupon_id": item.coupon_id, "amount": _money(item.amount),
-                             "commission": _money(item.commission), "created_at": item.created_at,
+                             "commission": _money(item.commission),
+                             "commission_rate": _money(redemption_commission_rate(redemption, s.commission_rate)),
+                             "created_at": item.created_at,
                              "reversal": {"amount": _money(reversal.amount), "commission": _money(reversal.commission),
                                           "reason": reversal.reason, "created_at": reversal.created_at} if reversal else None})
     out["invoices"] = [_invoice_out(db, invoice) for invoice in
@@ -756,7 +772,8 @@ def run_reconciliation(body: schemas_line_f.ReconciliationRunIn,
     reversals = {rev.item_id: rev for rev in db.query(SettlementReversal).join(SettlementItem).filter(
         SettlementItem.settlement_id == settlement.id)} if settlement else {}
     for i in items:
-        correct_fee = (i.amount * settlement.commission_rate).quantize(CENT) + i.rounding_adjustment
+        item_rate = redemption_commission_rate(redemption_by_id.get(i.redemption_id), settlement.commission_rate)
+        correct_fee = (i.amount * item_rate).quantize(CENT) + i.rounding_adjustment
         if correct_fee != i.commission:
             found.append(("commission_mismatch", i.redemption_id, i.id, correct_fee, i.commission))
         if i.redemption_id not in redemption_by_id:
