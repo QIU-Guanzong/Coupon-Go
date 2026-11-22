@@ -10,7 +10,8 @@ Coupon types: Cash / Discount / Gift / Price.
 from datetime import datetime, timezone
 
 from sqlalchemy import (
-    Boolean, Column, DateTime, ForeignKey, Integer, Numeric, String, Text, UniqueConstraint,
+    Boolean, CheckConstraint, Column, DateTime, ForeignKey, Integer,
+    Numeric, String, Text, UniqueConstraint,
 )
 from sqlalchemy.orm import relationship
 
@@ -136,12 +137,7 @@ class Coupon(Base):
     gift = Column(String(160), default="")
     discount_price = Column(Numeric(10, 2), nullable=True)
     regular_price = Column(Numeric(10, 2), nullable=True)
-    # Dianping listing (§3.1 calibre, P1-A compatible): sale price
-    # (售價，HKD). NULL / 0 = free coupon, behaviour unchanged;
-    # > 0 = paid coupon: it can only be bought (P1-A's purchase
-    # endpoint), never claimed for free. This slice only stores and
-    # exposes the field and guards the free-claim path; it does NOT
-    # build the purchase flow.
+    # NULL / 0 = free coupon; > 0 = paid coupon purchased via an order.
     sale_price = Column(Numeric(10, 2), nullable=True)
     # §3.4: max claims per user (default 1 = previous behaviour).
     per_user_limit = Column(Integer, default=1)
@@ -177,6 +173,13 @@ class Coupon(Base):
     usage_rules = Column(Text, default="")
     # refund policy: anytime | expiry_only | non_refundable
     refund_policy = Column(String(20), default="anytime", nullable=False)
+
+    __table_args__ = (
+        # P1-A / FIX-3 backstop: remaining can never go below zero even
+        # if a row lock fails to serialise (mirrors packages.stock_left).
+        CheckConstraint("remaining >= 0",
+                        name="ck_coupons_remaining_nonneg"),
+    )
 
     shop = relationship("Shop", back_populates="coupons")
 

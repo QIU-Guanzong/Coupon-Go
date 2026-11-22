@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 from .. import listing, models, schemas
 from ..database import get_db
 from ..deps import get_current_user, require_role
+from ..models_packages import Order, REFUND_POLICIES
 from ..serializers import amount_text, coupon_out, shop_out
 from ..shared import vendor_shop_ids
 
@@ -109,11 +110,15 @@ def _build_coupon(vendor: models.User, body: schemas.CouponCreateIn):
 
 
 def _get_vendor_coupon(db: Session, coupon_id: int,
-                       vendor: models.User) -> models.Coupon:
+                       vendor: models.User, *, lock: bool = False) -> models.Coupon:
     """The merchant's own coupon (admin may act on any)."""
     q = db.query(models.Coupon).filter(models.Coupon.id == coupon_id)
     if vendor.role != "admin":
         q = q.filter(models.Coupon.vendor_id == vendor.id)
+    if lock:
+        if db.get_bind().dialect.name == "sqlite":
+            q.update({"id": models.Coupon.id}, synchronize_session=False)
+        q = q.with_for_update().populate_existing()
     coupon = q.first()
     if coupon is None:
         raise HTTPException(status_code=404, detail="找不到此優惠券")
@@ -227,7 +232,14 @@ def coupon_edit(coupon_id: int, body: schemas.CouponUpdateIn,
     and validity changes are re-reviewed); draft / rejected edits
     stay drafts; pending_review edits stay pending_review. Expired /
     sold_out coupons cannot be edited — create a new one."""
-    coupon = _get_vendor_coupon(db, coupon_id, vendor)
+    coupon = _get_vendor_coupon(db, coupon_id, vendor, lock=True)
+    # Paid orders refer to this coupon row as their entitlement. Until
+    # coupon versioning is available, protect all orders that can be
+    # paid/retried and their historical terms; merchants may issue a new
+    # coupon rather than changing the terms of an existing purchase.
+    if db.query(Order.id).filter(Order.coupon_id == coupon.id,
+                                 Order.payment_status != "cancelled").first():
+        raise HTTPException(409, "此優惠券已有訂單，請建立新券以修改條款")
     if coupon.status in ("expired", "sold_out"):
         raise HTTPException(status_code=400, detail="已過期或已售罄的優惠券不可編輯，請重新建立")
     if coupon.status not in listing.EDITABLE_STATES:
