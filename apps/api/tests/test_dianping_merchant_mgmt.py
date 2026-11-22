@@ -316,6 +316,27 @@ def test_unrestricted_redemption_with_or_without_branches(client):
         assert result.status_code == 200, result.text
 
 
+def test_coupon_creation_persists_and_validates_branch_scope(client):
+    vendor = _vendor_headers(client)
+    branch = client.post("/api/v3/merchant/shops/1/branches",
+                         json={"name": "新券分店"}, headers=vendor).json()["branch"]["id"]
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    body = {"shop_id": 1, "coupon_type": "Discount", "coupon_name": "限定新券",
+            "percentage": 90, "valid_from": (now - timedelta(days=1)).isoformat(),
+            "valid_to": (now + timedelta(days=30)).isoformat(), "total": 50,
+            "branch_ids": [branch]}
+    created = client.post("/api/v3/coupon-previewed", json=body, headers=vendor)
+    assert created.status_code == 200 and created.json()["coupon"]["branch_ids"] == [branch]
+    invalid = dict(body, branch_ids=[branch, 999999])
+    assert client.post("/api/v3/coupon-previewed", json=invalid, headers=vendor).status_code == 400
+    assert client.post("/api/v3/add-coupon-preview", json=invalid, headers=vendor).status_code == 400
+    bulk = client.post("/api/v3/vendor/coupons/bulk",
+                       json={"coupons": [body, invalid]}, headers=vendor)
+    assert bulk.status_code == 200, bulk.text
+    assert bulk.json()["created"][0]["branch_ids"] == [branch]
+    assert [failure["index"] for failure in bulk.json()["failed"]] == [1]
+
+
 # ---------- 1.3 staff roles (P1) ----------
 def _invite_as(client, shop_id, email, role):
     h = _register_and_login(client, email)

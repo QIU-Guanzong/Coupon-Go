@@ -185,6 +185,14 @@ def _branch_out(b: models.Branch) -> dict:
             "longitude": float(b.longitude) if b.longitude is not None else None}
 
 
+def _validated_branch_ids(db: Session, shop_id: int, branch_ids: List[int]) -> list:
+    valid = {b.id for b in db.query(models.Branch).filter(
+        models.Branch.id.in_(branch_ids), models.Branch.shop_id == shop_id).all()}
+    if valid != set(branch_ids):
+        raise HTTPException(400, "包含不存在或不屬於此店舖的分店")
+    return sorted(valid)
+
+
 class ShopCreateIn(BaseModel):
     name: str
     name_en: str = ""
@@ -252,6 +260,7 @@ def coupon_preview(body: schemas.CouponCreateIn,
                    db: Session = Depends(get_db)):
     _require_shop_write(db, vendor, body.shop_id)
     _validate_coupon_dates_total(body)
+    _validated_branch_ids(db, body.shop_id, body.branch_ids)
     tmp = models.Coupon(coupon_type=body.coupon_type,
                         coupon_name=body.coupon_name,
                         cash_amount=body.cash_amount,
@@ -272,8 +281,12 @@ def coupon_create(body: schemas.CouponCreateIn,
     # then create. Submitted coupons go to review.
     shop = _require_shop_write(db, vendor, body.shop_id)
     _validate_coupon_dates_total(body)
+    branch_ids = _validated_branch_ids(db, body.shop_id, body.branch_ids)
     coupon = _build_coupon(db.get(models.User, shop.vendor_id), body)
     db.add(coupon)
+    db.flush()
+    db.add_all([models.CouponBranch(coupon_id=coupon.id, branch_id=branch_id)
+                for branch_id in branch_ids])
     db.commit()
     db.refresh(coupon)
     return {"message": "內容將提交審核，請耐心等待。",
@@ -305,6 +318,7 @@ def coupon_bulk_create(body: BulkCouponsIn,
             item = schemas.CouponCreateIn.model_validate(raw)
             shop = _require_shop_write(db, vendor, item.shop_id)
             _validate_coupon_dates_total(item)
+            branch_ids = _validated_branch_ids(db, item.shop_id, item.branch_ids)
         except ValidationError as exc:
             failed.append({"index": index,
                            "error": "; ".join(
@@ -317,6 +331,8 @@ def coupon_bulk_create(body: BulkCouponsIn,
         coupon = _build_coupon(db.get(models.User, shop.vendor_id), item)
         db.add(coupon)
         db.flush()
+        db.add_all([models.CouponBranch(coupon_id=coupon.id, branch_id=branch_id)
+                    for branch_id in branch_ids])
         created.append(coupon)
     db.commit()
     for coupon in created:
@@ -636,11 +652,7 @@ def assign_branches(body: AssignBranchesIn,
     if coupon is None:
         raise HTTPException(status_code=404, detail="找不到此優惠券")
     _require_shop_write(db, vendor, coupon.shop_id)
-    valid = [b.id for b in db.query(models.Branch).filter(
-        models.Branch.id.in_(body.branch_ids),
-        models.Branch.shop_id == coupon.shop_id).all()]
-    if set(valid) != set(body.branch_ids):
-        raise HTTPException(400, "包含不存在或不屬於此店舖的分店")
+    valid = _validated_branch_ids(db, coupon.shop_id, body.branch_ids)
     previous = {row.branch_id for row in db.query(models.CouponBranch).filter_by(coupon_id=coupon.id)}
     if previous == set(valid):
         return {"coupon_id": coupon.id, "assigned_branch_ids": sorted(previous)}
