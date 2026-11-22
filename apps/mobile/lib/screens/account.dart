@@ -15,6 +15,7 @@ import '../widgets/widgets.dart';
 import '../widgets/wallet_updates.dart';
 import 'cashback.dart';
 import 'reviews_admin.dart';
+import 'merchant_staff.dart';
 
 /// Q Wallet: points balance, three status tabs (1 unused / 2 used / 3 expired),
 /// points-exchange zone and records.
@@ -789,6 +790,10 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
         title: const Text('通知'),
         actions: [
           if (!widget.guest) TextButton(
+            onPressed: () => Navigator.of(context).push(MaterialPageRoute(
+              builder: (_) => ShopInvitationsScreen(api: widget.api))),
+            child: const Text('店員邀請', style: TextStyle(color: Colors.white))),
+          if (!widget.guest) TextButton(
             onPressed: () async {
               await widget.api.markAllNotificationsRead();
               _load();
@@ -836,9 +841,16 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                         : const Icon(Icons.circle,
                             size: 10, color: CgColors.primary),
                     onTap: () async {
+                      final session = widget.api.sessionRevision;
                       if (!n.isRead) {
                         await widget.api.markNotificationRead(n.id);
                         _load();
+                      }
+                      if (context.mounted && session == widget.api.sessionRevision &&
+                          n.type == 'shop_member_invitation') {
+                        await Navigator.of(context).push(MaterialPageRoute(
+                          builder: (_) => ShopInvitationsScreen(api: widget.api)));
+                        if (mounted && session == widget.api.sessionRevision) _load();
                       }
                     },
                   ),

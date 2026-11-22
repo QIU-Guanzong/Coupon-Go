@@ -94,7 +94,8 @@ class RoleChangeIn(BaseModel):
 
 
 class ShopMemberAddIn(BaseModel):
-    user_id: int
+    user_id: Optional[int] = None
+    email: Optional[str] = None
     # Dianping §1.3: staff role for this shop; defaults to the legacy
     # full-power merchant-admin. Validated against SHOP_MEMBER_ROLES.
     role: str = "merchant-admin"

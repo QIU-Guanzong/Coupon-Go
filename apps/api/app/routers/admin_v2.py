@@ -1483,8 +1483,13 @@ def add_shop_member(shop_id: int, body: schemas_line_f.ShopMemberAddIn,
     shop = get_shop_or_404(db, shop_id)
     if user.role != "admin" and shop.vendor_id != user.id:
         raise HTTPException(status_code=403, detail="只有管理員或店主可以加店員")
-    target = db.query(models.User).filter(
-        models.User.id == body.user_id).first()
+    if body.user_id is not None:
+        target = db.query(models.User).filter(models.User.id == body.user_id).first()
+    elif body.email and body.email.strip():
+        target = db.query(models.User).filter(
+            func.lower(models.User.email) == body.email.strip().lower()).first()
+    else:
+        raise HTTPException(status_code=400, detail="請輸入店員的註冊電郵")
     if target is None:
         raise HTTPException(status_code=404, detail="找不到此用戶")
     # F8: only a customer or an existing merchant-admin may be invited.
@@ -1515,6 +1520,8 @@ def add_shop_member(shop_id: int, body: schemas_line_f.ShopMemberAddIn,
                         invited_at=_now())
     db.add(member)
     db.flush()
+    notify(db, target.id, "店員邀請", f"「{shop.name}」邀請你加入店舖，請查看邀請並確認。",
+           "shop_member_invitation", target_shop_id=shop.id)
     _log(db, user.id, "shop.member.invite", "shop_member", member.id,
          f"shop_id={shop.id}; user_id={target.id}; role={role}")
     db.commit()
@@ -1528,6 +1535,18 @@ def add_shop_member(shop_id: int, body: schemas_line_f.ShopMemberAddIn,
         "invited_by": member.invited_by,
         "invited_at": member.invited_at,
         "created_at": member.created_at}}
+
+
+@router.get("/merchant/shop-invitations")
+def my_shop_invitations(user: models.User = Depends(get_current_user),
+                        db: Session = Depends(get_db)):
+    rows = (db.query(ShopMember, models.Shop).join(models.Shop, models.Shop.id == ShopMember.shop_id)
+            .filter(ShopMember.user_id == user.id, ShopMember.status == "pending")
+            .order_by(ShopMember.id.desc()).all())
+    return {"invitations": [{"id": member.id, "shop_id": shop.id,
+                            "shop_name": shop.name, "role": member.role,
+                            "permissions": shop_role_permissions_out(member.role)}
+                           for member, shop in rows]}
 
 
 @router.post("/admin/shops/{shop_id}/members/{member_id}/confirm")

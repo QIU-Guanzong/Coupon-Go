@@ -510,6 +510,26 @@ def _invite_as(client, shop_id, email, role):
     return h
 
 
+def test_email_invitation_notifies_and_can_be_confirmed_by_invitee(client):
+    vendor = _vendor_headers(client)
+    employee = _register_and_login(client, "invited-staff@example.com")
+    outsider = _register_and_login(client, "unrelated-staff@example.com")
+    invite = client.post("/api/v3/admin/shops/1/members",
+                         json={"email": "INVITED-STAFF@example.com", "role": "cashier"}, headers=vendor)
+    assert invite.status_code == 201, invite.text
+    member_id = invite.json()["member"]["id"]
+    assert client.get("/api/v3/merchant/shop-invitations", headers=outsider).json()["invitations"] == []
+    listing = client.get("/api/v3/merchant/shop-invitations", headers=employee)
+    assert listing.status_code == 200
+    assert [(item["id"], item["role"]) for item in listing.json()["invitations"]] == [(member_id, "cashier")]
+    notices = client.get("/api/v3/get-notification-list", headers=employee).json()["notifications"]
+    assert any(n["notification_type"] == "shop_member_invitation" for n in notices)
+    url = f"/api/v3/admin/shops/1/members/{member_id}/confirm"
+    assert client.post(url, headers=outsider).status_code == 403
+    assert client.post(url, headers=employee).status_code == 200
+    assert client.get("/api/v3/merchant/shop-invitations", headers=employee).json()["invitations"] == []
+
+
 def test_invite_role_is_validated(client):
     h = _register_and_login(client, "badrole@example.com")
     uid = _uid(client, h)
