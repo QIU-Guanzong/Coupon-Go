@@ -930,9 +930,12 @@ def test_coupon_sale_price_field_and_free_claim_guard(client):
     r = client.post("/api/v3/new-favorite-coupon",
                     params={"coupon_id": c["id"]}, headers=h)
     assert r.status_code == 400, r.text  # paid coupons are bought, not claimed
-    # No purchase endpoint in this slice: P1-A owns it.
-    r = client.post(f"/api/v3/coupons/{c['id']}/purchase", headers=h)
-    assert r.status_code in (404, 405), r.text
+    # The P1-A endpoint uses the server-side sale price for the order.
+    r = client.post(f"/api/v3/coupons/{c['id']}/purchase", headers=h,
+                    json={"payment_method": "fps"})
+    assert r.status_code == 200, r.text
+    assert r.json()["order"]["coupon_id"] == c["id"]
+    assert r.json()["order"]["amount"] == 50
 
 
 def test_coupon_free_behaviour_unchanged(client):
