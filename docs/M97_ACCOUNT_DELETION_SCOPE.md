@@ -3,8 +3,13 @@
 `POST /api/v3/delete-account` deactivates the authenticated account, replaces
 its email with a random unique placeholder, clears the user name and phone,
 replaces the password hash with an unusable value, and deletes all OTP rows
-for the old address. Search history and favorites are removed; unused wallet
-items are voided and their QR code and expiry cleared. Points are zeroed with
+for the old address. Search history, favorites, authored helpful votes and
+previous account notifications are removed; unused wallet items are voided
+and their QR code and expiry cleared. Authored reviews are hidden, their
+content, photo references, tags, replies and dispute text cleared, and affected
+shop ratings recomputed in the deletion transaction. Replies authored by the
+deleted account on other reviews are cleared. Review/redemption rows remain
+for the business records. Points are zeroed with
 a compensating ledger entry. A generic deletion notification is retained,
 but the optional free-form reason is deliberately not retained because it
 can itself include identifying information.
@@ -64,9 +69,10 @@ complete erasure from every table, attachment, log or backup**. In particular:
   Pending applications block deletion; historical application evidence is
   not silently destroyed. Access controls, retention basis, actual referenced
   files and a deletion/anonymization schedule still require review.
-* Public reviews, review images, tags, historic notifications and operational
-  audit logs can contain free text or identifying information. Backups and
-  any external processors must be inventoried and addressed separately.
+* Image URLs are removed from the review records, but uploaded image objects
+  and third-party copies are not deleted by this endpoint. Operational audit
+  logs, backups and any external processors must be inventoried and addressed
+  separately.
 
 Do not describe this change as complete legal or App Store deletion
 compliance until those remaining locations and retention obligations are
