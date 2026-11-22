@@ -1,19 +1,37 @@
 """Provider-confirmed transfer/reversal recovery using an isolated simulator."""
 from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
+from decimal import Decimal
 from threading import Barrier
 
 import pytest
 from fastapi import HTTPException
 
 from tests import test_p1b_connect_fixes as base
-from app import connect_gateway, connect_service
+from app import config, connect_gateway, connect_service
 from app.models_connect import ConnectLedgerEntry
 from app.models_line_b import AdminAuditLog
 from app.payments_gateway import GatewayError
 from app.timeutil import utcnow
 
 client = base.client
+
+
+@pytest.fixture(scope="module", autouse=True)
+def isolated_simulator():
+    connect_gateway._reset_simulator_idempotency()
+    yield
+    connect_gateway._reset_simulator_idempotency()
+
+
+def test_simulator_rejects_same_transfer_operation_with_different_parameters(monkeypatch):
+    monkeypatch.setattr(config, "STRIPE_SECRET_KEY", "")
+    first = connect_gateway.create_transfer("acct_sim_x", Decimal("10"), "group-x", idempotency_key="unique-mismatch-test")
+    assert connect_gateway.create_transfer("acct_sim_x", Decimal("10.00"), "group-x", idempotency_key="unique-mismatch-test") == first
+    with pytest.raises(GatewayError):
+        connect_gateway.create_transfer("acct_sim_x", Decimal("20"), "group-x", idempotency_key="unique-mismatch-test")
+    with pytest.raises(GatewayError):
+        connect_gateway.create_transfer("acct_sim_y", Decimal("10"), "group-x", idempotency_key="unique-mismatch-test")
 
 
 def _uncertain_transfer(client, monkeypatch, name, shop_id):
