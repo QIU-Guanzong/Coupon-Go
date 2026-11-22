@@ -45,6 +45,13 @@ def upgrade():
             raise RuntimeError("Incompatible connect_accounts.transfers_enabled")
     else:
         op.add_column("connect_accounts", sa.Column("transfers_enabled", sa.Boolean(), nullable=True))
+    ledger_columns = {c["name"]: c for c in sa.inspect(bind).get_columns("connect_ledger_entries")}
+    if "transfer_account_id" in ledger_columns:
+        c = ledger_columns["transfer_account_id"]
+        if not isinstance(c["type"], sa.String) or c["type"].length != 60 or not c["nullable"]:
+            raise RuntimeError("Incompatible connect_ledger_entries.transfer_account_id")
+    else:
+        op.add_column("connect_ledger_entries", sa.Column("transfer_account_id", sa.String(60), nullable=True))
     if not inspector.has_table("shop_connect_operations"):
         op.create_table(
             "shop_connect_operations",

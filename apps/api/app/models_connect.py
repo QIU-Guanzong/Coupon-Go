@@ -125,6 +125,9 @@ class ConnectLedgerEntry(Base):
     stripe_transfer_id = Column(String(60), default="")
     stripe_reversal_id = Column(String(60), default="")
     stripe_payout_id = Column(String(60), default="")
+    # Immutable account captured before the transfer request. NULL on
+    # legacy rows means the original destination cannot be proven locally.
+    transfer_account_id = Column(String(60), nullable=True)
     # NULL is preserved on legacy rows: their dispatch history is unknown.
     payout_request_id = Column(String(64), nullable=True)
     payout_operation_id = Column(String(32), nullable=True)
