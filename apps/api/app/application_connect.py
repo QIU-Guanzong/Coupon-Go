@@ -15,16 +15,45 @@ from .timeutil import utcnow
 
 
 def _application(db, application_id, user_id=None):
+    from .cashback_service import lock_account
+    owner_id = db.query(MerchantApplication.user_id).filter_by(id=application_id).scalar()
+    if owner_id is None or (user_id is not None and owner_id != user_id):
+        raise HTTPException(404, "找不到此入駐申請")
+    lock_account(db, owner_id)
     if db.get_bind().dialect.name == "sqlite":
         db.query(MerchantApplication).filter_by(id=application_id).update(
             {"status": MerchantApplication.status}, synchronize_session=False)
     app = (db.query(MerchantApplication).filter_by(id=application_id)
            .with_for_update().populate_existing().first())
-    if app is None or (user_id is not None and app.user_id != user_id):
+    if app is None or app.user_id != owner_id:
         raise HTTPException(404, "找不到此入駐申請")
     if app.status != "pending":
         raise HTTPException(409, "申請已審核")
     return app
+
+
+def _matching_shops(db, app):
+    shops = db.query(models.Shop).filter_by(vendor_id=app.user_id, name=app.shop_name).all()
+    address = (app.address or "").strip()
+    # Without an address the namesake may be the same business: do not
+    # silently create a second provider account while its identity is unclear.
+    return [shop for shop in shops if not address or not (shop.address or "").strip()
+            or shop.address.strip() == address]
+
+
+def _shop_operation_exists(db, shops):
+    ids = [shop.id for shop in shops]
+    if not ids:
+        return False
+    return (db.query(ConnectAccount.id).filter(ConnectAccount.shop_id.in_(ids)).first() is not None
+            or db.query(ShopConnectOperation.id).filter(ShopConnectOperation.shop_id.in_(ids)).first() is not None)
+
+
+def _application_operation_exists(db, shop):
+    pending = db.query(MerchantApplication).filter_by(user_id=shop.vendor_id, status="pending", shop_name=shop.name).all()
+    ids = [app.id for app in pending if any(candidate.id == shop.id for candidate in _matching_shops(db, app))]
+    return bool(ids and db.query(ApplicationConnectAccount.id)
+                .filter(ApplicationConnectAccount.application_id.in_(ids)).first())
 
 
 def _enabled():
@@ -47,6 +76,8 @@ def start(db, application_id, user, return_url, refresh_url):
     app = _application(db, application_id, user.id)
     row = db.query(ApplicationConnectAccount).filter_by(application_id=app.id).first()
     if row is None:
+        if _shop_operation_exists(db, _matching_shops(db, app)):
+            raise HTTPException(409, "同名店舖已有開戶記錄，請聯絡平台核對")
         # Persist an operation identity before making any provider request.
         row = ApplicationConnectAccount(application_id=app.id,
                                         operation_key="application-" + uuid4().hex,
@@ -98,6 +129,11 @@ def start(db, application_id, user, return_url, refresh_url):
 def start_existing_shop(db, shop_id, email):
     """Create at most one provider account for a pre-existing shop."""
     _enabled()
+    from .cashback_service import lock_account
+    owner_id = db.query(models.Shop.vendor_id).filter_by(id=shop_id).scalar()
+    if owner_id is None:
+        raise HTTPException(404, "找不到商店")
+    lock_account(db, owner_id)
     if db.get_bind().dialect.name == "sqlite":
         db.query(models.Shop).filter_by(id=shop_id).update(
             {"name": models.Shop.name}, synchronize_session=False)
@@ -108,11 +144,14 @@ def start_existing_shop(db, shop_id, email):
         return account
     op = db.query(ShopConnectOperation).filter_by(shop_id=shop.id).first()
     if op is None:
+        if _application_operation_exists(db, shop):
+            raise HTTPException(409, "入駐申請已有開戶記錄，請使用原開戶流程")
         op = ShopConnectOperation(shop_id=shop.id, operation_key="shop-" + uuid4().hex,
                                   contact_email=email, started_at=utcnow())
         db.add(op)
         db.commit()
     # The shop lock protects both the remote call and local account binding.
+    lock_account(db, owner_id)
     if db.get_bind().dialect.name == "sqlite":
         db.query(models.Shop).filter_by(id=shop_id).update(
             {"name": models.Shop.name}, synchronize_session=False)

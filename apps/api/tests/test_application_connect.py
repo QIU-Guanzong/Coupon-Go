@@ -1,9 +1,10 @@
 """Application-to-shop Connect flow; every provider call is a stub."""
 from datetime import timedelta
-from concurrent.futures import ThreadPoolExecutor
-from threading import Barrier
+from concurrent.futures import ThreadPoolExecutor, TimeoutError
+from threading import Barrier, Event
 
 import pytest
+from fastapi import HTTPException
 
 from tests import test_p1d_merchant_onboarding as base
 from app import application_connect, config, connect_gateway, models
@@ -267,3 +268,75 @@ def test_concurrent_onboarding_reuses_single_provider_operation(client, provider
     db = base.TestingSession()
     assert db.query(ApplicationConnectAccount).filter_by(application_id=app_id).count() == 1
     db.close()
+
+
+def test_application_and_legacy_shop_do_not_create_two_provider_accounts(client, provider):
+    h, app_id = applicant(client, "cross-entry")
+    db = base.TestingSession()
+    app = db.get(MerchantApplication, app_id)
+    user = db.get(models.User, app.user_id)
+    shop = models.Shop(vendor_id=app.user_id, name=app.shop_name, address=app.address)
+    db.add(shop)
+    db.commit()
+    shop_id, email = shop.id, user.email
+    db.close()
+    barrier = Barrier(2)
+    def application_request():
+        barrier.wait(timeout=5)
+        return start(client, h, app_id).status_code
+    def shop_request():
+        barrier.wait(timeout=5)
+        with base.TestingSession() as session:
+            try:
+                application_connect.start_existing_shop(session, shop_id, email)
+                return 200
+            except HTTPException as exc:
+                return exc.status_code
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first, second = pool.submit(application_request), pool.submit(shop_request)
+        outcomes = [first.result(timeout=20), second.result(timeout=20)]
+    assert sorted(outcomes) == [200, 409]
+    assert len(provider[0]) == 1
+
+
+@pytest.mark.parametrize("first_path", ["application", "shop"])
+def test_application_and_shop_serialize_in_both_orders(client, provider, monkeypatch, first_path):
+    h, app_id = applicant(client, "ordered-" + first_path)
+    db = base.TestingSession()
+    app = db.get(MerchantApplication, app_id)
+    user = db.get(models.User, app.user_id)
+    shop = models.Shop(vendor_id=app.user_id, name=app.shop_name, address=app.address)
+    db.add(shop)
+    db.commit()
+    shop_id, email = shop.id, user.email
+    db.close()
+    entered, release = Event(), Event()
+    real_create = connect_gateway.create_account
+    def held_provider(*args, **kwargs):
+        entered.set()
+        assert release.wait(timeout=10)
+        return real_create(*args, **kwargs)
+    monkeypatch.setattr(connect_gateway, "create_account", held_provider)
+    def application_request():
+        return start(client, h, app_id).status_code
+    def shop_request():
+        with base.TestingSession() as session:
+            try:
+                application_connect.start_existing_shop(session, shop_id, email)
+                return 200
+            except HTTPException as exc:
+                return exc.status_code
+    actions = {"application": application_request, "shop": shop_request}
+    second_path = "shop" if first_path == "application" else "application"
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first = pool.submit(actions[first_path])
+        try:
+            assert entered.wait(timeout=10)
+            second = pool.submit(actions[second_path])
+            with pytest.raises(TimeoutError):
+                second.result(timeout=0.3)
+        finally:
+            release.set()
+        assert first.result(timeout=20) == 200
+        assert second.result(timeout=20) == 409
+    assert len(provider[0]) == 1
