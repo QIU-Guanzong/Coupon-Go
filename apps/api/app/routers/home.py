@@ -18,8 +18,7 @@ from ..serializers import coupon_out, shop_out
 router = APIRouter()
 
 
-def _now():
-    return datetime.now(timezone.utc).replace(tzinfo=None)
+from ..timeutil import utcnow as _now
 
 
 def _active_coupons(db: Session):

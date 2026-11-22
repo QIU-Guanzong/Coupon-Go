@@ -183,11 +183,15 @@ def _run_two(fn):
     in launch order."""
     barrier = threading.Barrier(2)
     results = [None, None]
+    exceptions = [None, None]
 
     def worker(i):
-        tc = TestClient(app)
-        barrier.wait(timeout=30)
-        results[i] = fn(i, tc)
+        try:
+            tc = TestClient(app)
+            barrier.wait(timeout=30)
+            results[i] = fn(i, tc)
+        except BaseException as exc:
+            exceptions[i] = exc
 
     threads = [threading.Thread(target=worker, args=(i,)) for i in range(2)]
     for t in threads:
@@ -195,6 +199,9 @@ def _run_two(fn):
     for t in threads:
         t.join(timeout=60)
     assert all(t.is_alive() is False for t in threads), "concurrent worker hung"
+    for exc in exceptions:
+        if exc is not None:
+            raise exc
     return results
 
 
@@ -595,7 +602,7 @@ def test_invoice_cap_sequential_rejected(client):
 # ---------- 6. concurrent revoke: exactly one revokes, points reversed once ----------
 def test_concurrent_revoke_redemption_only_once__row_lock(
         client, monkeypatch):
-    import app.routers.redemption as redemption_router
+    import app.points as points_module
     h, wid, red_id = _redeem(client, "fix3-revoke@example.com", 22)
     vh = _vendor_headers(client)
     db = TestingSession()
@@ -607,9 +614,10 @@ def test_concurrent_revoke_redemption_only_once__row_lock(
         db.close()
     assert before == 30, before  # +10 claim, +20 redeem
     # add_points() reverses the +20 after the revoked_at check.
+    # Seam moved by dianping/unify: points writes now live in app.points.
     monkeypatch.setattr(
-        redemption_router, "add_points",
-        _sleeping_wrapper(redemption_router.add_points, seconds=0.4))
+        points_module, "add_points",
+        _sleeping_wrapper(points_module.add_points, seconds=0.4))
     results = _run_two(lambda i, tc: tc.post(
         f"/api/v3/redemptions/{red_id}/revoke", headers=vh))
     statuses = sorted(r.status_code for r in results)
@@ -707,7 +715,7 @@ def test_concurrent_scan_same_code_only_one_succeeds__row_lock(
     is recorded. Pre-fix both scans read status 1 before either
     commits, so both succeed.
     """
-    import app.routers.coupons as coupons_router
+    import app.points as points_module
     h = _register_and_login(client, "m2-scan@example.com")
     r = client.post("/api/v3/new-favorite-coupon",
                     params={"coupon_id": 22}, headers=h)
@@ -729,9 +737,10 @@ def test_concurrent_scan_same_code_only_one_succeeds__row_lock(
     assert before == 10, before  # +10 claim only, not yet redeemed
     # add_points() runs after the status check, before the commit —
     # sleep there to widen the race window.
+    # Seam moved by dianping/unify: points writes now live in app.points.
     monkeypatch.setattr(
-        coupons_router, "add_points",
-        _sleeping_wrapper(coupons_router.add_points, seconds=0.4))
+        points_module, "add_points",
+        _sleeping_wrapper(points_module.add_points, seconds=0.4))
     results = _run_two(lambda i, tc: tc.post(
         "/api/v3/new-scan-coupon", json={"code": code}, headers=vh))
     statuses = sorted(r.status_code for r in results)
@@ -796,3 +805,116 @@ def test_concurrent_package_refund_and_redemption_reconcile__row_lock(client):
         assert item.coupon.used_count == (0 if returned else 1)
         assert db.query(Refund).filter_by(order_id=oid, status="refunded").count() == int(returned)
         assert db.query(models.Redemption).filter_by(wallet_item_id=wid).count() == int(not returned)
+
+
+def test_refund_holding_customer_lock_does_not_deadlock_scan(client, monkeypatch):
+    """Force a scan to arrive after refund holds the account lock.
+
+    Before the fix the scan held the voucher while waiting for that account;
+    refund then waited for the voucher, and PostgreSQL aborted one request.
+    """
+    if BACKEND != "postgres":
+        pytest.skip("requires real PostgreSQL row locks")
+    from app import cashback_service
+    from app.routers import packages
+
+    h = _register_and_login(client, "fix3-forced-lock-order@example.com")
+    vh = _vendor_headers(client)
+    pkg = _create_package(client, "鎖順序測試", stock=3)
+    oid = _buy_paid(client, h, pkg["id"])
+    wid = client.get(f"/api/v3/orders/{oid}", headers=h).json()["order"]["wallet_item_id"]
+    code = client.post("/api/v3/store-scaned-qr-values", params={"wallet_item_id": wid},
+                       headers=h).json()["code"]
+    refund_has_account = threading.Event()
+    scan_requests_account = threading.Event()
+    original_claim = packages._claim_unused_voucher
+    original_lock = cashback_service.lock_account
+
+    def hold_refund(db, order, **kwargs):
+        refund_has_account.set()
+        assert scan_requests_account.wait(timeout=10), "scan did not reach account lock"
+        return original_claim(db, order, **kwargs)
+
+    def observe_account(db, user_id):
+        scan_requests_account.set()
+        return original_lock(db, user_id)
+
+    monkeypatch.setattr(packages, "_claim_unused_voucher", hold_refund)
+    monkeypatch.setattr(cashback_service, "lock_account", observe_account)
+
+    def submit(index, tc):
+        if index == 0:
+            return tc.post(f"/api/v3/orders/{oid}/refund", headers=h, json={})
+        assert refund_has_account.wait(timeout=10), "refund did not hold account lock"
+        return tc.post("/api/v3/new-scan-coupon", headers=vh, json={"code": code})
+
+    refund, scan = _run_two(submit)
+    assert refund.status_code == 200, refund.text
+    assert scan.status_code == 400, scan.text
+    with TestingSession() as db:
+        assert db.get(models.WalletItem, wid).status == 3
+        assert db.get(Package, pkg["id"]).stock_left == 3
+        assert db.query(Refund).filter_by(order_id=oid, status="refunded").count() == 1
+        assert db.query(models.Redemption).filter_by(wallet_item_id=wid).count() == 0
+
+
+def test_background_refund_retry_and_customer_request_do_not_deadlock(client, monkeypatch):
+    """A retry with a revoked redemption and a customer write share lock order."""
+    if BACKEND != "postgres":
+        pytest.skip("requires real PostgreSQL row locks")
+    from app import cashback_service
+    from app.routers import packages
+
+    h = _register_and_login(client, "fix3-refund-retry-lock@example.com")
+    pkg = _create_package(client, "退款重試鎖順序", stock=3)
+    oid = _buy_paid(client, h, pkg["id"])
+    wid = client.get(f"/api/v3/orders/{oid}", headers=h).json()["order"]["wallet_item_id"]
+    with TestingSession() as db:
+        order = db.get(Order, oid)
+        item = db.get(models.WalletItem, wid)
+        vendor = db.query(models.User).filter_by(email="vendor@coupon-go.example").one()
+        order.refund_status = "requested"
+        item.status, item.code, item.qr_expires_at = 3, "", None
+        db.add(models.Redemption(wallet_item_id=wid, coupon_id=item.coupon_id,
+                                 shop_id=1, scanned_by_vendor_id=vendor.id,
+                                 revoked_at=_now()))
+        db.add(Refund(order_id=oid, user_id=order.user_id, amount=order.paid_amount,
+                      reason="retry lock test", status="requested", gateway_ref="request-lock-test"))
+        db.commit()
+
+    request_has_account = threading.Event()
+    retry_requests_account = threading.Event()
+    original_get = packages._get_order_for_user_locked
+    original_account = cashback_service.lock_account
+
+    def hold_request(db, order_id, user_id):
+        request_has_account.set()
+        assert retry_requests_account.wait(timeout=10), "retry did not reach account lock"
+        return original_get(db, order_id, user_id)
+
+    def observe_account(db, user_id):
+        retry_requests_account.set()
+        return original_account(db, user_id)
+
+    def successful_refund(payment_ref, amount, request_key):
+        return {"gateway_ref": "re_test_lock", "payment_intent": payment_ref,
+                "currency": "HKD", "amount": amount, "status": "succeeded"}
+
+    monkeypatch.setattr(packages, "_get_order_for_user_locked", hold_request)
+    monkeypatch.setattr(cashback_service, "lock_account", observe_account)
+    monkeypatch.setattr(packages, "refund_payment", successful_refund)
+
+    def submit(index, tc):
+        if index == 0:
+            return tc.post(f"/api/v3/orders/{oid}/refund", headers=h, json={})
+        assert request_has_account.wait(timeout=10), "request did not hold account lock"
+        with TestingSession() as db:
+            return packages._resume_refund(db, oid).status
+
+    request, retry_status = _run_two(submit)
+    assert request.status_code == 400, request.text
+    assert retry_status == "refunded"
+    with TestingSession() as db:
+        assert db.get(Order, oid).refund_status == "refunded"
+        assert db.get(Package, pkg["id"]).stock_left == 3
+        assert db.query(Refund).filter_by(order_id=oid, status="refunded").count() == 1

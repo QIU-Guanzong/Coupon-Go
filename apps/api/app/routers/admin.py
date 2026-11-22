@@ -13,13 +13,9 @@ v1 scope (task contract):
 NOT in v1 (do not add here): orders (no orders table until the package
 line lands), settlements, banners/CMS, invoice handling, role changes.
 """
-import csv
-import io
 import json
-from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from fastapi.responses import PlainTextResponse
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
@@ -29,21 +25,13 @@ from ..deps import get_current_user, require_role
 from ..models_line_b import AdminAuditLog, MerchantApplication, Review
 from ..permissions_line_f import ALL_ROLES
 from ..serializers import coupon_out, shop_out
+from ..shared import audit_log as _log, csv_response, paginate
 
 router = APIRouter()
 admin_only = require_role("admin")
 
 
-def _now():
-    return datetime.now(timezone.utc).replace(tzinfo=None)
-
-
-def _log(db: Session, admin_id: int, action: str, target_type: str,
-         target_id, detail: str = ""):
-    db.add(AdminAuditLog(admin_id=admin_id, action=action,
-                         target_type=target_type, target_id=target_id,
-                         detail=detail))
-    db.flush()
+from ..timeutil import utcnow as _now
 
 
 def _application_out(db: Session, a: MerchantApplication) -> dict:
@@ -60,16 +48,6 @@ def _application_out(db: Session, a: MerchantApplication) -> dict:
         "status": a.status, "reject_reason": a.reject_reason or "",
         "reviewed_by": a.reviewed_by, "reviewed_at": a.reviewed_at,
         "created_at": a.created_at,
-    }
-
-
-def _page(items, page: int, per_page: int = 20):
-    total = len(items)
-    return {
-        "current_page": page,
-        "total_pages": max(1, (total + per_page - 1) // per_page),
-        "total": total,
-        "items": items[(page - 1) * per_page: page * per_page],
     }
 
 
@@ -100,6 +78,7 @@ def submit_application(body: schemas_line_b.MerchantApplicationCreateIn,
 @router.get("/admin/merchant-applications")
 def list_applications(status: str = Query(None),
                       page: int = Query(1, ge=1),
+                      page_size: int = Query(20, ge=1, le=100),
                       admin: models.User = Depends(admin_only),
                       db: Session = Depends(get_db)):
     q = db.query(MerchantApplication).order_by(
@@ -107,7 +86,7 @@ def list_applications(status: str = Query(None),
     if status in ("pending", "approved", "rejected"):
         q = q.filter(MerchantApplication.status == status)
     rows = q.all()
-    out = _page([_application_out(db, a) for a in rows], page)
+    out = paginate([_application_out(db, a) for a in rows], page, page_size)
     return {"current_page": out["current_page"],
             "total_pages": out["total_pages"], "total": out["total"],
             "applications": out["items"]}
@@ -187,6 +166,7 @@ def dashboard(admin: models.User = Depends(admin_only),
 
 @router.get("/admin/shops")
 def admin_shops(page: int = Query(1, ge=1),
+                page_size: int = Query(20, ge=1, le=100),
                 admin: models.User = Depends(admin_only),
                 db: Session = Depends(get_db)):
     from ..models_line_b import ShopRating
@@ -205,7 +185,7 @@ def admin_shops(page: int = Query(1, ge=1),
             "rating_overall": rating.overall if rating else None,
             "review_count": rating.review_count if rating else 0,
         })
-    out = _page(rows, page)
+    out = paginate(rows, page, page_size)
     return {"current_page": out["current_page"],
             "total_pages": out["total_pages"], "total": out["total"],
             "shops": out["items"]}
@@ -214,6 +194,7 @@ def admin_shops(page: int = Query(1, ge=1),
 @router.get("/admin/coupons")
 def admin_coupons(status: str = Query(None), shop_id: int = Query(None),
                   page: int = Query(1, ge=1),
+                  page_size: int = Query(20, ge=1, le=100),
                   admin: models.User = Depends(admin_only),
                   db: Session = Depends(get_db)):
     q = db.query(models.Coupon).order_by(models.Coupon.id.desc())
@@ -222,7 +203,7 @@ def admin_coupons(status: str = Query(None), shop_id: int = Query(None),
     if shop_id:
         q = q.filter(models.Coupon.shop_id == shop_id)
     rows = [coupon_out(db, c) for c in q.all()]
-    out = _page(rows, page)
+    out = paginate(rows, page, page_size)
     return {"current_page": out["current_page"],
             "total_pages": out["total_pages"], "total": out["total"],
             "coupons": out["items"]}
@@ -230,6 +211,7 @@ def admin_coupons(status: str = Query(None), shop_id: int = Query(None),
 
 @router.get("/admin/redemptions")
 def admin_redemptions(shop_id: int = Query(None), page: int = Query(1, ge=1),
+                      page_size: int = Query(20, ge=1, le=100),
                       format: str = Query("json"),
                       admin: models.User = Depends(admin_only),
                       db: Session = Depends(get_db)):
@@ -251,21 +233,12 @@ def admin_redemptions(shop_id: int = Query(None), page: int = Query(1, ge=1),
             "scanned_at": r.scanned_at.isoformat() if r.scanned_at else None,
         })
     if format == "csv":
-        buf = io.StringIO()
-        w = csv.writer(buf)
-        w.writerow(["id", "wallet_item_id", "coupon_id", "coupon_name",
-                    "shop_id", "shop_name", "scanned_by_vendor_id",
-                    "scanned_at"])
-        for row in rows:
-            w.writerow([row[k] for k in
-                        ("id", "wallet_item_id", "coupon_id", "coupon_name",
-                         "shop_id", "shop_name", "scanned_by_vendor_id",
-                         "scanned_at")])
-        return PlainTextResponse(
-            buf.getvalue(), media_type="text/csv",
-            headers={"Content-Disposition":
-                     "attachment; filename=redemptions.csv"})
-    out = _page(rows, page)
+        columns = ["id", "wallet_item_id", "coupon_id", "coupon_name",
+                   "shop_id", "shop_name", "scanned_by_vendor_id",
+                   "scanned_at"]
+        return csv_response("redemptions.csv", columns,
+                            [[row[k] for k in columns] for row in rows])
+    out = paginate(rows, page, page_size)
     return {"current_page": out["current_page"],
             "total_pages": out["total_pages"], "total": out["total"],
             "redemptions": out["items"]}
@@ -273,6 +246,7 @@ def admin_redemptions(shop_id: int = Query(None), page: int = Query(1, ge=1),
 
 @router.get("/admin/users")
 def admin_users(role: str = Query(None), page: int = Query(1, ge=1),
+                page_size: int = Query(20, ge=1, le=100),
                 admin: models.User = Depends(admin_only),
                 db: Session = Depends(get_db)):
     q = db.query(models.User).order_by(models.User.id)
@@ -285,7 +259,7 @@ def admin_users(role: str = Query(None), page: int = Query(1, ge=1),
              "role": u.role, "is_active": u.is_active,
              "created_at": u.created_at.isoformat() if u.created_at else None}
             for u in q.all()]
-    out = _page(rows, page)
+    out = paginate(rows, page, page_size)
     return {"current_page": out["current_page"],
             "total_pages": out["total_pages"], "total": out["total"],
             "users": out["items"]}
@@ -293,16 +267,29 @@ def admin_users(role: str = Query(None), page: int = Query(1, ge=1),
 
 @router.get("/admin/audit-logs")
 def admin_audit_logs(page: int = Query(1, ge=1),
+                     page_size: int = Query(20, ge=1, le=100),
+                     admin_id: int = Query(None),
+                     action: str = Query(None),
+                     target_type: str = Query(None),
                      admin: models.User = Depends(admin_only),
                      db: Session = Depends(get_db)):
-    rows = (db.query(AdminAuditLog)
-            .order_by(AdminAuditLog.created_at.desc(),
-                      AdminAuditLog.id.desc()).all())
-    out = _page([{"id": l.id, "admin_id": l.admin_id, "action": l.action,
+    """Audit-log list (GAP §5.9): filter by the admin who acted,
+    the action, or the target type — the log is now searchable
+    instead of page-through only."""
+    q = db.query(AdminAuditLog).order_by(
+        AdminAuditLog.created_at.desc(), AdminAuditLog.id.desc())
+    if admin_id is not None:
+        q = q.filter(AdminAuditLog.admin_id == admin_id)
+    if action:
+        q = q.filter(AdminAuditLog.action == action)
+    if target_type:
+        q = q.filter(AdminAuditLog.target_type == target_type)
+    rows = q.all()
+    out = paginate([{"id": l.id, "admin_id": l.admin_id, "action": l.action,
                   "target_type": l.target_type, "target_id": l.target_id,
                   "detail": l.detail or "",
                   "created_at": l.created_at.isoformat()
-                  if l.created_at else None} for l in rows], page)
+                  if l.created_at else None} for l in rows], page, page_size)
     return {"current_page": out["current_page"],
             "total_pages": out["total_pages"], "total": out["total"],
             "logs": out["items"]}
