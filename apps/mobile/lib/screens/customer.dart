@@ -810,7 +810,9 @@ class _NearbyCouponRow extends StatelessWidget {
                             const EdgeInsets.symmetric(horizontal: 16),
                       ),
                       onPressed: onTap,
-                      child: Text(context.tr('領取','Collect')),
+                      child: Text(coupon.isPaid
+                          ? context.tr('購買', 'Buy')
+                          : context.tr('領取','Collect')),
                     ),
                   ),
                   const SizedBox(height: 6),
@@ -924,10 +926,12 @@ class _CouponDetailScreenState extends State<CouponDetailScreen> {
   bool _claimed = false;
   bool _claiming = false;
   int? _remaining;
+  late String _purchaseRef;
 
   @override
   void initState() {
     super.initState();
+    _purchaseRef = 'coupon-${widget.coupon.id}-${DateTime.now().microsecondsSinceEpoch}';
     if (widget.api.isLoggedIn && widget.coupon.packageId == null) _readClaim();
   }
 
@@ -1023,7 +1027,9 @@ class _CouponDetailScreenState extends State<CouponDetailScreen> {
       bottomNavigationBar: Padding(
         padding: const EdgeInsets.all(16),
         child: ElevatedButton(
-          onPressed: const bool.fromEnvironment('PUBLIC_DEMO') || _claimed || _claiming
+          onPressed: const bool.fromEnvironment('PUBLIC_DEMO') ||
+                  (!c.isPaid && _claimed) || _claiming || (c.isPaid && remaining <= 0) ||
+                  (c.isPaid && (c.salePrice == null || c.salePrice! <= 0))
               ? null
               : () async {
                   if (_claiming) return;
@@ -1033,6 +1039,18 @@ class _CouponDetailScreenState extends State<CouponDetailScreen> {
                       if (!await guestLoginPrompt(context) || !context.mounted) return;
                       await Navigator.of(context).pushNamed('/login');
                       if (!widget.api.isLoggedIn || !mounted) return;
+                    }
+                    if (c.isPaid) {
+                      final result = await widget.api.purchasePaidCoupon(c.id, 'card', clientRef: _purchaseRef);
+                      final order = PackageOrder.fromJson(result['order'] as Map<String, dynamic>);
+                      if (!context.mounted) return;
+                      final done = await showPaymentSheet(context, widget.api, order);
+                      if (done == true && context.mounted) {
+                        _purchaseRef = 'coupon-${c.id}-${DateTime.now().microsecondsSinceEpoch}';
+                        await Navigator.of(context).push(MaterialPageRoute(
+                          builder: (_) => PaymentResultScreen(api: widget.api, initialOrder: order)));
+                      }
+                      return;
                     }
                     final result = await widget.api.claimCoupon(c.id);
                     if (!mounted) return;
@@ -1049,7 +1067,7 @@ class _CouponDetailScreenState extends State<CouponDetailScreen> {
                     }
                   } on ApiException catch (e) {
                     if (!context.mounted) return;
-                    if (e.status == 409) setState(() => _claimed = true);
+                    if (!c.isPaid && e.status == 409) setState(() => _claimed = true);
                     showCgToast(context, e.message);
                   } catch (_) {
                     if (context.mounted) showCgToast(context, context.tr('未能確認領券結果，請重試', 'Could not confirm the claim. Try again.'));
@@ -1059,11 +1077,17 @@ class _CouponDetailScreenState extends State<CouponDetailScreen> {
                 },
           child: Text(const bool.fromEnvironment('PUBLIC_DEMO')
               ? context.tr('只供瀏覽', 'Browse only')
-              : _claimed
+              : c.isPaid && remaining <= 0
+              ? context.tr('已售罄', 'Sold out')
+              : c.isPaid && (c.salePrice == null || c.salePrice! <= 0)
+              ? context.tr('價格暫不可用', 'Price unavailable')
+              : !c.isPaid && _claimed
               ? context.tr('已領取', 'Claimed')
               : _claiming
-                  ? context.tr('領取中…', 'Claiming…')
-                  : context.tr('立即領取', 'Claim now')),
+                  ? context.tr('處理中…', 'Processing…')
+                  : c.isPaid
+                      ? context.tr('購買 HK\$${c.salePrice!.toStringAsFixed(2)}', 'Buy HK\$${c.salePrice!.toStringAsFixed(2)}')
+                      : context.tr('立即領取', 'Claim now')),
         ),
       ),
     );

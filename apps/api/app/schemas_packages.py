@@ -196,6 +196,10 @@ class ConfirmPaymentIn(BaseModel):
     failure_message: str = ""
 
 
+class StripeTestConfirmIn(BaseModel):
+    payment_id: int
+
+
 class RetryPaymentIn(BaseModel):
     payment_method: Optional[str] = None  # fps | card; default: original
 

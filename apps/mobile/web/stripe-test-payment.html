@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="zh-Hant-HK">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <title>測試付款 · Coupon GO</title>
+  <link rel="stylesheet" href="stripe-test-payment.css">
+  <script src="https://js.stripe.com/v3/" defer></script>
+  <script src="stripe-test-payment.js" defer></script>
+</head>
+<body>
+  <header><a id="back-top" href="./">‹ 返回 Coupon GO</a></header>
+  <main>
+    <div class="label">COUPON GO · 測試付款</div>
+    <h1>完成信用卡測試付款</h1>
+    <p class="notice">這是 Stripe 測試環境，不會產生真實扣款。</p>
+    <div class="summary"><span id="order-label">訂單</span><strong id="amount">—</strong></div>
+    <form id="payment-form" hidden>
+      <div id="payment-element"></div>
+      <button id="pay" type="submit">確認測試付款</button>
+    </form>
+    <p id="status" role="status" aria-live="polite">正在載入付款表單…</p>
+    <button id="check" type="button" hidden>重新確認付款狀態</button>
+    <a id="back" class="back" href="./">返回訂單</a>
+    <noscript>請啟用 JavaScript 以使用測試付款；訂單不會因離開此頁而自動付款。</noscript>
+  </main>
+</body>
+</html>

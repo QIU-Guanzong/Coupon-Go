@@ -125,9 +125,9 @@ class CouponCard extends StatelessWidget {
                       color: CgColors.orange,
                       borderRadius: BorderRadius.circular(16),
                     ),
-                    child: const Text(
-                      '領取',
-                      style: TextStyle(color: Colors.white, fontSize: 12),
+                    child: Text(
+                      coupon.isPaid ? context.tr('購買', 'Buy') : context.tr('領取', 'Collect'),
+                      style: const TextStyle(color: Colors.white, fontSize: 12),
                     ),
                   ),
                 ],

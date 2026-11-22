@@ -75,6 +75,9 @@ class ApiClient extends ChangeNotifier {
 
   bool get isLoggedIn => _token != null;
 
+  /// Used only to resume the authenticated test-payment flow in this tab.
+  String? get paymentAccessToken => _token;
+
   Map<String, String> get _headers => {
         'Content-Type': 'application/json',
         if (_token != null) 'Authorization': 'Bearer $_token',
@@ -540,6 +543,12 @@ class ApiClient extends ChangeNotifier {
         'payment_method': method,
         'client_ref': clientRef,
         if (quantity > 1) 'quantity': quantity,
+      });
+  Future<Map<String, dynamic>> purchasePaidCoupon(int id, String method,
+          {required String clientRef}) =>
+      post('/coupons/$id/purchase', body: {
+        'payment_method': method,
+        'client_ref': clientRef,
       });
   // NOTE (UI_SPEC §3.3): the client never posts a self-reported payment
   // outcome. Results come from the gateway; the Flutter client only
