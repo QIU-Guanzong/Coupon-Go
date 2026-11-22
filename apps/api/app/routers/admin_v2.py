@@ -459,7 +459,7 @@ def get_settlement(settlement_id: int,
                    user: models.User = Depends(get_current_user),
                    db: Session = Depends(get_db)):
     s = db.query(Settlement).filter(Settlement.id == settlement_id).first()
-    if s is not None and not can_access_shop(db, user, db.get(models.Shop, s.shop_id)):
+    if s is not None and not can_view_settlement_shop(db, user, db.get(models.Shop, s.shop_id)):
         raise HTTPException(403, "沒有權限查看此結算單")
     if s is None:
         raise HTTPException(status_code=404, detail="找不到此結算單")

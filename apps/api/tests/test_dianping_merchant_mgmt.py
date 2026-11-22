@@ -540,9 +540,16 @@ def test_invite_role_is_validated(client):
 
 
 def test_cashier_and_manager_cannot_read_financial_dashboard(client):
+    from app.models_line_f import Settlement
     cashier = _invite_as(client, 1, "cashier-dashboard@example.com", "cashier")
     manager = _invite_as(client, 1, "manager-dashboard@example.com", "manager")
     finance = _invite_as(client, 1, "finance-dashboard@example.com", "finance")
+    with TestingSession() as db:
+        settlement = Settlement(shop_id=1, period="2001-02", period_start=datetime(2001, 2, 1),
+                                period_end=datetime(2001, 3, 1))
+        db.add(settlement)
+        db.commit()
+        settlement_id = settlement.id
     for user in (cashier, manager):
         for path in ("balance", "balance/entries", "dashboard"):
             response = client.get(f"/api/v3/merchant/shops/1/{path}", headers=user)
@@ -551,11 +558,15 @@ def test_cashier_and_manager_cannot_read_financial_dashboard(client):
             aggregate = client.get(f"/api/v3/merchant/{path}", headers=user)
             assert aggregate.status_code == 200, aggregate.text
             assert all(shop["shop_id"] != 1 for shop in aggregate.json()["shops"])
+        assert client.get(f"/api/v3/admin/settlements/{settlement_id}", headers=user).status_code == 403
+        assert client.post(f"/api/v3/merchant/settlements/{settlement_id}/dispute",
+                           json={"reason": "核對"}, headers=user).status_code == 403
     for path in ("balance", "balance/entries", "dashboard"):
         response = client.get(f"/api/v3/merchant/shops/1/{path}", headers=finance)
         assert response.status_code == 200, (path, response.text)
     admin = client.get("/api/v3/merchant/balance", headers=_admin_headers(client))
     assert any(shop["shop_id"] == 1 for shop in admin.json()["shops"])
+    assert client.get(f"/api/v3/admin/settlements/{settlement_id}", headers=finance).status_code == 200
 
 
 def test_paid_order_prevents_changing_assigned_branches(client):
