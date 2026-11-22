@@ -539,6 +539,25 @@ def test_invite_role_is_validated(client):
     assert r.status_code == 400, r.text
 
 
+def test_cashier_and_manager_cannot_read_financial_dashboard(client):
+    cashier = _invite_as(client, 1, "cashier-dashboard@example.com", "cashier")
+    manager = _invite_as(client, 1, "manager-dashboard@example.com", "manager")
+    finance = _invite_as(client, 1, "finance-dashboard@example.com", "finance")
+    for user in (cashier, manager):
+        for path in ("balance", "balance/entries", "dashboard"):
+            response = client.get(f"/api/v3/merchant/shops/1/{path}", headers=user)
+            assert response.status_code == 403, (path, response.text)
+        for path in ("balance", "dashboard"):
+            aggregate = client.get(f"/api/v3/merchant/{path}", headers=user)
+            assert aggregate.status_code == 200, aggregate.text
+            assert all(shop["shop_id"] != 1 for shop in aggregate.json()["shops"])
+    for path in ("balance", "balance/entries", "dashboard"):
+        response = client.get(f"/api/v3/merchant/shops/1/{path}", headers=finance)
+        assert response.status_code == 200, (path, response.text)
+    admin = client.get("/api/v3/merchant/balance", headers=_admin_headers(client))
+    assert any(shop["shop_id"] == 1 for shop in admin.json()["shops"])
+
+
 def test_paid_order_prevents_changing_assigned_branches(client):
     vendor = _vendor_headers(client)
     branch = client.post("/api/v3/merchant/shops/1/branches", json={"name": "付費券指定店"}, headers=vendor)
