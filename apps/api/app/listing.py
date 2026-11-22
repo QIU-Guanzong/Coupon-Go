@@ -178,6 +178,27 @@ def _set(row, status: str, stats: dict):
 
 
 def _set_pkg(db: Session, package: Package, status: str, stats: dict):
+    # A merchant may change the listing after the sweep selected it. Acquire
+    # the same row lock as purchase/edit and re-check before any transition.
+    if db.get_bind().dialect.name == "sqlite":
+        db.query(Package).filter_by(id=package.id).update(
+            {"stock_left": Package.stock_left}, synchronize_session=False)
+    package = (db.query(Package).filter_by(id=package.id).with_for_update()
+               .populate_existing().one())
+    now = _now()
+    if status == "active":
+        if package.status != "scheduled" or package.valid_from > now or package.valid_to <= now:
+            return
+        status = live_status(package.valid_from, package.valid_to, package.stock_left)
+    elif status == "scheduled":
+        if package.status != "active" or package.valid_from <= now:
+            return
+    elif status == "expired":
+        if package.status not in ("active", "scheduled", "paused") or package.valid_to > now:
+            return
+    elif status == "sold_out":
+        if package.status not in ("active", "scheduled") or package.stock_left > 0:
+            return
     package.status = status
     sync_package_coupon_status(db, package, status)
     if status == "active":

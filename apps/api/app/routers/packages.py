@@ -552,7 +552,7 @@ def approve_package(package_id: int, approve: bool = True, reason: str = "",
     Approval lands on active / scheduled (valid_from in the future)
     / sold_out (no stock); the template coupon mirrors the package.
     Rejection records the reason. Only pending_review can be decided."""
-    pkg = _get_package(db, package_id)
+    pkg = _get_package_locked(db, package_id)
     if pkg.status != "pending_review":
         raise HTTPException(status_code=400, detail="只有待審核的套餐可以審批")
     if approve:
@@ -656,7 +656,7 @@ def edit_package(package_id: int, body: sp.PackageUpdateIn,
 def pause_package(package_id: int,
                   vendor: models.User = Depends(require_role("vendor", "admin")),
                   db: Session = Depends(get_db)):
-    pkg = _get_vendor_package(db, package_id, vendor)
+    pkg = _get_vendor_package(db, package_id, vendor, lock=True)
     if pkg.status != "active":
         raise HTTPException(status_code=400, detail="只有上架中的套餐可以暫停")
     pkg.status = "paused"
@@ -669,7 +669,7 @@ def pause_package(package_id: int,
 def resume_package(package_id: int,
                    vendor: models.User = Depends(require_role("vendor", "admin")),
                    db: Session = Depends(get_db)):
-    pkg = _get_vendor_package(db, package_id, vendor)
+    pkg = _get_vendor_package(db, package_id, vendor, lock=True)
     if pkg.status != "paused":
         raise HTTPException(status_code=400, detail="只有已暫停的套餐可以恢復上架")
     target = listing.live_status(pkg.valid_from, pkg.valid_to, pkg.stock_left)
@@ -690,7 +690,7 @@ def unlist_package(package_id: int,
     """§3.2: take a package off the shelf back to draft; the
     template coupon mirrors it. Expired / sold_out are already off
     the shelf."""
-    pkg = _get_vendor_package(db, package_id, vendor)
+    pkg = _get_vendor_package(db, package_id, vendor, lock=True)
     if pkg.status in ("expired", "sold_out"):
         raise HTTPException(status_code=400, detail="已過期或已售罄的套餐不可下架")
     if pkg.status == "draft":
@@ -705,7 +705,7 @@ def unlist_package(package_id: int,
 def submit_package(package_id: int,
                    vendor: models.User = Depends(require_role("vendor", "admin")),
                    db: Session = Depends(get_db)):
-    pkg = _get_vendor_package(db, package_id, vendor)
+    pkg = _get_vendor_package(db, package_id, vendor, lock=True)
     if pkg.status not in ("draft", "rejected"):
         raise HTTPException(status_code=400, detail="只有草稿或被駁回的套餐可以提交審核")
     pkg.status = ("pending_review" if config.PACKAGE_REVIEW_REQUIRED else

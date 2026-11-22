@@ -431,6 +431,33 @@ def test_cancelled_order_late_success_is_not_silently_ignored(client, monkeypatc
     assert callback.json().get("ignored") != "order already settled", callback.text
 
 
+def test_listing_sweep_rechecks_stale_package_before_overwriting_pause(client, monkeypatch):
+    from app import listing
+    monkeypatch.setattr(config, "PACKAGE_REVIEW_REQUIRED", False)
+    pkg = _create_package(client, name="排程暫停競態")
+    db = TestingSession()
+    try:
+        row = db.get(Package, pkg["id"])
+        row.status = "scheduled"
+        db.commit()
+        stale = db.get(Package, pkg["id"])
+        other = TestingSession()
+        try:
+            changed = other.get(Package, pkg["id"])
+            changed.status = "paused"
+            other.commit()
+        finally:
+            other.close()
+        stats = {"packages_activated": 0, "packages_expired": 0,
+                 "packages_sold_out": 0, "packages_rescheduled": 0}
+        listing._set_pkg(db, stale, "active", stats)
+        db.commit()
+        assert db.get(Package, pkg["id"]).status == "paused"
+        assert stats["packages_activated"] == 0
+    finally:
+        db.close()
+
+
 # ---------- P0-6: package review flow ----------
 
 def test_package_create_is_pending_review_not_active(client):
