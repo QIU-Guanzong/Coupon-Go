@@ -42,13 +42,19 @@ def _refresh_expiry(db: Session, item: models.WalletItem):
 def ensure_paid_voucher(db, item):
     if item.source == "purchase":
         order = db.get(models.Order, item.order_id) if item.order_id else None
-        if not order or order.payment_status != "paid" or order.refund_status not in ("none", "rejected"):
+        if (not order or order.user_id != item.user_id or order.payment_status != "paid"
+                or order.refund_status not in ("none", "rejected")
+                or (item.coupon.kind == "package" and order.package_id != item.coupon.package_id)):
             raise HTTPException(400, "套餐券付款或退款狀態不允許核銷")
 
 
-def ensure_redeemable(coupon):
-    if coupon.status != "active":
+def ensure_redeemable(coupon, *, purchased_package=False):
+    # Merchandising states do not cancel an already sold package voucher.
+    allowed = ("active", "paused", "pending_review", "scheduled", "sold_out", "draft")
+    if coupon.status != "active" and not (purchased_package and coupon.status in allowed):
         raise HTTPException(400, "此優惠券已停用")
+    if coupon.valid_to <= _now():
+        raise HTTPException(400, "此優惠券已失效")
     if coupon.valid_from > _now():
         raise HTTPException(400, "此優惠券尚未到使用日期")
 
@@ -143,7 +149,7 @@ def generate_qr(wallet_item_id: int, user: models.User = Depends(get_current_use
     if item.status != 1:
         raise HTTPException(status_code=400, detail="此優惠券不能使用")
     ensure_paid_voucher(db, item)
-    ensure_redeemable(item.coupon)
+    ensure_redeemable(item.coupon, purchased_package=(item.source == "purchase" and item.coupon.kind == "package"))
     # Line A anti-screenshot: a fresh code is generated on EVERY present,
     # so a screenshot / forwarded photo of an older code is dead as soon
     # as the owner re-presents. Each code is single-use (cleared on scan).
@@ -228,7 +234,7 @@ def scan_coupon(body: schemas.ScanIn,
                                   models.Shop.vendor_id == vendor.id).all()]:
         raise HTTPException(status_code=400, detail="無效的 QR 碼！此碼屬於其他商店。")
     ensure_paid_voucher(db, item)
-    ensure_redeemable(coupon)
+    ensure_redeemable(coupon, purchased_package=(item.source == "purchase" and coupon.kind == "package"))
     today_start = _now().replace(hour=0, minute=0, second=0, microsecond=0)
     scans_today = db.query(models.Redemption).filter(
         models.Redemption.scanned_by_vendor_id == vendor.id,

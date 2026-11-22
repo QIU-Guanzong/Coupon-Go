@@ -5,6 +5,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from . import config, models
+from .package_templates import current_package_coupon
 from .models_line_b import Review, ShopRating
 from .models_line_f import Settlement, SettlementItem, SettlementReversal
 from .models_packages import Order, Package, Payment, Refund
@@ -77,10 +78,7 @@ def package_out(db: Session, p: Package, user_id: int | None = None) -> dict:
     # shop image, de-duplicated, non-empty only. There is no separate
     # package gallery table; no image is invented when both are empty.
     images: list[str] = []
-    coupon = (db.query(models.Coupon)
-              .filter(models.Coupon.package_id == p.id,
-                      models.Coupon.kind == "package")
-              .first())
+    coupon = current_package_coupon(db, p.id)
     for src in (coupon.image if coupon else "",
                 shop.image if shop else ""):
         if src and src not in images:
@@ -249,7 +247,10 @@ def order_out(db: Session, o: Order) -> dict:
         "order_type": o.order_type,
         "package_id": o.package_id,
         "quantity": o.quantity or 1,
-        "package_name": pkg.name if pkg else "",
+        "package_name": (wallet_item.coupon.coupon_name if wallet_item and wallet_item.coupon
+                         else db.get(models.Coupon, o.package_coupon_id).coupon_name
+                         if o.package_coupon_id and db.get(models.Coupon, o.package_coupon_id)
+                         else pkg.name if pkg else ""),
         "shop_name": shop.name if shop else "",
         "amount": float(o.amount or 0),
         "paid_amount": float(o.paid_amount or 0),

@@ -168,6 +168,9 @@ class Coupon(Base):
     # kind: coupon (free) | package (paid set-meal voucher)
     kind = Column(String(20), default="coupon", nullable=False)
     package_id = Column(Integer, ForeignKey("packages.id"), nullable=True)
+    # NULL denotes a legacy template, True is the current sellable version,
+    # False preserves a version already issued to customers.
+    is_package_template = Column(Boolean, nullable=True)
     person_count = Column(Integer, nullable=True)
     # usage rules JSON (times / booking / includes-excludes)
     usage_rules = Column(Text, default="")

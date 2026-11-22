@@ -31,6 +31,7 @@ from sqlalchemy.orm import Session
 from . import models
 from .models_line_b import AdminAuditLog
 from .models_packages import Package
+from .package_templates import current_package_coupon
 
 logger = logging.getLogger(__name__)
 
@@ -85,10 +86,7 @@ def sync_package_coupon_status(db: Session, package: Package, status: str):
     """The package template coupon (kind='package') mirrors the
     package status, so scan / claim guards that read the coupon see
     the same state as the listing."""
-    coupon = (db.query(models.Coupon)
-              .filter(models.Coupon.package_id == package.id,
-                      models.Coupon.kind == "package")
-              .first())
+    coupon = current_package_coupon(db, package.id)
     if coupon is not None:
         coupon.status = status
     return coupon

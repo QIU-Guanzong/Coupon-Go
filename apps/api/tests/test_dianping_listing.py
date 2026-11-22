@@ -23,7 +23,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 os.environ["COUPON_GO_ENV"] = "dev"
 os.environ["SEED_ON_STARTUP"] = "0"
 
-from app import models  # noqa: E402
+from app import config, models  # noqa: E402
 from app.database import Base, get_db  # noqa: E402
 from app.main import app  # noqa: E402
 from app.models_packages import Package  # noqa: E402
@@ -153,6 +153,210 @@ def _sweep():
         return sweep_listing_schedule(db)
     finally:
         db.close()
+
+
+@pytest.fixture(autouse=True)
+def manual_package_review(monkeypatch):
+    # Existing cases explicitly exercise the manual review mode.
+    monkeypatch.setattr(config, "PACKAGE_REVIEW_REQUIRED", True)
+
+
+def test_auto_approval_creates_purchasable_package_and_syncs_template(client, monkeypatch):
+    monkeypatch.setattr(config, "PACKAGE_REVIEW_REQUIRED", False)
+    pkg = _create_package(client, name="自動上架套餐")
+    assert pkg["status"] == "active"
+    db = TestingSession()
+    try:
+        coupon = db.query(models.Coupon).filter_by(package_id=pkg["id"], kind="package").one()
+        assert coupon.status == "active"
+    finally:
+        db.close()
+    h = _register_and_login(client, "listing-auto@example.com")
+    response = client.post(f"/api/v3/packages/{pkg['id']}/purchase",
+                           json={"payment_method": "fps"}, headers=h)
+    assert response.status_code == 200, response.text
+
+
+def test_auto_approval_respects_schedule_and_vendor_pause(client, monkeypatch):
+    monkeypatch.setattr(config, "PACKAGE_REVIEW_REQUIRED", False)
+    now = _now()
+    scheduled = _create_package(client, name="自動排期套餐",
+        valid_from=(now + timedelta(days=2)).isoformat(),
+        valid_to=(now + timedelta(days=30)).isoformat())
+    assert scheduled["status"] == "scheduled"
+    pkg = _create_package(client, name="暫停編輯套餐")
+    vh = _vendor_headers(client)
+    assert client.post(f"/api/v3/vendor/packages/{pkg['id']}/pause", headers=vh).json()["status"] == "paused"
+    response = client.patch(f"/api/v3/vendor/packages/{pkg['id']}",
+                            json={"package_price": 130}, headers=vh)
+    assert response.status_code == 200, response.text
+    assert response.json()["package"]["status"] == "paused"
+    assert client.post(f"/api/v3/vendor/packages/{pkg['id']}/resume", headers=vh).json()["status"] == "active"
+    assert client.post(f"/api/v3/vendor/packages/{pkg['id']}/unlist", headers=vh).json()["status"] == "draft"
+    response = client.post(f"/api/v3/vendor/packages/{pkg['id']}/submit", headers=vh)
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] == "active"
+
+
+def test_manual_review_switch_keeps_new_and_edited_packages_pending(client, monkeypatch):
+    monkeypatch.setattr(config, "PACKAGE_REVIEW_REQUIRED", False)
+    pkg = _create_package(client, name="開啟審核套餐")
+    assert pkg["status"] == "active"
+    monkeypatch.setattr(config, "PACKAGE_REVIEW_REQUIRED", True)
+    vh = _vendor_headers(client)
+    response = client.patch(f"/api/v3/vendor/packages/{pkg['id']}",
+                            json={"package_price": 120}, headers=vh)
+    assert response.status_code == 200, response.text
+    assert response.json()["package"]["status"] == "pending_review"
+    assert _create_package(client, name="新建待審套餐")["status"] == "pending_review"
+
+
+def test_issued_package_keeps_terms_after_pause_edit_and_new_purchase(client, monkeypatch):
+    monkeypatch.setattr(config, "PACKAGE_REVIEW_REQUIRED", False)
+    pkg = _create_package(client, name="原始套餐", package_price=150)
+    buyer = _register_and_login(client, "version-old@example.com")
+    purchase = client.post(f"/api/v3/packages/{pkg['id']}/purchase", json={"payment_method": "fps"}, headers=buyer)
+    assert purchase.status_code == 200, purchase.text
+    order_id = purchase.json()["order"]["id"]
+    paid = client.post(f"/api/v3/orders/{order_id}/confirm-payment", json={"outcome": "succeeded"}, headers=buyer)
+    assert paid.status_code == 200, paid.text
+    old_item = paid.json()["order"]["wallet_item_id"]
+    vh = _vendor_headers(client)
+    pause = client.post(f"/api/v3/vendor/packages/{pkg['id']}/pause", headers=vh)
+    assert pause.status_code == 200, pause.text
+    # Pausing sales must not cancel an already paid voucher.
+    qr = client.post("/api/v3/store-scaned-qr-values", params={"wallet_item_id": old_item}, headers=buyer)
+    assert qr.status_code == 200, qr.text
+    edit = client.patch(f"/api/v3/vendor/packages/{pkg['id']}", headers=vh,
+                        json={"name": "新版套餐", "package_price": 120})
+    assert edit.status_code == 200, edit.text
+    assert edit.json()["package"]["status"] == "paused"
+    wallet = client.get("/api/v3/get-favorite-coupons-list", headers=buyer).json()
+    old = next(x for x in wallet["items"] if x["id"] == old_item)
+    assert old["coupon_name"] == "原始套餐" and old["discount_price"] == 150
+    assert client.get(f"/api/v3/orders/{order_id}", headers=buyer).json()["order"]["package_name"] == "原始套餐"
+    scan = client.post("/api/v3/new-scan-coupon", json={"code": qr.json()["code"]}, headers=vh)
+    assert scan.status_code == 200, scan.text
+    assert client.post(f"/api/v3/vendor/packages/{pkg['id']}/resume", headers=vh).status_code == 200
+    next_buyer = _register_and_login(client, "version-new@example.com")
+    new_order = client.post(f"/api/v3/packages/{pkg['id']}/purchase", json={"payment_method": "fps"}, headers=next_buyer).json()["order"]
+    assert new_order["amount"] == 120
+    new_paid = client.post(f"/api/v3/orders/{new_order['id']}/confirm-payment", json={"outcome": "succeeded"}, headers=next_buyer)
+    assert new_paid.status_code == 200, new_paid.text
+    new_item = new_paid.json()["order"]["wallet_item_id"]
+    new_wallet = client.get("/api/v3/get-favorite-coupons-list", headers=next_buyer).json()
+    new = next(x for x in new_wallet["items"] if x["id"] == new_item)
+    assert new["coupon_name"] == "新版套餐" and new["discount_price"] == 120
+    assert new["coupon_id"] != old["coupon_id"]
+    refund = client.post(f"/api/v3/orders/{new_order['id']}/refund", json={}, headers=next_buyer)
+    assert refund.status_code == 200, refund.text
+    assert refund.json()["refund"]["amount"] == 120
+
+
+def test_pending_payment_preserves_original_template_after_edit(client, monkeypatch):
+    monkeypatch.setattr(config, "PACKAGE_REVIEW_REQUIRED", False)
+    pkg = _create_package(client, name="待付款套餐")
+    buyer = _register_and_login(client, "version-pending@example.com")
+    purchase = client.post(f"/api/v3/packages/{pkg['id']}/purchase", json={"payment_method": "fps"}, headers=buyer)
+    assert purchase.status_code == 200, purchase.text
+    order_id = purchase.json()["order"]["id"]
+    vh = _vendor_headers(client)
+    edit = client.patch(f"/api/v3/vendor/packages/{pkg['id']}", headers=vh, json={"name": "新名稱"})
+    assert edit.status_code == 200, edit.text
+    paid = client.post(f"/api/v3/orders/{order_id}/confirm-payment", json={"outcome": "succeeded"}, headers=buyer)
+    assert paid.status_code == 200, paid.text
+    assert client.get(f"/api/v3/orders/{order_id}", headers=buyer).json()["order"]["package_name"] == "待付款套餐"
+
+
+def test_failed_payment_retry_keeps_original_package_terms(client, monkeypatch):
+    monkeypatch.setattr(config, "PACKAGE_REVIEW_REQUIRED", False)
+    pkg = _create_package(client, name="付款失敗前套餐", package_price=150)
+    buyer = _register_and_login(client, "version-retry@example.com")
+    purchase = client.post(f"/api/v3/packages/{pkg['id']}/purchase", json={"payment_method": "fps"}, headers=buyer)
+    assert purchase.status_code == 200, purchase.text
+    order_id = purchase.json()["order"]["id"]
+    failed = client.post(f"/api/v3/orders/{order_id}/confirm-payment", json={"outcome": "failed"}, headers=buyer)
+    assert failed.status_code == 200, failed.text
+    edit = client.patch(f"/api/v3/vendor/packages/{pkg['id']}", headers=_vendor_headers(client),
+                        json={"name": "付款失敗後新版", "package_price": 120})
+    assert edit.status_code == 200, edit.text
+    retry = client.post(f"/api/v3/orders/{order_id}/retry-payment", json={"payment_method": "fps"}, headers=buyer)
+    assert retry.status_code == 200, retry.text
+    paid = client.post(f"/api/v3/orders/{order_id}/confirm-payment", json={"outcome": "succeeded"}, headers=buyer)
+    assert paid.status_code == 200, paid.text
+    assert paid.json()["order"]["package_name"] == "付款失敗前套餐"
+    assert paid.json()["order"]["paid_amount"] == 150
+    wallet = client.get("/api/v3/get-favorite-coupons-list", headers=buyer).json()
+    item = next(x for x in wallet["items"] if x["id"] == paid.json()["order"]["wallet_item_id"])
+    assert item["coupon_name"] == "付款失敗前套餐" and item["discount_price"] == 150
+
+
+def test_legacy_pending_order_without_snapshot_blocks_edit(client, monkeypatch):
+    monkeypatch.setattr(config, "PACKAGE_REVIEW_REQUIRED", False)
+    pkg = _create_package(client, name="舊待付款套餐")
+    buyer = _register_and_login(client, "version-legacy-pending@example.com")
+    purchase = client.post(f"/api/v3/packages/{pkg['id']}/purchase", json={"payment_method": "fps"}, headers=buyer)
+    order_id = purchase.json()["order"]["id"]
+    db = TestingSession()
+    try:
+        order = db.get(models.Order, order_id)
+        order.package_coupon_id = None
+        db.commit()
+    finally:
+        db.close()
+    edit = client.patch(f"/api/v3/vendor/packages/{pkg['id']}", headers=_vendor_headers(client), json={"name": "新版"})
+    assert edit.status_code == 409, edit.text
+
+
+@pytest.mark.skipif(not PG_URL, reason="row-lock race requires isolated PostgreSQL")
+def test_purchase_edit_race_keeps_order_template_consistent(client, monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    import threading
+    monkeypatch.setattr(config, "PACKAGE_REVIEW_REQUIRED", False)
+    pkg = _create_package(client, name="並發舊版", package_price=150)
+    buyer = _register_and_login(client, "version-race@example.com")
+    vh = _vendor_headers(client)
+    start = threading.Barrier(2)
+    def purchase():
+        start.wait()
+        return client.post(f"/api/v3/packages/{pkg['id']}/purchase", json={"payment_method": "fps"}, headers=buyer)
+    def edit():
+        start.wait()
+        return client.patch(f"/api/v3/vendor/packages/{pkg['id']}", headers=vh,
+                            json={"name": "並發新版", "package_price": 120})
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        fp, fe = pool.submit(purchase), pool.submit(edit)
+        bought, edited = fp.result(timeout=15), fe.result(timeout=15)
+    assert bought.status_code == edited.status_code == 200, (bought.text, edited.text)
+    order = bought.json()["order"]
+    paid = client.post(f"/api/v3/orders/{order['id']}/confirm-payment", json={"outcome": "succeeded"}, headers=buyer)
+    assert paid.status_code == 200, paid.text
+    item = next(x for x in client.get("/api/v3/get-favorite-coupons-list", headers=buyer).json()["items"]
+                if x["id"] == paid.json()["order"]["wallet_item_id"])
+    assert (item["coupon_name"], item["discount_price"], order["amount"]) in (
+        ("並發舊版", 150, 150), ("並發新版", 120, 120))
+
+
+def test_paid_coupon_cannot_be_exchanged_for_points_but_free_can(client):
+    buyer = _register_and_login(client, "listing-points-price@example.com")
+    db = TestingSession()
+    try:
+        user = db.query(models.User).filter_by(email="listing-points-price@example.com").one()
+        db.add(models.PointTransaction(user_id=user.id, delta=100, reason="test", ref_id=0))
+        paid = models.Coupon(shop_id=1, vendor_id=1, coupon_type="Price", coupon_name="付費積分券",
+            valid_from=_now() - timedelta(days=1), valid_to=_now() + timedelta(days=1),
+            status="active", kind="coupon", is_points_exchange=True, sale_price=10)
+        free = models.Coupon(shop_id=1, vendor_id=1, coupon_type="Price", coupon_name="免費積分券",
+            valid_from=_now() - timedelta(days=1), valid_to=_now() + timedelta(days=1),
+            status="active", kind="coupon", is_points_exchange=True, sale_price=0)
+        db.add_all([paid, free]); db.commit()
+        paid_id, free_id = paid.id, free.id
+    finally:
+        db.close()
+    refused = client.post("/api/v3/points/exchange", params={"coupon_id": paid_id}, headers=buyer)
+    assert refused.status_code == 400, refused.text
+    accepted = client.post("/api/v3/points/exchange", params={"coupon_id": free_id}, headers=buyer)
+    assert accepted.status_code == 200, accepted.text
 
 
 # ---------- P0-6: package review flow ----------

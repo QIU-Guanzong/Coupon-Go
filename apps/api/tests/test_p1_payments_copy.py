@@ -94,11 +94,12 @@ def _create_package(client, name="P1 套餐", stock=5, price=150, original=200):
     r = client.post("/api/v3/packages", json=body, headers=vh)
     assert r.status_code == 201, r.text
     pkg = r.json()["package"]
-    # §3.2: packages enter review on creation; approve before use.
-    ah = _admin_headers(client)
-    r = client.post(f"/api/v3/admin/packages/{pkg['id']}/approve",
-                    params={"approve": True}, headers=ah)
-    assert r.status_code == 200, r.text
+    # Support both optional manual review and default auto-approval.
+    if pkg["status"] == "pending_review":
+        ah = _admin_headers(client)
+        r = client.post(f"/api/v3/admin/packages/{pkg['id']}/approve",
+                        params={"approve": True}, headers=ah)
+        assert r.status_code == 200, r.text
     r = client.get("/api/v3/package-details", params={"package_id": pkg["id"]})
     assert r.status_code == 200, r.text
     return r.json()["package"]

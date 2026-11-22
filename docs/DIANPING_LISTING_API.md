@@ -21,18 +21,20 @@ draft ──submit──▶ pending_review ──approve──▶ active ⇄ pau
                      └─ 商戶編輯 ──▶ draft（被駁回的改完回草稿）
 ```
 
-- 建券 / 建套餐一律進 `pending_review`，不再直接上架。套餐以前是建完即
-  `active`，本片改為待審（`store_package`）。
+- 券仍須審核。套餐透過 `PACKAGE_REVIEW_REQUIRED` 控制：預設 `0` 自動批准；
+  設為 `1` 後，新建、已上架後編輯及重新提交才進 `pending_review`。自動批准
+  仍依有效期與庫存進入 `active`、`scheduled`、`expired` 或 `sold_out`。
 - 只有 `pending_review` 能審批；審批通過的落點由
   `listing.live_status(valid_from, valid_to, 庫存）` 決定：`valid_from` 未到
   → `scheduled`，庫存為 0 → `sold_out`，已過 `valid_to` → 400 不給批。
-- 商戶編輯已上架 / 已暫停 / 已排期內容（改價、改庫存、改有效期）會送回
-  `pending_review` 重新審核，審核期間暫時下架；草稿 / 被駁回的編輯留在
-  `draft`；待審的編輯留在 `pending_review`。已過期 / 已售罄不可編輯，請重建。
-- 套餐的券模板（`kind='package'` 的 `Coupon`）與套餐狀態始終同步：審批、
-  暫停、恢復、下架、提交、編輯、sweep 都同步寫模板券狀態。已購套餐券的核銷
-  讀模板券狀態，所以套餐重審期間，已購券暫時不可核銷（與券重審期間已領券
-  不可核銷同一口徑）。
+- 券或啟用審核後的套餐，商戶編輯已上架 / 已暫停 / 已排期內容時送回
+  `pending_review`；自動批准模式的套餐編輯保持上架或重新排期，已暫停者仍暫停。
+  草稿 / 被駁回的編輯留在 `draft`；待審的編輯留在 `pending_review`。
+  已過期 / 已售罄不可編輯，請重建。
+- 套餐當前券模板與商品狀態同步。已有券或訂單引用的模板在編輯時保留，
+  新建模板用於後續下單；新訂單預訂時凍結模板編號。舊待支付／可重試訂單
+  若缺少模板編號，須先完成或人工核對，避免推測原購買條款。已購套餐券不因
+  商品暫停、下架或重審而失效，仍須符合付款、退款及券自身有效期條件。
 - 公開列表只認 `status == "active"` 且在有效期內（`valid_from <= now <
   valid_to`）：`scheduled`、`paused`、`pending_review`、`draft`、`rejected`
   都不會出現在首頁 / 分類 / 搜尋 / 附近。領券與下單同樣只認 `active`。
@@ -65,7 +67,7 @@ draft ──submit──▶ pending_review ──approve──▶ active ⇄ pau
 |---|---|---|
 | GET | `/get-vendor-coupon-list?status=` | 新增 `status` 篩選（草稿 / 待審 / 已上架 / 已暫停…） |
 | POST | `/coupon-previewed` | 建券請求新增 `sale_price`、`refund_policy`、`per_user_limit`（見 §6）；仍進 `pending_review` |
-| POST | `/packages` | 建立後狀態改為 `pending_review`（以前是 `active`）；菜品校驗見 §7；仍返回 201 |
+| POST | `/packages` | 預設自動批准；啟用審核時為 `pending_review`；菜品校驗見 §7；仍返回 201 |
 | POST | `/new-favorite-coupon?coupon_id=` | 新增守衛：未到 `valid_from` 400；付費券（`sale_price > 0`）400「付費券請購買」；按 `per_user_limit` 計數限領（默認 1） |
 | GET | `/home`、`/get-classification-coupons`、`/get-limited-time-coupons`、`/get-most-people-grab`、`/recomandation-coupons` | 只列 `active` 且 `valid_from <= now` 的券 |
 | GET | `/auto-suggestion-new`、`/nearby-shops` | 同上（`has_coupons` / `has_packages` 也只認有效期內的 `active`） |
@@ -131,7 +133,7 @@ draft ──submit──▶ pending_review ──approve──▶ active ⇄ pau
 { "package_price": 99, "stock_total": 10,
   "items": [{ "name": "主菜一份", "qty": 1 }] }
 
-// 響應（改了已上架套餐 → 回待審，模板券同步 pending_review）
+// 響應（啟用套餐審核時改了已上架套餐 → 回待審；預設自動批准）
 { "message": "已儲存，內容將重新提交審核。",
   "package": { "id": 7, "status": "pending_review", "package_price": 99,
                "stock_total": 10, "stock_left": 8, "...": "..." } }
@@ -345,3 +347,7 @@ draft ──submit──▶ pending_review ──approve──▶ active ⇄ pau
   `test_m6_settlement_basis`、`test_p1_payments_copy`），其餘斷言不變。
 - Postgres：見 PR 匯報（遷移 `0021` 在真實 Postgres 上升 / 降級驗證，
   本片測試檔以 `LISTING_TEST_POSTGRES_URL` 跑過）。
+
+### 套餐模板版本
+
+遷移為 `coupons.is_package_template` 和 `orders.package_coupon_id` 新增可空欄位，不回填未知歷史權益。模板版本一經引用即保留，無法安全反推舊版時不自動猜測。為避免折疊已售券版本，該遷移不支持自動降級。

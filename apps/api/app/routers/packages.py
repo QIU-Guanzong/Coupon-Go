@@ -36,6 +36,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from .. import cashback_service, config, listing, models
+from ..package_templates import current_package_coupon, sync_edited_package_template
 from ..settlement_ledger import reverse_sale
 from ..database import get_db
 from ..deps import get_current_user, get_optional_user, require_role
@@ -88,10 +89,7 @@ def _get_package_locked(db: Session, package_id: int) -> Package:
 
 
 def _package_coupon(db: Session, package: Package):
-    return (db.query(models.Coupon)
-            .filter(models.Coupon.package_id == package.id,
-                    models.Coupon.kind == "package")
-            .first())
+    return current_package_coupon(db, package.id)
 
 
 def _sync_coupon_stock(db: Session, package: Package):
@@ -196,9 +194,10 @@ def _issue_voucher(db: Session, order: Order, package: Package):
                 .filter(models.WalletItem.order_id == order.id).first())
     if existing is not None:
         return existing
-    coupon = _package_coupon(db, package)
-    if coupon is None:
-        raise HTTPException(status_code=500, detail="套餐券模板缺失，請聯繫客服")
+    coupon = (db.get(models.Coupon, order.package_coupon_id)
+              if order.package_coupon_id else _package_coupon(db, package))
+    if coupon is None or coupon.package_id != package.id or coupon.kind != "package":
+        raise HTTPException(status_code=409, detail="訂單套餐券模板需要人工核對")
     item = models.WalletItem(
         user_id=order.user_id, coupon_id=coupon.id, status=1,
         source="purchase", order_id=order.id)
@@ -480,9 +479,10 @@ def create_package(body: sp.PackageCreateIn,
 
 
 def store_package(db: Session, shop: models.Shop, body: sp.PackageCreateIn):
-    # §3.2: a package now enters review like a coupon — created
-    # pending_review, never live on creation. Admin approval lands it
-    # on active / scheduled; the template coupon mirrors the package.
+    # MVP defaults to automatic approval; deployments can enable manual
+    # review without bypassing date or stock rules.
+    status = ("pending_review" if config.PACKAGE_REVIEW_REQUIRED else
+              listing.live_status(body.valid_from, body.valid_to, body.stock_total))
     pkg = Package(
         shop_id=body.shop_id, name=body.name, name_en=body.name_en,
         items=json.dumps([i.model_dump() for i in body.items],
@@ -494,7 +494,7 @@ def store_package(db: Session, shop: models.Shop, body: sp.PackageCreateIn):
         usage_rules=json.dumps(body.usage_rules.model_dump(),
                                ensure_ascii=False),
         stock_total=body.stock_total, stock_left=body.stock_total,
-        refund_policy=body.refund_policy, status="pending_review")
+        refund_policy=body.refund_policy, status=status)
     db.add(pkg)
     db.flush()
     # Coupon template for the package voucher (kind='package').
@@ -505,9 +505,9 @@ def store_package(db: Session, shop: models.Shop, body: sp.PackageCreateIn):
         regular_price=body.original_price,
         valid_from=body.valid_from, valid_to=body.valid_to,
         total=body.stock_total, remaining=body.stock_total,
-        status="pending_review",
+        status=status,
         additional_terms="套餐券：到店出示 QR 碼核銷；整張一次核銷，不可拆分。",
-        kind="package", package_id=pkg.id,
+        kind="package", package_id=pkg.id, is_package_template=True,
         person_count=body.person_count,
         usage_rules=json.dumps(body.usage_rules.model_dump(),
                                ensure_ascii=False),
@@ -518,9 +518,9 @@ def store_package(db: Session, shop: models.Shop, body: sp.PackageCreateIn):
 
 
 def _get_vendor_package(db: Session, package_id: int,
-                        vendor: models.User) -> Package:
+                        vendor: models.User, *, lock=False) -> Package:
     """The merchant's own package (admin may act on any)."""
-    pkg = _get_package(db, package_id)
+    pkg = _get_package_locked(db, package_id) if lock else _get_package(db, package_id)
     if vendor.role != "admin":
         shop = db.query(models.Shop).filter(models.Shop.id == pkg.shop_id).first()
         if shop is None or shop.vendor_id != vendor.id:
@@ -586,7 +586,18 @@ def edit_package(package_id: int, body: sp.PackageUpdateIn,
     Expired / sold_out packages cannot be edited. stock_total may not
     drop below the units already sold; the template coupon mirrors
     the package status."""
-    pkg = _get_vendor_package(db, package_id, vendor)
+    # Purchase and edits serialize on the package row. Pending payments must
+    # retain their original template until the payment result is known.
+    pkg = _get_vendor_package(db, package_id, vendor, lock=True)
+    pending = (db.query(Order.id).filter(Order.package_id == pkg.id,
+        Order.payment_status.in_(("pending", "failed", "timeout")),
+        Order.package_coupon_id.is_(None)).first())
+    missing = (db.query(Order.id).outerjoin(models.WalletItem, models.WalletItem.order_id == Order.id)
+               .filter(Order.package_id == pkg.id, Order.payment_status == "paid",
+                       Order.package_coupon_id.is_(None), Order.refund_status != "refunded",
+                       models.WalletItem.id.is_(None)).first())
+    if pending or missing:
+        raise HTTPException(409, "套餐有待付款或待核對的訂單，請稍後再編輯")
     if pkg.status in ("expired", "sold_out"):
         raise HTTPException(status_code=400, detail="已過期或已售罄的套餐不可編輯，請重新建立")
     if pkg.status not in listing.EDITABLE_STATES:
@@ -627,10 +638,13 @@ def edit_package(package_id: int, body: sp.PackageUpdateIn,
     if body.refund_policy is not None:
         pkg.refund_policy = body.refund_policy
     if pkg.status in listing.RE_REVIEW_STATES:
-        pkg.status = "pending_review"
+        if config.PACKAGE_REVIEW_REQUIRED:
+            pkg.status = "pending_review"
+        elif pkg.status != "paused":
+            pkg.status = listing.live_status(pkg.valid_from, pkg.valid_to, pkg.stock_left)
     elif pkg.status == "rejected":
         pkg.status = "draft"
-    listing.sync_package_coupon_status(db, pkg, pkg.status)
+    sync_edited_package_template(db, pkg)
     db.commit()
     db.refresh(pkg)
     return {"message": "已儲存，內容將重新提交審核。" if pkg.status == "pending_review" else "已儲存。",
@@ -693,8 +707,9 @@ def submit_package(package_id: int,
     pkg = _get_vendor_package(db, package_id, vendor)
     if pkg.status not in ("draft", "rejected"):
         raise HTTPException(status_code=400, detail="只有草稿或被駁回的套餐可以提交審核")
-    pkg.status = "pending_review"
-    listing.sync_package_coupon_status(db, pkg, "pending_review")
+    pkg.status = ("pending_review" if config.PACKAGE_REVIEW_REQUIRED else
+                  listing.live_status(pkg.valid_from, pkg.valid_to, pkg.stock_left))
+    listing.sync_package_coupon_status(db, pkg, pkg.status)
     db.commit()
     return {"package_id": pkg.id, "status": pkg.status}
 
@@ -742,9 +757,12 @@ def purchase_package(package_id: int, body: sp.PurchaseIn,
     # Gap 7: quantity scales the total price and the stock reservation.
     total = pkg.package_price * body.quantity
     try:
+        template = _package_coupon(db, pkg)
+        if template is None:
+            raise HTTPException(409, "套餐券模板缺失，請聯絡客服")
         order = Order(
             user_id=user.id, order_type="package", package_id=pkg.id,
-            quantity=body.quantity,
+            package_coupon_id=template.id, quantity=body.quantity,
             amount=total, paid_amount=0,
             payment_method=body.payment_method, payment_status="pending",
             refund_status="none", settlement_status="pending",
