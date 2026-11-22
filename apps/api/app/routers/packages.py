@@ -35,12 +35,12 @@ from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from .. import cashback_service, config, listing, models
+from .. import cashback_service, config, late_payments, listing, models
 from ..package_templates import current_package_coupon, sync_edited_package_template
 from ..settlement_ledger import reverse_sale
 from ..database import get_db
 from ..deps import get_current_user, get_optional_user, require_role
-from ..models_packages import Order, Package, Payment, Refund, REFUND_POLICIES
+from ..models_packages import LatePaymentRefund, Order, Package, Payment, Refund, REFUND_POLICIES
 from ..shared import issue_wallet_item
 from ..payments_gateway import (
     GatewayError, create_payment_intent, refund_payment,
@@ -1088,24 +1088,81 @@ async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
     gateway_ref = obj.get("id", "")
     if not gateway_ref:
         raise HTTPException(status_code=400, detail="缺少 payment_intent id")
-    attempt = db.query(Payment).filter(
-        Payment.gateway_ref == gateway_ref).first()
-    if attempt is None:
+    matches = db.query(Payment).filter(Payment.gateway_ref == gateway_ref).limit(2).all()
+    if not matches:
         raise HTTPException(status_code=404, detail="找不到此筆支付")
+    if len(matches) != 1:
+        raise HTTPException(status_code=409, detail="支付記錄需要人工核對")
+    attempt = matches[0]
     if body.type == "payment_intent.succeeded":
         outcome = "succeeded"
     elif body.type == "payment_intent.payment_failed":
         outcome = "failed"
     else:
         return {"received": True, "ignored": body.type}
-    order = _lock_order(db, attempt.order_id)
+    order = _lock_order_with_account(db, attempt.order_id)
     db.refresh(attempt)
     if order is None:
         raise HTTPException(status_code=404, detail="找不到此訂單")
     _refresh_payment_timeout(db, order)
-    if order.payment_status != "pending":
-        return {"received": True, "ignored": "order already settled"}
+    # Timeout handling can commit. Reacquire the account and order locks
+    # before comparing this attempt with a retry or a cancellation.
+    order = _lock_order_with_account(db, attempt.order_id)
+    db.refresh(attempt)
+    latest = _latest_payment(db, order.id)
+    current = (order.payment_status == "pending" and latest is not None and
+               latest.id == attempt.id and attempt.status in ("requires_payment", "processing"))
+    if outcome == "succeeded" and not current:
+        if attempt.status in ("succeeded", "refunded"):
+            return {"received": True, "ignored": "order already settled"}
+        entry = late_payments.record_late_success(db, order, attempt, obj)
+        entry = late_payments.dispatch(db, entry.id)
+        return {"received": True, "order_id": order.id,
+                "late_payment_refund": {"id": entry.id, "status": entry.status}}
+    if not current:
+        return {"received": True, "ignored": "payment already settled"}
     _apply_payment_result(db, order, attempt, outcome,
                           obj.get("last_payment_error", {}).get("message", "")
                           if isinstance(obj.get("last_payment_error"), dict) else "")
     return {"received": True, "order_id": order.id, "outcome": outcome}
+
+
+@router.get("/admin/late-payment-refunds")
+def list_late_payment_refunds(
+        status: str | None = None, actor: models.User = Depends(require_role("admin", "finance")),
+        db: Session = Depends(get_db)):
+    query = db.query(LatePaymentRefund)
+    if status:
+        query = query.filter_by(status=status)
+    entries = query.order_by(LatePaymentRefund.id.desc()).limit(100).all()
+    return {"items": [{"id": e.id, "order_id": e.order_id, "payment_id": e.payment_id,
+                        "amount": float(e.amount), "currency": e.currency,
+                        "status": e.status, "last_error": e.last_error,
+                        "payment_gateway_ref": getattr(db.get(Payment, e.payment_id), "gateway_ref", None),
+                        "refund_gateway_ref": e.gateway_ref,
+                        "created_at": e.created_at} for e in entries]}
+
+
+@router.post("/admin/late-payment-refunds/{entry_id}/retry")
+def retry_late_payment_refund(entry_id: int,
+        actor: models.User = Depends(require_role("admin", "finance")),
+        db: Session = Depends(get_db)):
+    entry = late_payments.dispatch(db, entry_id)
+    if entry is None:
+        raise HTTPException(404, "找不到此筆補償退款")
+    return {"id": entry.id, "status": entry.status, "last_error": entry.last_error}
+
+
+@router.post("/admin/late-payment-refunds/{entry_id}/verify")
+def verify_late_payment_refund(entry_id: int, gateway_ref: str = Query(min_length=1, max_length=80),
+        actor: models.User = Depends(require_role("admin", "finance")),
+        db: Session = Depends(get_db)):
+    try:
+        entry = late_payments.confirm_existing(db, entry_id, gateway_ref)
+    except GatewayError:
+        raise HTTPException(502, GATEWAY_FAILURE_MESSAGE)
+    except ValueError:
+        raise HTTPException(409, "退款資料不相符，請繼續核對")
+    if entry is None:
+        raise HTTPException(404, "找不到此筆補償退款")
+    return {"id": entry.id, "status": entry.status}

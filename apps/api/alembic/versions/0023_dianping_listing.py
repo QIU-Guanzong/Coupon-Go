@@ -24,7 +24,7 @@ from alembic import op
 import sqlalchemy as sa
 
 revision = "0023_dianping_listing"
-down_revision = "0021_account_deletion"
+down_revision = "0022_late_payment_refunds"
 branch_labels = None
 depends_on = None
 

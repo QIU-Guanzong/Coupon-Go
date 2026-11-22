@@ -145,3 +145,24 @@ class Refund(Base):
     status = Column(String(20), default="requested", nullable=False)
     gateway_ref = Column(String(80), default="")  # Stripe refund id
     created_at = Column(DateTime, default=_now)
+
+
+class LatePaymentRefund(Base):
+    """Compensation for one payment attempt that succeeded too late.
+
+    Kept separate from the order's normal refund: an old attempt can
+    succeed after a newer attempt has already paid for a valid voucher.
+    """
+    __tablename__ = "late_payment_refunds"
+    id = Column(Integer, primary_key=True)
+    payment_id = Column(Integer, ForeignKey("payments.id"), nullable=False, unique=True)
+    order_id = Column(Integer, ForeignKey("orders.id"), nullable=False, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    amount = Column(Numeric(10, 2), nullable=False)
+    currency = Column(String(10), nullable=False)
+    request_key = Column(String(80), nullable=False, unique=True)
+    gateway_ref = Column(String(80), nullable=False, default="", server_default="")
+    status = Column(String(20), nullable=False, default="pending", server_default="pending")
+    last_error = Column(String(100), nullable=False, default="", server_default="")
+    created_at = Column(DateTime, nullable=False, default=_now)
+    updated_at = Column(DateTime, nullable=False, default=_now, onupdate=_now)

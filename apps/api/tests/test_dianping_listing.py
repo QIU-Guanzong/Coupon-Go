@@ -411,7 +411,6 @@ def test_wrong_shop_snapshot_cannot_be_issued(client, monkeypatch):
         db.close()
 
 
-@pytest.mark.xfail(strict=True, reason="cancelled order currently ignores a late successful payment; durable reconciliation is required")
 def test_cancelled_order_late_success_is_not_silently_ignored(client, monkeypatch):
     monkeypatch.setattr(config, "PACKAGE_REVIEW_REQUIRED", False)
     pkg = _create_package(client, name="取消後付款套餐")
@@ -428,7 +427,15 @@ def test_cancelled_order_late_success_is_not_silently_ignored(client, monkeypatc
     assert cancelled.status_code == 200, cancelled.text
     callback = client.post("/api/v3/payments/webhook", json={"type": "payment_intent.succeeded", "data": {"object": {"id": gateway_ref}}})
     assert callback.status_code == 200, callback.text
-    assert callback.json().get("ignored") != "order already settled", callback.text
+    assert callback.json()["late_payment_refund"]["status"] == "refunded", callback.text
+    db = TestingSession()
+    try:
+        from app.models_packages import LatePaymentRefund
+        assert db.get(models.Order, order_id).payment_status == "cancelled"
+        assert db.query(models.WalletItem).filter_by(order_id=order_id).count() == 0
+        assert db.query(LatePaymentRefund).filter_by(order_id=order_id, status="refunded").count() == 1
+    finally:
+        db.close()
 
 
 def test_listing_sweep_rechecks_stale_package_before_overwriting_pause(client, monkeypatch):

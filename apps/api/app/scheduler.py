@@ -54,7 +54,7 @@ from .models_scheduler import SchedulerLock  # noqa: F401  (register table)
 logger = logging.getLogger(__name__)
 
 JOB_NAMES = ("expired-packages", "bargain-expire", "payment-timeouts",
-             "cashback-sweep", "coupon-expiry", "listing-schedule")
+             "cashback-sweep", "coupon-expiry", "late-payment-refunds", "listing-schedule")
 
 # Fixed Postgres advisory-lock keys, one per job (arbitrary but stable;
 # changing them orphans nothing — advisory locks die with the session).
@@ -67,7 +67,8 @@ ADVISORY_LOCK_KEYS = {
     # monthly-settlements AND listing listing-schedule); this job
     # takes the next free key instead of joining the collision.
     "coupon-expiry": 2026111706,
-    "listing-schedule": 2026111707,
+    "late-payment-refunds": 2026111707,
+    "listing-schedule": 2026111708,
 }
 
 
@@ -208,6 +209,12 @@ def run_expired_packages(db):
     return _run_job(db, "expired-packages", pkg.sweep_expired_packages)
 
 
+def run_late_payment_refunds(db):
+    """Retry durable compensation for payment attempts that settled late."""
+    from . import late_payments
+    return _run_job(db, "late-payment-refunds", late_payments.sweep)
+
+
 def run_bargain_expire(db):
     """Expired bargain sessions -> settle (refund difference / full)."""
     from .routers import bargain as bgn
@@ -249,6 +256,7 @@ JOB_RUNNERS = {
     "cashback-sweep": run_cashback_sweep,
     "coupon-expiry": run_coupon_expiry,
     "listing-schedule": run_listing_schedule,
+    "late-payment-refunds": run_late_payment_refunds,
 }
 
 
@@ -258,7 +266,7 @@ def run_all_jobs(session_factory=None, batch_size=None):
     factory = session_factory or SessionLocal
     results = {}
     for name in ("expired-packages", "bargain-expire", "payment-timeouts",
-                 "coupon-expiry", "listing-schedule"):
+                 "coupon-expiry", "late-payment-refunds", "listing-schedule"):
         db = factory()
         try:
             results[name] = JOB_RUNNERS[name](db)
@@ -313,6 +321,10 @@ def create_scheduler(session_factory=None, interval_seconds=None):
     sched.add_job(lambda: _one(run_listing_schedule),
                   trigger=IntervalTrigger(seconds=interval),
                   id="listing-schedule", max_instances=1, coalesce=True,
+                  misfire_grace_time=60)
+    sched.add_job(lambda: _one(run_late_payment_refunds),
+                  trigger=IntervalTrigger(seconds=interval),
+                  id="late-payment-refunds", max_instances=1, coalesce=True,
                   misfire_grace_time=60)
     return sched
 

@@ -8,7 +8,7 @@ from . import config, models
 from .package_templates import current_package_coupon
 from .models_line_b import Review, ShopRating
 from .models_line_f import Settlement, SettlementItem, SettlementReversal
-from .models_packages import Order, Package, Payment, Refund
+from .models_packages import LatePaymentRefund, Order, Package, Payment, Refund
 
 REFUND_POLICY_TEXT = {
     "anytime": "未使用隨時退，過期自動退",
@@ -188,6 +188,8 @@ def order_out(db: Session, o: Order) -> dict:
                      .order_by(Refund.id.desc()).first())
     payments = (db.query(Payment).filter(Payment.order_id == o.id)
                 .order_by(Payment.id).all())
+    late_refunds = (db.query(LatePaymentRefund).filter_by(order_id=o.id)
+                    .order_by(LatePaymentRefund.id).all())
     # Gap 10 — order_no: there is no stored order-number column; the
     # number is derived deterministically from the order id, so it is
     # stable and unique without inventing a separate sequence.
@@ -257,6 +259,8 @@ def order_out(db: Session, o: Order) -> dict:
         "payment_method": o.payment_method or "",
         "payment_status": o.payment_status,
         "refund_status": o.refund_status,
+        "late_payment_refunds": [{"amount": float(r.amount), "currency": r.currency,
+                                  "status": r.status} for r in late_refunds],
         "latest_refund_reason": latest_refund.reason if latest_refund else "",
         "wallet_status": wallet_item.status if wallet_item else None,
         "refund_amount": refund_amount,
