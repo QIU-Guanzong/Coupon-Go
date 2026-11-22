@@ -278,7 +278,19 @@ def scan_coupon(body: schemas.ScanIn,
     replay = prior_result()
     if replay:
         return replay
-    item = presented_item(db, body.code, lock=True)
+    # Refunds and account deletion take the customer account lock before
+    # locking their orders and wallet items. Find the candidate without a
+    # write lock, then take the same order of locks before revalidating QR.
+    item = presented_item(db, body.code)
+    presented_id = item.id if item is not None else None
+    if item is not None:
+        cashback_service.lock_account(db, item.user_id)
+        if item.order_id is not None:
+            from .packages import _lock_order
+            _lock_order(db, item.order_id)
+        item = presented_item(db, body.code, lock=True)
+        if item is not None and item.id != presented_id:
+            raise errors.qr_invalid()
     if item is None:
         replay = prior_result()
         if replay:

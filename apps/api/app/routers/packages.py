@@ -155,6 +155,18 @@ def _lock_order(db, order_id):
     return db.query(Order).filter_by(id=order_id).with_for_update().populate_existing().first()
 
 
+def _lock_order_with_account(db, order_id):
+    """Background refund work uses the same account -> order order as API writes."""
+    user_id = db.query(Order.user_id).filter_by(id=order_id).scalar()
+    if user_id is None:
+        return None
+    cashback_service.lock_account(db, user_id)
+    order = _lock_order(db, order_id)
+    if order is not None and order.user_id != user_id:
+        raise HTTPException(409, "訂單資料需要核對，請聯絡客服")
+    return order
+
+
 def _get_order_for_user_locked(db: Session, order_id: int,
                                user_id: int) -> Order:
     # FIX-3: lock the order row before any check-then-write on it
@@ -262,7 +274,9 @@ def _paid_attempt(db, order):
 
 
 def _resume_refund(db, order_id):
-    order = _lock_order(db, order_id)
+    order = _lock_order_with_account(db, order_id)
+    if order is None:
+        raise HTTPException(404, "找不到此訂單")
     refund = db.query(Refund).filter_by(order_id=order_id).order_by(Refund.id.desc()).first()
     if refund is None:
         raise HTTPException(409, "找不到退款記錄，請聯絡客服核對")
@@ -326,7 +340,9 @@ def _process_refund(db, order, reason, *, expired=False):
 
 
 def _settle_expired(db, order_id):
-    order = _lock_order(db, order_id)
+    order = _lock_order_with_account(db, order_id)
+    if order is None:
+        return None
     if order.refund_status == "requested":
         return _resume_refund(db, order_id).status
     if order.payment_status != "paid" or order.refund_status not in ("none", "rejected") or order.settlement_status == "void":
