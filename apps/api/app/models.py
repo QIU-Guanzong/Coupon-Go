@@ -226,8 +226,22 @@ class Redemption(Base):
     # Line A (report §11.2): idempotency + prepare + revoke window.
     idempotency_key = Column(String(80), unique=True, nullable=True)
     prepared_at = Column(DateTime, nullable=True)   # pre-redeem check time
+    method = Column(String(20), nullable=False, default="scan", server_default="scan")
+    note = Column(Text, nullable=True)
     revoked_at = Column(DateTime, nullable=True)    # revoke time (10-min window)
     revoked_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+
+
+class RedemptionBatch(Base):
+    """One atomic, replayable merchant batch without retaining presented codes."""
+    __tablename__ = "redemption_batches"
+    __table_args__ = (UniqueConstraint("vendor_id", "request_key", name="uq_redemption_batch_vendor_key"),)
+    id = Column(Integer, primary_key=True)
+    vendor_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    request_key = Column(String(80), nullable=False)
+    request_fingerprint = Column(String(64), nullable=False)
+    redemption_ids = Column(Text, nullable=False, default="[]")
+    created_at = Column(DateTime, nullable=False, default=_now)
 
 
 class PointTransaction(Base):

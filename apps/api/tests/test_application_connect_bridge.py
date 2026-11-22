@@ -33,7 +33,7 @@ def test_old_schema_gains_application_connect_tables_preserving_records(database
         conn.execute(text("INSERT INTO connect_ledger_entries(id,shop_id,kind,status,gross_amount,commission,net_amount,pending_reversal,retry_count,manual_notified) VALUES (1,1,'transfer','transfer_unknown',100,10,90,false,1,true)"))
     alembic(database_url, "upgrade", "head")
     with engine.connect() as conn:
-        assert conn.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "0029_application_connect_bridge"
+        assert conn.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "0030_redemption_batch_bridge"
         expected_shop = 1 if prior == "0028_p1d_approval_shop" else None
         assert conn.execute(text("SELECT shop_name, approved_shop_id FROM merchant_applications WHERE id=1")).one() == ("existing", expected_shop)
         assert inspect(conn).has_table("application_connect_accounts")
