@@ -4,6 +4,7 @@ import 'package:coupon_go/screens/vendor.dart';
 import 'package:coupon_go/screens/vendor_packages.dart';
 import 'package:coupon_go/theme.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 class MerchantPackageApi extends ApiClient {
@@ -253,5 +254,27 @@ void main() {
     await tester.tap(find.text('儲存套餐'));
     await tester.pumpAndSettle();
     expect(api.lastBody?['shop_id'], 12);
+  });
+
+  testWidgets('keyboard opens creation with reduced motion', (tester) async {
+    final api = MerchantPackageApi();
+    await tester.pumpWidget(LanguageScope(
+      language: AppLanguage(),
+      child: MaterialApp(
+        theme: CgTheme.light(),
+        builder: (context, child) => MediaQuery(
+          data: MediaQuery.of(context).copyWith(disableAnimations: true),
+          child: child!,
+        ),
+        home: VendorPackagesScreen(api: api),
+      ),
+    ));
+    await tester.pumpAndSettle();
+    await tester.sendKeyEvent(LogicalKeyboardKey.tab);
+    await tester.pump();
+    expect(FocusManager.instance.primaryFocus, isNotNull);
+    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+    await tester.pumpAndSettle();
+    expect(find.text('套餐內容'), findsOneWidget);
   });
 }
