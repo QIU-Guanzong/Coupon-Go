@@ -14,7 +14,7 @@ import sys
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from fastapi.testclient import TestClient
@@ -801,6 +801,17 @@ def test_simulated_approval_creates_shop_and_unlocks_workspace(client):
     workspace = client.get('/api/v3/vendor/package-workspace', headers=merchant)
     assert workspace.status_code == 200, workspace.text
     assert workspace.json()['shops'] == [{'id': shop_id, 'name': '茶餐廳 A'}]
+    now = datetime.now(timezone.utc)
+    package = client.post('/api/v3/packages', headers=merchant, json={
+        'shop_id': shop_id, 'name': '測試套餐', 'items': [{'name': '主菜', 'qty': 1}],
+        'person_count': 1, 'original_price': 100, 'package_price': 80,
+        'valid_from': (now - timedelta(days=1)).isoformat(),
+        'valid_to': (now + timedelta(days=30)).isoformat(),
+        'usage_rules': {}, 'stock_total': 5, 'refund_policy': 'anytime',
+    })
+    assert package.status_code == 201, package.text
+    workspace = client.get('/api/v3/vendor/package-workspace', headers=merchant).json()
+    assert [item['name'] for item in workspace['packages']] == ['測試套餐']
     assert _approve(client, admin, app_id).status_code == 400
     with TestingSession() as db:
         shop = db.get(models.Shop, shop_id)
@@ -893,3 +904,23 @@ def test_approval_rejects_existing_pointer_to_other_users_shop(client):
     assert _set_stripe_onboarding(client, admin, app_id).status_code == 200
     response = _approve(client, admin, app_id)
     assert response.status_code == 409 and '不屬於' in response.json()['detail']
+
+
+def test_approval_activates_prelinked_owned_shop(client):
+    merchant = _register_and_login(client, 'p1d-prelinked@example.com')
+    admin = _admin_headers(client)
+    app_id, _ = _submit_with_files(client, merchant, 'prelinked')
+    with TestingSession() as db:
+        user = db.query(models.User).filter_by(email='p1d-prelinked@example.com').one()
+        shop = models.Shop(vendor_id=user.id, name='prelinked shop', is_approved=False)
+        db.add(shop); db.flush()
+        sid, uid = shop.id, user.id
+        db.get(models.MerchantApplication, app_id).approved_shop_id = sid
+        db.commit()
+    assert _sign_current(client, merchant, app_id).status_code == 201
+    assert _set_stripe_onboarding(client, admin, app_id).status_code == 200
+    response = _approve(client, admin, app_id)
+    assert response.status_code == 200 and response.json()['application']['approved_shop_id'] == sid
+    with TestingSession() as db:
+        assert db.get(models.Shop, sid).is_approved is True
+        assert db.query(models.Shop).filter_by(vendor_id=uid).count() == 1

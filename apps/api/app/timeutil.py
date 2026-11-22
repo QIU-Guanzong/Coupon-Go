@@ -16,3 +16,10 @@ from datetime import datetime, timezone
 def utcnow():
     """Naive UTC now, matching the DateTime columns (no tzinfo stored)."""
     return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+def naive_utc(value):
+    """Normalize incoming offset-aware timestamps to the database's UTC convention."""
+    if value is not None and value.utcoffset() is not None:
+        return value.astimezone(timezone.utc).replace(tzinfo=None)
+    return value

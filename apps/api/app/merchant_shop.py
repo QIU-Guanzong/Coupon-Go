@@ -16,6 +16,7 @@ def bind_approved_shop(db: Session, app: MerchantApplication):
         shop = db.query(models.Shop).filter_by(id=app.approved_shop_id).first()
         if shop is None or shop.vendor_id != app.user_id:
             raise HTTPException(409, "申請關聯的店舖不屬於此商戶，請聯絡平台核對")
+        shop.is_approved = True
         return shop
     namesakes = db.query(models.Shop).filter_by(vendor_id=app.user_id, name=app.shop_name).all()
     address = (app.address or "").strip()
