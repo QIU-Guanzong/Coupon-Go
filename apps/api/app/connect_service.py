@@ -65,8 +65,9 @@ CURRENCY = "HKD"
 
 
 def connect_configured() -> bool:
+    key = (config.STRIPE_SECRET_KEY or "").strip()
     return bool(config.connect_enabled().get("enabled") and
-                (config.APP_ENV == "dev" or (config.STRIPE_SECRET_KEY or "").strip()))
+                (key.startswith("sk_test_") or (not key and config.APP_ENV == "dev")))
 
 
 def effective_commission_rate(db: Session, shop_id: int) -> Decimal:

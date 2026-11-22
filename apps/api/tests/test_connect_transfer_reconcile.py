@@ -56,6 +56,16 @@ def test_non_development_missing_key_never_marks_simulated_transfer_complete(cli
         db.commit()
 
 
+def test_non_test_connect_key_is_rejected_before_dispatch(monkeypatch):
+    monkeypatch.setattr(config, "APP_ENV", "dev")
+    monkeypatch.setattr(config, "STRIPE_CONNECT_ENABLED_RAW", "1")
+    monkeypatch.setattr(config, "STRIPE_SECRET_KEY", "not_a_test_key")
+    assert not connect_service.connect_configured()
+    with pytest.raises(HTTPException) as exc:
+        application_connect._enabled()
+    assert exc.value.status_code == 503
+
+
 def _uncertain_transfer(client, monkeypatch, name, shop_id):
     base._onboard_sync(client, shop_id)
     scan, _ = base._scan_package(client, f"reconcile-{name}@example.com", shop_id)
