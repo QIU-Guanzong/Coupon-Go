@@ -14,13 +14,16 @@ from tests.test_paid_points_allocation import make_order, scan
 
 def test_multi_voucher_settlement_reversal_refund_and_monthly_retry(client, monkeypatch):
     monkeypatch.setattr(config, 'CASHBACK_ENABLED', True)
-    customer, package, order, voucher_ids = make_order(client, 'final-queue-lifecycle', count=3)
     merchant, admin = base._vendor_headers(client), base._admin_headers(client)
+    shop_response = client.post('/api/v3/merchant/shops', json={'name': '全鏈路專用店'}, headers=merchant)
+    assert shop_response.status_code == 201, shop_response.text
+    shop_id = shop_response.json()['shop']['id']
+    customer, package, order, voucher_ids = make_order(client, 'final-queue-lifecycle', count=3, shop_id=shop_id)
     stock_after_purchase = base._stock_left(client, package['id'])
     redemptions = [scan(client, customer, merchant, item_id) for item_id in voucher_ids]
     period = datetime.now(timezone.utc).strftime('%Y-%m')
     created = client.post('/api/v3/admin/settlements/generate',
-                          json={'shop_id': 1, 'period': period}, headers=admin)
+                          json={'shop_id': shop_id, 'period': period}, headers=admin)
     assert created.status_code == 201, created.text
     statement_id = created.json()['settlement']['id']
     with base.TestingSession() as db:
@@ -60,5 +63,6 @@ def test_multi_voucher_settlement_reversal_refund_and_monthly_retry(client, monk
         assert all(not entry.stripe_transfer_id and not entry.pending_reversal for entry in entries)
         first = sweep_monthly_settlements(db, period=period)
         second = sweep_monthly_settlements(db, period=period)
-        assert first['generated'] == second['generated'] == 0
-        assert db.query(Settlement).filter_by(shop_id=1, period=period).count() == 1
+        assert second['generated'] == 0
+        assert all(failure['shop_id'] != shop_id for failure in first['failures'] + second['failures'])
+        assert db.query(Settlement).filter_by(shop_id=shop_id, period=period).count() == 1

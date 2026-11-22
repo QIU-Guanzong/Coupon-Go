@@ -11,9 +11,9 @@ from app.order_allocation import ensure_order_allocations
 from app.models_cashback import CashbackTransaction
 
 
-def make_order(client, suffix, count=3, price=100.01):
+def make_order(client, suffix, count=3, price=100.01, shop_id=1):
     user = base._register_and_login(client, f'allocation-{suffix}@example.com')
-    pkg = base._create_package(client, name=f'allocation-{suffix}', price=price)
+    pkg = base._create_package(client, name=f'allocation-{suffix}', price=price, shop_id=shop_id)
     response = client.post(f"/api/v3/packages/{pkg['id']}/purchase", json={'quantity': count, 'payment_method': 'fps'}, headers=user)
     assert response.status_code == 200, response.text
     paid = base._pay(client, user, response.json()['order']['id'])

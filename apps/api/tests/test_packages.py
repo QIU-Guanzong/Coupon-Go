@@ -87,10 +87,10 @@ def _stock_left(client, package_id):
 
 
 def _create_package(client, name="測試雙人套餐", refund_policy="anytime",
-                    stock=5, price=150, original=200):
+                    stock=5, price=150, original=200, shop_id=1):
     vh = _vendor_headers(client)
     body = {
-        "shop_id": 1, "name": name,
+        "shop_id": shop_id, "name": name,
         "items": [{"name": "主菜一份", "qty": 1}, {"name": "飲品兩杯", "qty": 2}],
         "person_count": 2, "original_price": original, "package_price": price,
         "valid_from": "2026-11-01T00:00:00",
