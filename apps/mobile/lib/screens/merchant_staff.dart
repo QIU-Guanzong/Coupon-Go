@@ -234,42 +234,46 @@ class _MerchantStaffScreenState extends State<MerchantStaffScreen> {
                   ]))
                 : RefreshIndicator(
                     onRefresh: _load,
-                    child:
-                        ListView(padding: const EdgeInsets.all(16), children: [
-                      const Text('邀請已註冊的用戶，並按職責設定店舖權限。'),
-                      const SizedBox(height: 12),
-                      FilledButton.icon(
-                          onPressed: _busy ? null : _invite,
-                          icon: const Icon(Icons.person_add_alt),
-                          label: const Text('邀請店員')),
-                      const SizedBox(height: 12),
-                      if (_members.isEmpty)
-                        const Padding(
-                            padding: EdgeInsets.symmetric(vertical: 24),
-                            child: Text('暫無店員')),
-                      for (final member in _members)
-                        ListTile(
-                          title: Text(
-                              (member['name'] as String?)?.isNotEmpty == true
-                                  ? member['name'] as String
-                                  : (member['email'] as String? ?? '店員')),
-                          subtitle: Text(
-                              '${member['email'] ?? ''}\n${_roles[member['role']] ?? member['role']} · ${member['status'] == 'active' ? '已加入' : '待確認'}'),
-                          isThreeLine: true,
-                          trailing: PopupMenuButton<String>(
-                              enabled: !_busy,
-                              onSelected: (action) {
-                                if (action == 'role') _changeRole(member);
-                                if (action == 'remove') _remove(member);
-                              },
-                              itemBuilder: (_) => const [
-                                    PopupMenuItem(
-                                        value: 'role', child: Text('更改角色')),
-                                    PopupMenuItem(
-                                        value: 'remove', child: Text('移除店員'))
-                                  ]),
-                        ),
-                    ])),
+                    child: ListView(
+                        physics: const AlwaysScrollableScrollPhysics(),
+                        padding: const EdgeInsets.all(16),
+                        children: [
+                          const Text('邀請已註冊的用戶，並按職責設定店舖權限。'),
+                          const SizedBox(height: 12),
+                          FilledButton.icon(
+                              onPressed: _busy ? null : _invite,
+                              icon: const Icon(Icons.person_add_alt),
+                              label: const Text('邀請店員')),
+                          const SizedBox(height: 12),
+                          if (_members.isEmpty)
+                            const Padding(
+                                padding: EdgeInsets.symmetric(vertical: 24),
+                                child: Text('暫無店員')),
+                          for (final member in _members)
+                            ListTile(
+                              title: Text(
+                                  (member['name'] as String?)?.isNotEmpty ==
+                                          true
+                                      ? member['name'] as String
+                                      : (member['email'] as String? ?? '店員')),
+                              subtitle: Text(
+                                  '${member['email'] ?? ''}\n${_roles[member['role']] ?? member['role']} · ${member['status'] == 'active' ? '已加入' : '待確認'}'),
+                              isThreeLine: true,
+                              trailing: PopupMenuButton<String>(
+                                  enabled: !_busy,
+                                  onSelected: (action) {
+                                    if (action == 'role') _changeRole(member);
+                                    if (action == 'remove') _remove(member);
+                                  },
+                                  itemBuilder: (_) => const [
+                                        PopupMenuItem(
+                                            value: 'role', child: Text('更改角色')),
+                                        PopupMenuItem(
+                                            value: 'remove',
+                                            child: Text('移除店員'))
+                                      ]),
+                            ),
+                        ])),
       );
 }
 
@@ -391,21 +395,24 @@ class _ShopInvitationsScreenState extends State<ShopInvitationsScreen> {
                   ]))
                 : RefreshIndicator(
                     onRefresh: _load,
-                    child:
-                        ListView(padding: const EdgeInsets.all(16), children: [
-                      if (_items.isEmpty)
-                        const Padding(
-                            padding: EdgeInsets.symmetric(vertical: 24),
-                            child: Text('暫無待確認邀請')),
-                      for (final item in _items)
-                        ListTile(
-                          title: Text(item['shop_name'] as String? ?? '店舖'),
-                          subtitle: Text(
-                              '角色：${_roles[item['role']] ?? item['role']}'),
-                          trailing: FilledButton(
-                              onPressed: _busy ? null : () => _confirm(item),
-                              child: const Text('查看邀請')),
-                        ),
-                    ])),
+                    child: ListView(
+                        physics: const AlwaysScrollableScrollPhysics(),
+                        padding: const EdgeInsets.all(16),
+                        children: [
+                          if (_items.isEmpty)
+                            const Padding(
+                                padding: EdgeInsets.symmetric(vertical: 24),
+                                child: Text('暫無待確認邀請')),
+                          for (final item in _items)
+                            ListTile(
+                              title: Text(item['shop_name'] as String? ?? '店舖'),
+                              subtitle: Text(
+                                  '角色：${_roles[item['role']] ?? item['role']}'),
+                              trailing: FilledButton(
+                                  onPressed:
+                                      _busy ? null : () => _confirm(item),
+                                  child: const Text('查看邀請')),
+                            ),
+                        ])),
       );
 }
