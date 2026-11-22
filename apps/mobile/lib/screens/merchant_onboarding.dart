@@ -121,6 +121,10 @@ class _MerchantOnboardingScreenState extends State<MerchantOnboardingScreen>
       if (result['simulated'] == true) {
         if (mounted) {
           setState(() {
+            _application = {
+              ..._application!,
+              'stripe_status_source': 'simulated'
+            };
             _connectMessage = '目前為本地模擬，沒有可開啟的正式收款頁面。';
           });
         }
@@ -140,6 +144,10 @@ class _MerchantOnboardingScreenState extends State<MerchantOnboardingScreen>
       }
       if (mounted) {
         setState(() {
+          _application = {
+            ..._application!,
+            'stripe_status_source': 'stripe_test'
+          };
           _connectMessage = '已開啟 Stripe 測試設定；返回後請刷新收款狀態。';
         });
       }
@@ -168,14 +176,17 @@ class _MerchantOnboardingScreenState extends State<MerchantOnboardingScreen>
       final result = await widget.api.syncApplicationConnect(
         _application!['id'] as int,
       );
-      final active =
-          result['onboarding_status'] == 'active' &&
+      final active = result['onboarding_status'] == 'active' &&
           result['charges_enabled'] == true &&
           result['payouts_enabled'] == true &&
           result['transfers_enabled'] == true;
       final simulated = result['simulated'] == true;
       if (mounted) {
         setState(() {
+          _application = {
+            ..._application!,
+            'stripe_status_source': simulated ? 'simulated' : 'stripe_test'
+          };
           _connectMessage = simulated
               ? (active ? '本地模擬已完成；不代表正式開戶。' : '本地模擬尚未完成；不代表正式開戶。')
               : (active ? 'Stripe 測試能力已開通；不代表正式開戶。' : 'Stripe 測試資料尚未完成，請繼續設定。');
@@ -209,9 +220,8 @@ class _MerchantOnboardingScreenState extends State<MerchantOnboardingScreen>
       final rows = result['applications'] as List<dynamic>;
       if (!mounted) return;
       setState(() {
-        _application = rows.isEmpty
-            ? null
-            : Map<String, dynamic>.from(rows.first as Map);
+        _application =
+            rows.isEmpty ? null : Map<String, dynamic>.from(rows.first as Map);
         _showForm = rows.isEmpty || _application?['status'] == 'rejected';
         _uncertain = false;
         _loading = false;
@@ -550,8 +560,8 @@ class _MerchantOnboardingScreenState extends State<MerchantOnboardingScreen>
                           onChanged: _busy
                               ? null
                               : (v) => setState(() {
-                                  _accepted = v ?? false;
-                                }),
+                                    _accepted = v ?? false;
+                                  }),
                           title: const Text('我已閱讀並同意以上當前版本合約'),
                         ),
                         FilledButton(
@@ -562,9 +572,9 @@ class _MerchantOnboardingScreenState extends State<MerchantOnboardingScreen>
                           onPressed: _busy
                               ? null
                               : () => setState(() {
-                                  _contract = null;
-                                  _accepted = false;
-                                }),
+                                    _contract = null;
+                                    _accepted = false;
+                                  }),
                           child: const Text('收起合約'),
                         ),
                         const Divider(height: 32),
@@ -656,9 +666,8 @@ class _MerchantOnboardingScreenState extends State<MerchantOnboardingScreen>
                                         '尚未上傳',
                                   ),
                                   trailing: OutlinedButton(
-                                    onPressed: _busy
-                                        ? null
-                                        : () => _upload(entry.key),
+                                    onPressed:
+                                        _busy ? null : () => _upload(entry.key),
                                     child: Text(
                                       _files.containsKey(entry.key)
                                           ? '更換'

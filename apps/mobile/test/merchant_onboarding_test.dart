@@ -156,7 +156,7 @@ void main() {
     expect(find.text('收款帳戶：狀態待確認'), findsOneWidget);
   });
   testWidgets('模擬開戶不打開虛構網頁，同步狀態清楚標示', (tester) async {
-    final api = OnboardingApi(existing: true);
+    final api = OnboardingApi(existing: true, source: 'not_started');
     var opened = false;
     await tester.pumpWidget(
       MaterialApp(
@@ -173,6 +173,7 @@ void main() {
     await tester.tap(find.text('開啟 Stripe 測試設定'));
     await tester.pumpAndSettle();
     expect(opened, isFalse);
+    expect(find.text('收款帳戶：測試模擬狀態，並非正式開戶'), findsOneWidget);
     expect(find.text('目前為本地模擬，沒有可開啟的正式收款頁面。'), findsOneWidget);
     await tester.tap(find.text('刷新收款狀態'));
     await tester.pumpAndSettle();
