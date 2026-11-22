@@ -44,4 +44,21 @@ void main() {
     expect(find.text('切換失敗，請重試'), findsOneWidget);
     expect(selected, ['customer']);
   });
+
+  testWidgets('identity controls fit a narrow screen', (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    await tester.binding.setSurfaceSize(const Size(320, 640));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(MaterialApp(
+      builder: (_, child) => Column(children: [
+        TrialBanner(api: FakeTrialApi(), onRoleChanged: (_) {}),
+        Expanded(child: child!),
+      ]),
+      home: const Scaffold(),
+    ));
+    await tester.tap(find.text('切換身份 ▾'));
+    await tester.pumpAndSettle();
+    expect(find.text('示例商戶'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
 }
