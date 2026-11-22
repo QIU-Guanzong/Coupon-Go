@@ -50,7 +50,8 @@ docs/ API.md（接口概覽）
 
 本倉庫的發布通道只接受 UTF-8 文本，二進制文件無法直接推送。
 `assets-packed/` 裡每個素材都是一份 `.b64` 文本 + `manifest.json`
-（SHA-256 校驗）。clone 後跑一次解包即可：
+（SHA-256 校驗）。clone 後跑一次解包即可。腳本會覆寫 manifest 所列
+的 112 個目標文件；如果已修改其中的文件，請先保存修改：
 
 ```bash
 cd apps/mobile
@@ -256,11 +257,14 @@ FIX-2 已刪除 `POST /cashback/record`：返現只能由核銷成功後服務�
 **提現戶名（P1-4）**：收款賬戶姓名須與註冊姓名（`User.name`）一致；
 未填註冊姓名時拒絕提現，不再跳過校驗。
 
-## 還沒做的事
+## 原始待辦記錄（2026-11-16）
 
-- Flutter 真機編譯與 `flutter analyze`（本機無 Flutter SDK，未驗證；線 A
-  新增的 `url_launcher` / `geolocator` 依賴未跑過 `flutter pub get`，須在
-  有 SDK 的機器上驗證；含線 C 新增的套餐購買頁/訂單頁；管理端頁面只做了括號平衡粗查）
+以下為當時的工作記錄，不代表目前各功能的狀態。2026-11-22 已在
+Flutter 3.35.7 工作面成功執行 `flutter pub get`、`flutter analyze --no-pub`
+及 Web release 構建；實體手機和相機掃碼仍需另外驗證。
+
+- Flutter 真機編譯與分析：當時沒有本機 Flutter SDK；現在的 Web 構建與
+  分析結果見上方說明。
 - Google Maps 實景瓦片地圖視圖（線 A 目前是位置示意 marker 圖；接
   `google_maps_flutter` 需原生 API Key 配置 + 真機驗證）
 - 出示頁原生防截屏（Android FLAG_SECURE / iOS 截屏遮罩；線 A 目前是動態
@@ -354,7 +358,16 @@ cd apps/api
 
 ### 网页版
 
-在 `apps/mobile` 运行 `flutter build web --release --no-web-resources-cdn --dart-define=API_BASE_URL=`。构建使用浏览器当前站点的 API，可在桌面或手机浏览器打开。沿用现有 API 启动方式，并将服务端环境变量 `COUPON_WEB_DIR` 指向构建好的 `build/web` 绝对路径。网站首页、静态资源和 `/api/v3` 共用一个地址。外接独立 API 的构建仍可用 `--dart-define=API_BASE_URL=https://你的接口域名` 指定地址。
+全新检出后，先从仓库根目录解包素材，再构建网页：
+
+```bash
+cd apps/mobile
+python3 tools/unpack_assets.py
+flutter pub get
+flutter build web --release --no-web-resources-cdn --dart-define=API_BASE_URL=
+```
+
+解包会覆写 manifest 所列的目标文件，已有修改请先保存。构建使用浏览器当前站点的 API，可在桌面或手机浏览器打开。沿用现有 API 启动方式，并将服务端环境变量 `COUPON_WEB_DIR` 指向构建好的 `build/web` 绝对路径。网站首页、静态资源和 `/api/v3` 共用一个地址。外接独立 API 的构建仍可用 `--dart-define=API_BASE_URL=https://你的接口域名` 指定地址。
 
 ### MVP 目錄配圖
 

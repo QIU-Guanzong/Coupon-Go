@@ -51,6 +51,16 @@ Future<void> prepare(WidgetTester tester, ScanApi api) async {
 }
 
 void main() {
+  testWidgets('空兌換碼顯示六位碼提示且不發送核銷請求', (tester) async {
+    final api = ScanApi(restricted: false);
+    await tester.pumpWidget(MaterialApp(home: ScanScreen(api: api)));
+    await tester.pump();
+    await tester.tap(find.text('預核銷'));
+    await tester.pump();
+    expect(find.text('請輸入券上的六位兌換碼'), findsOneWidget);
+    expect(api.preflightBranches, isEmpty);
+    await tester.pumpWidget(const SizedBox());
+  });
   testWidgets('受限券須選擇分店，確認提交使用相同分店', (tester) async {
     final api = ScanApi(restricted: true);
     await prepare(tester, api);
