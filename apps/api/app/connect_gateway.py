@@ -82,11 +82,15 @@ CENT = Decimal("0.01")
 # remembers {key: first result} in-process. Real Stripe calls never
 # touch this. Tests reset it via _reset_simulator_idempotency().
 _SIM_IDEMPOTENCY: dict = {}
+_SIM_TRANSFERS: dict = {}
+_SIM_REVERSALS: dict = {}
 
 
 def _reset_simulator_idempotency():
     """Test helper: clear the simulator's idempotency memory."""
     _SIM_IDEMPOTENCY.clear()
+    _SIM_TRANSFERS.clear()
+    _SIM_REVERSALS.clear()
 
 
 def _to_cents(amount) -> int:
@@ -364,17 +368,24 @@ def create_transfer(account_id: str, amount_hkd,
     amount_dec = (amount_hkd if isinstance(amount_hkd, Decimal)
                   else Decimal(str(amount_hkd)))
     if not key:
-        return _sim_idempotent(
+        result = _sim_idempotent(
             idempotency_key, "tr", f"{account_id}:{transfer_group}",
             lambda: {"transfer_id": _sim_ref(
                 "tr", f"{account_id}:{transfer_group}"),
                 "status": "paid", "amount": float(amount_dec),
                 "currency": currency, "simulated": True})
+        _SIM_TRANSFERS.setdefault(result["transfer_id"], {
+            "id": result["transfer_id"], "object": "transfer", "amount": _to_cents(amount_dec),
+            "amount_reversed": 0, "reversed": False, "currency": currency.lower(),
+            "destination": account_id, "transfer_group": transfer_group,
+            "metadata": {"connect_operation_key": idempotency_key or ""}, "livemode": False})
+        return result
     data = _post(key, "/transfers", {
         "amount": _to_cents(amount_dec),
         "currency": currency.lower(),
         "destination": account_id,
         "transfer_group": transfer_group,
+        "metadata[connect_operation_key]": idempotency_key or "",
     }, headers=({"Idempotency-Key": idempotency_key}
                 if idempotency_key else None))
     return {"transfer_id": data.get("id", ""), "status": data.get("status", ""),
@@ -393,20 +404,51 @@ def reverse_transfer(transfer_id: str, amount_hkd,
     amount_dec = (amount_hkd if isinstance(amount_hkd, Decimal)
                   else Decimal(str(amount_hkd)))
     if not key:
-        return _sim_idempotent(
+        result = _sim_idempotent(
             idempotency_key, "trr", f"{transfer_id}:{amount_dec}",
             lambda: {"reversal_id": _sim_ref(
                 "trr", f"{transfer_id}:{amount_dec}"),
                 "status": "succeeded", "amount": float(amount_dec),
                 "currency": currency, "simulated": True})
+        if result["reversal_id"] not in _SIM_REVERSALS:
+            _SIM_REVERSALS[result["reversal_id"]] = {
+                "id": result["reversal_id"], "object": "transfer_reversal", "transfer": transfer_id,
+                "amount": _to_cents(amount_dec), "currency": currency.lower(),
+                "metadata": {"connect_operation_key": idempotency_key or ""}}
+            simulated_transfer = _SIM_TRANSFERS.get(transfer_id)
+            if simulated_transfer:
+                simulated_transfer["amount_reversed"] += _to_cents(amount_dec)
+                simulated_transfer["reversed"] = simulated_transfer["amount_reversed"] == simulated_transfer["amount"]
+        return result
     data = _post(key, f"/transfers/{transfer_id}/reversals", {
         "amount": _to_cents(amount_dec),
+        "metadata[connect_operation_key]": idempotency_key or "",
     }, headers=({"Idempotency-Key": idempotency_key}
                 if idempotency_key else None))
     return {"reversal_id": data.get("id", ""), "status": data.get("status", ""),
             "amount": (data.get("amount") or 0) / 100,
             "currency": (data.get("currency") or currency).upper(),
             "simulated": False}
+
+
+def retrieve_transfer(transfer_id: str) -> dict:
+    key = _require_test_key()
+    if not key:
+        obj = _SIM_TRANSFERS.get(transfer_id)
+        if obj is None:
+            raise GatewayError("模擬環境找不到此轉帳")
+        return dict(obj)
+    return _get(key, f"/transfers/{transfer_id}")
+
+
+def retrieve_reversal(transfer_id: str, reversal_id: str) -> dict:
+    key = _require_test_key()
+    if not key:
+        obj = _SIM_REVERSALS.get(reversal_id)
+        if obj is None or obj.get("transfer") != transfer_id:
+            raise GatewayError("模擬環境找不到此沖回")
+        return dict(obj)
+    return _get(key, f"/transfers/{transfer_id}/reversals/{reversal_id}")
 
 
 def create_payout(account_id: str, amount_hkd,
