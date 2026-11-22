@@ -405,15 +405,46 @@ def delete_account(body: schemas.DeleteAccountIn, user: models.User = Depends(ge
     balance = points_balance(db, user.id)
     if balance > 0:
         add_points(db, user.id, -balance, "account_delete")
-    # Do not retain user-supplied free text: it may contain identifying data.
-    db.add(models.Notification(
-        user_id=user.id, title="帳戶刪除",
-        body="帳戶已刪除", notification_type="account",
-    ))
     original_email = user.email
     db.query(models.OtpCode).filter(models.OtpCode.email == original_email).delete(synchronize_session=False)
     db.query(models.SearchHistory).filter_by(user_id=user.id).delete(synchronize_session=False)
     db.query(models.Favorite).filter_by(user_id=user.id).delete(synchronize_session=False)
+    # Remove authored review text and image references from public surfaces,
+    # but retain the review/redemption rows needed by transaction records.
+    # Hidden rows cannot be restored through the dispute-resolution flow.
+    authored_reviews = (db.query(models.Review).filter_by(user_id=user.id)
+                        .with_for_update().all())
+    affected_shops = {review.shop_id for review in authored_reviews
+                      if review.status == "visible"}
+    review_ids = [review.id for review in authored_reviews]
+    for review in authored_reviews:
+        review.status = "hidden"
+        review.counts_toward_rating = False
+        review.content = ""
+        review.images = "[]"
+        review.tags = "[]"
+        review.reply_text = ""
+        review.replied_at = None
+        review.replied_by = None
+        review.dispute_reason = ""
+    # Also remove the deleted user's reactions and authored merchant replies
+    # on other people's reviews, without removing those reviews.
+    votes = db.query(models.ReviewHelpfulVote).filter(
+        or_(models.ReviewHelpfulVote.user_id == user.id,
+            models.ReviewHelpfulVote.review_id.in_(review_ids)))
+    votes.delete(synchronize_session=False)
+    db.query(models.Review).filter(models.Review.replied_by == user.id).update(
+        {"reply_text": "", "replied_at": None, "replied_by": None},
+        synchronize_session=False)
+    db.query(models.Notification).filter_by(user_id=user.id).delete(synchronize_session=False)
+    # Retain only a generic receipt, never the user's free-text reason.
+    db.add(models.Notification(user_id=user.id, title="帳戶刪除",
+                               body="帳戶已刪除", notification_type="account"))
+    db.flush()
+    if affected_shops:
+        from .reviews import recompute_rating
+        for shop_id in sorted(affected_shops):
+            recompute_rating(db, shop_id)
     # Randomness prevents a deleted id from claiming a predictable tombstone.
     user.email = f"deleted+{user.id}-{secrets.token_hex(16)}@deleted.invalid"
     user.name = ""

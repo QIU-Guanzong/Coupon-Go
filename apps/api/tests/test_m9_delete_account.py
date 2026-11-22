@@ -234,6 +234,70 @@ def test_delete_without_reason_succeeds(client):
         db.close()
 
 
+def test_delete_removes_public_review_content_and_recomputes_rating(client, monkeypatch):
+    departing = _register_and_login(client, "del-review@example.com")
+    remaining = _register_and_login(client, "del-review-other@example.com")
+    departing_id = _user("del-review@example.com").id
+    vendor = _vendor_headers(client)
+    review_ids = []
+    for headers, score, content in ((departing, 1, "private text"),
+                                    (remaining, 5, "still visible")):
+        item = _claim(client, headers, _make_coupon(name=content))
+        _redeem(client, headers, vendor, item)
+        response = client.post("/api/v3/reviews", headers=headers, json={
+            "wallet_item_id": item, "taste": score, "ambience": score,
+            "service": score, "content": content,
+            "images": ["https://example.test/private-photo.jpg"],
+            "tags": ["private tag"], "claim_points": False,
+        })
+        assert response.status_code == 200, response.text
+        review_ids.append(response.json()["review"]["id"])
+    for headers, review_id in ((departing, review_ids[1]), (remaining, review_ids[0])):
+        assert client.post(f"/api/v3/reviews/{review_id}/helpful", headers=headers,
+                           json={"helpful": True}).status_code == 200
+    db = TestingSession()
+    try:
+        db.add(models.Notification(user_id=departing_id, title="帳戶刪除",
+                                   body="private old notification"))
+        db.commit()
+    finally:
+        db.close()
+    from app.routers import reviews as reviews_router
+    with monkeypatch.context() as patcher:
+        def fail_recompute(*args, **kwargs):
+            raise RuntimeError("simulated rating failure")
+        patcher.setattr(reviews_router, "recompute_rating", fail_recompute)
+        with pytest.raises(RuntimeError, match="simulated rating failure"):
+            _delete(client, departing)
+    db = TestingSession()
+    try:
+        assert db.get(models.User, departing_id).deleted_at is None
+        assert db.get(models.Review, review_ids[0]).content == "private text"
+        assert db.get(models.Review, review_ids[0]).status == "visible"
+        assert db.query(models.Notification).filter_by(user_id=departing_id,
+                                                       body="private old notification").count() == 1
+    finally:
+        db.close()
+    assert _delete(client, departing).status_code == 200
+    listing = client.get("/api/v3/shops/1/reviews").json()
+    assert [r["id"] for r in listing["reviews"] if r["id"] in review_ids] == [review_ids[1]]
+    rating = client.get("/api/v3/shops/1/rating").json()
+    assert rating["review_count"] == listing["total"]
+    assert rating["rating_distribution"]["1"] == 0
+    db = TestingSession()
+    try:
+        removed = db.get(models.Review, review_ids[0])
+        assert removed.status == "hidden" and not removed.counts_toward_rating
+        assert removed.content == "" and removed.images_list == [] and removed.tags_list == []
+        assert db.query(models.ReviewHelpfulVote).filter(
+            models.ReviewHelpfulVote.review_id.in_(review_ids)).count() == 0
+        notes = db.query(models.Notification).filter_by(user_id=departing_id).all()
+        assert len(notes) == 1 and notes[0].body == "帳戶已刪除"
+        assert db.get(models.Review, review_ids[1]).content == "still visible"
+    finally:
+        db.close()
+
+
 # ---------- cashback guard (fail closed) ----------
 
 def test_delete_refused_with_withdrawable_cashback(client):
