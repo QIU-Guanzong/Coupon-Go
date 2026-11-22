@@ -109,8 +109,9 @@ class _CouponGoAppState extends State<CouponGoApp> {
       title: 'Coupon GO!',
       navigatorKey: _navigatorKey,
       builder: (context, child) => const bool.fromEnvironment('PUBLIC_TRIAL')
-          ? Column(children: [TrialBanner(api: _api, onRoleChanged: _trialRoleChanged),
-              Expanded(child: child ?? const SizedBox.shrink())])
+          ? Column(verticalDirection: VerticalDirection.up, children: [
+              Expanded(child: child ?? const SizedBox.shrink()),
+              TrialBanner(api: _api, onRoleChanged: _trialRoleChanged)])
           : (child ?? const SizedBox.shrink()),
       theme: CgTheme.light(),
       home: HomeShell(
