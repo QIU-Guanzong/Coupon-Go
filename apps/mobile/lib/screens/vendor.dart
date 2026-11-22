@@ -14,6 +14,7 @@ import 'reviews_admin.dart';
 import 'vendor_packages.dart';
 import 'redemption_recovery.dart';
 import 'merchant_dashboard.dart';
+import 'scan_batch.dart';
 
 /// Vendor home: gold theme, usage summary, issue-coupon entry.
 class VendorHomeScreen extends StatefulWidget {
@@ -904,6 +905,15 @@ class _ScanScreenState extends State<ScanScreen> {
                               ],
                             ),
                           ),
+                        ),
+                      ),
+                    if (_prepared == null && _branchChoices.isEmpty)
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 16),
+                        child: OutlinedButton(
+                          onPressed: _handled ? null : () => Navigator.of(context).push(
+                            MaterialPageRoute(builder: (_) => ScanBatchScreen(api: widget.api))),
+                          child: const Text('批量核銷'),
                         ),
                       ),
                     if (_prepared == null && _branchChoices.isEmpty)

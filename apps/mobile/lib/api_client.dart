@@ -438,6 +438,14 @@ class ApiClient extends ChangeNotifier {
         'code': code,
         if (branchId != null) 'branch_id': branchId,
       });
+  Future<Map<String, dynamic>> scanBatch(List<String> codes, List<String> tokens,
+          List<int?> branchIds, String requestId) =>
+      post('/new-scan-coupon/batch', body: {
+        'codes': codes,
+        'prepare_tokens': tokens,
+        'idempotency_key': requestId,
+        if (branchIds.any((id) => id != null)) 'branch_ids': branchIds,
+      });
   Future<Map<String, dynamic>> revokeRedemption(int redemptionId) async =>
       post('/redemptions/$redemptionId/revoke',
           query: {'acknowledge_existing': 'true'});
