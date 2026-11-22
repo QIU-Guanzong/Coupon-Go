@@ -26,12 +26,17 @@ def upgrade():
         },
         "merchant_files": {"id": sa.Integer, "application_id": sa.Integer,
                            "uploader_id": sa.Integer, "kind": sa.String,
-                           "stored_name": sa.String, "sha256": sa.String},
+                           "stored_name": sa.String, "sha256": sa.String,
+                           "original_filename": sa.String, "content_type": sa.String,
+                           "size_bytes": sa.Integer, "created_at": sa.DateTime},
         "merchant_contract_versions": {"id": sa.Integer, "version": sa.String,
-                                       "body_text": sa.Text, "is_current": sa.Boolean},
+                                       "title": sa.String, "body_text": sa.Text,
+                                       "is_current": sa.Boolean, "published_at": sa.DateTime,
+                                       "created_by": sa.Integer},
         "merchant_contract_signatures": {"id": sa.Integer, "application_id": sa.Integer,
                                          "user_id": sa.Integer, "contract_version_id": sa.Integer,
-                                         "pdf_file_id": sa.Integer},
+                                         "pdf_file_id": sa.Integer, "signed_at": sa.DateTime,
+                                         "ip_address": sa.String},
     }
     for table, columns in required.items():
         if not inspector.has_table(table):
@@ -40,6 +45,12 @@ def upgrade():
         for name, expected in columns.items():
             if name not in actual or not isinstance(actual[name], expected):
                 raise RuntimeError(f"Incompatible onboarding column: {table}.{name}")
+    for table, columns in (("merchant_contract_versions", {"version"}),
+                           ("merchant_contract_signatures", {"application_id", "contract_version_id"})):
+        unique = [set(c["column_names"]) for c in inspector.get_unique_constraints(table)]
+        unique += [set(i["column_names"]) for i in inspector.get_indexes(table) if i.get("unique")]
+        if columns not in unique:
+            raise RuntimeError(f"Missing onboarding uniqueness constraint: {table}.{','.join(sorted(columns))}")
 
 
 def downgrade():
