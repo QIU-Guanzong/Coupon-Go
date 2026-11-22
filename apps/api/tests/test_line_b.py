@@ -237,6 +237,16 @@ def test_merchant_application_flow(client):
     r = client.post(f"/api/v3/admin/merchant-applications/{app_id}/review",
                     json={"approve": False, "reject_reason": ""}, headers=ah)
     assert r.status_code == 400
+    # P1-D approval gates: sign the current contract + complete Stripe
+    # onboarding before the admin can approve.
+    r = client.post(f"/api/v3/merchant-applications/{app_id}/sign-contract",
+                    json={}, headers=h)
+    assert r.status_code == 201, r.text
+    r = client.post(
+        f"/api/v3/admin/merchant-applications/{app_id}/stripe-onboarding",
+        json={"stripe_account_id": "acct_test123",
+              "charges_enabled": True, "payouts_enabled": True}, headers=ah)
+    assert r.status_code == 200, r.text
     r = client.post(f"/api/v3/admin/merchant-applications/{app_id}/review",
                     json={"approve": True}, headers=ah)
     assert r.status_code == 200, r.text

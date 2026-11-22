@@ -1072,3 +1072,31 @@ def test_admin_listing_sweep_endpoint(client):
     h = _register_and_login(client, "listing-sweep-cust@example.com")
     r = client.post("/api/v3/admin/listing-sweep", headers=h)
     assert r.status_code == 403, r.text
+
+
+def test_listing_dates_with_offsets_are_normalized_on_create_and_edit(client):
+    tz = timezone(timedelta(hours=8))
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    start = (now - timedelta(days=1)).astimezone(tz)
+    end = (now + timedelta(days=30)).astimezone(tz)
+    later = (now + timedelta(days=40)).astimezone(tz)
+    expected_start = start.astimezone(timezone.utc).replace(tzinfo=None)
+    expected_later = later.astimezone(timezone.utc).replace(tzinfo=None)
+
+    coupon = _create_coupon(client, valid_from=start.isoformat(), valid_to=end.isoformat())
+    coupon_id = coupon['id']
+    response = client.patch(f'/api/v3/vendor/coupons/{coupon_id}',
+                            headers=_vendor_headers(client), json={'valid_to': later.isoformat()})
+    assert response.status_code == 200, response.text
+    with TestingSession() as db:
+        saved = db.get(models.Coupon, coupon_id)
+        assert saved.valid_from == expected_start and saved.valid_to == expected_later
+
+    package = _create_package(client, valid_from=start.isoformat(), valid_to=end.isoformat())
+    package_id = package['id']
+    response = client.patch(f'/api/v3/vendor/packages/{package_id}',
+                            headers=_vendor_headers(client), json={'valid_to': later.isoformat()})
+    assert response.status_code == 200, response.text
+    with TestingSession() as db:
+        saved = db.get(Package, package_id)
+        assert saved.valid_from == expected_start and saved.valid_to == expected_later

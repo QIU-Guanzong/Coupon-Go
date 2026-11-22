@@ -13,14 +13,16 @@ v1 scope (task contract):
 NOT in v1 (do not add here): orders (no orders table until the package
 line lands), settlements, banners/CMS, invoice handling, role changes.
 """
+import hashlib
 import json
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import func
+from sqlalchemy import func, text
 from sqlalchemy.orm import Session
 
-from .. import models, schemas_line_b
+from .. import config, models, schemas_line_b
 from ..database import get_db
+from ..merchant_shop import bind_approved_shop
 from ..deps import get_current_user, require_role
 from ..models_line_b import AdminAuditLog, MerchantApplication, Review
 from ..permissions_line_f import ALL_ROLES
@@ -34,8 +36,41 @@ admin_only = require_role("admin")
 from ..timeutil import utcnow as _now
 
 
+def _file_meta(db: Session, file_id):
+    """Metadata for one merchant file id (no URL — downloads need a
+    signed link from POST /merchant-files/{id}/download-link)."""
+    if not file_id:
+        return None
+    from ..models_line_b import MerchantFile
+    f = db.query(MerchantFile).filter(MerchantFile.id == file_id).first()
+    if f is None:
+        return None
+    return {
+        "id": f.id, "original_filename": f.original_filename or "",
+        "size_bytes": f.size_bytes or 0, "sha256": f.sha256 or "",
+        "created_at": f.created_at.isoformat() if f.created_at else None,
+    }
+
+
 def _application_out(db: Session, a: MerchantApplication) -> dict:
+    from ..models_line_b import (MerchantContractSignature,
+                                 MerchantContractVersion)
     user = db.query(models.User).filter(models.User.id == a.user_id).first()
+    contract = None
+    if a.contract_version_id:
+        v = db.query(MerchantContractVersion).filter(
+            MerchantContractVersion.id == a.contract_version_id).first()
+        sig = (db.query(MerchantContractSignature)
+               .filter(MerchantContractSignature.application_id == a.id)
+               .order_by(MerchantContractSignature.signed_at.desc(),
+                         MerchantContractSignature.id.desc()).first())
+        contract = {
+            "version": v.version if v else "",
+            "signed_at": a.contract_signed_at.isoformat()
+            if a.contract_signed_at else None,
+            "signed_ip": a.contract_signed_ip or "",
+            "pdf_file_id": sig.pdf_file_id if sig else None,
+        }
     return {
         "id": a.id, "user_id": a.user_id,
         "applicant_email": user.email if user else "",
@@ -45,6 +80,24 @@ def _application_out(db: Session, a: MerchantApplication) -> dict:
         "id_card": a.id_card or "",
         "shop_photos": a.shop_photos_list,
         "industry_license": a.industry_license or "",
+        # P1-D Hong Kong fields
+        "br_number": a.br_number or "",
+        "documents": {
+            "br": _file_meta(db, a.br_file_id),
+            "ci": _file_meta(db, a.ci_file_id),
+            "director_id": _file_meta(db, a.director_id_file_id),
+        },
+        "shop_photo_files": [
+            m for m in (_file_meta(db, fid)
+                        for fid in a.shop_photo_file_ids_list)
+            if m is not None],
+        "stripe_account_id": a.stripe_account_id or "",
+        "stripe_charges_enabled": bool(a.stripe_charges_enabled),
+        "stripe_payouts_enabled": bool(a.stripe_payouts_enabled),
+        "stripe_status_source": ("simulated" if config.APP_ENV == "dev" else "unverified")
+        if a.stripe_account_id else "not_started",
+        "approved_shop_id": a.approved_shop_id,
+        "contract": contract,
         "status": a.status, "reject_reason": a.reject_reason or "",
         "reviewed_by": a.reviewed_by, "reviewed_at": a.reviewed_at,
         "created_at": a.created_at,
@@ -52,6 +105,27 @@ def _application_out(db: Session, a: MerchantApplication) -> dict:
 
 
 # ---------- merchant onboarding ----------
+def _resolve_application_file(db: Session, user: models.User, file_id: int,
+                              expected_kind: str):
+    """Validate one file reference on a new application: the file must
+    exist, belong to the applicant, be of the expected kind, and be
+    unattached (the application does not exist yet, so a file already
+    attached to another application cannot be claimed here)."""
+    from ..models_line_b import MerchantFile
+    f = db.query(MerchantFile).filter(MerchantFile.id == file_id).first()
+    if f is None:
+        raise HTTPException(status_code=400, detail="找不到指定的文件")
+    if f.uploader_id != user.id:
+        raise HTTPException(status_code=400, detail="文件不属于申请人")
+    if f.kind != expected_kind:
+        raise HTTPException(
+            status_code=400,
+            detail=f"文件類別不符：需要 {expected_kind}，實際為 {f.kind}")
+    if f.application_id is not None:
+        raise HTTPException(status_code=400, detail="文件已被其他申請使用")
+    return f
+
+
 @router.post("/admin/merchant-applications", status_code=201)
 def submit_application(body: schemas_line_b.MerchantApplicationCreateIn,
                        user: models.User = Depends(get_current_user),
@@ -61,14 +135,32 @@ def submit_application(body: schemas_line_b.MerchantApplicationCreateIn,
                        MerchantApplication.status == "pending").first())
     if pending is not None:
         raise HTTPException(status_code=400, detail="已有待審核的入駐申請")
+    # P1-D: validate Hong Kong file references before creating anything.
+    files_to_link = []
+    for file_id, kind in ((body.br_file_id, "br"),
+                          (body.ci_file_id, "ci"),
+                          (body.director_id_file_id, "director_id")):
+        if file_id is not None:
+            files_to_link.append(
+                _resolve_application_file(db, user, file_id, kind))
+    for file_id in body.shop_photo_file_ids:
+        files_to_link.append(
+            _resolve_application_file(db, user, file_id, "shop_photo"))
     app = MerchantApplication(
         user_id=user.id, shop_name=body.shop_name,
         contact_name=body.contact_name, phone=body.phone,
         address=body.address, business_license=body.business_license,
         id_card=body.id_card,
         shop_photos=json.dumps(body.shop_photos, ensure_ascii=False),
-        industry_license=body.industry_license, status="pending")
+        industry_license=body.industry_license, status="pending",
+        br_number=body.br_number or "",
+        br_file_id=body.br_file_id, ci_file_id=body.ci_file_id,
+        director_id_file_id=body.director_id_file_id,
+        shop_photo_file_ids=json.dumps(body.shop_photo_file_ids))
     db.add(app)
+    db.flush()
+    for f in files_to_link:
+        f.application_id = app.id
     db.commit()
     db.refresh(app)
     return {"message": "入駐申請已提交，請等待審核",
@@ -108,19 +200,62 @@ def review_application(application_id: int,
                        body: schemas_line_b.MerchantApplicationReviewIn,
                        admin: models.User = Depends(admin_only),
                        db: Session = Depends(get_db)):
-    app = db.query(MerchantApplication).filter(
-        MerchantApplication.id == application_id).first()
-    if app is None:
+    # Account deletion and other write paths lock the user first. Read the
+    # identity, then lock user -> application to keep the same order.
+    application_user_id = db.query(MerchantApplication.user_id).filter_by(id=application_id).scalar()
+    if application_user_id is None:
         raise HTTPException(status_code=404, detail="找不到此入駐申請")
+    applicant = db.query(models.User).filter_by(id=application_user_id).with_for_update().first()
+    app = db.query(MerchantApplication).filter_by(id=application_id).with_for_update().populate_existing().first()
+    if app is None or applicant is None or not applicant.is_active:
+        raise HTTPException(status_code=409, detail="申請人帳戶不可用")
     if app.status != "pending":
         raise HTTPException(status_code=400, detail="此申請已審核，不可重複審核")
     if not body.approve and not body.reject_reason.strip():
         raise HTTPException(status_code=400, detail="拒絕時請填寫拒絕原因")
+    if body.approve:
+        # P1-D approval gates (rejection is not gated):
+        # (1) the applicant signed the CURRENT contract version;
+        # (2) Stripe onboarding is complete (P1-B writes these columns;
+        #     until then admin records them via /stripe-onboarding).
+        from ..models_line_b import (MerchantContractSignature,
+                                     MerchantContractVersion)
+        current = db.query(MerchantContractVersion).filter(
+            MerchantContractVersion.is_current == True).first()  # noqa: E712
+        sig = None
+        if current is not None:
+            sig = db.query(MerchantContractSignature).filter(
+                MerchantContractSignature.application_id == app.id,
+                MerchantContractSignature.contract_version_id == current.id
+            ).first()
+        if current is None or sig is None:
+            any_sig = db.query(MerchantContractSignature).filter(
+                MerchantContractSignature.application_id == app.id).first()
+            if any_sig is not None:
+                raise HTTPException(
+                    status_code=400,
+                    detail="合約版本已更新，請簽署當前版本")
+            raise HTTPException(status_code=400,
+                                detail="尚未簽署當前版本合約")
+        if config.APP_ENV != "dev" and "【待法務確認】" in (current.body_text or ""):
+            raise HTTPException(status_code=409,
+                                detail="測試合約不能用於正式入駐")
+        # These columns can currently only be entered manually in the
+        # development simulator; they are not evidence of a real account.
+        # Connect must replace this guard with a verified provider lookup.
+        if config.APP_ENV != "dev":
+            raise HTTPException(status_code=409,
+                                detail="正式 Stripe 開戶核驗尚未接通，暫不能批准")
+        if (not (app.stripe_account_id or "").strip()
+                or not app.stripe_charges_enabled
+                or not app.stripe_payouts_enabled):
+            raise HTTPException(status_code=400,
+                                detail="尚未完成 Stripe 開戶")
+        bind_approved_shop(db, app)
     app.status = "approved" if body.approve else "rejected"
     app.reject_reason = "" if body.approve else body.reject_reason.strip()
     app.reviewed_by = admin.id
     app.reviewed_at = _now()
-    applicant = db.query(models.User).filter(models.User.id == app.user_id).first()
     if body.approve and applicant is not None and applicant.role == "customer":
         applicant.role = "vendor"
     action = ("merchant_application.approve" if body.approve
@@ -130,6 +265,56 @@ def review_application(application_id: int,
                                          else f"; reason={app.reject_reason}"))
     db.commit()
     return {"message": "入駐申請已通過" if body.approve else "入駐申請已拒絕",
+            "application": _application_out(db, app)}
+
+
+@router.post("/admin/merchant-applications/{application_id}/stripe-onboarding")
+def record_stripe_onboarding(
+        application_id: int,
+        body: schemas_line_b.StripeOnboardingIn,
+        admin: models.User = Depends(admin_only),
+        db: Session = Depends(get_db)):
+    """Development-only mock; never represents a provider verification."""
+    if config.APP_ENV != "dev":
+        raise HTTPException(status_code=409,
+                            detail="模擬開戶僅供測試環境使用")
+    app = db.query(MerchantApplication).filter(
+        MerchantApplication.id == application_id).with_for_update().first()
+    if app is None:
+        raise HTTPException(status_code=404, detail="找不到此入駐申請")
+    if app.status != "pending":
+        raise HTTPException(status_code=409, detail="已審核的申請不能修改開戶資料")
+    account_id = body.stripe_account_id.strip()
+    if not account_id:
+        raise HTTPException(status_code=422, detail="請填寫模擬帳戶編號")
+    if app.stripe_account_id and app.stripe_account_id != account_id:
+        raise HTTPException(status_code=409, detail="申請已綁定其他模擬帳戶")
+    if db.bind.dialect.name == "postgresql":
+        # Serialize claims for one account across concurrent applications.
+        key = int.from_bytes(hashlib.sha256(account_id.encode()).digest()[:8],
+                             byteorder="big", signed=True)
+        db.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": key})
+    else:
+        # SQLite serializes writers rather than supporting FOR UPDATE.
+        app.stripe_onboarding_updated_at = _now()
+        db.flush()
+    claimed = db.query(MerchantApplication.id).filter(
+        MerchantApplication.stripe_account_id == account_id,
+        MerchantApplication.user_id != app.user_id).first()
+    if claimed:
+        raise HTTPException(status_code=409, detail="模擬帳戶已綁定其他申請人")
+    app.stripe_account_id = account_id
+    app.stripe_charges_enabled = bool(body.charges_enabled)
+    app.stripe_payouts_enabled = bool(body.payouts_enabled)
+    app.stripe_onboarding_updated_at = _now()
+    _log(db, admin.id, "merchant_application.stripe_onboarding",
+         "merchant_application", app.id,
+         f"stripe_account_id={app.stripe_account_id}; "
+         f"charges={app.stripe_charges_enabled}; "
+         f"payouts={app.stripe_payouts_enabled}")
+    db.commit()
+    db.refresh(app)
+    return {"message": "已登記模擬 Stripe 開戶狀態，僅供測試",
             "application": _application_out(db, app)}
 
 

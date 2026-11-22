@@ -6,6 +6,7 @@ from datetime import datetime
 from typing import List, Optional
 
 from pydantic import BaseModel, Field, field_validator
+from .timeutil import naive_utc
 
 
 class PackageItemIn(BaseModel):
@@ -53,6 +54,11 @@ class PackageUpdateIn(BaseModel):
     stock_total: Optional[int] = Field(default=None, ge=0)
     refund_policy: Optional[str] = None
 
+    @field_validator('valid_from', 'valid_to')
+    @classmethod
+    def _utc_dates(cls, value):
+        return naive_utc(value)
+
 
 class PackageCreateIn(BaseModel):
     """Vendor/admin creates a package product (套餐商品）. The coupon
@@ -69,6 +75,11 @@ class PackageCreateIn(BaseModel):
     usage_rules: UsageRulesIn = UsageRulesIn()
     stock_total: int = Field(default=0, ge=0)
     refund_policy: str = "anytime"  # anytime | expiry_only | non_refundable
+
+    @field_validator('valid_from', 'valid_to')
+    @classmethod
+    def _utc_dates(cls, value):
+        return naive_utc(value)
 
 
 class PackageOut(BaseModel):
