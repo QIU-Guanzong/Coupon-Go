@@ -50,7 +50,8 @@ docs/ API.md（接口概覽）
 
 本倉庫的發布通道只接受 UTF-8 文本，二進制文件無法直接推送。
 `assets-packed/` 裡每個素材都是一份 `.b64` 文本 + `manifest.json`
-（SHA-256 校驗）。clone 後跑一次解包即可：
+（SHA-256 校驗）。clone 後跑一次解包即可。腳本會覆寫 manifest 所列
+的 112 個目標文件；如果已修改其中的文件，請先保存修改：
 
 ```bash
 cd apps/mobile
@@ -354,7 +355,16 @@ cd apps/api
 
 ### 网页版
 
-在 `apps/mobile` 运行 `flutter build web --release --no-web-resources-cdn --dart-define=API_BASE_URL=`。构建使用浏览器当前站点的 API，可在桌面或手机浏览器打开。沿用现有 API 启动方式，并将服务端环境变量 `COUPON_WEB_DIR` 指向构建好的 `build/web` 绝对路径。网站首页、静态资源和 `/api/v3` 共用一个地址。外接独立 API 的构建仍可用 `--dart-define=API_BASE_URL=https://你的接口域名` 指定地址。
+全新检出后，先从仓库根目录解包素材，再构建网页：
+
+```bash
+cd apps/mobile
+python3 tools/unpack_assets.py
+flutter pub get
+flutter build web --release --no-web-resources-cdn --dart-define=API_BASE_URL=
+```
+
+解包会覆写 manifest 所列的目标文件，已有修改请先保存。构建使用浏览器当前站点的 API，可在桌面或手机浏览器打开。沿用现有 API 启动方式，并将服务端环境变量 `COUPON_WEB_DIR` 指向构建好的 `build/web` 绝对路径。网站首页、静态资源和 `/api/v3` 共用一个地址。外接独立 API 的构建仍可用 `--dart-define=API_BASE_URL=https://你的接口域名` 指定地址。
 
 ### MVP 目錄配圖
 
