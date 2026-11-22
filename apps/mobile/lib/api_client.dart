@@ -167,6 +167,15 @@ class ApiClient extends ChangeNotifier {
       post('/merchant-applications/$id/connect/onboarding', body: {});
   Future<Map<String, dynamic>> syncApplicationConnect(int id) =>
       post('/merchant-applications/$id/connect/sync', body: {});
+  Future<Map<String, dynamic>> merchantBalance() => get('/merchant/balance');
+  Future<Map<String, dynamic>> merchantDashboard(int days) =>
+      get('/merchant/dashboard', query: {'days': '$days'});
+  Future<Map<String, dynamic>> merchantShopBalance(int shopId) =>
+      get('/merchant/shops/$shopId/balance');
+  Future<Map<String, dynamic>> merchantShopDashboard(int shopId, int days) =>
+      get('/merchant/shops/$shopId/dashboard', query: {'days': '$days'});
+  Future<Map<String, dynamic>> merchantBalanceEntries(int shopId, int page) =>
+      get('/merchant/shops/$shopId/balance/entries', query: {'page': '$page'});
 
   // ---- auth ----
   Future<Map<String, dynamic>> login(String email, String password) async {
