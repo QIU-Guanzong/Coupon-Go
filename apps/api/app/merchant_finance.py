@@ -539,5 +539,3 @@ def settlement_items_csv(settlement_id: int, period: str, items) -> "PlainTextRe
                     item["amount"], item["commission"],
                     item.get("basis_note", "")])
     return PlainTextResponse(buf.getvalue(), media_type="text/csv; charset=utf-8")
-
-
