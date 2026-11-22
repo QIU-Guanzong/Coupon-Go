@@ -1,7 +1,7 @@
 """Merchant onboarding and multi-shop staff access across role changes."""
 from tests.test_dianping_merchant_mgmt import (
     client, _claim_and_present, _make_coupon,
-    _register_and_login, _uid, _vendor_headers,
+    _register_and_login, _review_application, _submit_application, _uid, _vendor_headers,
 )
 
 
@@ -94,3 +94,31 @@ def test_multi_shop_invitation_role_and_redemption_journey(client):
     assert client.delete(role_url, headers=owner).status_code == 200
     assert client.get('/api/v3/merchant/shops', headers=employee).json()['shops'] == []
     assert client.get(f'/api/v3/merchant/shops/{shops[1]}/branches', headers=employee).status_code == 403
+
+
+def test_staff_can_join_different_owners_without_cross_shop_control(client):
+    owner_a = _vendor_headers(client)
+    owner_b = _register_and_login(client, 'staff-journey-second-owner@example.com')
+    application = _submit_application(client, owner_b, '第二商戶')
+    _review_application(client, application, True)
+    shop_a = client.post('/api/v3/merchant/shops', json={'name': '第一商戶'}, headers=owner_a).json()['shop']['id']
+    shops_b = client.get('/api/v3/merchant/shops', headers=owner_b).json()['shops']
+    shop_b = next(shop['id'] for shop in shops_b if shop['name'] == '第二商戶')
+    employee = _register_and_login(client, 'staff-two-owners@example.com')
+    employee_id = _uid(client, employee)
+    for shop_id, owner, role in ((shop_a, owner_a, 'manager'), (shop_b, owner_b, 'cashier')):
+        invited = client.post(f'/api/v3/admin/shops/{shop_id}/members',
+                              json={'email': 'staff-two-owners@example.com', 'role': role}, headers=owner)
+        assert invited.status_code == 201, invited.text
+        member_id = invited.json()['member']['id']
+        assert client.post(f'/api/v3/admin/shops/{shop_id}/members/{member_id}/confirm', headers=employee).status_code == 200
+    visible = {row['id']: row for row in client.get('/api/v3/merchant/shops', headers=employee).json()['shops']}
+    assert set(visible) == {shop_a, shop_b}
+    assert visible[shop_a]['can_manage_branches'] is True
+    assert visible[shop_b]['can_manage_branches'] is False
+    cross_change = client.patch(f'/api/v3/admin/shops/{shop_b}/members/{employee_id}',
+                                json={'role': 'manager'}, headers=owner_a)
+    assert cross_change.status_code == 403, cross_change.text
+    assert client.delete(f'/api/v3/admin/shops/{shop_a}/members/{employee_id}', headers=owner_a).status_code == 200
+    remaining = client.get('/api/v3/merchant/shops', headers=employee).json()['shops']
+    assert [(row['id'], row['can_redeem']) for row in remaining] == [(shop_b, True)]
