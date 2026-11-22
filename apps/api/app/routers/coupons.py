@@ -240,7 +240,7 @@ def _redeem_item(db: Session, item: models.WalletItem,
         idempotency_key=idempotency_key or None,
         prepared_at=prepared_at)
     db.add(red)
-    points.award_redeem_points(db, item.user_id, item.id)
+    points.award_redeem_points(db, item.user_id, item.id, paid_basis=face_value)
     # FIX-2: cashback is credited here, server-side, from this redemption
     # only — amount basis and rate come from the coupon row / server
     # config, never from the client. Same transaction as the redemption,
@@ -304,8 +304,8 @@ def scan_coupon(body: schemas.ScanIn,
     if item is not None:
         cashback_service.lock_account(db, item.user_id)
         if item.order_id is not None:
-            from .packages import _lock_order
-            _lock_order(db, item.order_id)
+            from ..order_allocation import ensure_order_allocations
+            ensure_order_allocations(db, item.order_id)
         item = presented_item(db, body.code, lock=True)
         if item is not None and item.id != presented_id:
             raise errors.qr_invalid()

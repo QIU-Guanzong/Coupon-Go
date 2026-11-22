@@ -68,14 +68,14 @@ Endpoint 名稱沿用 Coupon GO! 1.2.6 APK 逆向出的原始名稱（含原始�
 | POST | `/new-favorite-coupon?coupon_id=` | 領券 → Q Wallet，+10 分；重複領取 409；上架變更（§3.4/§3.1）：每人限領 `per_user_limit` 張（默認 1，超限 409）；付費券（`sale_price > 0`）不可免費領（400，請購買）；未到 `valid_from` 不可領（400） |
 | POST | `/store-scaned-qr-values?wallet_item_id=` | 生成 QR 碼 + 6 位兌換碼，15:00 有效；每次出示輪換新碼（線 A 防截圖） |
 | POST | `/new-scan-coupon/prepare` | **線 A** 預核銷（唯讀查券，`{code}`）→ `can_redeem` + 5 分鐘 prepare token，不改券狀態 |
-| POST | `/new-scan-coupon` | 商戶掃碼核銷 `{code, idempotency_key?, prepare_token?}`，+20 分；錯店/已用/過期/每日 200 次上限；同 `idempotency_key` 重放只算一次（`duplicate: true`）；核銷後兌換碼失效 |
+| POST | `/new-scan-coupon` | 商戶掃碼核銷 `{code, idempotency_key?, prepare_token?}`，免費券 +20 分、付費券按實付金額 `floor(實付 × POINTS_PER_HKD)` 分；錯店/已用/過期/每日 200 次上限；同 `idempotency_key` 重放只算一次（`duplicate: true`）；核銷後兌換碼失效 |
 | POST | `/redemptions/{id}/revoke` | **線 A** 核銷撤销（10 分鐘窗口內；券退回未使用、換新碼、+20 分沖回；超時 400；M7：若該核銷已有評價，評價改為隱藏、已發的 +15 評價積分沖回，響應新增 `review: {review_id, points_clawed_back, status}`，無評價時為 `null`） |
 | GET | `/vendor/redemptions/export?format=json\|csv` | **線 A** 商戶核銷記錄導出 / 匯總（對賬用；admin 看全部） |
 | GET | `/get-favorite-coupons-list?page=&status=&sortby=` | 錢包三狀態：1 未使用 / 2 已使用 / 3 已失效 |
 | GET | `/get-user-record-list` | 消費記錄 |
-| GET | `/points` | 積分餘額 + 明細 |
+| GET | `/points` | 積分餘額 + 明細 + 30 天內即將過期分數（`{balance, expiring_soon, expiring_soon_days, transactions[]}`，明細含 `expires_at`） |
 | POST | `/review?wallet_item_id=` | 【舊版】評價已用券，+15 分（一次）；不寫評價記錄、不影響星級 |
-| POST | `/points/exchange?coupon_id=` | 9 積分兌換 9 分分券 |
+| POST | `/points/exchange?coupon_id=` | 9 積分兌換 9 分分券；餘額為負時 400（退款扣回所致，見積分一節） |
 
 ## 地圖（線 A）
 
@@ -954,8 +954,8 @@ reviews[]}`；`sort=latest`（默認）/ `helpful`，非法值 422
 | POST | `/redemptions/{id}/revoke` | 核銷撤销（10 分鐘窗口內；券退回未使用、換新碼、+20 分沖回；超時 400；M7：若該核銷已有評價，評價改為隱藏、已發的 +15 評價積分沖回，響應新增 `review: {review_id, points_clawed_back, status}`，無評價時為 `null`） |
 | GET | `/get-favorite-coupons-list?page=&status=&sortby=` | 錢包列表，三狀態：1 未使用 / 2 已使用 / 3 已失效；20/頁 |
 | GET | `/get-user-record-list` | 消費記錄 |
-| GET | `/points` | 積分餘額 + 明細（最新 50 條） |
-| POST | `/points/exchange?coupon_id=` | 9 積分兌換 9 分分券 |
+| GET | `/points` | 積分餘額 + 明細（最新 50 條）+ 30 天內即將過期分數（`{balance, expiring_soon, expiring_soon_days, transactions[]}`，明細含 `expires_at`） |
+| POST | `/points/exchange?coupon_id=` | 9 積分兌換 9 分分券；餘額為負時 400（退款扣回所致） |
 
 領券：`POST /api/v3/new-favorite-coupon?coupon_id=5`，成功響應
 `{message: "已存入 Q Wallet", wallet_item_id, coupon}`；錯誤：
@@ -1008,11 +1008,15 @@ redemption_id, duplicate}`；同 `idempotency_key` 重放只算一次
 套餐券按訂單實付 `Order.paid_amount` 計，價格券按
 `discount_price` 計。不要用券面值或 `min_spend` 自己算返現。
 
-積分：`GET /points` 響應 `{balance, transactions[]}`，明細項
-`{id, delta, reason, created_at}`。積分規則：領券 +10、核銷 +20、
-評價（領積分時）+15；積分行用「分」後綴、中性色，返現行用 HK$
-前綴，兩者絕不相加。`POST /points/exchange?coupon_id=` 為
-9 積分兌換。
+積分：`GET /points` 響應 `{balance, expiring_soon, expiring_soon_days,
+transactions[]}`，明細項 `{id, delta, reason, created_at, expires_at}`。
+積分規則：領券 +10、免費券核銷 +20、付費券核銷按實付金額
+`floor(實付 × POINTS_PER_HKD)`（默認 HK$1 = 1 分）、評價（領積分時）+15；
+每筆積分自獲得起 12 個月有效（`POINTS_EXPIRE_MONTHS`），過期由調度器
+`points-expire` 清掉並寫 `reason=expire` 流水；退款扣回該訂單核銷所得
+積分（`reason=refund_clawback`），餘額可為負，負數期間兌換/轉出返回 400。
+積分行用「分」後綴、中性色，返現行用 HK$ 前綴，兩者絕不相加。
+`POST /points/exchange?coupon_id=` 為 9 積分兌換。詳見 `docs/P1C_API.md`。
 
 ### 搜尋 / 通知
 

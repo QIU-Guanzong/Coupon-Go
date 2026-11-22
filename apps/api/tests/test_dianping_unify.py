@@ -193,15 +193,18 @@ def test_points_award_functions(client):
     try:
         user = db.query(models.User).filter_by(
             email="demo@coupon-go.example").one()
+        item = models.WalletItem(user_id=user.id, coupon_id=1, status=2, source="claim")
+        db.add(item)
+        db.flush()
         before = points_balance(db, user.id)
         pts.award_claim_points(db, user.id, 1)
-        pts.award_redeem_points(db, user.id, 99)
-        pts.award_review_points(db, user.id, 99)
+        pts.award_redeem_points(db, user.id, item.id)
+        pts.award_review_points(db, user.id, item.id)
         assert points_balance(db, user.id) == before + 10 + 20 + 15
         row = db.query(models.PointTransaction).filter_by(
-            user_id=user.id, reason="redeem", ref_id=99).one()
+            user_id=user.id, reason="redeem", ref_id=item.id).one()
         assert row.delta == 20
-        clawed = pts.clawback_points(db, user.id, "redeem", 99,
+        clawed = pts.clawback_points(db, user.id, "redeem", item.id,
                                      revoke_reason="revoke", revoke_ref_id=7)
         assert clawed == 20
         assert points_balance(db, user.id) == before + 10 + 15

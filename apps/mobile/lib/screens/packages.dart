@@ -1029,7 +1029,7 @@ class _OrdersScreenState extends State<OrdersScreen> with WalletUpdates<OrdersSc
       builder: (ctx) => AlertDialog(
         title: const Text('申請退款'),
         content: Text(
-            '訂單 ${o.orderNoText} · ${formatHkd(o.amount)}\n將退回整張套餐券（${o.quantity} 份），確定嗎？'),
+            '訂單 ${o.orderNoText} · ${formatHkd(o.paidAmount)}\n將退款整筆訂單及其所有券（共 ${o.quantity} 份），只有全部符合退款條件時才可申請。確定嗎？'),
         actions: [
           TextButton(
               onPressed: () => Navigator.of(ctx).pop(false),
@@ -1278,7 +1278,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> with WalletUpdate
       builder: (ctx) => AlertDialog(
         title: const Text('申請退款'),
         content: Text(
-            '訂單 ${o.orderNoText} · ${formatHkd(o.amount)}\n將退回整張套餐券（${o.quantity} 份），確定嗎？'),
+            '訂單 ${o.orderNoText} · ${formatHkd(o.paidAmount)}\n將退款整筆訂單及其所有券（共 ${o.quantity} 份），只有全部符合退款條件時才可申請。確定嗎？'),
         actions: [
           TextButton(
               onPressed: () => Navigator.of(ctx).pop(false),

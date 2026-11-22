@@ -363,6 +363,35 @@ def test_purchased_coupon_redeem_via_scan(client):
     db.close()
 
 
+def test_paid_coupon_points_follow_actual_price_across_revoke_and_retry(client):
+    h = _register_and_login(client, "p1a-points-share@example.com")
+    coupon = _create_coupon(client, name="按實付積分券", sale_price=37.60)
+    _, paid = _buy_paid(client, h, coupon["id"])
+    wid = paid["wallet_item_id"]
+    vendor = _vendor_headers(client)
+    redemptions = []
+    for cycle in range(2):
+        qr = client.post('/api/v3/store-scaned-qr-values', params={'wallet_item_id': wid}, headers=h)
+        assert qr.status_code == 200, qr.text
+        payload = {'code': qr.json()['code'], 'idempotency_key': f'p1a-points-{cycle}'}
+        result = client.post('/api/v3/new-scan-coupon', json=payload, headers=vendor)
+        assert result.status_code == 200, result.text
+        redemptions.append(result.json()['redemption_id'])
+        replay = client.post('/api/v3/new-scan-coupon', json=payload, headers=vendor)
+        assert replay.status_code == 200 and replay.json()['duplicate'] is True
+        assert client.post(f'/api/v3/redemptions/{redemptions[-1]}/revoke', headers=vendor).status_code == 200
+    refund = client.post(f"/api/v3/orders/{paid['id']}/refund", json={}, headers=h)
+    assert refund.status_code == 200 and refund.json()['refund']['status'] == 'refunded'
+    with TestingSession() as db:
+        awards = db.query(models.PointTransaction).filter_by(reason='redeem', ref_id=wid).all()
+        revocations = db.query(models.PointTransaction).filter(
+            models.PointTransaction.reason == 'revoke', models.PointTransaction.ref_id.in_(redemptions)).all()
+        assert [row.delta for row in awards] == [37, 37]
+        assert [row.delta for row in revocations] == [-37, -37]
+        assert db.query(models.PointTransaction).filter_by(
+            reason='refund_clawback', ref_id=paid['id']).count() == 0
+
+
 # ---------- failure / timeout / retry / cancel ----------
 def test_payment_failure_retry_then_success(client):
     h = _register_and_login(client, "p1a-retry@example.com")

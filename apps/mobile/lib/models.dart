@@ -137,6 +137,10 @@ class WalletItem {
         source = j['source'] as String? ?? 'claim',
         orderId = j['order_id'] as int?,
         quantity = j['quantity'] as int? ?? 1,
+        orderQuantity = j['order_quantity'] as int? ?? j['quantity'] as int? ?? 1,
+        orderPaidAmount = (j['order_paid_amount'] as num?)?.toDouble(),
+        orderRefundable = j['order_refundable'] as bool?,
+        orderWalletQuantityStatus = j['order_wallet_quantity_status'] as String?,
         refundStatus = j['refund_status'] as String? ?? 'none',
         isPackage = j['is_package'] as bool? ?? false,
         refundPolicy = j['refund_policy'] as String? ?? 'anytime';
@@ -154,6 +158,11 @@ class WalletItem {
   final String source; // claim | purchase | bargain | exchange
   final int? orderId;
   final int quantity;
+  final int orderQuantity;
+  final double? orderPaidAmount;
+  final bool? orderRefundable;
+  final String? orderWalletQuantityStatus;
+  bool get orderNeedsReview => orderWalletQuantityStatus == 'needs_review';
   final String refundStatus;
   final bool isPackage;
   final String refundPolicy;
@@ -164,10 +173,9 @@ class WalletItem {
       refundStatus == 'rejected' ? (status == 1 ? '未使用 · 退款未成功' : '已失效 · 退款未成功') :
       status == 1 ? '未使用' : '已失效';
 
-  /// Refundable from the wallet: an unused, purchased, refundable voucher.
+  /// Only the server can decide whether every voucher in the order is refundable.
   bool get canRefund =>
-      status == 1 && isPackage && orderId != null && refundPolicy == 'anytime' &&
-      (refundStatus == 'none' || refundStatus == 'rejected');
+      status == 1 && (isPackage || source == 'purchase') && orderId != null && !orderNeedsReview && orderRefundable == true;
 }
 
 class AppNotification {
@@ -854,13 +862,9 @@ class PackageOrder {
       paymentStatus == 'failed' || paymentStatus == 'timeout';
   bool get canCancel => paymentStatus == 'pending';
 
-  /// 申请退款仅在券未核销且在可退条件内显示；服务端 refundable 字段
-  /// 优先，未返回时用（已支付、未退款、未核销）兜底。
+  /// An order may contain several vouchers; only the server sees them all.
   bool get canRefund {
-    if (refundable != null) return refundable! && !voucherRedeemed && walletStatus != 3;
-    return paymentStatus == 'paid' &&
-        refundStatus == 'none' &&
-        !voucherRedeemed && walletStatus != 3;
+    return refundable == true && !voucherRedeemed && walletStatus != 3;
   }
 }
 
