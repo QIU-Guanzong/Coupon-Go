@@ -247,8 +247,9 @@ class _MerchantPayoutScreenState extends State<MerchantPayoutScreen> {
       final latest = await widget.api.activeMerchantPayouts(widget.shopId);
       if (!_isCurrent(revision)) return;
       final payouts = latest['payouts'];
-      if (payouts is! List || payouts.any((row) => row is! Map))
+      if (payouts is! List || payouts.any((row) => row is! Map)) {
         throw const FormatException('Missing payout list');
+      }
       if (payouts.isNotEmpty) {
         setState(() {
           _active =

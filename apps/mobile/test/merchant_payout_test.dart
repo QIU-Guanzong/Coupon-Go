@@ -35,8 +35,9 @@ class PayoutApi extends ApiClient {
   Future<Map<String, dynamic>> createMerchantPayout(
       int shopId, String amount, String requestId) async {
     requestIds.add(requestId);
-    if (timeoutFirst && requestIds.length == 1)
+    if (timeoutFirst && requestIds.length == 1) {
       throw TimeoutException('test timeout');
+    }
     active = [
       {
         'request_id': requestId,
