@@ -11,7 +11,9 @@ import hmac
 import io
 import os
 import sys
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 
 import pytest
@@ -506,6 +508,55 @@ def test_mock_account_identity_cannot_move_to_another_application(client):
     assert _set_stripe_onboarding(client, ah, app1, stripe_account_id="acct_shared").status_code == 200
     assert _set_stripe_onboarding(client, ah, app2, stripe_account_id="acct_shared").status_code == 409
     assert _set_stripe_onboarding(client, ah, app1, stripe_account_id="acct_different").status_code == 409
+
+
+def test_test_contract_never_approves_in_production(client, monkeypatch):
+    from app import legal
+    from app.models_line_b import MerchantContractVersion
+    h = _register_and_login(client, "p1d-placeholder-prod@example.com")
+    ah = _admin_headers(client)
+    app_id, _ = _submit_with_files(client, h, "placeholder-prod")
+    assert _sign_current(client, h, app_id).status_code == 201
+    assert _set_stripe_onboarding(client, ah, app_id).status_code == 200
+    with TestingSession() as db:
+        contract = db.query(MerchantContractVersion).filter_by(is_current=True).one()
+        contract_id, original = contract.id, contract.body_text
+        contract.body_text = "【待法務確認】僅供流程測試"
+        db.commit()
+    try:
+        monkeypatch.setattr(legal, "documents", lambda: {})
+        monkeypatch.setattr(config, "APP_ENV", "prod")
+        response = _approve(client, ah, app_id)
+        assert response.status_code == 409
+        assert "測試合約" in response.json()["detail"]
+    finally:
+        with TestingSession() as db:
+            db.get(MerchantContractVersion, contract_id).body_text = original
+            db.commit()
+
+
+@pytest.mark.skipif(not PG_URL, reason="row and advisory locks require PostgreSQL")
+def test_concurrent_mock_account_claims_have_one_owner(client):
+    h1 = _register_and_login(client, "p1d-race-owner-1@example.com")
+    h2 = _register_and_login(client, "p1d-race-owner-2@example.com")
+    admin1 = _admin_headers(client)
+    admin2 = _register_and_login(client, "p1d-race-admin@example.com")
+    with TestingSession() as db:
+        user = db.query(models.User).filter_by(email="p1d-race-admin@example.com").one()
+        user.role = "admin"
+        db.commit()
+    app1, _ = _submit_with_files(client, h1, "race-account-1")
+    app2, _ = _submit_with_files(client, h2, "race-account-2")
+    barrier = threading.Barrier(2, timeout=10)
+    def claim(admin, app_id):
+        barrier.wait()
+        return _set_stripe_onboarding(client, admin, app_id,
+                                      stripe_account_id="acct_race_shared")
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures = [pool.submit(claim, admin, app_id)
+                   for admin, app_id in ((admin1, app1), (admin2, app2))]
+        responses = [future.result() for future in futures]
+    assert sorted(r.status_code for r in responses) == [200, 409]
 
 
 def test_reject_still_needs_no_gates(client):

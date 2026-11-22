@@ -230,6 +230,9 @@ def review_application(application_id: int,
                     detail="合約版本已更新，請簽署當前版本")
             raise HTTPException(status_code=400,
                                 detail="尚未簽署當前版本合約")
+        if config.APP_ENV != "dev" and "【待法務確認】" in (current.body_text or ""):
+            raise HTTPException(status_code=409,
+                                detail="測試合約不能用於正式入駐")
         # These columns can currently only be entered manually in the
         # development simulator; they are not evidence of a real account.
         # Connect must replace this guard with a verified provider lookup.
