@@ -187,6 +187,25 @@ def create_payout(body: PayoutBody,
     return out
 
 
+@router.get("/merchant/connect/payouts/active")
+def active_payouts(shop_id: int = Query(...),
+                   vendor: models.User = Depends(require_role("vendor", "admin")),
+                   db: Session = Depends(get_db)):
+    """Read every unresolved payout for recovery on another device."""
+    shop = _shop_or_404(db, shop_id, vendor)
+    rows = (db.query(ConnectLedgerEntry)
+            .filter(ConnectLedgerEntry.shop_id == shop.id,
+                    ConnectLedgerEntry.kind == "payout",
+                    ConnectLedgerEntry.status.in_(("processing", "payout_unknown", "submitted")))
+            .order_by(ConnectLedgerEntry.id.desc()).all())
+    return {"shop_id": shop.id, "currency": connect_service.CURRENCY,
+            "payouts": [{"entry_id": row.id, "request_id": row.payout_request_id,
+                         "amount": _money(-row.net_amount), "status": row.status,
+                         "stripe_payout_id": row.stripe_payout_id or None,
+                         "created_at": row.created_at.isoformat() if row.created_at else None}
+                        for row in rows]}
+
+
 @router.post("/admin/connect/payouts/{entry_id}/reconcile")
 def reconcile_payout_entry(entry_id: int, body: ReconcilePayoutBody,
         admin: models.User = Depends(require_role("admin")),
