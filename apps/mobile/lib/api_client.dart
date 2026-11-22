@@ -85,6 +85,14 @@ class ApiClient extends ChangeNotifier {
     return _decode(res);
   }
 
+  Future<Map<String, dynamic>> patch(String path,
+      {Map<String, dynamic>? body}) async {
+    final uri = Uri.parse('$baseUrl/api/v3$path');
+    final res = await http.patch(uri, headers: _headers,
+        body: body == null ? null : jsonEncode(body));
+    return _decode(res);
+  }
+
   Future<Map<String, dynamic>> delete(String path,
       {Map<String, String>? query}) async {
     final uri = Uri.parse('$baseUrl/api/v3$path').replace(queryParameters: query);
@@ -424,6 +432,14 @@ class ApiClient extends ChangeNotifier {
   // ---- vendor ----
   Future<List<dynamic>> vendorCoupons() async =>
       (await get('/get-vendor-coupon-list'))['coupons'] as List<dynamic>;
+  Future<Map<String, dynamic>> vendorPackageWorkspace() =>
+      get('/vendor/package-workspace');
+  Future<Map<String, dynamic>> createVendorPackage(Map<String, dynamic> body) =>
+      post('/packages', body: body);
+  Future<Map<String, dynamic>> editVendorPackage(int id, Map<String, dynamic> body) =>
+      patch('/vendor/packages/$id', body: body);
+  Future<Map<String, dynamic>> vendorPackageAction(int id, String action) =>
+      post('/vendor/packages/$id/$action');
 
   // ---- packages / orders (line C: 套餐 2A) ----
   Future<List<dynamic>> packages({int? shopId}) async =>
