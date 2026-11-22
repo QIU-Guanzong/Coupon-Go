@@ -115,6 +115,23 @@ def test_provider_account_owned_by_another_application_cannot_be_reused(client, 
     assert start(client, second, second_id).status_code == 409
 
 
+def test_two_applications_cannot_bind_same_provider_account_concurrently(client, provider, monkeypatch):
+    first, first_id = applicant(client, "same-provider-one")
+    second, second_id = applicant(client, "same-provider-two")
+    monkeypatch.setattr(connect_gateway, "create_account", lambda *a, **kw: {
+        "account_id": "acct_shared_provider", "simulated": False})
+    barrier = Barrier(2)
+    def request(pair):
+        barrier.wait(timeout=5)
+        return start(client, *pair)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        responses = list(pool.map(request, [(first, first_id), (second, second_id)]))
+    assert sorted(r.status_code for r in responses) == [200, 409]
+    db = base.TestingSession()
+    assert db.query(ApplicationConnectAccount).filter_by(stripe_account_id="acct_shared_provider").count() == 1
+    db.close()
+
+
 def test_unconfirmed_manual_payout_schedule_blocks_approval(client, provider, monkeypatch):
     h, app_id = applicant(client, "manual-not-confirmed")
     assert start(client, h, app_id).status_code == 200

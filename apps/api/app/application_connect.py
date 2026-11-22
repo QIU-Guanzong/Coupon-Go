@@ -1,8 +1,10 @@
 """Connect onboarding bound to an application before the shop exists."""
 from datetime import timedelta
+from hashlib import sha256
 from uuid import uuid4
 
 from fastapi import HTTPException
+from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 
 from . import config, connect_gateway, models
@@ -28,6 +30,14 @@ def _application(db, application_id, user_id=None):
 def _enabled():
     if not config.connect_enabled()["enabled"]:
         raise HTTPException(503, "Stripe Connect 尚未配置")
+
+
+def _lock_provider_id(db, account_id):
+    # A provider ID must not be bound concurrently through an application
+    # and an older shop's independent onboarding entry point.
+    if db.get_bind().dialect.name == "postgresql":
+        key = int.from_bytes(sha256(account_id.encode()).digest()[:8], "big", signed=True)
+        db.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": key})
 
 
 def start(db, application_id, user, return_url, refresh_url):
@@ -61,6 +71,7 @@ def start(db, application_id, user, return_url, refresh_url):
         if not account_id:
             db.rollback()
             raise HTTPException(502, "開戶結果未確認，請稍後重試")
+        _lock_provider_id(db, account_id)
         conflicting_application = (db.query(ApplicationConnectAccount.id)
                                    .filter(ApplicationConnectAccount.stripe_account_id == account_id,
                                            ApplicationConnectAccount.id != row.id).first())
@@ -121,7 +132,9 @@ def start_existing_shop(db, shop_id, email):
     if not account_id:
         db.rollback()
         raise HTTPException(502, "開戶結果未確認，請稍後重試")
-    if db.query(ConnectAccount).filter_by(stripe_account_id=account_id).first():
+    _lock_provider_id(db, account_id)
+    if (db.query(ConnectAccount).filter_by(stripe_account_id=account_id).first()
+            or db.query(ApplicationConnectAccount).filter_by(stripe_account_id=account_id).first()):
         raise HTTPException(409, "此開戶帳號已有店鋪綁定，請聯絡平台核對")
     account = ConnectAccount(shop_id=shop_id, stripe_account_id=account_id,
                              charges_enabled=bool(created.get("charges_enabled")),
