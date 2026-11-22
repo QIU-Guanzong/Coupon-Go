@@ -11,11 +11,9 @@ Ledger semantics (docs/P1B_API.md):
   unique when set). status pending (待结算) -> transferred (已转帐)
   -> reversed (已冲回). A pending entry reversed before any Stripe
   transfer has no stripe_reversal_id; a transferred entry reversed
-  via the Transfer Reversal API records it. After
-  CONNECT_MAX_TRANSFER_RETRIES (default 5) failed transfer attempts
-  the entry goes needs_manual (需人工) and an admin notification is
-  raised once (manual_notified); the manual retry endpoint is the
-  recovery path. retry_count counts failed transfer AND reversal
+  via the Transfer Reversal API records it. Uncertain transfer or
+  reversal results remain visible for provider reconciliation and are
+  not automatically resent. Existing needs_manual entries remain visible. retry_count counts failed transfer AND reversal
   attempts on the entry (reset on success).
 - kind="payout": one row per merchant withdrawal, status processing
   (处理中, balance already deducted at write time) -> paid_out, or

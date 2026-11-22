@@ -132,6 +132,7 @@ STRIPE_CONNECT_RETURN_URL = os.environ.get("STRIPE_CONNECT_RETURN_URL", "")
 STRIPE_CONNECT_REFRESH_URL = os.environ.get("STRIPE_CONNECT_REFRESH_URL", "")
 STRIPE_V2_VERSION = os.environ.get("STRIPE_V2_VERSION", "2026-11-18.preview")
 STRIPE_CONNECT_PAYOUT_HOLD_DAYS = int(os.environ.get("STRIPE_CONNECT_PAYOUT_HOLD_DAYS", "90"))
+# Legacy configuration retained for compatibility; uncertain results are not auto-retried.
 CONNECT_MAX_TRANSFER_RETRIES = int(os.environ.get("CONNECT_MAX_TRANSFER_RETRIES", "5"))
 SCHEDULER_CONNECT_BATCH_SIZE = int(os.environ.get("SCHEDULER_CONNECT_BATCH_SIZE", "50"))
 

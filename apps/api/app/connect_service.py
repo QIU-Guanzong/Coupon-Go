@@ -31,10 +31,9 @@ queue §F 2026-11-21):
 - A balance MAY go negative (a transfer reversed after the merchant
   already paid the money out). While negative, new payouts are
   refused; the admin recoveries board lists the shop.
-- A failed transfer / reversal attempt increments retry_count; after
-  CONNECT_MAX_TRANSFER_RETRIES (default 5) the entry goes
-  ``needs_manual`` and an admin notification is raised once. The
-  manual retry endpoint is the recovery path.
+- An uncertain transfer or reversal is recorded and reported for
+  provider reconciliation; it is not automatically resent. Legacy
+  ``needs_manual`` entries remain visible for review.
 - A later scan of the same voucher is held while its previous transfer
   or reversal remains unresolved; a confirmed reversal permits retry.
 """
@@ -67,12 +66,6 @@ CURRENCY = "HKD"
 
 def connect_configured() -> bool:
     return bool(config.connect_enabled().get("enabled"))
-
-
-def _max_retries() -> int:
-    """Failed attempts per entry before it goes needs_manual. Read at
-    call time so tests can monkeypatch config."""
-    return int(config.CONNECT_MAX_TRANSFER_RETRIES)
 
 
 def effective_commission_rate(db: Session, shop_id: int) -> Decimal:
@@ -446,10 +439,8 @@ def sweep_pending_transfers(db: Session, batch_size=None) -> dict:
 def _attempt_reversal(db: Session, entry: ConnectLedgerEntry) -> dict:
     """Transfer Reversal for an already-transferred entry. Returns
     {"reversed": bool, "reason": str}. Never raises: on failure the
-    entry keeps its transferred status and is flagged pending_reversal
-    for the retry endpoint. A gateway failure counts toward
-    retry_count; after CONNECT_MAX_TRANSFER_RETRIES an admin
-    notification is raised once."""
+    entry keeps its transferred status and pending_reversal. An uncertain
+    provider response requires reconciliation and is not resent."""
     if entry.note != "reversal_queued":
         return {"reversed": False, "reason": "reversal_result_unknown"}
     account = get_account(db, entry.shop_id)
