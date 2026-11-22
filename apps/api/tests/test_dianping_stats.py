@@ -545,12 +545,14 @@ def test_monthly_catchup_retries_failed_old_period_and_is_idempotent(client, mon
     from app import merchant_finance as finance
     from app.models_line_f import Settlement
     period = f'{datetime.now(timezone.utc).year - 2}-04'
-    _, _, red_id = _redeem(client, 'stats-catchup-retry@example.com', PRICE_COUPON)
+    shop_id = 14
+    coupon_id = _priced_coupon_for_shop(shop_id, 100)
+    _, _, red_id = _redeem(client, 'stats-catchup-retry@example.com', coupon_id)
     _backdate_redemption(red_id, period)
     original = finance.generate_settlement_for_shop
     attempts = []
     def fail_once(db, shop, target_period, *args, **kwargs):
-        if shop.id == PRICE_SHOP and target_period == period and not attempts:
+        if shop.id == shop_id and target_period == period and not attempts:
             attempts.append('simulated failure')
             raise RuntimeError('simulated temporary failure')
         return original(db, shop, target_period, *args, **kwargs)
@@ -558,14 +560,14 @@ def test_monthly_catchup_retries_failed_old_period_and_is_idempotent(client, mon
     with TestingSession() as db:
         first = finance.catch_up_monthly_settlements(db)
         assert first['failed'] >= 1
-        assert not db.query(Settlement).filter_by(shop_id=PRICE_SHOP, period=period).first()
+        assert not db.query(Settlement).filter_by(shop_id=shop_id, period=period).first()
     with TestingSession() as db:
         second = finance.catch_up_monthly_settlements(db)
         assert second['generated'] >= 1
-        assert db.query(Settlement).filter_by(shop_id=PRICE_SHOP, period=period).count() == 1
+        assert db.query(Settlement).filter_by(shop_id=shop_id, period=period).count() == 1
     with TestingSession() as db:
         finance.catch_up_monthly_settlements(db)
-        assert db.query(Settlement).filter_by(shop_id=PRICE_SHOP, period=period).count() == 1
+        assert db.query(Settlement).filter_by(shop_id=shop_id, period=period).count() == 1
 
 
 def test_conversion_excludes_redemptions_of_earlier_claims(client):
@@ -612,11 +614,13 @@ def test_monthly_allocation_conflict_is_failure_not_duplicate_skip(client, monke
     from app import merchant_finance as finance
     from app.models_line_f import Settlement
     period = f'{datetime.now(timezone.utc).year - 4}-05'
-    _, _, red_id = _redeem(client, 'stats-allocation-conflict@example.com', PRICE_COUPON)
+    shop_id = 15
+    coupon_id = _priced_coupon_for_shop(shop_id, 100)
+    _, _, red_id = _redeem(client, 'stats-allocation-conflict@example.com', coupon_id)
     _backdate_redemption(red_id, period)
     original = finance.generate_settlement_for_shop
     def conflict(db, shop, target_period, *args, **kwargs):
-        if shop.id == PRICE_SHOP and target_period == period:
+        if shop.id == shop_id and target_period == period:
             raise HTTPException(409, 'allocation needs review')
         return original(db, shop, target_period, *args, **kwargs)
     monkeypatch.setattr(finance, 'generate_settlement_for_shop', conflict)
@@ -624,5 +628,5 @@ def test_monthly_allocation_conflict_is_failure_not_duplicate_skip(client, monke
         result = finance.catch_up_monthly_settlements(db)
         item = next(p for p in result['periods'] if p['period'] == period)
         assert item['failed'] >= 1
-        assert any(x['shop_id'] == PRICE_SHOP for x in item['failures'])
-        assert not db.query(Settlement).filter_by(shop_id=PRICE_SHOP, period=period).first()
+        assert any(x['shop_id'] == shop_id for x in item['failures'])
+        assert not db.query(Settlement).filter_by(shop_id=shop_id, period=period).first()

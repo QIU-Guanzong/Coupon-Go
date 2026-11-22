@@ -3,6 +3,7 @@
 Connect is the only merchant payout and balance mechanism.
 """
 from datetime import datetime, timezone
+from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
@@ -19,6 +20,10 @@ from . import admin_v2
 from .admin_v2 import _settlement_out
 
 router = APIRouter()
+
+
+def _sum_money(values):
+    return float(sum((Decimal(str(value)) for value in values), Decimal('0')).quantize(Decimal('0.01')))
 
 
 def _page(items, page: int, per_page: int = 20):
@@ -45,10 +50,10 @@ def merchant_balance(user: models.User = Depends(get_current_user),
              .order_by(models.Shop.id).all()) if shop_ids else []
     per_shop = [mf.shop_balance(db, s) for s in shops]
     return {
-        "pending_settlement": sum(s["pending_settlement"] for s in per_shop),
-        "withdrawable": sum(s["withdrawable"] for s in per_shop),
-        "reserved": sum(s["reserved"] for s in per_shop),
-        "withdrawn": sum(s["withdrawn"] for s in per_shop),
+        "pending_settlement": _sum_money(s["pending_settlement"] for s in per_shop),
+        "withdrawable": _sum_money(s["withdrawable"] for s in per_shop),
+        "reserved": _sum_money(s["reserved"] for s in per_shop),
+        "withdrawn": _sum_money(s["withdrawn"] for s in per_shop),
         "balance_complete": all(s["balance_complete"] for s in per_shop),
         "legacy_untracked_redemptions": sum(s["legacy_untracked_redemptions"] for s in per_shop),
         "shops": per_shop,
@@ -102,9 +107,9 @@ def merchant_dashboard(days: int = Query(30, ge=1, le=90),
     totals = {
         "redemptions": sum(s["totals"]["redemptions"] for s in per_shop),
         "redeemed_orders": sum(s["totals"]["redeemed_orders"] for s in per_shop),
-        "gross_amount": sum(s["totals"]["gross_amount"] for s in per_shop),
-        "commission": sum(s["totals"]["commission"] for s in per_shop),
-        "net_amount": sum(s["totals"]["net_amount"] for s in per_shop),
+        "gross_amount": _sum_money(s["totals"]["gross_amount"] for s in per_shop),
+        "commission": _sum_money(s["totals"]["commission"] for s in per_shop),
+        "net_amount": _sum_money(s["totals"]["net_amount"] for s in per_shop),
         "claims": sum(s["totals"]["claims"] for s in per_shop),
         "redeemed_claims": sum(s["totals"]["redeemed_claims"] for s in per_shop),
     }

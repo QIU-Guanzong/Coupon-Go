@@ -1,5 +1,6 @@
 """Merchant totals preserve the paid amount across multiple voucher lines."""
 from decimal import Decimal
+import pytest
 
 from tests import test_packages as base
 from tests.test_packages import client
@@ -20,4 +21,4 @@ def test_multiple_vouchers_count_as_one_redeemed_order(client):
     assert after['redemptions'] - before['redemptions'] == 3
     assert after['redeemed_orders'] - before['redeemed_orders'] == 1
     assert Decimal(str(after['gross_amount'])) - Decimal(str(before['gross_amount'])) == Decimal('100.01')
-    assert after['avg_order_value'] == after['gross_amount'] / after['redeemed_orders']
+    assert after['avg_order_value'] == pytest.approx(after['gross_amount'] / after['redeemed_orders'])
