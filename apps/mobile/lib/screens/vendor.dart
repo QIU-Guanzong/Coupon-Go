@@ -1079,11 +1079,7 @@ class _ScanScreenState extends State<ScanScreen> {
                                   minimumSize: const Size(88, 56)),
                               onPressed: _handled
                                   ? null
-                                  : () {
-                                      if (_code.text.isNotEmpty) {
-                                        _prepare(_code.text);
-                                      }
-                                    },
+                                  : () => _prepare(_code.text),
                               child: const Text('預核銷'),
                             ),
                           ],
