@@ -62,13 +62,16 @@ class _VendorHomeScreenState extends State<VendorHomeScreen> {
   }
 
   Future<void> _load() async {
+    if (!mounted) return;
     final session = _session;
     try {
       final data = await widget.api.get('/merchant/shops');
+      if (!mounted || session != _session) return;
       final shops = (data['shops'] as List? ?? []).whereType<Map>().map((s) => Map<String, dynamic>.from(s)).toList();
       final isOwner = widget.showAdmin || shops.any((s) => s['is_owner'] == true);
       final canManage = widget.showAdmin || shops.any((s) => s['can_manage_coupons'] == true);
       final usage = isOwner ? await widget.api.usageData() : null;
+      if (!mounted || session != _session) return;
       final list = canManage ? await widget.api.vendorCoupons() : <dynamic>[];
       if (!mounted || session != _session) return;
       setState(() {
