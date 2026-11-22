@@ -699,3 +699,24 @@ def test_balance_reports_configured_provider_mode(client, monkeypatch, enabled, 
         response = client.get(path, headers=headers)
         assert response.status_code == 200, response.text
         assert response.json()['connect_mode'] == expected
+
+
+def test_run_all_jobs_runs_connect_and_monthly_once(monkeypatch):
+    from app import scheduler
+    calls = []
+    class Session:
+        def close(self):
+            pass
+    def simple(name):
+        return lambda db: calls.append((name, None)) or {}
+    for name in scheduler.JOB_RUNNERS:
+        monkeypatch.setitem(scheduler.JOB_RUNNERS, name, simple(name))
+    monkeypatch.setattr(scheduler, 'run_connect_transfers',
+                        lambda db, batch_size=None: calls.append(('connect-transfers', batch_size)) or {})
+    monkeypatch.setattr(scheduler, 'run_cashback_sweep',
+                        lambda db, batch_size=None: calls.append(('cashback-sweep', batch_size)) or {})
+    result = scheduler.run_all_jobs(session_factory=Session, batch_size=7)
+    assert len(calls) == len(scheduler.JOB_NAMES)
+    assert calls.count(('connect-transfers', 7)) == 1
+    assert calls.count(('monthly-settlements', None)) == 1
+    assert set(result) == set(scheduler.JOB_NAMES)
