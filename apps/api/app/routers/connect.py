@@ -56,6 +56,10 @@ class ReconcilePayoutBody(BaseModel):
     provider_id: Annotated[str, Field(min_length=4, max_length=80, pattern=r"^[A-Za-z0-9_]+$")]
 
 
+class ReconcileTransferBody(BaseModel):
+    provider_id: Annotated[str, Field(min_length=4, max_length=80, pattern=r"^[A-Za-z0-9_]+$")]
+
+
 def _money(value) -> float:
     return connect_service._money(value)
 
@@ -189,6 +193,18 @@ def reconcile_payout_entry(entry_id: int, body: ReconcilePayoutBody,
         admin: models.User = Depends(require_role("admin")),
         db: Session = Depends(get_db)):
     return reconcile_payout(db, entry_id, body.provider_id, admin.id)
+
+
+@router.post("/admin/connect/transfers/{entry_id}/reconcile")
+def reconcile_transfer_entry(entry_id: int, body: ReconcileTransferBody,
+        admin: models.User = Depends(require_role("admin")), db: Session = Depends(get_db)):
+    return connect_service.reconcile_transfer(db, entry_id, body.provider_id, admin.id)
+
+
+@router.post("/admin/connect/transfers/{entry_id}/reversal/reconcile")
+def reconcile_reversal_entry(entry_id: int, body: ReconcileTransferBody,
+        admin: models.User = Depends(require_role("admin")), db: Session = Depends(get_db)):
+    return connect_service.reconcile_reversal(db, entry_id, body.provider_id, admin.id)
 
 
 @router.get("/admin/connect/recoveries")

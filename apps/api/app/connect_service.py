@@ -286,6 +286,7 @@ def _attempt_transfer(db: Session, entry: ConnectLedgerEntry) -> dict:
     # must never be mistaken for a transfer that was never sent.
     entry_id, redemption_id = entry.id, entry.redemption_id
     amount, account_id = entry.net_amount, account.stripe_account_id
+    entry.transfer_account_id = account_id
     entry.dispatch_started = True
     entry.status = "transferring"
     entry.note = "transfer_started"
@@ -728,6 +729,151 @@ def reconcile_payout(db: Session, entry_id: int, provider_id: str, admin_id: int
                              detail=f"{status}->{current.status}; stripe_object={provider_id}"))
     db.commit()
     return _payout_out(db, current)
+
+
+def _reconcile_error(db, entry_id, admin_id, code, message, status=409):
+    if admin_id is not None:
+        db.add(AdminAuditLog(admin_id=admin_id, action="connect.reconcile.incomplete",
+                             target_type="connect_ledger", target_id=entry_id, detail=code))
+        db.commit()
+    raise HTTPException(status, message)
+
+
+def _transfer_evidence(obj, entry_id, redemption_id, account_id, cents, provider_id):
+    return (obj.get("id") == provider_id and obj.get("object") == "transfer"
+            and obj.get("livemode") is False and obj.get("destination") == account_id
+            and type(obj.get("amount")) is int and obj.get("amount") == cents
+            and str(obj.get("currency", "")).upper() == CURRENCY
+            and obj.get("transfer_group") == f"coupon-go-redemption-{redemption_id}"
+            and (obj.get("metadata") or {}).get("connect_operation_key") == f"transfer-{entry_id}"
+            and type(obj.get("amount_reversed")) is int
+            and 0 <= obj["amount_reversed"] <= cents)
+
+
+def reconcile_transfer(db: Session, entry_id: int, provider_id: str, admin_id: int | None = None) -> dict:
+    """Resolve an uncertain transfer only from a matching provider object."""
+    if not connect_configured():
+        raise HTTPException(503, "Stripe Connect 未配置")
+    if not re.fullmatch(r"tr_[A-Za-z0-9_]+", provider_id or ""):
+        raise HTTPException(422, "Stripe 轉帳編號無效")
+    existing = db.get(ConnectLedgerEntry, entry_id)
+    if existing is None or existing.kind != "transfer":
+        raise HTTPException(404, "找不到此轉帳流水")
+    shop_id = existing.shop_id
+    lock_shop(db, shop_id)
+    entry = (db.query(ConnectLedgerEntry).filter_by(id=entry_id)
+             .with_for_update().populate_existing().one())
+    if entry.stripe_transfer_id:
+        if entry.stripe_transfer_id == provider_id and entry.status in ("transferred", "reversed"):
+            return {"entry_id": entry.id, "status": entry.status, "stripe_transfer_id": provider_id,
+                    "pending_reversal": bool(entry.pending_reversal), "duplicate": True}
+        _reconcile_error(db, entry_id, admin_id, "transfer_id_conflict", "轉帳編號與已有記錄不一致")
+    if entry.status not in ("transfer_unknown", "transferring"):
+        _reconcile_error(db, entry_id, admin_id, "transfer_state_not_unknown", "此轉帳狀態無需核對")
+    if entry.status == "transferring" and (not entry.updated_at or
+            datetime.now(timezone.utc).replace(tzinfo=None) - entry.updated_at < timedelta(minutes=2)):
+        _reconcile_error(db, entry_id, admin_id, "transfer_in_flight", "轉帳可能仍在處理，請稍後核對")
+    if entry.dispatch_started is not True or not entry.transfer_account_id or not entry.redemption_id:
+        _reconcile_error(db, entry_id, admin_id, "transfer_legacy_evidence_missing", "舊轉帳缺少原帳戶或操作標識，請人工核對")
+    status, account_id, redemption_id = entry.status, entry.transfer_account_id, entry.redemption_id
+    cents = connect_gateway._to_cents(entry.net_amount)
+    db.commit()
+    try:
+        obj = connect_gateway.retrieve_transfer(provider_id)
+    except GatewayError:
+        _reconcile_error(db, entry_id, admin_id, "transfer_provider_unavailable", "無法查詢 Stripe 轉帳，流水仍待核對", 502)
+    if not _transfer_evidence(obj, entry_id, redemption_id, account_id, cents, provider_id):
+        _reconcile_error(db, entry_id, admin_id, "transfer_evidence_mismatch", "Stripe 轉帳資料不足或與流水不一致")
+    lock_shop(db, shop_id)
+    current = (db.query(ConnectLedgerEntry).filter_by(id=entry_id)
+               .with_for_update().populate_existing().one())
+    if current.stripe_transfer_id == provider_id and current.status in ("transferred", "reversed"):
+        return {"entry_id": current.id, "status": current.status, "stripe_transfer_id": provider_id,
+                "pending_reversal": bool(current.pending_reversal), "duplicate": True}
+    if (current.status != status or current.transfer_account_id != account_id or
+            current.redemption_id != redemption_id or connect_gateway._to_cents(current.net_amount) != cents):
+        _reconcile_error(db, entry_id, admin_id, "transfer_changed_during_lookup", "轉帳資料已變更，請重新核對")
+    from .application_connect import _lock_provider_id
+    _lock_provider_id(db, provider_id)
+    if db.query(ConnectLedgerEntry.id).filter(ConnectLedgerEntry.stripe_transfer_id == provider_id,
+                                               ConnectLedgerEntry.id != entry_id).first():
+        _reconcile_error(db, entry_id, admin_id, "transfer_object_already_claimed", "此 Stripe 轉帳已關聯其他流水")
+    current.status, current.stripe_transfer_id = "transferred", provider_id
+    if obj["amount_reversed"]:
+        current.pending_reversal, current.note = True, "reversal_result_unknown"
+    else:
+        current.note = "reversal_queued" if current.pending_reversal else "reconciled_from_stripe"
+    if admin_id is not None:
+        db.add(AdminAuditLog(admin_id=admin_id, action="connect.transfer.reconcile",
+                             target_type="connect_ledger", target_id=entry_id,
+                             detail=f"{status}->transferred; stripe_object={provider_id}"))
+    db.commit()
+    return {"entry_id": entry_id, "status": current.status, "stripe_transfer_id": provider_id,
+            "pending_reversal": bool(current.pending_reversal), "duplicate": False}
+
+
+def reconcile_reversal(db: Session, entry_id: int, provider_id: str, admin_id: int | None = None) -> dict:
+    """Resolve an uncertain full reversal using both Stripe objects."""
+    if not connect_configured():
+        raise HTTPException(503, "Stripe Connect 未配置")
+    if not re.fullmatch(r"trr_[A-Za-z0-9_]+", provider_id or ""):
+        raise HTTPException(422, "Stripe 沖回編號無效")
+    existing = db.get(ConnectLedgerEntry, entry_id)
+    if existing is None or existing.kind != "transfer":
+        raise HTTPException(404, "找不到此轉帳流水")
+    shop_id = existing.shop_id
+    lock_shop(db, shop_id)
+    entry = (db.query(ConnectLedgerEntry).filter_by(id=entry_id)
+             .with_for_update().populate_existing().one())
+    if entry.stripe_reversal_id:
+        if entry.stripe_reversal_id == provider_id and entry.status == "reversed":
+            return {"entry_id": entry.id, "status": "reversed", "stripe_reversal_id": provider_id, "duplicate": True}
+        _reconcile_error(db, entry_id, admin_id, "reversal_id_conflict", "沖回編號與已有記錄不一致")
+    if entry.status != "transferred" or not entry.pending_reversal or entry.note not in ("reversal_result_unknown", "reversal_dispatch_started"):
+        _reconcile_error(db, entry_id, admin_id, "reversal_state_not_unknown", "此沖回狀態無需核對")
+    if entry.note == "reversal_dispatch_started" and (not entry.updated_at or
+            datetime.now(timezone.utc).replace(tzinfo=None) - entry.updated_at < timedelta(minutes=2)):
+        _reconcile_error(db, entry_id, admin_id, "reversal_in_flight", "沖回可能仍在處理，請稍後核對")
+    if not entry.transfer_account_id or not entry.redemption_id or not entry.stripe_transfer_id:
+        _reconcile_error(db, entry_id, admin_id, "reversal_legacy_evidence_missing", "舊沖回缺少原帳戶或操作標識，請人工核對")
+    transfer_id, account_id, redemption_id, note = entry.stripe_transfer_id, entry.transfer_account_id, entry.redemption_id, entry.note
+    cents = connect_gateway._to_cents(entry.net_amount)
+    db.commit()
+    try:
+        transfer = connect_gateway.retrieve_transfer(transfer_id)
+        reversal = connect_gateway.retrieve_reversal(transfer_id, provider_id)
+    except GatewayError:
+        _reconcile_error(db, entry_id, admin_id, "reversal_provider_unavailable", "無法查詢 Stripe 沖回，流水仍待核對", 502)
+    if (not _transfer_evidence(transfer, entry_id, redemption_id, account_id, cents, transfer_id)
+            or transfer.get("amount_reversed") != cents or transfer.get("reversed") is not True
+            or reversal.get("id") != provider_id or reversal.get("object") != "transfer_reversal"
+            or reversal.get("transfer") != transfer_id or type(reversal.get("amount")) is not int
+            or reversal.get("amount") != cents
+            or str(reversal.get("currency", "")).upper() != CURRENCY
+            or (reversal.get("metadata") or {}).get("connect_operation_key") != f"reversal-{entry_id}"):
+        _reconcile_error(db, entry_id, admin_id, "reversal_evidence_mismatch", "Stripe 沖回資料不足或與流水不一致")
+    lock_shop(db, shop_id)
+    current = (db.query(ConnectLedgerEntry).filter_by(id=entry_id)
+               .with_for_update().populate_existing().one())
+    if current.stripe_reversal_id == provider_id and current.status == "reversed":
+        return {"entry_id": current.id, "status": "reversed", "stripe_reversal_id": provider_id, "duplicate": True}
+    if (current.status != "transferred" or not current.pending_reversal or current.note != note
+            or current.stripe_transfer_id != transfer_id or current.transfer_account_id != account_id
+            or current.redemption_id != redemption_id or connect_gateway._to_cents(current.net_amount) != cents):
+        _reconcile_error(db, entry_id, admin_id, "reversal_changed_during_lookup", "沖回資料已變更，請重新核對")
+    from .application_connect import _lock_provider_id
+    _lock_provider_id(db, provider_id)
+    if db.query(ConnectLedgerEntry.id).filter(ConnectLedgerEntry.stripe_reversal_id == provider_id,
+                                               ConnectLedgerEntry.id != entry_id).first():
+        _reconcile_error(db, entry_id, admin_id, "reversal_object_already_claimed", "此 Stripe 沖回已關聯其他流水")
+    current.status, current.stripe_reversal_id = "reversed", provider_id
+    current.pending_reversal, current.note = False, "reconciled_from_stripe"
+    if admin_id is not None:
+        db.add(AdminAuditLog(admin_id=admin_id, action="connect.reversal.reconcile",
+                             target_type="connect_ledger", target_id=entry_id,
+                             detail=f"transferred->reversed; stripe_object={provider_id}"))
+    db.commit()
+    return {"entry_id": entry_id, "status": "reversed", "stripe_reversal_id": provider_id, "duplicate": False}
 
 
 def negative_balances(db: Session) -> list:

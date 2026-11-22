@@ -11,6 +11,8 @@
 
 每张已付款券以其冻结的实付分摊金额生成核销流水，按核销时记录的佣金率计算；结算单、返现和积分沿用同一分摊依据。核销事务只记录待处理转账，`connect-transfers` 定时任务在事务完成后发送。提款结果不明时保留待处理余额，不重复发送；需通过供应商记录核对后更新。撤销或退款采用持久冲回记录；结果不明时停止自动重发。
 
+财务核对可用 `POST /api/v3/admin/connect/transfers/{id}/reconcile`，提交 Stripe 转账对象的 `provider_id`；未知冲回使用 `POST /api/v3/admin/connect/transfers/{id}/reversal/reconcile`，提交冲回对象的 `provider_id`。后端只读取供应商对象，并比对转账时保存的原商户账户、金额、币种和唯一操作标识；冲回还需匹配原转账及全额冲回。核对失败的流水仍保持待处理并记录原因，不会重发转账或冲回。没有原账户快照或唯一操作标识的历史记录不能通过此接口确认，需保留并人工核对；接口不会把“未找到对象”当作款项未发生。
+
 当前固定的 Accounts v2 版本为 `2026-11-18.preview`，可用 `STRIPE_V2_VERSION` 配置。2026-11-22 核对时，Stripe 的[创建账户接口参考](https://docs.stripe.com/api/v2/core/accounts/create)示例使用 `2026-11-18.endive`，而 [Connect Accounts v2 指南](https://docs.stripe.com/connect/accounts-v2)示例仍使用 `2026-11-18.preview`。两个示例存在差异；切换版本之前需要用测试账户验证完整开户与结算行为。
 
 ## 接口与运维状态
