@@ -1,8 +1,9 @@
 """Line B schemas: reviews (F6 v1) and admin v1 (F4 v1)."""
+import re
 from datetime import datetime
 from typing import List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 # ---------- reviews ----------
@@ -81,13 +82,49 @@ class ShopRatingOut(BaseModel):
 # ---------- merchant applications / admin ----------
 class MerchantApplicationCreateIn(BaseModel):
     shop_name: str = Field(min_length=1, max_length=120)
-    contact_name: str = ""
+    contact_name: str = ""   # 聯絡人
     phone: str = ""
     address: str = ""
-    business_license: str = ""   # 營業執照（文字憑證，v1 無上傳）
-    id_card: str = ""            # 法人身份證（文字憑證，v1 無上傳）
+    # P1-D Hong Kong fields. br_number: 8 digits when given.
+    br_number: str = ""
+    br_file_id: Optional[int] = None
+    ci_file_id: Optional[int] = None
+    director_id_file_id: Optional[int] = None
+    shop_photo_file_ids: List[int] = Field(default_factory=list, max_length=10)
+    # LEGACY mainland fields: still accepted + stored, no longer gate approval.
+    business_license: str = ""   # 營業執照（舊口徑，僅追溯）
+    id_card: str = ""            # 法人身份證（舊口徑，僅追溯）
     shop_photos: List[str] = Field(default_factory=list, max_length=10)
-    industry_license: str = ""   # 行業許可證（如食品經營許可證）
+    industry_license: str = ""   # 行業許可證（舊口徑，僅追溯）
+
+    @field_validator("br_number")
+    @classmethod
+    def _br_number_must_be_8_digits(cls, v: str) -> str:
+        digits = re.sub(r"[\s\-]", "", v or "")
+        if digits and not re.fullmatch(r"\d{8}", digits):
+            raise ValueError("商業登記號碼須為 8 位數字")
+        return digits
+
+
+class MerchantFileOut(BaseModel):
+    id: int
+    application_id: Optional[int] = None
+    kind: str
+    original_filename: str = ""
+    content_type: str = ""
+    size_bytes: int = 0
+    sha256: str = ""
+    created_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
+
+class MerchantContractInfo(BaseModel):
+    version: str
+    signed_at: Optional[datetime] = None
+    signed_ip: str = ""
+    pdf_file_id: Optional[int] = None
 
 
 class MerchantApplicationOut(BaseModel):
@@ -102,6 +139,14 @@ class MerchantApplicationOut(BaseModel):
     id_card: str = ""
     shop_photos: List[str] = []
     industry_license: str = ""
+    # P1-D
+    br_number: str = ""
+    documents: dict = {}
+    shop_photo_files: List[MerchantFileOut] = []
+    stripe_account_id: str = ""
+    stripe_charges_enabled: bool = False
+    stripe_payouts_enabled: bool = False
+    contract: Optional[MerchantContractInfo] = None
     status: str
     reject_reason: str = ""
     reviewed_by: Optional[int] = None
@@ -115,6 +160,53 @@ class MerchantApplicationOut(BaseModel):
 class MerchantApplicationReviewIn(BaseModel):
     approve: bool
     reject_reason: str = ""
+
+
+class StripeOnboardingIn(BaseModel):
+    """P1-B bridge: record a merchant's Stripe Connect onboarding result.
+
+    Until P1-B lands, admin fills this in from the Stripe Dashboard;
+    after P1-B lands, P1-B's onboarding callback writes the same three
+    columns directly. We never store bank account numbers.
+    """
+    stripe_account_id: str = Field(min_length=1, max_length=120)
+    charges_enabled: bool = False
+    payouts_enabled: bool = False
+
+
+class MerchantContractVersionCreateIn(BaseModel):
+    version: str = Field(min_length=1, max_length=20)
+    title: str = Field(min_length=1, max_length=200)
+    body_text: str = Field(min_length=1)
+
+
+class MerchantContractVersionOut(BaseModel):
+    id: int
+    version: str
+    title: str
+    body_text: str = ""
+    is_current: bool = False
+    published_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
+
+class MerchantContractSignIn(BaseModel):
+    contract_version_id: Optional[int] = None  # omit = sign current version
+
+
+class MerchantContractSignatureOut(BaseModel):
+    id: int
+    application_id: int
+    user_id: int
+    contract_version: str
+    signed_at: Optional[datetime] = None
+    ip_address: str = ""
+    pdf_file_id: Optional[int] = None
+
+    class Config:
+        from_attributes = True
 
 
 class AdminAuditLogOut(BaseModel):

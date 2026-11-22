@@ -60,6 +60,36 @@ SCAN_DAILY_LIMIT = int(os.environ.get("SCAN_DAILY_LIMIT", "200"))
 UPLOAD_DIR = os.environ.get("UPLOAD_DIR", os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "uploads"))
 UPLOAD_MAX_BYTES = int(os.environ.get("UPLOAD_MAX_BYTES", str(5 * 1024 * 1024)))
+
+# P1-D: merchant onboarding files (BR / CI / director ID / shop photos /
+# signed-contract PDFs). PRIVATE storage: this directory is NOT served by
+# the /uploads StaticFiles mount; files are only reachable through the
+# signed-download endpoints (see app/routers/merchant_onboarding.py).
+# Local disk is a placeholder like review-images: swap in object storage
+# (S3 / GCS private bucket) before launch, see docs/P1D_API.md §4.
+MERCHANT_FILE_DIR = os.environ.get("MERCHANT_FILE_DIR", os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    "merchant-files-private"))
+# Signed merchant-file download links live this long (seconds).
+MERCHANT_DOWNLOAD_LINK_TTL_SECONDS = int(
+    os.environ.get("MERCHANT_DOWNLOAD_LINK_TTL_SECONDS", "900"))
+# Optional path to a CJK TrueType collection for contract PDFs
+# (reportlab). Defaults to the system Noto Sans CJK TC.
+MERCHANT_CONTRACT_FONT = os.environ.get("MERCHANT_CONTRACT_FONT", "")
+# P1-D rework 2026-11-21: unattached-file quotas + upload rate limit.
+# "Unattached" = MerchantFile.application_id IS NULL (uploaded before
+# the application was submitted). Quota is checked before saving;
+# either limit breached -> 429 (see docs/P1D_API.md §1).
+MERCHANT_UNATTACHED_MAX_FILES = int(
+    os.environ.get("MERCHANT_UNATTACHED_MAX_FILES", "20"))
+MERCHANT_UNATTACHED_MAX_BYTES = int(
+    os.environ.get("MERCHANT_UNATTACHED_MAX_BYTES", "52428800"))  # 50 MB
+MERCHANT_UPLOAD_RATE_LIMIT_PER_MINUTE = int(
+    os.environ.get("MERCHANT_UPLOAD_RATE_LIMIT_PER_MINUTE", "10"))
+# Stale unattached files older than this are removed by
+# `python -m app.cleanup_merchant_files` (run daily, see docs §4).
+MERCHANT_UNATTACHED_MAX_AGE_DAYS = int(
+    os.environ.get("MERCHANT_UNATTACHED_MAX_AGE_DAYS", "7"))
 OTP_TTL_SECONDS = int(os.environ.get("OTP_TTL_SECONDS", "600"))
 OTP_LENGTH = 6
 

@@ -1,6 +1,8 @@
 FROM python:3.12-slim
 WORKDIR /app
-# Stage-0: install the pinned set, not the loose >= requirements.
+# Contract PDFs require a TrueType-outlined Chinese font.
+RUN apt-get update && apt-get install -y --no-install-recommends fonts-wqy-zenhei && rm -rf /var/lib/apt/lists/*
+# Install the pinned set, including the contract PDF dependencies.
 COPY requirements.lock .
 RUN pip install --no-cache-dir -r requirements.lock
 COPY . .

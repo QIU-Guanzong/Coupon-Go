@@ -261,5 +261,23 @@ def seed(db: Session) -> dict:
             name=name, monthly_fee=fee, coupon_limit=limit,
             description="月費計劃可隨時取消，每月從帳戶扣除，無隱藏費用。",
         ))
+
+    # P1-D: seed the current merchant-contract v1 placeholder so the
+    # sign-contract flow works on a fresh database (same approach as
+    # M9-2's legal v1 placeholder rows). The text is explicitly marked
+    # 待法務確認; legal finalises it and admin publishes the real
+    # version, after which merchants must re-sign to be approved.
+    from .models_line_b import MerchantContractVersion
+    if db.query(MerchantContractVersion).filter(
+            MerchantContractVersion.is_current == True).first() is None:  # noqa: E712
+        db.add(MerchantContractVersion(
+            version="1", title="商户合作协议",
+            body_text=(
+                "【待法務確認】商户合作协议（v1 占位版）。\n"
+                "本版本正文待法務定稿，僅供開發與流程測試使用；"
+                "正式版本發布後，商户須重新簽署當前版本方可通過入駐審核。\n"
+                "商户入駐平台即表示同意遵守平台規則、按時結算，"
+                "並授權平台按約定比例收取佣金。"),
+            is_current=True, published_at=NOW))
     db.commit()
     return {"shops": len(shops), "coupons": len(COUPONS), "skipped": False}
