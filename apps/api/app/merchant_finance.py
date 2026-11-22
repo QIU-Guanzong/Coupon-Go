@@ -10,7 +10,7 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
 from fastapi import HTTPException
-from sqlalchemy import extract, func
+from sqlalchemy import extract, func, or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -19,6 +19,7 @@ from .models_line_f import (
     MerchantCommissionRate, Settlement, SettlementItem,
     SettlementReversal, SettlementTransfer,
 )
+from .models_packages import Order
 from .settlement_basis import settlement_basis, settlement_basis_note
 from .settlement_ledger import CENT, cash_totals, lock_shop, lock_statement, redemption_commission_rate
 
@@ -212,6 +213,7 @@ def shop_dashboard(db: Session, shop: models.Shop, days: int = 30,
     wallets = {item.id: item for item in db.query(models.WalletItem)
                .filter(models.WalletItem.id.in_(wallet_ids)).all()} if wallet_ids else {}
     order_keys = set()
+    redeemed_claim_ids = set()
     gross = Decimal("0")
     net = Decimal("0")
     for red in redemptions:
@@ -234,8 +236,10 @@ def shop_dashboard(db: Session, shop: models.Shop, days: int = 30,
             "coupon_id": red.coupon_id, "claims": 0, "redemptions": 0,
             "redeemed_claims": 0, "expired": 0, "gross_amount": Decimal("0")})
         row["redemptions"] += 1
-        if item and item.claimed_at and start <= item.claimed_at < stop:
+        if (item and item.claimed_at and start <= item.claimed_at < stop
+                and item.id not in redeemed_claim_ids):
             row["redeemed_claims"] += 1
+            redeemed_claim_ids.add(item.id)
         row["gross_amount"] += amount
     coupon_ids = [c.id for c in db.query(models.Coupon.id)
                   .filter(models.Coupon.shop_id == shop.id).all()]
@@ -437,8 +441,11 @@ def catch_up_monthly_settlements(db: Session) -> dict:
     periods = (db.query(models.Redemption.shop_id,
                         extract('year', models.Redemption.scanned_at),
                         extract('month', models.Redemption.scanned_at))
+               .outerjoin(models.WalletItem, models.WalletItem.id == models.Redemption.wallet_item_id)
+               .outerjoin(Order, Order.id == models.WalletItem.order_id)
                .filter(models.Redemption.scanned_at < cutoff,
                        models.Redemption.revoked_at.is_(None),
+                       or_(Order.id.is_(None), Order.refund_status != 'refunded'),
                        ~models.Redemption.id.in_(db.query(SettlementItem.redemption_id)))
                .distinct().all())
     existing = set(db.query(Settlement.shop_id, Settlement.period).all())
