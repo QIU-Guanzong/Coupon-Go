@@ -1,3 +1,4 @@
+import 'screens/merchant_onboarding.dart';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -173,7 +174,7 @@ class _CouponGoAppState extends State<CouponGoApp> {
             return MaterialPageRoute(builder: (_) => AdminScreen(api: _api));
           case '/admin/apply':
             return MaterialPageRoute(
-                builder: (_) => MerchantApplicationFormScreen(api: _api));
+                builder: (_) => MerchantOnboardingScreen(api: _api));
           case '/admin/settlements':
             return MaterialPageRoute(
                 builder: (_) => SettlementsScreen(api: _api));

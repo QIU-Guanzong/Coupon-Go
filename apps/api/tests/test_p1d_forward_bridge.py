@@ -8,7 +8,7 @@ import pytest
 from sqlalchemy import create_engine, text
 
 API = Path(__file__).resolve().parents[1]
-HEAD = '0028_application_connect_bridge'
+HEAD = '0029_application_connect_bridge'
 
 
 def alembic(url, *args, ok=True):
@@ -55,4 +55,30 @@ def test_incompatible_onboarding_schema_fails_before_version_advances(tmp_path):
     assert 'Incompatible onboarding column: merchant_applications.br_number' in result.stderr
     with engine.connect() as conn:
         assert HEAD not in set(conn.execute(text('SELECT version_num FROM alembic_version')).scalars())
+    engine.dispose()
+
+
+def test_approval_shop_upgrade_adds_column_without_rewriting_old_application(tmp_path):
+    url = f"sqlite:///{tmp_path / 'old-approval.db'}"
+    alembic(url, 'upgrade', '0027_p1d_forward_bridge')
+    engine = create_engine(url)
+    with engine.begin() as conn:
+        conn.execute(text('ALTER TABLE merchant_applications DROP COLUMN approved_shop_id'))
+        conn.execute(text("INSERT INTO users(id,email,password_hash,role) VALUES (1,'preapprove@example.invalid','x','customer')"))
+        conn.execute(text("INSERT INTO merchant_applications(id,user_id,shop_name,status,stripe_charges_enabled,stripe_payouts_enabled) VALUES (1,1,'old shop','pending',0,0)"))
+    alembic(url, 'upgrade', 'head')
+    with engine.connect() as conn:
+        assert conn.execute(text('SELECT shop_name,approved_shop_id FROM merchant_applications WHERE id=1')).one() == ('old shop', None)
+    engine.dispose()
+
+
+def test_approval_shop_upgrade_rejects_incompatible_column(tmp_path):
+    url = f"sqlite:///{tmp_path / 'bad-approval.db'}"
+    alembic(url, 'upgrade', '0027_p1d_forward_bridge')
+    engine = create_engine(url)
+    with engine.begin() as conn:
+        conn.execute(text('ALTER TABLE merchant_applications DROP COLUMN approved_shop_id'))
+        conn.execute(text('ALTER TABLE merchant_applications ADD COLUMN approved_shop_id VARCHAR(20)'))
+    result = alembic(url, 'upgrade', 'head', ok=False)
+    assert 'Incompatible onboarding column: merchant_applications.approved_shop_id' in result.stderr
     engine.dispose()

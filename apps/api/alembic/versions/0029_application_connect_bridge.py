@@ -2,8 +2,8 @@
 import sqlalchemy as sa
 from alembic import op
 
-revision = "0028_application_connect_bridge"
-down_revision = ("0027_p1d_forward_bridge", "0023_p1b_payout_recovery")
+revision = "0029_application_connect_bridge"
+down_revision = ("0028_p1d_approval_shop", "0023_p1b_payout_recovery")
 branch_labels = None
 depends_on = None
 

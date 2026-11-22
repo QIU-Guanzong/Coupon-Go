@@ -174,8 +174,7 @@ class MerchantApplication(Base):
     stripe_charges_enabled = Column(Boolean, default=False, nullable=False)
     stripe_payouts_enabled = Column(Boolean, default=False, nullable=False)
     stripe_onboarding_updated_at = Column(DateTime, nullable=True)
-    # A pending application has no shop yet. This pointer is set only as
-    # part of its successful approval and never guessed from a name.
+    # Set only during approval; never infer ownership from the account ID.
     approved_shop_id = Column(Integer, nullable=True)
     # --- P1-D e-contract (denormalised pointer to the latest signature) ---
     contract_version_id = Column(

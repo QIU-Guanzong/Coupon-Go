@@ -190,6 +190,29 @@ def test_existing_provider_binding_does_not_create_second_shop(client, provider)
     db.close()
 
 
+def test_approval_reuses_verified_same_owner_shop_and_connect_account(client, provider):
+    h, app_id = applicant(client, "same-shop")
+    assert start(client, h, app_id).status_code == 200
+    db = base.TestingSession()
+    app = db.get(MerchantApplication, app_id)
+    row = db.query(ApplicationConnectAccount).filter_by(application_id=app_id).one()
+    shop = models.Shop(vendor_id=app.user_id, name=app.shop_name, address=app.address)
+    db.add(shop)
+    db.flush()
+    shop_id = shop.id
+    db.add(ConnectAccount(shop_id=shop.id, stripe_account_id=row.stripe_account_id))
+    db.commit()
+    db.close()
+    response = base._approve(client, base._admin_headers(client), app_id)
+    assert response.status_code == 200, response.text
+    assert response.json()["application"]["approved_shop_id"] == shop_id
+    db = base.TestingSession()
+    app = db.get(MerchantApplication, app_id)
+    assert db.query(models.Shop).filter_by(vendor_id=app.user_id).count() == 1
+    assert db.query(ConnectAccount).filter_by(shop_id=shop_id).one().transfers_enabled
+    db.close()
+
+
 def test_simulated_provider_status_cannot_become_formal_approval(client, provider, monkeypatch):
     h, app_id = applicant(client, "simulated")
     assert start(client, h, app_id).status_code == 200

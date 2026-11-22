@@ -22,6 +22,7 @@ from sqlalchemy.orm import Session
 
 from .. import config, models, schemas_line_b
 from ..database import get_db
+from ..merchant_shop import bind_approved_shop
 from ..deps import get_current_user, require_role
 from ..models_line_b import AdminAuditLog, MerchantApplication, Review
 from ..permissions_line_f import ALL_ROLES
@@ -203,10 +204,15 @@ def review_application(application_id: int,
                        body: schemas_line_b.MerchantApplicationReviewIn,
                        admin: models.User = Depends(admin_only),
                        db: Session = Depends(get_db)):
-    app = db.query(MerchantApplication).filter(
-        MerchantApplication.id == application_id).with_for_update().first()
-    if app is None:
+    # Account deletion and other write paths lock the user first. Read the
+    # identity, then lock user -> application to keep the same order.
+    application_user_id = db.query(MerchantApplication.user_id).filter_by(id=application_id).scalar()
+    if application_user_id is None:
         raise HTTPException(status_code=404, detail="找不到此入駐申請")
+    applicant = db.query(models.User).filter_by(id=application_user_id).with_for_update().first()
+    app = db.query(MerchantApplication).filter_by(id=application_id).with_for_update().populate_existing().first()
+    if app is None or applicant is None or not applicant.is_active:
+        raise HTTPException(status_code=409, detail="申請人帳戶不可用")
     if app.status != "pending":
         raise HTTPException(status_code=400, detail="此申請已審核，不可重複審核")
     if not body.approve and not body.reject_reason.strip():
@@ -252,11 +258,13 @@ def review_application(application_id: int,
         elif (not (app.stripe_account_id or "").strip()
               or not app.stripe_charges_enabled or not app.stripe_payouts_enabled):
             raise HTTPException(status_code=400, detail="尚未完成 Stripe 開戶")
+        else:
+            # Only the development mock reaches this path.
+            bind_approved_shop(db, app)
     app.status = "approved" if body.approve else "rejected"
     app.reject_reason = "" if body.approve else body.reject_reason.strip()
     app.reviewed_by = admin.id
     app.reviewed_at = _now()
-    applicant = db.query(models.User).filter(models.User.id == app.user_id).first()
     if body.approve and applicant is not None and applicant.role == "customer":
         applicant.role = "vendor"
     action = ("merchant_application.approve" if body.approve

@@ -5,6 +5,7 @@ from typing import List, Optional
 from pydantic import BaseModel, EmailStr, Field, field_validator
 
 from .security import validate_password
+from .timeutil import naive_utc
 
 
 def _check_password(value: Optional[str]) -> Optional[str]:
@@ -204,6 +205,11 @@ class CouponCreateIn(BaseModel):
     is_limited_time: bool = False
     branch_ids: List[int] = []
 
+    @field_validator('valid_from', 'valid_to')
+    @classmethod
+    def _utc_dates(cls, value):
+        return naive_utc(value)
+
 
 class CouponUpdateIn(BaseModel):
     """Merchant edit of a coupon (§3.2). All fields optional; only the
@@ -230,6 +236,11 @@ class CouponUpdateIn(BaseModel):
     total: Optional[int] = Field(default=None, ge=0)
     additional_terms: Optional[str] = None
     is_limited_time: Optional[bool] = None
+
+    @field_validator('valid_from', 'valid_to')
+    @classmethod
+    def _utc_dates(cls, value):
+        return naive_utc(value)
 
 
 class CouponPreviewOut(BaseModel):

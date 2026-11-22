@@ -192,25 +192,28 @@ def approve_binding(db, app):
         raise HTTPException(409, "測試或模擬開戶不能用於正式入駐")
     if not (row.charges_enabled and row.payouts_enabled and row.transfers_enabled and row.manual_payouts):
         raise HTTPException(400, "尚未完成 Stripe 開戶")
-    matches = (db.query(ConnectAccount, models.Shop)
-               .join(models.Shop, models.Shop.id == ConnectAccount.shop_id)
-               .filter(ConnectAccount.stripe_account_id == row.stripe_account_id).all())
-    if matches:
-        # Existing bindings must be reconciled explicitly; never guess ownership.
-        raise HTTPException(409, "此開戶帳號已有店鋪綁定，請聯絡平台核對")
-    if app.approved_shop_id:
-        raise HTTPException(409, "申請已關聯店鋪，請聯絡平台核對")
-    shop = models.Shop(vendor_id=app.user_id, name=app.shop_name,
-                       address=app.address or "", phone=app.phone or "", is_approved=True)
-    db.add(shop)
-    db.flush()
-    db.add(ConnectAccount(shop_id=shop.id, stripe_account_id=row.stripe_account_id,
-                          charges_enabled=row.charges_enabled,
-                          payouts_enabled=row.payouts_enabled,
-                          transfers_enabled=row.transfers_enabled,
-                          details_submitted=row.details_submitted,
-                          manual_payouts=row.manual_payouts,
-                          onboarding_status=row.state))
-    app.approved_shop_id = shop.id
+    # Caller already holds user -> application locks. Use exactly the same
+    # shop resolution as simulated approval and serialize against legacy
+    # shop onboarding before checking or attaching the Connect account.
+    from .merchant_shop import bind_approved_shop
+    from .settlement_ledger import lock_shop
+    shop = bind_approved_shop(db, app)
+    lock_shop(db, shop.id)
+    _lock_provider_id(db, row.stripe_account_id)
+    matching = db.query(ConnectAccount).filter_by(stripe_account_id=row.stripe_account_id).all()
+    if any(account.shop_id != shop.id for account in matching):
+        raise HTTPException(409, "此開戶帳號已有其他店舖綁定，請聯絡平台核對")
+    account = db.query(ConnectAccount).filter_by(shop_id=shop.id).first()
+    if account and account.stripe_account_id != row.stripe_account_id:
+        raise HTTPException(409, "此店舖已有其他開戶帳號，請聯絡平台核對")
+    if account is None:
+        account = ConnectAccount(shop_id=shop.id, stripe_account_id=row.stripe_account_id)
+        db.add(account)
+    account.charges_enabled = row.charges_enabled
+    account.payouts_enabled = row.payouts_enabled
+    account.transfers_enabled = row.transfers_enabled
+    account.details_submitted = row.details_submitted
+    account.manual_payouts = row.manual_payouts
+    account.onboarding_status = row.state
     db.flush()
     return shop
