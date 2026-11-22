@@ -83,6 +83,8 @@ void main() {
     expect(find.textContaining('待確認金額不代表已到帳'), findsOneWidget);
     await tester.dragUntilVisible(
         find.text('測試店'), find.byType(Scrollable).first, const Offset(0, -300));
+    await tester.ensureVisible(find.text('測試店'));
+    await tester.pumpAndSettle();
     await tester.tap(find.text('測試店'));
     await tester.pumpAndSettle();
     await tester.dragUntilVisible(find.text('狀態：沖回待核對'),
