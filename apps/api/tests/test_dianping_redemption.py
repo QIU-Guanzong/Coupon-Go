@@ -304,6 +304,32 @@ def test_supplementary_scan_wrong_customer_role_forbidden(client):
 
 # ---------- 4.2 force revoke ----------
 
+def test_force_review_allows_staff_to_verify_before_and_after_revoke(client):
+    customer = _register_and_login(client, "dp4-force-review@example.com")
+    vendor = _vendor_headers(client)
+    admin = _admin_headers(client)
+    support = _support_headers(client)
+    _, code = _claim_and_qr(client, customer, 2)
+    scanned = _scan(client, vendor, code, idempotency_key="dp4-force-review")
+    assert scanned.status_code == 200, scanned.text
+    rid = scanned.json()["redemption_id"]
+    path = f"/api/v3/admin/redemptions/{rid}/force-review"
+    for headers in (admin, support):
+        result = client.get(path, headers=headers)
+        assert result.status_code == 200, result.text
+        assert result.json()["redemption_id"] == rid
+        assert result.json()["coupon_name"]
+        assert result.json()["shop_name"]
+        assert result.json()["revoked"] is False
+    for headers in (customer, vendor):
+        assert client.get(path, headers=headers).status_code == 403
+    assert client.get("/api/v3/admin/redemptions/999999999/force-review", headers=admin).status_code == 404
+    revoked = client.post(f"/api/v3/admin/redemptions/{rid}/force-revoke",
+                          json={"reason": "核對後撤銷"}, headers=support)
+    assert revoked.status_code == 200, revoked.text
+    assert client.get(path, headers=support).json()["revoked"] is True
+
+
 def test_force_revoke_over_window_by_admin_with_reason_and_audit(client):
     h = _register_and_login(client, "dp4-force@example.com")
     vh = _vendor_headers(client)

@@ -11,6 +11,8 @@ Stripe 转账。涉及多张券时按顾客、订单、券、店铺的固定顺�
 - `POST /merchant/redemptions/supplementary-scan`：传入 `wallet_item_id`，
   可选 `idempotency_key`、`reason`、`note`；补录使用现有核销核心并记录
   操作者及原因。同一请求编号重放返回原记录，更换券或撤销后不能用旧编号。
+- `GET /admin/redemptions/{id}/force-review`：管理员或客服查阅待撤销记录的
+  券、商户、时间和撤销状态，用于提交前核对。
 - `POST /admin/redemptions/{id}/force-revoke`：管理员或客服填写 `reason`
   后可处理超出时限的核销；与普通撤销共用券、积分、返现、结算和冲回流程，
   原因与操作人员写入同一事务的记录。
