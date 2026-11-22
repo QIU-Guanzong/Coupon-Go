@@ -44,7 +44,7 @@ from ..models_line_f import (
 )
 from ..models_packages import PAYMENT_STATUSES, Order, Package
 from ..serializers_packages import order_out
-from ..settlement_ledger import CENT, lock_shop, lock_statement, cash_totals
+from ..settlement_ledger import CENT, lock_shop, lock_statement, cash_totals, redemption_commission_rate
 from ..models_line_f import SettlementReversal, SettlementTransfer
 from ..settlement_basis import settlement_basis
 from ..shared import (audit_log as _log, csv_response, money as _money,
@@ -96,17 +96,39 @@ def _invoice_totals(db: Session, settlement: Settlement) -> dict:
     }
 
 
+def _settlement_payment_mode(db: Session, settlement: Settlement) -> str:
+    from ..models_connect import ConnectAccount, ConnectLedgerEntry
+    items = db.query(SettlementItem).filter_by(settlement_id=settlement.id).all()
+    positive_ids = {i.redemption_id for i in items if i.amount > 0}
+    entries = db.query(ConnectLedgerEntry).filter(
+        ConnectLedgerEntry.redemption_id.in_(positive_ids),
+        ConnectLedgerEntry.kind == "transfer").all() if positive_ids else []
+    represented = {e.redemption_id for e in entries}
+    has_account = db.query(ConnectAccount.id).filter_by(shop_id=settlement.shop_id).first() is not None
+    has_manual = db.query(SettlementTransfer.id).filter_by(settlement_id=settlement.id, kind="payment").first() is not None
+    if not entries and not has_account:
+        return "legacy_manual"
+    if has_manual or represented != positive_ids:
+        return "mixed_review"
+    return "connect"
+
+
 def _settlement_out(db: Session, s: Settlement) -> dict:
     shop = db.query(models.Shop).filter(models.Shop.id == s.shop_id).first()
     paid, balance = cash_totals(db, s)
+    rates = {redemption_commission_rate(red, s.commission_rate)
+             for red in db.query(models.Redemption)
+             .join(SettlementItem, SettlementItem.redemption_id == models.Redemption.id)
+             .filter(SettlementItem.settlement_id == s.id)}
     return {
         **_invoice_totals(db, s),
         "id": s.id, "shop_id": s.shop_id,
-        "shop_name": shop.name if shop else "",
+        "shop_name": shop.name if shop else "", "payment_mode": _settlement_payment_mode(db, s),
         "transferred_net": _money(paid), "outstanding_net": _money(balance),
         "period": s.period, "redemption_count": s.redemption_count,
         "gross_amount": _money(s.gross_amount),
-        "commission_rate": _money(s.commission_rate),
+        "commission_rate": float(s.commission_rate), "commission_rate_mixed": len(rates) > 1,
+        "applied_commission_rate": float(next(iter(rates))) if len(rates) == 1 else None,
         "commission": _money(s.commission),
         "net_amount": _money(s.net_amount),
         "status": s.status, "dispute_reason": s.dispute_reason or "",
@@ -409,7 +431,8 @@ def generate_settlement(body: schemas_line_f.SettlementGenerateIn,
             continue
         gross += amount
         items.append((r, amount))
-    commission = sum(((amount * rate).quantize(CENT) for _, amount in items), Decimal("0"))
+    commission = sum(((amount * redemption_commission_rate(r, rate)).quantize(CENT)
+                      for r, amount in items), Decimal("0"))
     net = gross - commission
     settlement = Settlement(
         shop_id=shop.id, period=body.period, period_start=start,
@@ -434,7 +457,7 @@ def generate_settlement(body: schemas_line_f.SettlementGenerateIn,
         db.add(SettlementItem(
             settlement_id=settlement.id, redemption_id=r.id,
             coupon_id=r.coupon_id, amount=amount,
-            commission=(amount * rate).quantize(Decimal("0.01"))))
+            commission=(amount * redemption_commission_rate(r, rate)).quantize(Decimal("0.01"))))
     _log(db, user.id, "settlement.generate", "settlement", settlement.id,
          f"shop_id={shop.id}; period={body.period}; "
          f"redemptions={len(items)}; gross={gross}; rate={rate}"
@@ -444,7 +467,8 @@ def generate_settlement(body: schemas_line_f.SettlementGenerateIn,
     db.refresh(settlement)
     out = _settlement_out(db, settlement)
     out["items"] = [{"redemption_id": r.id, "coupon_id": r.coupon_id,
-                     "amount": _money(a)} for r, a in items]
+                     "amount": _money(a), "commission_rate": float(redemption_commission_rate(r, rate))}
+                    for r, a in items]
     return {"message": "結算單已生成", "settlement": out}
 
 
@@ -494,9 +518,12 @@ def get_settlement(settlement_id: int,
     for item, reversal in db.query(SettlementItem, SettlementReversal).outerjoin(
             SettlementReversal, SettlementReversal.item_id == SettlementItem.id).filter(
             SettlementItem.settlement_id == s.id).order_by(SettlementItem.id):
+        red = db.get(models.Redemption, item.redemption_id)
         out["items"].append({"id": item.id, "redemption_id": item.redemption_id,
                              "coupon_id": item.coupon_id, "amount": _money(item.amount),
-                             "commission": _money(item.commission), "created_at": item.created_at,
+                             "commission": _money(item.commission),
+                             "commission_rate": float(redemption_commission_rate(red, s.commission_rate)),
+                             "created_at": item.created_at,
                              "reversal": {"amount": _money(reversal.amount), "commission": _money(reversal.commission),
                                           "reason": reversal.reason, "created_at": reversal.created_at} if reversal else None})
     out["invoices"] = [_invoice_out(db, invoice) for invoice in
@@ -601,8 +628,10 @@ def pay_settlement(settlement_id: int,
                    user: models.User = Depends(
                        require_perm("settlements.write")),
                    db: Session = Depends(get_db)):
-    # FIX-3: lock the settlement row before the status check so a
-    # second concurrent pay blocks here and sees status == "paid".
+    shop_id = db.query(Settlement.shop_id).filter_by(id=settlement_id).scalar()
+    if shop_id is None:
+        raise HTTPException(status_code=404, detail="找不到此結算單")
+    lock_shop(db, shop_id)
     s = lock_statement(db, settlement_id)
     if s is None:
         raise HTTPException(status_code=404, detail="找不到此結算單")
@@ -617,6 +646,8 @@ def pay_settlement(settlement_id: int,
             raise HTTPException(409, "付款金額或憑證已變更，請重新核對")
     if s.status != "approved":
         raise HTTPException(status_code=400, detail="只有已確認的結算單可以付款")
+    if _settlement_payment_mode(db, s) != "legacy_manual":
+        raise HTTPException(409, "結算單包含 Connect 收款或待核對記錄，不可重複手動付款")
     _hold_legacy_cash_voucher_payment(db, s.id)
     s.status = "paid"
     db.add(SettlementTransfer(settlement_id=s.id, amount=s.net_amount, kind="payment",
@@ -634,9 +665,15 @@ def pay_settlement(settlement_id: int,
 def record_balance_transfer(settlement_id: int, body: schemas_line_f.SettlementTransferIn,
                             user: models.User = Depends(require_perm("settlements.write")),
                             db: Session = Depends(get_db)):
+    shop_id = db.query(Settlement.shop_id).filter_by(id=settlement_id).scalar()
+    if shop_id is None:
+        raise HTTPException(status_code=404, detail="找不到此結算單")
+    lock_shop(db, shop_id)
     s = lock_statement(db, settlement_id)
     if s is None:
         raise HTTPException(404, "找不到此結算單")
+    if _settlement_payment_mode(db, s) != "legacy_manual":
+        raise HTTPException(409, "結算單包含 Connect 收款或待核對記錄，不可手動登記")
     reference = body.reference.strip()
     if not reference:
         raise HTTPException(400, "請填寫付款或收回憑證編號")
@@ -761,7 +798,8 @@ def run_reconciliation(body: schemas_line_f.ReconciliationRunIn,
     reversals = {rev.item_id: rev for rev in db.query(SettlementReversal).join(SettlementItem).filter(
         SettlementItem.settlement_id == settlement.id)} if settlement else {}
     for i in items:
-        correct_fee = (i.amount * settlement.commission_rate).quantize(CENT) + i.rounding_adjustment
+        correct_fee = (i.amount * redemption_commission_rate(
+            redemption_by_id.get(i.redemption_id), settlement.commission_rate)).quantize(CENT) + i.rounding_adjustment
         if correct_fee != i.commission:
             found.append(("commission_mismatch", i.redemption_id, i.id, correct_fee, i.commission))
         if i.redemption_id not in redemption_by_id:

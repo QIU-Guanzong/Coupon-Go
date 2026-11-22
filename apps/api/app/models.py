@@ -222,6 +222,7 @@ class Redemption(Base):
     # column existed; settlement_basis falls back to the live rows
     # for those rows only (migration 0014 backfills them).
     face_value = Column(Numeric(12, 2), nullable=True)
+    commission_rate_snapshot = Column(Numeric(5, 4), nullable=True)
     # Line A (report §11.2): idempotency + prepare + revoke window.
     idempotency_key = Column(String(80), unique=True, nullable=True)
     prepared_at = Column(DateTime, nullable=True)   # pre-redeem check time
@@ -305,6 +306,7 @@ from .models_line_b import (  # noqa: E402,F401
 # Line D: register cashback tables on Base.metadata (import only; the
 # models live in app/models_cashback.py so other lines' tables are untouched).
 from . import models_cashback  # noqa: F401,E402
+from .models_connect import ConnectAccount, ConnectLedgerEntry  # noqa: F401,E402
 # --- line C (套餐 2A) models live in their own module; importing here
 # registers them on Base.metadata so create_all / alembic see them. ---
 from .models_packages import Order, Package, Payment, Refund  # noqa: E402,F401

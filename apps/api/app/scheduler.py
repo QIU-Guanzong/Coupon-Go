@@ -54,7 +54,7 @@ from .models_scheduler import SchedulerLock  # noqa: F401  (register table)
 logger = logging.getLogger(__name__)
 
 JOB_NAMES = ("expired-packages", "bargain-expire", "payment-timeouts",
-             "cashback-sweep", "points-expire", "coupon-expiry", "late-payment-refunds", "listing-schedule")
+             "cashback-sweep", "points-expire", "coupon-expiry", "late-payment-refunds", "listing-schedule", "connect-transfers")
 
 # Fixed Postgres advisory-lock keys, one per job (arbitrary but stable;
 # changing them orphans nothing — advisory locks die with the session).
@@ -67,6 +67,7 @@ ADVISORY_LOCK_KEYS = {
     "coupon-expiry": 2026111706,
     "late-payment-refunds": 2026111707,
     "listing-schedule": 2026111708,
+    "connect-transfers": 2026111709,
 }
 
 
@@ -252,6 +253,12 @@ def run_points_expire(db):
     return _run_job(db, "points-expire", svc.sweep_expired_points)
 
 
+def run_connect_transfers(db, batch_size=None):
+    from . import connect_service as svc
+    size = batch_size if batch_size is not None else config.SCHEDULER_CONNECT_BATCH_SIZE
+    return _run_job(db, "connect-transfers", svc.sweep_pending_transfers, batch_size=size)
+
+
 JOB_RUNNERS = {
     "expired-packages": run_expired_packages,
     "bargain-expire": run_bargain_expire,
@@ -261,6 +268,7 @@ JOB_RUNNERS = {
     "listing-schedule": run_listing_schedule,
     "late-payment-refunds": run_late_payment_refunds,
     "points-expire": run_points_expire,
+    "connect-transfers": run_connect_transfers,
 }
 
 
@@ -270,7 +278,7 @@ def run_all_jobs(session_factory=None, batch_size=None):
     factory = session_factory or SessionLocal
     results = {}
     for name in ("expired-packages", "bargain-expire", "payment-timeouts",
-                 "coupon-expiry", "late-payment-refunds", "listing-schedule", "points-expire"):
+                 "coupon-expiry", "late-payment-refunds", "listing-schedule", "points-expire", "connect-transfers"):
         db = factory()
         try:
             results[name] = JOB_RUNNERS[name](db)
@@ -333,6 +341,10 @@ def create_scheduler(session_factory=None, interval_seconds=None):
     sched.add_job(lambda: _one(run_points_expire),
                   trigger=IntervalTrigger(seconds=interval),
                   id="points-expire", max_instances=1, coalesce=True,
+                  misfire_grace_time=60)
+    sched.add_job(lambda: _one(run_connect_transfers),
+                  trigger=IntervalTrigger(seconds=interval),
+                  id="connect-transfers", max_instances=1, coalesce=True,
                   misfire_grace_time=60)
     return sched
 

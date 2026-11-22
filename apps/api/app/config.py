@@ -125,6 +125,21 @@ OPEN_LOGIN = os.environ.get("OPEN_LOGIN", "false").strip().lower() in ("1", "tru
 # in the repo. With STRIPE_SECRET_KEY unset the gateway runs its local
 # test-mode simulator; with a key set only sk_test_… is accepted.
 STRIPE_SECRET_KEY = os.environ.get("STRIPE_SECRET_KEY", "")
+
+# Connect runs in the existing explicitly configured test environment only.
+STRIPE_CONNECT_ENABLED_RAW = os.environ.get("STRIPE_CONNECT_ENABLED")
+STRIPE_CONNECT_RETURN_URL = os.environ.get("STRIPE_CONNECT_RETURN_URL", "")
+STRIPE_CONNECT_REFRESH_URL = os.environ.get("STRIPE_CONNECT_REFRESH_URL", "")
+STRIPE_V2_VERSION = os.environ.get("STRIPE_V2_VERSION", "2026-11-18.preview")
+STRIPE_CONNECT_PAYOUT_HOLD_DAYS = int(os.environ.get("STRIPE_CONNECT_PAYOUT_HOLD_DAYS", "90"))
+CONNECT_MAX_TRANSFER_RETRIES = int(os.environ.get("CONNECT_MAX_TRANSFER_RETRIES", "5"))
+SCHEDULER_CONNECT_BATCH_SIZE = int(os.environ.get("SCHEDULER_CONNECT_BATCH_SIZE", "50"))
+
+
+def connect_enabled():
+    raw = STRIPE_CONNECT_ENABLED_RAW
+    return {"enabled": (raw.strip().lower() in ("1", "true", "yes", "on")
+                        if raw is not None else APP_ENV == "dev")}
 STRIPE_PUBLISHABLE_KEY = os.environ.get("STRIPE_PUBLISHABLE_KEY", "")
 STRIPE_WEBHOOK_SECRET = os.environ.get("STRIPE_WEBHOOK_SECRET", "")
 # Stripe webhook signature timestamp tolerance (seconds; Stripe default 300).

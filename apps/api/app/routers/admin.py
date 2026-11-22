@@ -233,17 +233,20 @@ def review_application(application_id: int,
         if config.APP_ENV != "dev" and "【待法務確認】" in (current.body_text or ""):
             raise HTTPException(status_code=409,
                                 detail="測試合約不能用於正式入駐")
-        # These columns can currently only be entered manually in the
-        # development simulator; they are not evidence of a real account.
-        # Connect must replace this guard with a verified provider lookup.
-        if config.APP_ENV != "dev":
+        from ..models_connect import ApplicationConnectAccount
+        from .. import application_connect
+        actual_account = db.query(ApplicationConnectAccount).filter_by(
+            application_id=app.id).first()
+        if actual_account is not None:
+            # Recheck with the provider and bind the resulting account to
+            # the new shop in this same approval transaction.
+            application_connect.approve_binding(db, app)
+        elif config.APP_ENV != "dev":
             raise HTTPException(status_code=409,
                                 detail="正式 Stripe 開戶核驗尚未接通，暫不能批准")
-        if (not (app.stripe_account_id or "").strip()
-                or not app.stripe_charges_enabled
-                or not app.stripe_payouts_enabled):
-            raise HTTPException(status_code=400,
-                                detail="尚未完成 Stripe 開戶")
+        elif (not (app.stripe_account_id or "").strip()
+              or not app.stripe_charges_enabled or not app.stripe_payouts_enabled):
+            raise HTTPException(status_code=400, detail="尚未完成 Stripe 開戶")
     app.status = "approved" if body.approve else "rejected"
     app.reject_reason = "" if body.approve else body.reject_reason.strip()
     app.reviewed_by = admin.id

@@ -10,7 +10,7 @@ from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.engine import make_url
 
 API = Path(__file__).resolve().parents[1]
-HEAD = '0026_p1c_allocation_bridge'
+HEAD = '0028_application_connect_bridge'
 
 
 @pytest.fixture(params=['sqlite', 'postgres'])
