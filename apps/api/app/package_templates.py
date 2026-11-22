@@ -2,7 +2,7 @@
 from fastapi import HTTPException
 
 from . import models
-from .models_packages import Order
+from .models_packages import Order, Package
 
 
 def current_package_coupon(db, package_id):
@@ -12,11 +12,17 @@ def current_package_coupon(db, package_id):
             .order_by(models.Coupon.id).all())
     current = [row for row in rows if row.is_package_template is True]
     if len(current) == 1:
+        package = db.get(Package, package_id)
+        if package is None or current[0].shop_id != package.shop_id:
+            raise HTTPException(409, "套餐券商戶資料需要人工核對")
         return current[0]
     if len(current) > 1:
         raise HTTPException(409, "套餐券模板需要人工核對")
     legacy = [row for row in rows if row.is_package_template is None]
     if len(legacy) == 1:
+        package = db.get(Package, package_id)
+        if package is None or legacy[0].shop_id != package.shop_id:
+            raise HTTPException(409, "歷史套餐券商戶資料需要人工核對")
         return legacy[0]
     if len(legacy) > 1:
         raise HTTPException(409, "歷史套餐券模板需要人工核對")

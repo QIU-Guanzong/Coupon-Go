@@ -359,6 +359,78 @@ def test_paid_coupon_cannot_be_exchanged_for_points_but_free_can(client):
     assert accepted.status_code == 200, accepted.text
 
 
+def test_delayed_payment_callback_uses_reserved_template(client, monkeypatch):
+    monkeypatch.setattr(config, "PACKAGE_REVIEW_REQUIRED", False)
+    pkg = _create_package(client, name="回調前套餐", package_price=150)
+    buyer = _register_and_login(client, "version-callback@example.com")
+    purchase = client.post(f"/api/v3/packages/{pkg['id']}/purchase", json={"payment_method": "fps"}, headers=buyer)
+    assert purchase.status_code == 200, purchase.text
+    order_id = purchase.json()["order"]["id"]
+    db = TestingSession()
+    try:
+        attempt = db.query(models.Payment).filter_by(order_id=order_id).one()
+        gateway_ref = attempt.gateway_ref
+    finally:
+        db.close()
+    edit = client.patch(f"/api/v3/vendor/packages/{pkg['id']}", headers=_vendor_headers(client),
+                        json={"name": "回調後套餐", "package_price": 120})
+    assert edit.status_code == 200, edit.text
+    webhook = client.post("/api/v3/payments/webhook", json={"type": "payment_intent.succeeded", "data": {"object": {"id": gateway_ref}}})
+    assert webhook.status_code == 200, webhook.text
+    wallet = client.get("/api/v3/get-favorite-coupons-list", headers=buyer).json()
+    item = next(x for x in wallet["items"] if x["order_id"] == order_id)
+    assert item["coupon_name"] == "回調前套餐" and item["discount_price"] == 150
+
+
+def test_wrong_shop_snapshot_cannot_be_issued(client, monkeypatch):
+    monkeypatch.setattr(config, "PACKAGE_REVIEW_REQUIRED", False)
+    pkg = _create_package(client, name="商戶歸屬套餐")
+    buyer = _register_and_login(client, "version-wrong-shop@example.com")
+    purchase = client.post(f"/api/v3/packages/{pkg['id']}/purchase", json={"payment_method": "fps"}, headers=buyer)
+    assert purchase.status_code == 200, purchase.text
+    order_id = purchase.json()["order"]["id"]
+    db = TestingSession()
+    try:
+        order = db.get(models.Order, order_id)
+        coupon = db.get(models.Coupon, order.package_coupon_id)
+        coupon.shop_id = 2
+        db.commit()
+    finally:
+        db.close()
+    paid = client.post(f"/api/v3/orders/{order_id}/confirm-payment", json={"outcome": "succeeded"}, headers=buyer)
+    assert paid.status_code == 409, paid.text
+    db = TestingSession()
+    try:
+        order = db.get(models.Order, order_id)
+        assert order.payment_status == "pending"
+        assert db.query(models.WalletItem).filter_by(order_id=order_id).count() == 0
+        # Restore the synthetic corruption; the module-scoped fixture is reused.
+        db.get(models.Coupon, order.package_coupon_id).shop_id = pkg["shop_id"]
+        db.commit()
+    finally:
+        db.close()
+
+
+@pytest.mark.xfail(strict=True, reason="cancelled order currently ignores a late successful payment; durable reconciliation is required")
+def test_cancelled_order_late_success_is_not_silently_ignored(client, monkeypatch):
+    monkeypatch.setattr(config, "PACKAGE_REVIEW_REQUIRED", False)
+    pkg = _create_package(client, name="取消後付款套餐")
+    buyer = _register_and_login(client, "version-late-cancelled@example.com")
+    purchase = client.post(f"/api/v3/packages/{pkg['id']}/purchase", json={"payment_method": "fps"}, headers=buyer)
+    assert purchase.status_code == 200, purchase.text
+    order_id = purchase.json()["order"]["id"]
+    db = TestingSession()
+    try:
+        gateway_ref = db.query(models.Payment).filter_by(order_id=order_id).one().gateway_ref
+    finally:
+        db.close()
+    cancelled = client.post(f"/api/v3/orders/{order_id}/cancel", headers=buyer)
+    assert cancelled.status_code == 200, cancelled.text
+    callback = client.post("/api/v3/payments/webhook", json={"type": "payment_intent.succeeded", "data": {"object": {"id": gateway_ref}}})
+    assert callback.status_code == 200, callback.text
+    assert callback.json().get("ignored") != "order already settled", callback.text
+
+
 # ---------- P0-6: package review flow ----------
 
 def test_package_create_is_pending_review_not_active(client):

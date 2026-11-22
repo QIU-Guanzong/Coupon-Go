@@ -196,7 +196,8 @@ def _issue_voucher(db: Session, order: Order, package: Package):
         return existing
     coupon = (db.get(models.Coupon, order.package_coupon_id)
               if order.package_coupon_id else _package_coupon(db, package))
-    if coupon is None or coupon.package_id != package.id or coupon.kind != "package":
+    if (coupon is None or coupon.package_id != package.id or coupon.shop_id != package.shop_id
+            or coupon.kind != "package"):
         raise HTTPException(status_code=409, detail="訂單套餐券模板需要人工核對")
     item = models.WalletItem(
         user_id=order.user_id, coupon_id=coupon.id, status=1,
