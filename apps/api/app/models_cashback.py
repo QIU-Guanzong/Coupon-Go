@@ -24,8 +24,7 @@ from sqlalchemy import Column, DateTime, ForeignKey, Integer, Numeric, String, T
 from .database import Base
 
 
-def _now():
-    return datetime.now(timezone.utc).replace(tzinfo=None)
+from .timeutil import utcnow as _now
 
 
 # D-extension: "withdrawn" is a terminal state the report's enum does not

@@ -36,7 +36,7 @@ from sqlalchemy.orm import Session
 from .. import models, schemas_line_f, schemas_packages
 from ..database import get_db
 from ..deps import get_current_user, require_role
-from ..models_line_b import AdminAuditLog, Review
+from ..models_line_b import Review
 from ..models_line_f import (
     CmsAnnouncement, CmsBanner, Invoice, InvoiceCredit, MerchantCommissionRate,
     ReconciliationDiscrepancy, ReconciliationReport, Settlement,
@@ -47,6 +47,8 @@ from ..serializers_packages import order_out
 from ..settlement_ledger import CENT, lock_shop, lock_statement, cash_totals
 from ..models_line_f import SettlementReversal, SettlementTransfer
 from ..settlement_basis import settlement_basis
+from ..shared import (audit_log as _log, csv_response, money as _money,
+                      paginate, vendor_shop_ids)
 from ..permissions_line_f import (
     ALL_ROLES, can_access_shop, can_request_invoice_for_shop,
     get_shop_or_404, has_perm, require_perm, role_permissions,
@@ -62,30 +64,7 @@ admin_only = require_role("admin")
 DEFAULT_COMMISSION_RATE = Decimal("0.10")
 
 
-def _now():
-    return datetime.now(timezone.utc).replace(tzinfo=None)
-
-
-def _money(value) -> float:
-    return float(value) if value is not None else 0.0
-
-
-def _log(db: Session, admin_id: int, action: str, target_type: str,
-         target_id, detail: str = ""):
-    db.add(AdminAuditLog(admin_id=admin_id, action=action,
-                         target_type=target_type, target_id=target_id,
-                         detail=detail))
-    db.flush()
-
-
-def _page(items, page: int, per_page: int = 20):
-    total = len(items)
-    return {
-        "current_page": page,
-        "total_pages": max(1, (total + per_page - 1) // per_page),
-        "total": total,
-        "items": items[(page - 1) * per_page: page * per_page],
-    }
+from ..timeutil import utcnow as _now
 
 
 def _period_bounds(period: str):
@@ -235,8 +214,7 @@ def _merchant_admin_shop_ids(db: Session, user: models.User) -> set:
     ids = {m.shop_id for m in db.query(ShopMember).filter(
         ShopMember.user_id == user.id,
         ShopMember.status == "active").all()}
-    ids |= {s.id for s in db.query(models.Shop).filter(
-        models.Shop.vendor_id == user.id).all()}
+    ids |= set(vendor_shop_ids(db, user))
     return ids
 
 
@@ -244,15 +222,18 @@ def _merchant_admin_shop_ids(db: Session, user: models.User) -> set:
 def list_admin_orders(status: str = Query(None),
                       page: int = Query(1, ge=1),
                       page_size: int = Query(20, ge=1, le=100),
+                      format: str = Query("json", pattern="^(json|csv)$"),
                       user: models.User = Depends(get_current_user),
                       db: Session = Depends(get_db)):
     """Admin order list. finance / auditor / admin see all orders;
     merchant-admin sees only orders of their own shop(s) (matched via
     the order's package -> shop); every other role gets 403.
 
-    Pagination follows the admin-v2 style (page + _page helper, 20 per
+    Pagination follows the shared style (page + page_size, 20 per
     page by default); status filters payment_status and unknown values
     are ignored, like the other admin list endpoints.
+    ``?format=csv`` exports the same rows through the one shared CSV
+    writer (GAP §5.9); the nested ``payments`` list is not a column.
     """
     if user.role in ("finance", "auditor", "admin"):
         shop_ids = None
@@ -268,7 +249,18 @@ def list_admin_orders(status: str = Query(None),
             Package.shop_id.in_(shop_ids)).all()] if shop_ids else []
         q = q.filter(Order.package_id.in_(pkg_ids)) if pkg_ids else \
             q.filter(False)
-    out = _page([_admin_order_out(db, o, user) for o in q.all()], page, page_size)
+    rows = [_admin_order_out(db, o, user) for o in q.all()]
+    if format == "csv":
+        columns = ["id", "order_id", "order_no", "user_id", "user_name",
+                   "user_email", "order_type", "package_id", "package_name",
+                   "shop_id", "shop_name", "quantity", "amount",
+                   "paid_amount", "payment_method", "payment_status",
+                   "refund_status", "refundable", "settlement_status",
+                   "commission_amount", "net_amount", "status",
+                   "created_at", "paid_at"]
+        return csv_response("orders.csv", columns,
+                            [[r.get(k) for k in columns] for r in rows])
+    out = paginate(rows, page, page_size)
     return {"current_page": out["current_page"],
             "total_pages": out["total_pages"], "total": out["total"],
             "orders": out["items"]}
@@ -355,7 +347,7 @@ def list_commission_rates(shop_id: int = Query(None),
         MerchantCommissionRate.shop_id)
     if shop_id:
         q = q.filter(MerchantCommissionRate.shop_id == shop_id)
-    out = _page([_commission_rate_out(db, r) for r in q.all()], page)
+    out = paginate([_commission_rate_out(db, r) for r in q.all()], page)
     return {"current_page": out["current_page"],
             "total_pages": out["total_pages"], "total": out["total"],
             "commission_rates": out["items"]}
@@ -460,16 +452,29 @@ def generate_settlement(body: schemas_line_f.SettlementGenerateIn,
 def list_settlements(shop_id: int = Query(None),
                      status: str = Query(None),
                      page: int = Query(1, ge=1),
+                     page_size: int = Query(20, ge=1, le=100),
+                     format: str = Query("json", pattern="^(json|csv)$"),
                      user: models.User = Depends(
                          require_perm("settlements.read")),
                      db: Session = Depends(get_db)):
+    """Settlement list. ``?format=csv`` exports the same rows through
+    the one shared CSV writer (GAP §5.9)."""
     q = db.query(Settlement).order_by(Settlement.period.desc(),
                                       Settlement.id.desc())
     if shop_id:
         q = q.filter(Settlement.shop_id == shop_id)
     if status in ("pending", "approved", "disputed", "paid"):
         q = q.filter(Settlement.status == status)
-    out = _page([_settlement_out(db, s) for s in q.all()], page)
+    rows = [_settlement_out(db, s) for s in q.all()]
+    if format == "csv":
+        columns = ["id", "shop_id", "shop_name", "period", "status",
+                   "redemption_count", "gross_amount", "commission_rate",
+                   "commission", "net_amount", "transferred_net",
+                   "outstanding_net", "dispute_reason", "decided_by",
+                   "decided_at", "paid_at", "created_at", "updated_at"]
+        return csv_response("settlements.csv", columns,
+                            [[r.get(k) for k in columns] for r in rows])
+    out = paginate(rows, page, page_size)
     return {"current_page": out["current_page"],
             "total_pages": out["total_pages"], "total": out["total"],
             "settlements": out["items"], "can_write": has_perm(user, "settlements.write")}
@@ -669,7 +674,7 @@ def merchant_settlements(shop_id: int, page: int = Query(1, ge=1),
         raise HTTPException(status_code=403, detail="沒有權限查看此商户")
     q = (db.query(Settlement).filter(Settlement.shop_id == shop.id)
          .order_by(Settlement.period.desc(), Settlement.id.desc()))
-    out = _page([_settlement_out(db, s) for s in q.all()], page)
+    out = paginate([_settlement_out(db, s) for s in q.all()], page)
     return {"current_page": out["current_page"],
             "total_pages": out["total_pages"], "total": out["total"],
             "settlements": out["items"]}
@@ -866,7 +871,7 @@ def list_reconciliation_reports(
         q = q.filter(ReconciliationReport.shop_id == shop_id)
     if period:
         q = q.filter(ReconciliationReport.period == period)
-    out = _page([_report_out(db, r) for r in q.all()], page)
+    out = paginate([_report_out(db, r) for r in q.all()], page)
     return {"current_page": out["current_page"],
             "total_pages": out["total_pages"], "total": out["total"],
             "reports": out["items"]}
@@ -927,7 +932,7 @@ def merchant_reconciliation(shop_id: int, page: int = Query(1, ge=1),
          .filter(ReconciliationReport.shop_id == shop.id)
          .order_by(ReconciliationReport.period.desc(),
                    ReconciliationReport.id.desc()))
-    out = _page([_report_out(db, r) for r in q.all()], page)
+    out = paginate([_report_out(db, r) for r in q.all()], page)
     return {"current_page": out["current_page"],
             "total_pages": out["total_pages"], "total": out["total"],
             "reports": out["items"]}
@@ -984,7 +989,7 @@ def list_invoices(shop_id: int = Query(None), status: str = Query(None),
         q = q.filter(Invoice.shop_id == shop_id)
     if status in ("pending", "approved", "rejected", "issued"):
         q = q.filter(Invoice.status == status)
-    out = _page([_invoice_out(db, i) for i in q.all()], page)
+    out = paginate([_invoice_out(db, i) for i in q.all()], page)
     return {"current_page": out["current_page"],
             "total_pages": out["total_pages"], "total": out["total"],
             "invoices": out["items"], "can_write": has_perm(user, "invoices.write")}
@@ -1121,7 +1126,7 @@ def merchant_invoices(shop_id: int, page: int = Query(1, ge=1),
         raise HTTPException(status_code=403, detail="沒有權限查看此商户")
     q = (db.query(Invoice).filter(Invoice.shop_id == shop.id)
          .order_by(Invoice.created_at.desc(), Invoice.id.desc()))
-    out = _page([_invoice_out(db, i) for i in q.all()], page)
+    out = paginate([_invoice_out(db, i) for i in q.all()], page)
     return {"current_page": out["current_page"],
             "total_pages": out["total_pages"], "total": out["total"],
             "invoices": out["items"]}
@@ -1135,7 +1140,7 @@ def list_banners(status: str = Query(None), page: int = Query(1, ge=1),
     q = db.query(CmsBanner).order_by(CmsBanner.sort_order, CmsBanner.id)
     if status in ("draft", "active", "archived"):
         q = q.filter(CmsBanner.status == status)
-    out = _page([_banner_out(b) for b in q.all()], page)
+    out = paginate([_banner_out(b) for b in q.all()], page)
     return {"current_page": out["current_page"],
             "total_pages": out["total_pages"], "total": out["total"],
             "banners": out["items"]}
@@ -1226,7 +1231,7 @@ def list_announcements(status: str = Query(None),
                                            CmsAnnouncement.id)
     if status in ("draft", "active", "archived"):
         q = q.filter(CmsAnnouncement.status == status)
-    out = _page([_announcement_out(a) for a in q.all()], page)
+    out = paginate([_announcement_out(a) for a in q.all()], page)
     return {"current_page": out["current_page"],
             "total_pages": out["total_pages"], "total": out["total"],
             "announcements": out["items"]}
@@ -1580,7 +1585,7 @@ def list_review_disputes(page: int = Query(1, ge=1),
         out = review_out(db, r)
         out["dispute_reason"] = r.dispute_reason or ""
         items.append(out)
-    out = _page(items, page)
+    out = paginate(items, page)
     return {"current_page": out["current_page"],
             "total_pages": out["total_pages"], "total": out["total"],
             "reviews": out["items"]}

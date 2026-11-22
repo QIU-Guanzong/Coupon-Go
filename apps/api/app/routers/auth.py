@@ -21,6 +21,7 @@ from ..models_line_b import MerchantApplication
 from ..models_line_f import Settlement, SettlementItem
 from ..models_packages import Order, Package
 from ..settlement_basis import settlement_basis
+from ..timeutil import utcnow as _now
 from ..deps import (
     add_points, get_current_user, get_identity_user, get_session_identity,
     points_balance,
@@ -38,10 +39,6 @@ def _lock_email_user(db: Session, email: str):
     """
     return (db.query(models.User).filter(models.User.email == email)
             .with_for_update().populate_existing().first())
-
-
-def _now():
-    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 def _issue_otp(db: Session, email: str, purpose: str, role: str = "customer") -> str:
