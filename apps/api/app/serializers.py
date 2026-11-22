@@ -120,6 +120,9 @@ def wallet_out(db: Session, w: models.WalletItem):
         "valid_to": c.valid_to if c else None,
         "discount_price": float(c.discount_price) if c and c.discount_price is not None else None,
         "regular_price": float(c.regular_price) if c and c.regular_price is not None else None,
+        # P1-A: the price paid for this voucher (None for free claims).
+        "sale_price": float(c.sale_price) if c and getattr(c, "sale_price", None) is not None else None,
+        "is_paid": bool(c and (getattr(c, "sale_price", None) or 0)) > 0,
         # line C: package vouchers ride the same wallet states
         "source": w.source or "claim",
         "order_id": w.order_id,

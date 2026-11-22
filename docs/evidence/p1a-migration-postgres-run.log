@@ -1,0 +1,47 @@
+# P1-A migration 0021 — PostgreSQL verification (pgserver 16.2)
+# date: 2026-11-20 (rebase onto main 3f2d8bc, local commit 0c1127b)
+# DB: coupon_go_test_mig (scratch, pgserver); chain: 0001..0020 (main) + 0021 (this PR)
+# note: 0020_m92_legal_consents is now in main (PR #7 merged); 0021 down_revision = 0020, single head
+# note: system PostgreSQL 16.15 was lost in a VM reset during this session; the same sequence
+# was already verified on system PostgreSQL 16.15 earlier in this session (downgrade base ->
+# upgrade head -> downgrade 0020 -> upgrade head -> current 0021); this is a repeat on pgserver.
+
+=== alembic downgrade base ===
+(no-op: fresh scratch DB already at base, nothing to downgrade)
+=== alembic upgrade head ===
+INFO  [alembic.runtime.migration] Running upgrade  -> 0001, Initial schema: all tables from app.models (users, otp, categories, areas,
+INFO  [alembic.runtime.migration] Running upgrade 0001 -> 0002_line_a, Line A: redemption hardening columns on redemptions (report §11.2).
+INFO  [alembic.runtime.migration] Running upgrade 0002_line_a -> 0002_line_b, Line B (reviews v1 + admin v1): reviews, shop_ratings,
+INFO  [alembic.runtime.migration] Running upgrade 0002_line_b -> 0002_cashback, Line D — cashback tables (返现 2B).
+INFO  [alembic.runtime.migration] Running upgrade 0002_cashback -> 0002_bargain_e, Line E (bargain 2C): bargain_campaigns / bargain_sessions /
+INFO  [alembic.runtime.migration] Running upgrade 0002_bargain_e -> 0002_line_c, Line C (套餐 2A): packages / orders / payments / refunds tables +
+INFO  [alembic.runtime.migration] Running upgrade 0002_line_c -> 0003_line_f, Line F (admin v2): settlements, settlement_items,
+INFO  [alembic.runtime.migration] Running upgrade 0003_line_f -> 0004_cashback_redemption_unique, FIX-2: cashback may only come from a redemption record.
+INFO  [alembic.runtime.migration] Running upgrade 0004_cashback_redemption_unique -> 0005_fix3_row_lock_backstops, FIX-3: database backstops for the row locks.
+INFO  [alembic.runtime.migration] Running upgrade 0005_fix3_row_lock_backstops -> 0006_p1_cashback_revoke_bargain_refund, P1: cashback revoke rollback + bargain gateway refunds.
+INFO  [alembic.runtime.migration] Running upgrade 0006_p1_cashback_revoke_bargain_refund -> 0007_gap7_order_quantity, Gap 7: orders.quantity — purchase quantity (default 1).
+INFO  [alembic.runtime.migration] Running upgrade 0007_gap7_order_quantity -> 0008_gap6_withdrawal_failure_reason, Gap 6: cashback_withdrawals.failure_reason — why a payout failed.
+INFO  [alembic.runtime.migration] Running upgrade 0008_gap6_withdrawal_failure_reason -> 0009_gap9_review_helpful, Gap 9: review_helpful_votes — one helpful vote per (review, user).
+INFO  [alembic.runtime.migration] Running upgrade 0009_gap9_review_helpful -> 0010_f4f6f7_settlement_snapshot, F4/F6/F7: redemptions.face_value — face-value snapshot at scan time.
+INFO  [alembic.runtime.migration] Running upgrade 0010_f4f6f7_settlement_snapshot -> 0011_f5_commission_rate_table, F5: merchant_commission_rates — source table for merchant
+INFO  [alembic.runtime.migration] Running upgrade 0011_f5_commission_rate_table -> 0012_f8f9_member_invite, F8: shop-member invite flow — status / invited_by / invited_at.
+INFO  [alembic.runtime.migration] Running upgrade 0012_f8f9_member_invite -> 0013_m1_scheduler_locks, M1: scheduler_locks — single-runner claim rows for background jobs
+INFO  [alembic.runtime.migration] Running upgrade 0013_m1_scheduler_locks -> 0014_m6_settlement_basis_backfill, M6: backfill redemptions.face_value to the actual-paid basis.
+INFO  [alembic.runtime.migration] Running upgrade 0014_m6_settlement_basis_backfill -> 0015_m7_review_rating_backfill, M7: backfill reviews.counts_toward_rating to True (rating basis fix).
+INFO  [alembic.runtime.migration] Running upgrade 0015_m7_review_rating_backfill -> 0016_withdrawal_ledger, Retain withdrawal allocations and review history.
+INFO  [alembic.runtime.migration] Running upgrade 0016_withdrawal_ledger -> 0017_package_usage, Reconcile package use counters previously incremented at voucher issue.
+INFO  [alembic.runtime.migration] Running upgrade 0017_package_usage -> 0018_settlement_ledger, Keep merchant cash movements and credit notes separate from original sales.
+INFO  [alembic.runtime.migration] Running upgrade 0018_settlement_ledger -> 0019_invoice_credits, Retain issued invoices and separately record confirmed credit notes.
+INFO  [alembic.runtime.migration] Running upgrade 0019_invoice_credits -> 0020_m92_legal_consents, Record explicitly accepted legal document pairs.
+INFO  [alembic.runtime.migration] Running upgrade 0020_m92_legal_consents -> 0021_p1a_paid_coupons, P1-A: paid coupons — coupons.sale_price + orders.coupon_id.
+(exit 0)
+=== alembic downgrade 0020_m92_legal_consents ===
+INFO  [alembic.runtime.migration] Running downgrade 0021_p1a_paid_coupons -> 0020_m92_legal_consents, P1-A: paid coupons — coupons.sale_price + orders.coupon_id.
+(exit 0)
+=== alembic upgrade head ===
+INFO  [alembic.runtime.migration] Running upgrade 0020_m92_legal_consents -> 0021_p1a_paid_coupons, P1-A: paid coupons — coupons.sale_price + orders.coupon_id.
+(exit 0)
+=== alembic current ===
+0021_p1a_paid_coupons (head)
+=== alembic heads ===
+0021_p1a_paid_coupons (head)
