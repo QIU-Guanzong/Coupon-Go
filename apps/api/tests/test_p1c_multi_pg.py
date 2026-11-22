@@ -1,5 +1,6 @@
 """Multi-voucher points, refund and scan races on disposable PostgreSQL."""
 import os
+from decimal import Decimal
 from concurrent.futures import ThreadPoolExecutor
 from threading import Barrier
 
@@ -12,6 +13,32 @@ from tests.test_paid_points_allocation import make_order
 
 pytestmark = pytest.mark.skipif(not os.environ.get('PACKAGES_TEST_POSTGRES_URL'),
                                 reason='requires disposable PostgreSQL')
+
+
+def test_two_vouchers_concurrently_redeem_with_exact_allocation(client):
+    user, _pkg, order, ids = make_order(client, 'two-scans-pg', count=2, price=100.01)
+    vendor = base._vendor_headers(client)
+    codes = []
+    for item_id in ids:
+        presented = client.post('/api/v3/store-scaned-qr-values',
+                                params={'wallet_item_id': item_id}, headers=user)
+        assert presented.status_code == 200, presented.text
+        codes.append(presented.json()['code'])
+    start = Barrier(2)
+
+    def scan(code):
+        start.wait(timeout=10)
+        return client.post('/api/v3/new-scan-coupon', json={'code': code}, headers=vendor)
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures = [pool.submit(scan, code) for code in codes]
+        responses = [future.result(timeout=30) for future in futures]
+    assert [response.status_code for response in responses] == [200, 200], [response.text for response in responses]
+    with base.TestingSession() as db:
+        rows = (db.query(models.Redemption).filter(models.Redemption.wallet_item_id.in_(ids))
+                .order_by(models.Redemption.wallet_item_id).all())
+        assert [row.face_value for row in rows] == [Decimal('50.01'), Decimal('50.00')]
+        assert sum(row.face_value for row in rows) == db.get(Order, order['id']).paid_amount
 
 
 def test_multi_voucher_scan_and_whole_refund_serialize(client):
