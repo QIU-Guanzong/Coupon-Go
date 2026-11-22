@@ -90,11 +90,13 @@ class PublicPreviewTest(unittest.TestCase):
         from app.routers.home import app_config
         actual = self.client.get("/api/v3/app-config")
         self.assertEqual(actual.status_code, 200)
-        self.assertEqual(actual.json(), app_config())
-        self.assertEqual(set(actual.json()), {
+        public_fields = {
             "points_claim", "points_redeem", "points_review",
             "qr_ttl_seconds", "cashback_unlock_days",
-        })
+        }
+        self.assertEqual(set(actual.json()), public_fields)
+        internal_config = app_config()
+        self.assertEqual(actual.json(), {key: internal_config[key] for key in public_fields})
         expected = {
             "points_claim": 10, "points_redeem": 20, "points_review": 15,
             "qr_ttl_seconds": 900, "cashback_unlock_days": 90,
