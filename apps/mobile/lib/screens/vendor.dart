@@ -12,6 +12,7 @@ import '../theme.dart';
 import '../widgets/widgets.dart';
 import 'reviews_admin.dart';
 import 'vendor_packages.dart';
+import 'coupon_branch_scope.dart';
 import 'redemption_recovery.dart';
 import 'merchant_dashboard.dart';
 import 'scan_batch.dart';
@@ -187,6 +188,12 @@ class _VendorHomeScreenState extends State<VendorHomeScreen> {
                     title: Text(c.name),
                     subtitle:
                         Text('剩餘 ${c.remaining} · 已核銷 ${c.usedCount ?? '—'}'),
+                    trailing: IconButton(
+                      tooltip: '編輯適用分店', icon: const Icon(Icons.storefront_outlined),
+                      onPressed: () => Navigator.of(context).push(MaterialPageRoute(
+                        builder: (_) => CouponBranchEditScreen(api: widget.api, couponId: c.id,
+                          shopId: c.shopId, couponName: c.name))),
+                    ),
                   ),
                 )),
             if (_allows('can_manage_coupons') && _coupons.isEmpty && !_loading && _loadError == null)
@@ -307,11 +314,62 @@ class _IssueCouponScreenState extends State<IssueCouponScreen> {
   final _total = TextEditingController(text: '100');
   final _minSpend = TextEditingController(text: '0');
   final _terms = TextEditingController();
-  final int _shopId = 1;
+  int? _shopId;
+  List<Map<String, dynamic>>? _shops;
+  List<int>? _branchIds;
+  String? _shopsError;
+  bool _submitting = false;
+  late int _session;
   DateTime _validTo = DateTime.now().add(const Duration(days: 30));
+
+  @override
+  void initState() {
+    super.initState();
+    _session = widget.api.sessionRevision;
+    widget.api.addListener(_sessionChanged);
+    _loadShops();
+  }
+
+  void _sessionChanged() {
+    if (_session == widget.api.sessionRevision) return;
+    _session = widget.api.sessionRevision;
+    if (mounted) {
+      setState(() {
+      _shops = null; _shopId = null; _branchIds = null; _submitting = false;
+      _shopsError = '登入狀態已變更，請重新讀取商店。';
+    });
+    }
+  }
+
+  Future<void> _loadShops() async {
+    final session = _session;
+    setState(() { _shops = null; _shopsError = null; _shopId = null; _branchIds = null; });
+    try {
+      final data = await widget.api.vendorPackageWorkspace();
+      final rows = data['shops'];
+      if (rows is! List || rows.any((v) => v is! Map || v['id'] is! int || v['name'] is! String)) {
+        throw const FormatException();
+      }
+      if (!mounted || session != _session) return;
+      setState(() {
+        _shops = rows.map((v) => Map<String, dynamic>.from(v as Map)).toList();
+        if (_shops!.isNotEmpty) _shopId = _shops!.first['id'] as int;
+      });
+    } catch (e) {
+      if (mounted && session == _session) setState(() => _shopsError = e is ApiException ? e.message : '未能讀取商店，請重試');
+    }
+  }
+
+  @override
+  void dispose() {
+    widget.api.removeListener(_sessionChanged);
+    _name.dispose(); _percentage.dispose(); _cash.dispose(); _total.dispose(); _minSpend.dispose(); _terms.dispose();
+    super.dispose();
+  }
 
   Map<String, dynamic> _body() => {
         'shop_id': _shopId,
+        'branch_ids': _branchIds,
         'coupon_type': _type,
         'coupon_name': _name.text,
         'percentage':
@@ -335,6 +393,15 @@ class _IssueCouponScreenState extends State<IssueCouponScreen> {
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
+          if (_shopsError != null) ...[Text(_shopsError!), TextButton(onPressed: _loadShops, child: const Text('重試'))],
+          if (_shops == null && _shopsError == null) const LinearProgressIndicator(),
+          if (_shops != null && _shops!.isEmpty) const Text('此帳戶尚未有可管理的商店。'),
+          if (_shops != null && _shops!.isNotEmpty) DropdownButtonFormField<int>(
+            initialValue: _shopId, decoration: const InputDecoration(labelText: '商店'),
+            items: _shops!.map((shop) => DropdownMenuItem<int>(value: shop['id'] as int, child: Text(shop['name'] as String))).toList(),
+            onChanged: (id) => setState(() { _shopId = id; _branchIds = null; }),
+          ),
+          const SizedBox(height: 12),
           TextField(
               controller: _name,
               decoration: const InputDecoration(labelText: '優惠券名稱')),
@@ -374,6 +441,11 @@ class _IssueCouponScreenState extends State<IssueCouponScreen> {
           TextField(
               controller: _terms,
               decoration: const InputDecoration(labelText: '條款和條件')),
+          const SizedBox(height: 20),
+          if (_shopId != null) BranchScopePicker(
+            key: ValueKey(_shopId), api: widget.api, shopId: _shopId!, initial: const [],
+            onChanged: (ids) => setState(() => _branchIds = ids),
+          ),
           const SizedBox(height: 12),
           ListTile(
             title: const Text('到期日期'),
@@ -393,10 +465,12 @@ class _IssueCouponScreenState extends State<IssueCouponScreen> {
           ElevatedButton(
             style:
                 ElevatedButton.styleFrom(backgroundColor: CgColors.vendorGold),
-            onPressed: () async {
+            onPressed: _shopId == null || _branchIds == null || _submitting ? null : () async {
+              final session = _session;
+              setState(() => _submitting = true);
               try {
                 final preview = await widget.api.couponPreview(_body());
-                if (!context.mounted) return;
+                if (!context.mounted || session != _session) return;
                 final ok = await showDialog<bool>(
                   context: context,
                   builder: (c) => AlertDialog(
@@ -413,15 +487,17 @@ class _IssueCouponScreenState extends State<IssueCouponScreen> {
                     ],
                   ),
                 );
-                if (ok == true) {
+                if (ok == true && session == _session) {
                   final res = await widget.api.couponCreate(_body());
-                  if (context.mounted) {
+                  if (context.mounted && session == _session) {
                     showCgToast(context, res['message'] as String? ?? '已提交審核');
                     Navigator.of(context).pop();
                   }
                 }
               } on ApiException catch (e) {
-                if (context.mounted) showCgToast(context, e.message);
+                if (context.mounted && session == _session) showCgToast(context, e.message);
+              } finally {
+                if (mounted && session == _session) setState(() => _submitting = false);
               }
             },
             child: Text(context.tr('檢查並提交', 'Review and submit'),
