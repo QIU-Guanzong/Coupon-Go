@@ -176,8 +176,9 @@ def generate_qr(wallet_item_id: int, user: models.User = Depends(get_current_use
 
 
 def _redeem_item(db: Session, item: models.WalletItem,
-                 vendor: models.User, code: str, *,
-                 idempotency_key=None, prepared_at=None) -> models.Redemption:
+                 vendor: models.User, code: str | None, *,
+                 idempotency_key=None, prepared_at=None, method='scan', note=None,
+                 commit=True) -> models.Redemption:
     """The single consume chain (dianping unify).
 
     QR scan, manual code entry, supplementary scan and batch scan all
@@ -196,15 +197,16 @@ def _redeem_item(db: Session, item: models.WalletItem,
     in main yet — when its migration lands, this function takes them
     and the batch / supplementary callers pass them here.
     """
-    _refresh_expiry(db, item)
+    if commit:
+        _refresh_expiry(db, item)
     if item.status == 2:
         raise errors.voucher_used()
     if item.status == 3:
         raise errors.voucher_expired()
-    if item.qr_expires_at and item.qr_expires_at < _now():
+    if code is not None and item.qr_expires_at and item.qr_expires_at < _now():
         raise errors.qr_expired()
     coupon = db.query(models.Coupon).filter(models.Coupon.id == item.coupon_id).first()
-    if coupon.shop_id not in vendor_shop_ids(db, vendor):
+    if coupon is None or (vendor.role != 'admin' and coupon.shop_id not in vendor_shop_ids(db, vendor)):
         raise errors.qr_wrong_shop()
     ensure_paid_voucher(db, item)
     ensure_redeemable(coupon, purchased_order=item.source == "purchase")
@@ -216,11 +218,13 @@ def _redeem_item(db: Session, item: models.WalletItem,
     if scans_today >= config.SCAN_DAILY_LIMIT:
         raise errors.scan_daily_limit()
     cashback_service.lock_account(db, item.user_id)
-    consumed = db.query(models.WalletItem).filter(
-        models.WalletItem.id == item.id, models.WalletItem.status == 1,
-        models.WalletItem.code == code, models.WalletItem.qr_expires_at > _now()
-    ).update({"status": 2, "used_at": _now(), "code": "", "qr_expires_at": None},
-             synchronize_session=False)
+    consume_query = db.query(models.WalletItem).filter(
+        models.WalletItem.id == item.id, models.WalletItem.status == 1)
+    if code is not None:
+        consume_query = consume_query.filter(models.WalletItem.code == code,
+                                              models.WalletItem.qr_expires_at > _now())
+    consumed = consume_query.update({"status": 2, "used_at": _now(), "code": "", "qr_expires_at": None},
+                                    synchronize_session=False)
     if not consumed:
         raise errors.code_expired()
     # Line A: the presented code dies on consume — a screenshot of it
@@ -241,7 +245,7 @@ def _redeem_item(db: Session, item: models.WalletItem,
         wallet_item_id=item.id, coupon_id=coupon.id, shop_id=coupon.shop_id,
         scanned_by_vendor_id=vendor.id, face_value=face_value,
         idempotency_key=idempotency_key or None, commission_rate_snapshot=commission_rate,
-        prepared_at=prepared_at)
+        prepared_at=prepared_at, method=method, note=note)
     db.add(red)
     points.award_redeem_points(db, item.user_id, item.id, paid_basis=face_value)
     # FIX-2: cashback is credited here, server-side, from this redemption
@@ -264,8 +268,11 @@ def _redeem_item(db: Session, item: models.WalletItem,
             raise HTTPException(status_code=400, detail=str(e))
     add_scanned_sale(db, red)
     connect_result = connect_service.record_redemption(db, red)
-    db.commit()
-    db.refresh(red)
+    if commit:
+        db.commit()
+        db.refresh(red)
+    else:
+        db.flush()
     red._connect_result = connect_result
     return red
 
@@ -274,7 +281,7 @@ def _scan_response(red: models.Redemption, coupon, duplicate: bool) -> dict:
     return {"message": "您的優惠券已成功使用", "coupon_name": coupon.coupon_name,
             "shop_id": coupon.shop_id, "redemption_id": red.id,
             "revoke_window_minutes": config.REVOKE_WINDOW_MINUTES,
-            "scanned_at": red.scanned_at.replace(tzinfo=timezone.utc),
+            "scanned_at": red.scanned_at.replace(tzinfo=timezone.utc), "method": red.method or 'scan',
             "duplicate": duplicate, "connect": getattr(red, "_connect_result", None)}
 
 
@@ -332,7 +339,7 @@ def scan_coupon(body: schemas.ScanIn,
     try:
         red = _redeem_item(db, item, vendor, body.code,
                            idempotency_key=body.idempotency_key,
-                           prepared_at=prepared_at)
+                           prepared_at=prepared_at, method=body.method)
     except errors.ApiError as exc:
         # A lost consume race against a replayed idempotency key: the
         # other request already committed this redemption — return it

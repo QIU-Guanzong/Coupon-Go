@@ -12,6 +12,7 @@ import '../theme.dart';
 import '../widgets/widgets.dart';
 import 'reviews_admin.dart';
 import 'vendor_packages.dart';
+import 'redemption_recovery.dart';
 import 'merchant_dashboard.dart';
 
 /// Vendor home: gold theme, usage summary, issue-coupon entry.
@@ -92,6 +93,13 @@ class _VendorHomeScreenState extends State<VendorHomeScreen> {
                   builder: (_) => MerchantDashboardScreen(api: widget.api))),
               icon: const Icon(Icons.insights_outlined),
               label: Text(context.tr('經營與餘額', 'Business and balance')),
+            ),
+            const SizedBox(height: 8),
+            OutlinedButton.icon(
+              onPressed: () => Navigator.of(context).push(MaterialPageRoute(
+                  builder: (_) => MerchantRedemptionRecoveryScreen(api: widget.api))),
+              icon: const Icon(Icons.manage_search),
+              label: const Text('補錄核銷'),
             ),
             const SizedBox(height: 8),
             OutlinedButton(
