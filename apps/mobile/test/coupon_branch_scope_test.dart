@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:coupon_go/api_client.dart';
 import 'package:coupon_go/screens/coupon_branch_scope.dart';
 import 'package:coupon_go/screens/vendor.dart';
@@ -11,6 +12,8 @@ class ScopeApi extends ApiClient {
   Map<String, dynamic>? createBody;
   Map<String, dynamic>? assigned;
   bool rejectAssignment = false;
+  bool failCreate = false;
+  int createAttempts = 0;
   @override
   Future<Map<String, dynamic>> vendorPackageWorkspace() async => {
         'shops': [
@@ -22,11 +25,13 @@ class ScopeApi extends ApiClient {
   Future<Map<String, dynamic>> get(String path,
       {Map<String, String>? query}) async {
     if (path == '/merchant/shops') {
-      return {'shops': [
-      {'id': 2, 'name': '其他商店', 'can_manage_coupons': true},
-      {'id': 9, 'name': '目標商店', 'can_manage_coupons': true},
-      {'id': 10, 'name': '無權商店', 'can_manage_coupons': false},
-    ]};
+      return {
+        'shops': [
+          {'id': 2, 'name': '其他商店', 'can_manage_coupons': true},
+          {'id': 9, 'name': '目標商店', 'can_manage_coupons': true},
+          {'id': 10, 'name': '無權商店', 'can_manage_coupons': false},
+        ]
+      };
     }
     if (path == '/coupon-details-new') {
       return {
@@ -60,6 +65,8 @@ class ScopeApi extends ApiClient {
   @override
   Future<Map<String, dynamic>> couponCreate(Map<String, dynamic> body) async {
     createBody = Map.from(body);
+    createAttempts++;
+    if (failCreate) throw TimeoutException('lost response');
     return {'message': '已提交'};
   }
 }
@@ -114,8 +121,9 @@ void main() {
   testWidgets('切換帳號清除原商戶的編輯資料', (tester) async {
     final api = ScopeApi();
     await api.saveToken('first', persist: false);
-    await tester.pumpWidget(MaterialApp(home: CouponBranchEditScreen(
-      api: api, couponId: 5, shopId: 9, couponName: '舊帳戶券')));
+    await tester.pumpWidget(MaterialApp(
+        home: CouponBranchEditScreen(
+            api: api, couponId: 5, shopId: 9, couponName: '舊帳戶券')));
     await tester.pumpAndSettle();
     await api.saveToken('second', persist: false);
     await tester.pumpAndSettle();
@@ -124,4 +132,23 @@ void main() {
     expect(api.assigned, isNull);
   });
 
+  testWidgets('提交後斷線保留不確定狀態並阻止重複建立', (tester) async {
+    final api = ScopeApi()..failCreate = true;
+    await tester.pumpWidget(MaterialApp(home: IssueCouponScreen(api: api)));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField).first, '新券');
+    FocusManager.instance.primaryFocus?.unfocus();
+    await tester.pumpAndSettle();
+    await tester.dragUntilVisible(find.text('檢查並提交'), find.byType(Scrollable).first, const Offset(0, -250));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('檢查並提交'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('提交審核'));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('提交結果未確認'), findsOneWidget);
+    expect(api.createAttempts, 1);
+    final button = tester
+        .widget<ElevatedButton>(find.widgetWithText(ElevatedButton, '檢查並提交'));
+    expect(button.onPressed, isNull);
+  });
 }

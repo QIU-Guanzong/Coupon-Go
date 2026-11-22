@@ -319,6 +319,7 @@ class _IssueCouponScreenState extends State<IssueCouponScreen> {
   List<int>? _branchIds;
   String? _shopsError;
   bool _submitting = false;
+  bool _createUncertain = false;
   late int _session;
   DateTime _validTo = DateTime.now().add(const Duration(days: 30));
 
@@ -335,7 +336,7 @@ class _IssueCouponScreenState extends State<IssueCouponScreen> {
     _session = widget.api.sessionRevision;
     if (mounted) {
       setState(() {
-      _shops = null; _shopId = null; _branchIds = null; _submitting = false;
+      _shops = null; _shopId = null; _branchIds = null; _submitting = false; _createUncertain = false;
       _shopsError = '登入狀態已變更，請重新讀取商店。';
     });
     }
@@ -463,13 +464,18 @@ class _IssueCouponScreenState extends State<IssueCouponScreen> {
             },
           ),
           const SizedBox(height: 16),
+          if (_createUncertain) const Padding(
+            padding: EdgeInsets.only(bottom: 12),
+            child: Text('提交結果未確認，請返回券列表刷新核對，勿重複建立。'),
+          ),
           ElevatedButton(
             style:
                 ElevatedButton.styleFrom(backgroundColor: CgColors.vendorGold),
-            onPressed: _shopId == null || _branchIds == null || _submitting ? null : () async {
+            onPressed: _shopId == null || _branchIds == null || _submitting || _createUncertain ? null : () async {
               final session = _session;
               final draft = _body();
               final scope = _branchIds!.isEmpty ? '所有分店' : '指定 ${_branchIds!.length} 間分店';
+              var creating = false;
               setState(() => _submitting = true);
               try {
                 final preview = await widget.api.couponPreview(draft);
@@ -491,6 +497,7 @@ class _IssueCouponScreenState extends State<IssueCouponScreen> {
                   ),
                 );
                 if (ok == true && session == _session) {
+                  creating = true;
                   final res = await widget.api.couponCreate(draft);
                   if (context.mounted && session == _session) {
                     showCgToast(context, res['message'] as String? ?? '已提交審核');
@@ -498,7 +505,18 @@ class _IssueCouponScreenState extends State<IssueCouponScreen> {
                   }
                 }
               } on ApiException catch (e) {
-                if (context.mounted && session == _session) showCgToast(context, e.message);
+                if (context.mounted && session == _session) {
+                  if (creating && e.status >= 500) {
+                    setState(() => _createUncertain = true);
+                  } else {
+                    showCgToast(context, e.message);
+                  }
+                }
+              } catch (_) {
+                if (context.mounted && session == _session) {
+                  if (creating) { setState(() => _createUncertain = true); }
+                  else { showCgToast(context, '未能連線，請重試'); }
+                }
               } finally {
                 if (mounted && session == _session) setState(() => _submitting = false);
               }
