@@ -5,7 +5,7 @@ per-user claim limit, sale_price / refund-policy listing calibre,
 merchant image upload, admin package review queue.
 
 Run:  cd apps/api && ../../.venv/bin/python -m pytest tests/test_dianping_listing.py -v
-Own throwaway SQLite file (/tmp/coupon_go_test_listing.db); Postgres run
+Own per-process temporary SQLite file; Postgres run
 uses LISTING_TEST_POSTGRES_URL (same pattern as M8_TEST_POSTGRES_URL).
 """
 import io
@@ -28,8 +28,9 @@ from app.database import Base, get_db  # noqa: E402
 from app.main import app  # noqa: E402
 from app.models_packages import Package  # noqa: E402
 from app.seed import seed  # noqa: E402
+from tests.db_isolation import sqlite_test_path  # noqa: E402
 
-TEST_DB = "/tmp/coupon_go_test_listing.db"
+TEST_DB = sqlite_test_path("coupon_go_test_listing.db")
 PG_URL = os.getenv("LISTING_TEST_POSTGRES_URL")
 if PG_URL:
     engine = create_engine(PG_URL)
@@ -929,9 +930,12 @@ def test_coupon_sale_price_field_and_free_claim_guard(client):
     r = client.post("/api/v3/new-favorite-coupon",
                     params={"coupon_id": c["id"]}, headers=h)
     assert r.status_code == 400, r.text  # paid coupons are bought, not claimed
-    # No purchase endpoint in this slice: P1-A owns it.
-    r = client.post(f"/api/v3/coupons/{c['id']}/purchase", headers=h)
-    assert r.status_code in (404, 405), r.text
+    # The P1-A endpoint uses the server-side sale price for the order.
+    r = client.post(f"/api/v3/coupons/{c['id']}/purchase", headers=h,
+                    json={"payment_method": "fps"})
+    assert r.status_code == 200, r.text
+    assert r.json()["order"]["coupon_id"] == c["id"]
+    assert r.json()["order"]["amount"] == 50
 
 
 def test_coupon_free_behaviour_unchanged(client):
