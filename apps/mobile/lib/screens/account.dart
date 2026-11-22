@@ -900,14 +900,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(t(
-                  '提交後帳戶將停用，你將無法使用未用優惠券及積分。',
-                  'Submitting deactivates your account. You will lose access to unused coupons and points.',
+                  '刪除後，免費優惠券、積分及待確認或追蹤中的返現會作廢。',
+                  'Deleting your account voids free vouchers, points, and any pending or tracked cashback.',
                 )),
-                Text(cashbackEnabled
-                    ? t('如有可提現返現，請先提現。',
-                        'Withdraw any available cashback first.')
-                    : t('如有尚待處理的款項，請先聯絡客服。',
-                        'If you have any outstanding funds, contact support first.')),
+                Text(t('未使用的付費優惠券，請先退款或使用。',
+                    'Refund or use any unused paid vouchers first.')),
+                Text(t('如有可提現返現，請先提現。',
+                    'Withdraw any available cashback first.')),
                 if (cashbackEnabled && currentBalance == null) ...[
                   const SizedBox(height: 12),
                   Text(t('暫時無法核對返現餘額，請先查看返現或稍後再試。',
@@ -991,12 +990,74 @@ class _SettingsScreenState extends State<SettingsScreen> {
       await widget.api.post('/delete-account', body: {});
       await widget.api.clearToken();
       if (mounted) widget.onLogout();
+    } on ApiException catch (error) {
+      if (!mounted) return;
+      if (error.status == 409) {
+        await _showDeletionBlocker(error);
+      } else {
+        showCgToast(context, context.tr('未能刪除帳戶，請重試。', 'Could not delete your account. Try again.'));
+      }
     } catch (_) {
       if (mounted) {
         showCgToast(context, context.tr('未能刪除帳戶，請重試。', 'Could not delete your account. Try again.'));
       }
     } finally {
       if (mounted) setState(() => _deleting = false);
+    }
+  }
+
+  Future<void> _showDeletionBlocker(ApiException error) async {
+    final t = context.tr;
+    final english = switch (error.code) {
+      'unused_paid_voucher' => 'Refund or use any unused paid vouchers first.',
+      'payment_in_flight' => 'Cancel or pay for the pending order in My orders.',
+      'refund_in_flight' => 'Check the refund in My orders. Delete your account once the refund is complete.',
+      'withdrawal_in_flight' => 'Check your withdrawal history. Delete your account once the withdrawal is complete.',
+      'withdrawable_cashback' => 'Withdraw your available cashback first.',
+      'withdrawal_unreconciled' => 'Give support the withdrawal reference so they can reconcile the payment.',
+      'cashback_adjustment' => 'Give support the cashback reference so they can reconcile the balance.',
+      'merchant_application' => 'Wait for your merchant application decision or ask support to withdraw it.',
+      'active_shop' => 'Close the shop in the merchant dashboard or ask support to arrange a transfer.',
+      'unsettled_merchant_funds' => 'Review the funds in the merchant dashboard. Delete your account after settlement.',
+      'merchant_orders' => 'Complete or refund outstanding orders in the merchant dashboard.',
+      'admin_role' => 'Transfer and remove this account’s administrator access in admin settings.',
+      _ => error.message,
+    };
+    final hasOrder = const {'unused_paid_voucher', 'payment_in_flight', 'refund_in_flight'}.contains(error.code);
+    final hasWithdrawal = cashbackEnabled && error.code == 'withdrawable_cashback';
+    final hasHistory = error.code == 'withdrawal_in_flight';
+    final navigate = await showDialog<bool>(
+      context: context,
+      builder: (dialog) => AlertDialog(
+        title: Text(t('暫時無法刪除帳戶', 'Can’t delete account yet')),
+        content: Text(t(error.message, english)),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialog, false),
+            child: Text(t('關閉', 'Close')),
+          ),
+          if (hasOrder || hasWithdrawal || hasHistory)
+            TextButton(
+              onPressed: () => Navigator.pop(dialog, true),
+              child: Text(hasOrder
+                  ? t('查看訂單', 'View orders')
+                  : hasWithdrawal
+                      ? t('去提現', 'Withdraw cashback')
+                      : t('查看提現紀錄', 'View withdrawal history')),
+            ),
+        ],
+      ),
+    );
+    if (navigate == true && mounted && widget.api.isLoggedIn) {
+      if (hasOrder) {
+        await Navigator.of(context).pushNamed('/orders');
+      } else {
+        await Navigator.of(context).push(MaterialPageRoute(
+          builder: (_) => hasWithdrawal
+              ? WithdrawScreen(api: widget.api)
+              : WithdrawalHistoryScreen(api: widget.api),
+        ));
+      }
     }
   }
 

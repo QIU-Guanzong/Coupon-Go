@@ -1,5 +1,5 @@
 """Auth dependencies: current user / roles."""
-from fastapi import Depends, HTTPException
+from fastapi import Depends, HTTPException, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.orm import Session
 
@@ -9,23 +9,35 @@ from .database import get_db
 bearer = HTTPBearer(auto_error=False)
 
 
-def _identity(creds, db):
+def _identity(creds, db, *, lock_for_write=False):
     payload = security.decode_token(creds.credentials) if creds is not None else None
     if payload is not None and payload.get("purpose") in (None, "legal-consent"):
         try:
-            user = db.get(models.User, int(payload["sub"]))
+            user_id = int(payload["sub"])
+            if lock_for_write:
+                # Serialize authenticated writes with account deletion.
+                # SQLite ignores SELECT FOR UPDATE, so acquire its write lock
+                # explicitly; PostgreSQL holds the row lock until commit.
+                if db.get_bind().dialect.name == "sqlite":
+                    db.query(models.User).filter_by(id=user_id).update(
+                        {"id": user_id}, synchronize_session=False)
+                user = (db.query(models.User).filter_by(id=user_id)
+                        .with_for_update(key_share=True).populate_existing().first())
+            else:
+                user = db.get(models.User, user_id)
         except (KeyError, TypeError, ValueError):
             user = None
-        if user is not None and user.is_active:
+        if user is not None and user.is_active and user.deleted_at is None:
             return user, payload
     return None, {}
 
 
 def get_session_identity(
+    request: Request,
     creds: HTTPAuthorizationCredentials = Depends(bearer),
     db: Session = Depends(get_db),
 ) -> tuple[models.User, bool]:
-    user, payload = _identity(creds, db)
+    user, payload = _identity(creds, db, lock_for_write=request.method not in ("GET", "HEAD", "OPTIONS"))
     if user is None:
         raise HTTPException(status_code=401, detail="請登錄以繼續")
     return user, payload.get("purpose") == "legal-consent"
@@ -37,10 +49,11 @@ def get_identity_user(identity=Depends(get_session_identity)) -> models.User:
 
 
 def get_current_user(
+    request: Request,
     creds: HTTPAuthorizationCredentials = Depends(bearer),
     db: Session = Depends(get_db),
 ) -> models.User:
-    user, payload = _identity(creds, db)
+    user, payload = _identity(creds, db, lock_for_write=request.method not in ("GET", "HEAD", "OPTIONS"))
     if user is None:
         raise HTTPException(status_code=401, detail="請登錄以繼續")
     docs = legal.documents()
