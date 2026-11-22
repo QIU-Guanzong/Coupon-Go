@@ -55,7 +55,9 @@ def test_multi_voucher_settlement_reversal_refund_and_monthly_retry(client, monk
         awards = db.query(models.PointTransaction).filter(models.PointTransaction.reason == 'redeem', models.PointTransaction.ref_id.in_(voucher_ids)).all()
         reversals = db.query(models.PointTransaction).filter(models.PointTransaction.reason == 'revoke', models.PointTransaction.ref_id.in_(redemptions)).all()
         assert sum(row.delta for row in awards) + sum(row.delta for row in reversals) == 0
-        assert len(db.query(ConnectLedgerEntry).filter(ConnectLedgerEntry.redemption_id.in_(redemptions)).all()) == 3
+        entries = db.query(ConnectLedgerEntry).filter(ConnectLedgerEntry.redemption_id.in_(redemptions)).all()
+        assert len(entries) == 3 and all(entry.status == 'reversed' for entry in entries)
+        assert all(not entry.stripe_transfer_id and not entry.pending_reversal for entry in entries)
         first = sweep_monthly_settlements(db, period=period)
         second = sweep_monthly_settlements(db, period=period)
         assert first['generated'] == second['generated'] == 0
