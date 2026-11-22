@@ -555,8 +555,7 @@ def test_pay_racing_with_revocation_preserves_cash_and_effective_balance(client)
 @pytest.mark.skipif(BACKEND != "postgres", reason="exercises PostgreSQL FK lock compatibility")
 def test_generate_during_revocation_posts_sale_and_credit_once(client, monkeypatch):
     from threading import Event
-    from app import settlement_ledger
-    from app.routers import admin_v2
+    from app import merchant_finance, settlement_ledger
 
     _, _, rid = _redeem(client, "generate-revoke@example.com", 30)
     finance, vendor = _finance_headers(client), _vendor_headers(client)
@@ -573,7 +572,7 @@ def test_generate_during_revocation_posts_sale_and_credit_once(client, monkeypat
         revoke_ready.set()
         return original_lock(db, shop_id)
 
-    monkeypatch.setattr(admin_v2, "lock_shop", generate_lock)
+    monkeypatch.setattr(merchant_finance, "lock_shop", generate_lock)
     monkeypatch.setattr(settlement_ledger, "lock_shop", credit_lock)
 
     def action(i, tc):
