@@ -18,6 +18,7 @@ def fake_stripe(monkeypatch):
     monkeypatch.setattr(config, 'APP_ENV', 'dev')
     monkeypatch.setattr(config, 'STRIPE_SECRET_KEY', 'sk_test_fixture')
     monkeypatch.setattr(config, 'STRIPE_PUBLISHABLE_KEY', 'pk_test_fixture')
+    monkeypatch.setattr(config, 'STRIPE_WEBHOOK_SECRET', 'whsec_fixture')
     monkeypatch.setattr('app.routers.packages.verify_webhook_signature', lambda *_: True)
     from app.routers import packages
     lock_order = packages._lock_order_with_account

@@ -74,10 +74,14 @@ PAYMENT_METHODS = ("fps", "card")
 
 
 def _payment_mode():
-    if config.APP_ENV == "dev" and not config.STRIPE_SECRET_KEY:
+    secret = config.STRIPE_SECRET_KEY.strip()
+    publishable = config.STRIPE_PUBLISHABLE_KEY.strip()
+    webhook = config.STRIPE_WEBHOOK_SECRET.strip()
+    # Incomplete Stripe configuration must not silently become a local
+    # simulator: a callback-capable Stripe test setup needs all three.
+    if config.APP_ENV == "dev" and not (secret or publishable or webhook):
         return "demo"
-    if (config.STRIPE_SECRET_KEY.startswith("sk_test_") and
-            config.STRIPE_PUBLISHABLE_KEY.startswith("pk_test_")):
+    if secret.startswith("sk_test_") and publishable.startswith("pk_test_") and webhook:
         return "stripe_test"
     return "unavailable"
 

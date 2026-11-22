@@ -15,6 +15,7 @@ def stripe_test(monkeypatch):
     monkeypatch.setattr(config, "APP_ENV", "dev")
     monkeypatch.setattr(config, "STRIPE_SECRET_KEY", "sk_test_fixture")
     monkeypatch.setattr(config, "STRIPE_PUBLISHABLE_KEY", "pk_test_fixture")
+    monkeypatch.setattr(config, "STRIPE_WEBHOOK_SECRET", "whsec_fixture")
 
     def fake_intent(key, order_id, amount, method, currency):
         ref = "pi_fake_" + uuid4().hex
@@ -31,6 +32,27 @@ def test_payment_configuration_is_honest(client, monkeypatch):
     assert client.get('/api/v3/payment-options').json() == {
         "mode": "unavailable", "card": False, "fps": False}
     assert client.post('/api/v3/packages/1/purchase', json={"payment_method": "card"}, headers=h).status_code == 503
+
+
+@pytest.mark.parametrize('missing', ['secret', 'publishable', 'webhook'])
+def test_incomplete_stripe_configuration_does_not_enable_payment(client, monkeypatch, missing):
+    monkeypatch.setattr(config, 'APP_ENV', 'dev')
+    monkeypatch.setattr(config, 'STRIPE_SECRET_KEY', '' if missing == 'secret' else 'sk_test_fixture')
+    monkeypatch.setattr(config, 'STRIPE_PUBLISHABLE_KEY', '' if missing == 'publishable' else 'pk_test_fixture')
+    monkeypatch.setattr(config, 'STRIPE_WEBHOOK_SECRET', '' if missing == 'webhook' else 'whsec_fixture')
+    assert client.get('/api/v3/payment-options').json() == {
+        'mode': 'unavailable', 'card': False, 'fps': False}
+    user = _register_and_login(client, f'stripe-missing-{missing}@example.com')
+    assert client.post('/api/v3/packages/1/purchase', json={'payment_method': 'card'}, headers=user).status_code == 503
+
+
+def test_simulator_is_available_only_with_no_stripe_configuration(client, monkeypatch):
+    monkeypatch.setattr(config, 'APP_ENV', 'dev')
+    monkeypatch.setattr(config, 'STRIPE_SECRET_KEY', '')
+    monkeypatch.setattr(config, 'STRIPE_PUBLISHABLE_KEY', '')
+    monkeypatch.setattr(config, 'STRIPE_WEBHOOK_SECRET', '')
+    assert client.get('/api/v3/payment-options').json() == {
+        'mode': 'demo', 'card': True, 'fps': True}
 
 
 def test_current_owner_can_resume_test_payment_and_server_confirms(client, stripe_test, monkeypatch):
