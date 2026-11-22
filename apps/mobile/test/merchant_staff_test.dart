@@ -71,8 +71,9 @@ class StaffLoginApi extends StaffApi {
   @override
   Future<Map<String, dynamic>> post(String path,
       {Map<String, dynamic>? body, Map<String, String>? query}) async {
-    if (path == '/login')
+    if (path == '/login') {
       return {'role': 'merchant-admin', 'access_token': 'test-token'};
+    }
     return super.post(path, body: body, query: query);
   }
 
