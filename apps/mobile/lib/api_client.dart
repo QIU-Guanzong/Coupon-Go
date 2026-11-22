@@ -35,11 +35,17 @@ class ApiClient extends ChangeNotifier {
   int _sessionRevision = 0;
   int get sessionRevision => _sessionRevision;
 
+  // A public simulated trial shares the same origin as the real application.
+  // It must never overwrite an existing account's persisted token.
+  static const _tokenStorageKey = bool.fromEnvironment('PUBLIC_TRIAL')
+      ? 'coupon_trial_access_token'
+      : 'access_token';
+
   Future<void> loadToken() async {
     final revision = _sessionRevision;
     final prefs = await SharedPreferences.getInstance();
     if (revision != _sessionRevision) return;
-    final token = prefs.getString('access_token');
+    final token = prefs.getString(_tokenStorageKey);
     if (_token != token) {
       _token = token;
       _sessionRevision++;
@@ -53,9 +59,9 @@ class ApiClient extends ChangeNotifier {
     notifyListeners();
     final prefs = await SharedPreferences.getInstance();
     if (persist) {
-      await prefs.setString('access_token', token);
+      await prefs.setString(_tokenStorageKey, token);
     } else {
-      await prefs.remove('access_token');
+      await prefs.remove(_tokenStorageKey);
     }
   }
 
@@ -64,7 +70,7 @@ class ApiClient extends ChangeNotifier {
     _sessionRevision++;
     notifyListeners();
     final prefs = await SharedPreferences.getInstance();
-    await prefs.remove('access_token');
+    await prefs.remove(_tokenStorageKey);
   }
 
   bool get isLoggedIn => _token != null;
