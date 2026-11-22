@@ -12,6 +12,7 @@ class DashboardApi extends ApiClient {
       'balance_complete': false,
       'legacy_untracked_redemptions': 2,
       'unknown_transfer_count': 1,
+      'unknown_transfer_amount': 90,
       'unknown_reversal_count': 1,
       'withdrawable': 0,
       'pending_settlement': 90,
@@ -78,6 +79,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('有 2 筆歷史核銷待核對，金額僅包含已接入流水。'), findsOneWidget);
     expect(find.text('已接入流水可提取'), findsOneWidget);
+    expect(find.textContaining('HK\$90.00 已列入待轉帳'), findsOneWidget);
     expect(find.textContaining('待確認金額不代表已到帳'), findsOneWidget);
     await tester.dragUntilVisible(
         find.text('測試店'), find.byType(Scrollable).first, const Offset(0, -300));

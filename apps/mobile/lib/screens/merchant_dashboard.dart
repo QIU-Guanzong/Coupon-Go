@@ -11,6 +11,17 @@ String _rate(Object? value, Object? claims) =>
         ? '${(value * 100).toStringAsFixed(1)}%'
         : '—';
 
+String? _unresolved(Map? balance) {
+  final transfers = balance?['unknown_transfer_count'];
+  final reversals = balance?['unknown_reversal_count'];
+  if (transfers is! num || reversals is! num) return '待核對流水狀態暫不可用，請先核對。';
+  if (transfers == 0 && reversals == 0) return null;
+  final amount = balance?['unknown_transfer_amount'];
+  final amountText =
+      amount is num && transfers > 0 ? '（${_money(amount)} 已列入待轉帳）' : '';
+  return '有 ${_count(transfers)} 筆轉帳$amountText及 ${_count(reversals)} 筆沖回待核對；待確認金額不代表已到帳。';
+}
+
 class MerchantDashboardScreen extends StatefulWidget {
   const MerchantDashboardScreen({super.key, required this.api});
   final ApiClient api;
@@ -106,12 +117,8 @@ class _MerchantDashboardScreenState extends State<MerchantDashboardScreen> {
                                 const TextStyle(fontWeight: FontWeight.w600)),
                         const SizedBox(height: 12),
                       ],
-                      if ((balance['unknown_transfer_count'] as num? ?? 0) >
-                              0 ||
-                          (balance['unknown_reversal_count'] as num? ?? 0) >
-                              0) ...[
-                        Text(
-                            '有 ${_count(balance['unknown_transfer_count'])} 筆轉帳及 ${_count(balance['unknown_reversal_count'])} 筆沖回待核對；待確認金額不代表已到帳。'),
+                      if (_unresolved(balance) != null) ...[
+                        Text(_unresolved(balance)!),
                         const SizedBox(height: 12),
                       ],
                       _AmountRow(
@@ -328,11 +335,8 @@ class _MerchantShopDashboardScreenState
                       Text(_balance?['balance_complete'] == false
                           ? '有 ${_count(_balance?['legacy_untracked_redemptions'])} 筆歷史核銷待核對，金額僅包含已接入流水。'
                           : '餘額完整性待確認，請先核對流水。'),
-                    if ((_balance?['unknown_transfer_count'] as num? ?? 0) >
-                            0 ||
-                        (_balance?['unknown_reversal_count'] as num? ?? 0) > 0)
-                      Text(
-                          '有 ${_count(_balance?['unknown_transfer_count'])} 筆轉帳及 ${_count(_balance?['unknown_reversal_count'])} 筆沖回待核對；待確認金額不代表已到帳。'),
+                    if (_unresolved(_balance) != null)
+                      Text(_unresolved(_balance)!),
                     _AmountRow(
                         label: _balance?['balance_complete'] == true
                             ? '可提取'
