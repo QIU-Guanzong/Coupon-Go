@@ -638,3 +638,44 @@ def test_monthly_allocation_conflict_is_failure_not_duplicate_skip(client, monke
         assert item['failed'] >= 1
         assert any(x['shop_id'] == shop_id for x in item['failures'])
         assert not db.query(Settlement).filter_by(shop_id=shop_id, period=period).first()
+
+
+def test_unknown_transfer_and_revoked_reversal_remain_visible(client):
+    """Simulated provider states stay visible in the single Connect ledger."""
+    from app.models_connect import ConnectLedgerEntry
+    shop_id = 16
+    coupon_id = _priced_coupon_for_shop(shop_id, 100)
+    _, _, redemption_id = _redeem(client, 'stats-unknown-reversal@example.com', coupon_id)
+    headers = _vendor_headers(client)
+    with TestingSession() as db:
+        entry = db.query(ConnectLedgerEntry).filter_by(redemption_id=redemption_id).one()
+        entry.status = 'transfer_unknown'
+        entry.dispatch_started = True
+        db.commit()
+    balance = _balance(client, shop_id, headers)
+    assert balance['unknown_transfer_count'] == 1
+    assert balance['unknown_transfer_amount'] == pytest.approx(90)
+    assert balance['withdrawable'] == 0
+    with TestingSession() as db:
+        entry = db.query(ConnectLedgerEntry).filter_by(redemption_id=redemption_id).one()
+        entry.status = 'transferred'
+        entry.pending_reversal = True
+        entry.note = 'reversal_result_unknown'
+        db.get(models.Redemption, redemption_id).revoked_at = _now()
+        db.commit()
+    balance = _balance(client, shop_id, headers)
+    assert balance['unknown_transfer_count'] == 0 and balance['unknown_reversal_count'] == 1
+    response = client.get(f'/api/v3/merchant/shops/{shop_id}/balance/entries', headers=headers)
+    assert response.status_code == 200, response.text
+    line = next(row for row in response.json()['entries'] if row['redemption_id'] == redemption_id)
+    assert line['state'] == 'reversal_unknown' and line['reversed'] is True
+    assert line['basis_amount'] == 100 and line['net_amount'] == 90
+    with TestingSession() as db:
+        entry = db.query(ConnectLedgerEntry).filter_by(redemption_id=redemption_id).one()
+        entry.status = 'reversed'
+        entry.pending_reversal = False
+        entry.note = ''
+        db.commit()
+    assert _balance(client, shop_id, headers)['unknown_reversal_count'] == 0
+    entries = client.get(f'/api/v3/merchant/shops/{shop_id}/balance/entries', headers=headers).json()['entries']
+    assert next(row for row in entries if row['redemption_id'] == redemption_id)['state'] == 'reversed'

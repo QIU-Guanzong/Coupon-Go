@@ -64,6 +64,12 @@ def shop_balance(db: Session, shop: models.Shop) -> dict:
     from .connect_service import merchant_balance
     from .models_connect import ConnectLedgerEntry
     balance = merchant_balance(db, shop.id)
+    uncertain_transfers = (db.query(ConnectLedgerEntry)
+                           .filter_by(shop_id=shop.id, kind='transfer', status='transfer_unknown')
+                           .all())
+    uncertain_reversals = (db.query(ConnectLedgerEntry)
+                           .filter_by(shop_id=shop.id, kind='transfer', pending_reversal=True,
+                                      note='reversal_result_unknown').count())
     recorded = db.query(ConnectLedgerEntry.redemption_id).filter(
         ConnectLedgerEntry.shop_id == shop.id, ConnectLedgerEntry.kind == "transfer",
         ConnectLedgerEntry.redemption_id.is_not(None))
@@ -102,6 +108,9 @@ def shop_balance(db: Session, shop: models.Shop) -> dict:
         "commission_rate": float(effective_commission_rate(db, shop.id)),
         "balance_complete": legacy_count == 0,
         "legacy_untracked_redemptions": legacy_count,
+        "unknown_transfer_count": len(uncertain_transfers),
+        "unknown_transfer_amount": _money(sum((Decimal(str(e.net_amount)) for e in uncertain_transfers), Decimal('0'))),
+        "unknown_reversal_count": uncertain_reversals,
     }
 
 
@@ -116,7 +125,9 @@ def balance_entries(db: Session, shop: models.Shop,
         entry = transfers.get(redemption_id)
         if not entry:
             return "unavailable"
-        return "reversal_pending" if entry.pending_reversal else entry.status
+        if entry.pending_reversal:
+            return "reversal_unknown" if entry.note == "reversal_result_unknown" else "reversal_pending"
+        return entry.status
 
     rows = []
     settled = (db.query(SettlementItem, Settlement, models.Redemption)
@@ -148,20 +159,24 @@ def balance_entries(db: Session, shop: models.Shop,
             "net_amount": _money(item.amount - item.commission),
             "state": state,
             "settlement_id": s.id,
-            "reversed": rev is not None,
+            "reversed": rev is not None or red.revoked_at is not None,
         })
     unsettled = (db.query(models.Redemption)
-                 .filter(models.Redemption.shop_id == shop.id,
-                         models.Redemption.revoked_at.is_(None))
+                 .filter(models.Redemption.shop_id == shop.id)
                  .order_by(models.Redemption.scanned_at.desc()).all())
     for red in unsettled:
         if red.id in seen_redemptions:
             continue
-        amount = settlement_basis(db, redemption=red)
+        transfer = transfers.get(red.id)
+        if red.revoked_at and transfer is None:
+            continue
+        amount = (Decimal(str(transfer.gross_amount)) if red.revoked_at and transfer
+                  else settlement_basis(db, redemption=red))
         if amount is None:
             continue
         coupon = db.get(models.Coupon, red.coupon_id)
-        fee = (amount * redemption_commission_rate(red, rate)).quantize(CENT)
+        fee = (Decimal(str(transfer.commission)) if red.revoked_at and transfer
+               else (amount * redemption_commission_rate(red, rate)).quantize(CENT))
         rows.append({
             "redemption_id": red.id, "coupon_id": red.coupon_id,
             "coupon_name": coupon.coupon_name if coupon else "",
@@ -173,7 +188,7 @@ def balance_entries(db: Session, shop: models.Shop,
             "net_amount": _money(amount - fee),
             "state": transfer_state(red.id),
             "settlement_id": None,
-            "reversed": False,
+            "reversed": red.revoked_at is not None,
         })
     rows.sort(key=lambda e: e["scanned_at"] or datetime.min, reverse=True)
     total = len(rows)

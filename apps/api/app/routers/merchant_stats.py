@@ -56,6 +56,9 @@ def merchant_balance(user: models.User = Depends(get_current_user),
         "withdrawn": _sum_money(s["withdrawn"] for s in per_shop),
         "balance_complete": all(s["balance_complete"] for s in per_shop),
         "legacy_untracked_redemptions": sum(s["legacy_untracked_redemptions"] for s in per_shop),
+        "unknown_transfer_count": sum(s["unknown_transfer_count"] for s in per_shop),
+        "unknown_transfer_amount": _sum_money(s["unknown_transfer_amount"] for s in per_shop),
+        "unknown_reversal_count": sum(s["unknown_reversal_count"] for s in per_shop),
         "shops": per_shop,
     }
 

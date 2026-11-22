@@ -16,6 +16,9 @@
 不能按结算单推断已转款。`balance_complete=false` 与
 `legacy_untracked_redemptions` 指示缺少 Connect 流水的历史核销数，
 此时所示余额仅代表已接入 Connect 的部分。
+`unknown_transfer_count` / `unknown_transfer_amount` 表示转账结果尚待
+确认的笔数和净额；尚未进入冲回的部分包含在待处理金额中，均不表示已到账。`unknown_reversal_count`
+表示冲回结果未知的笔数。商户端应提示待核对，不应表示这些金额已到账。
 
 ## 接口清单
 
@@ -45,8 +48,11 @@
  "state": "pending_settlement", "settlement_id": null, "reversed": false}
 ```
 
-`state` 为 Connect 转账流水状态；`reversal_pending` 表示冲回未确认，
+`state` 为 Connect 转账流水状态；`reversal_pending` 表示冲回待处理，
+`reversal_unknown` 表示冲回结果未知，已撤销的相关核销仍保留在明细中；
 `unavailable` 表示没有转账流水，不能据此断言已付款。
+`reversed` 表示核销或结算行已撤销，不代表 Stripe 冲回已完成；冲回结果
+以 `state` 为准。
 
 ### 经营看板（§2.4）
 
