@@ -1,5 +1,6 @@
 import 'package:coupon_go/api_client.dart';
 import 'package:coupon_go/screens/merchant_staff.dart';
+import 'package:coupon_go/screens/guest_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -66,7 +67,32 @@ class StaffApi extends ApiClient {
   }
 }
 
+class StaffLoginApi extends StaffApi {
+  @override
+  Future<Map<String, dynamic>> post(String path,
+      {Map<String, dynamic>? body, Map<String, String>? query}) async {
+    if (path == '/login')
+      return {'role': 'merchant-admin', 'access_token': 'test-token'};
+    return super.post(path, body: body, query: query);
+  }
+
+  @override
+  Future<void> saveToken(String token, {bool persist = true}) async {}
+}
+
 void main() {
+  testWidgets('已接受邀請的店員可從企業登入', (tester) async {
+    final api = StaffLoginApi();
+    var authed = false;
+    await tester.pumpWidget(MaterialApp(
+        home:
+            AuthScreen(api: api, vendor: true, onAuthed: () => authed = true)));
+    await tester.enterText(find.byType(TextField).at(0), 'staff@example.com');
+    await tester.enterText(find.byType(TextField).at(1), 'password');
+    await tester.tap(find.text('登錄').last);
+    await tester.pumpAndSettle();
+    expect(authed, isTrue);
+  });
   testWidgets('店主使用電郵與角色發送邀請', (tester) async {
     final api = StaffApi();
     await tester.pumpWidget(

@@ -149,7 +149,7 @@ class _AuthScreenState extends State<AuthScreen> {
               : await api.post('/login',
                   body: {'email': address, 'password': password.text});
           if (!mounted) return;
-          if (widget.vendor && !['vendor', 'admin'].contains(result['role'])) {
+          if (widget.vendor && !['vendor', 'admin', 'merchant-admin'].contains(result['role'])) {
             setState(() => error =
                 context.tr('請使用企業帳戶登錄', 'Please use a business account'));
             return;
