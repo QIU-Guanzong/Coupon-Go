@@ -81,7 +81,7 @@ class _ScanBatchScreenState extends State<ScanBatchScreen> {
     });
     try {
       var result = await widget.api.prepareScan(code);
-      if (!_current(revision)) return;
+      if (!mounted || !_current(revision)) return;
       int? branchId;
       String? branchName;
       if (result['branch_selection_required'] == true) {
