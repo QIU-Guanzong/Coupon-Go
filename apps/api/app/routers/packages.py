@@ -445,6 +445,20 @@ def _purchase_response(db: Session, order: Order, attempt: Payment,
 
 
 # ---------- packages: list / detail / create ----------
+@router.get("/vendor/package-workspace")
+def vendor_package_workspace(
+        vendor: models.User = Depends(require_role("vendor", "admin")),
+        db: Session = Depends(get_db)):
+    """Current merchant's stores and packages, including non-public states."""
+    shops = (db.query(models.Shop).filter(models.Shop.vendor_id == vendor.id)
+             .order_by(models.Shop.id).all())
+    shop_ids = [shop.id for shop in shops]
+    packages = (db.query(Package).filter(Package.shop_id.in_(shop_ids))
+                .order_by(Package.id.desc()).all()) if shop_ids else []
+    return {"shops": [{"id": shop.id, "name": shop.name} for shop in shops],
+            "packages": [package_out(db, package) for package in packages]}
+
+
 @router.get("/packages")
 def list_packages(shop_id: int = Query(None),
                   status: str = Query("active"),
