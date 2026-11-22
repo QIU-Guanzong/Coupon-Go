@@ -12,6 +12,7 @@ import '../theme.dart';
 import '../widgets/widgets.dart';
 import 'reviews_admin.dart';
 import 'vendor_packages.dart';
+import 'merchant_dashboard.dart';
 
 /// Vendor home: gold theme, usage summary, issue-coupon entry.
 class VendorHomeScreen extends StatefulWidget {
@@ -84,6 +85,13 @@ class _VendorHomeScreenState extends State<VendorHomeScreen> {
                   builder: (_) => VendorPackagesScreen(api: widget.api))),
               icon: const Icon(Icons.restaurant_menu),
               label: Text(context.tr('套餐管理', 'Packages')),
+            ),
+            const SizedBox(height: 8),
+            OutlinedButton.icon(
+              onPressed: () => Navigator.of(context).push(MaterialPageRoute(
+                  builder: (_) => MerchantDashboardScreen(api: widget.api))),
+              icon: const Icon(Icons.insights_outlined),
+              label: Text(context.tr('經營與餘額', 'Business and balance')),
             ),
             const SizedBox(height: 8),
             OutlinedButton(
