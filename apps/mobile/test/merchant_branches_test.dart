@@ -89,6 +89,18 @@ void main() {
     expect(api.calls.single['query']['branch_id'], '11');
     expect(find.textContaining('無法儲存'), findsOneWidget);
     expect(find.text('中環店'), findsOneWidget);
+    expect(
+        tester
+            .widget<TextButton>(find.widgetWithText(TextButton, '編輯'))
+            .onPressed,
+        isNull);
+    await tester.tap(find.text('重新載入'));
+    await tester.pumpAndSettle();
+    expect(
+        tester
+            .widget<TextButton>(find.widgetWithText(TextButton, '編輯'))
+            .onPressed,
+        isNotNull);
   });
 
   testWidgets('店主從選中的店舖打開員工頁', (tester) async {

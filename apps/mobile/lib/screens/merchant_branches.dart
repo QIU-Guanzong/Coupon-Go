@@ -23,6 +23,7 @@ class _MerchantBranchesScreenState extends State<MerchantBranchesScreen> {
   int? _shopId;
   bool _loading = true;
   bool _busy = false;
+  bool _requiresRefresh = false;
   String? _error;
   late int _session;
   int _loadRevision = 0;
@@ -51,6 +52,7 @@ class _MerchantBranchesScreenState extends State<MerchantBranchesScreen> {
       _branches = [];
       _shopId = null;
       _busy = false;
+      _requiresRefresh = false;
       _loading = true;
       _error = null;
     });
@@ -123,6 +125,7 @@ class _MerchantBranchesScreenState extends State<MerchantBranchesScreen> {
       setState(() {
         _branches = _rows(data['branches']);
         _loading = false;
+        _requiresRefresh = false;
       });
     } catch (error) {
       if (mounted &&
@@ -143,7 +146,10 @@ class _MerchantBranchesScreenState extends State<MerchantBranchesScreen> {
   Future<void> _edit([Map<String, dynamic>? branch]) async {
     final shopId = _shopId;
     final session = _session;
-    if (shopId == null || _shop?['can_manage_branches'] != true || _busy) {
+    if (shopId == null ||
+        _shop?['can_manage_branches'] != true ||
+        _busy ||
+        _requiresRefresh) {
       return;
     }
     final values = await showDialog<Map<String, String>>(
@@ -171,13 +177,17 @@ class _MerchantBranchesScreenState extends State<MerchantBranchesScreen> {
         );
       }
       if (!mounted || session != _session || shopId != _shopId) return;
+      setState(() => _requiresRefresh = true);
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(branch == null ? '分店已建立' : '分店資料已更新')),
       );
       await _loadBranches(shopId);
     } catch (error) {
       if (mounted && session == _session && shopId == _shopId) {
-        setState(() => _error = '${_message(error)} 如結果未確認，請先重新載入核對。');
+        setState(() {
+          _requiresRefresh = true;
+          _error = '${_message(error)} 如結果未確認，請先重新載入核對。';
+        });
       }
     } finally {
       if (mounted && session == _session) setState(() => _busy = false);
@@ -260,7 +270,9 @@ class _MerchantBranchesScreenState extends State<MerchantBranchesScreen> {
                         ),
                         if (_shop?['can_manage_branches'] == true)
                           FilledButton.icon(
-                            onPressed: _busy ? null : () => _edit(),
+                            onPressed: _busy || _requiresRefresh
+                                ? null
+                                : () => _edit(),
                             icon: const Icon(Icons.add),
                             label: const Text('新增分店'),
                           ),
@@ -285,7 +297,9 @@ class _MerchantBranchesScreenState extends State<MerchantBranchesScreen> {
                         ),
                         trailing: _shop?['can_manage_branches'] == true
                             ? TextButton(
-                                onPressed: _busy ? null : () => _edit(branch),
+                                onPressed: _busy || _requiresRefresh
+                                    ? null
+                                    : () => _edit(branch),
                                 child: const Text('編輯'),
                               )
                             : null,
