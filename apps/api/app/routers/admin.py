@@ -55,7 +55,9 @@ def _file_meta(db: Session, file_id):
 def _application_out(db: Session, a: MerchantApplication) -> dict:
     from ..models_line_b import (MerchantContractSignature,
                                  MerchantContractVersion)
+    from ..models_connect import ApplicationConnectAccount
     user = db.query(models.User).filter(models.User.id == a.user_id).first()
+    connect = db.query(ApplicationConnectAccount).filter_by(application_id=a.id).first()
     contract = None
     if a.contract_version_id:
         v = db.query(MerchantContractVersion).filter(
@@ -74,7 +76,8 @@ def _application_out(db: Session, a: MerchantApplication) -> dict:
     return {
         "id": a.id, "user_id": a.user_id,
         "applicant_email": user.email if user else "",
-        "shop_name": a.shop_name, "contact_name": a.contact_name or "",
+        "shop_name": a.shop_name, "approved_shop_id": a.approved_shop_id,
+        "contact_name": a.contact_name or "",
         "phone": a.phone or "", "address": a.address or "",
         "business_license": a.business_license or "",
         "id_card": a.id_card or "",
@@ -94,9 +97,10 @@ def _application_out(db: Session, a: MerchantApplication) -> dict:
         "stripe_account_id": a.stripe_account_id or "",
         "stripe_charges_enabled": bool(a.stripe_charges_enabled),
         "stripe_payouts_enabled": bool(a.stripe_payouts_enabled),
-        "stripe_status_source": ("simulated" if config.APP_ENV == "dev" else "unverified")
-        if a.stripe_account_id else "not_started",
-        "approved_shop_id": a.approved_shop_id,
+        "stripe_transfers_enabled": bool(connect.transfers_enabled) if connect else False,
+        "stripe_status_source": ("simulated" if connect.simulated else "stripe_test") if connect else (
+            ("simulated" if config.APP_ENV == "dev" else "unverified")
+            if a.stripe_account_id else "not_started"),
         "contract": contract,
         "status": a.status, "reject_reason": a.reject_reason or "",
         "reviewed_by": a.reviewed_by, "reviewed_at": a.reviewed_at,
@@ -240,18 +244,23 @@ def review_application(application_id: int,
         if config.APP_ENV != "dev" and "【待法務確認】" in (current.body_text or ""):
             raise HTTPException(status_code=409,
                                 detail="測試合約不能用於正式入駐")
-        # These columns can currently only be entered manually in the
-        # development simulator; they are not evidence of a real account.
-        # Connect must replace this guard with a verified provider lookup.
-        if config.APP_ENV != "dev":
+        from ..models_connect import ApplicationConnectAccount
+        from .. import application_connect
+        actual_account = db.query(ApplicationConnectAccount).filter_by(
+            application_id=app.id).first()
+        if actual_account is not None:
+            # Recheck with the provider and bind the resulting account to
+            # the new shop in this same approval transaction.
+            application_connect.approve_binding(db, app)
+        elif config.APP_ENV != "dev":
             raise HTTPException(status_code=409,
                                 detail="正式 Stripe 開戶核驗尚未接通，暫不能批准")
-        if (not (app.stripe_account_id or "").strip()
-                or not app.stripe_charges_enabled
-                or not app.stripe_payouts_enabled):
-            raise HTTPException(status_code=400,
-                                detail="尚未完成 Stripe 開戶")
-        bind_approved_shop(db, app)
+        elif (not (app.stripe_account_id or "").strip()
+              or not app.stripe_charges_enabled or not app.stripe_payouts_enabled):
+            raise HTTPException(status_code=400, detail="尚未完成 Stripe 開戶")
+        else:
+            # Only the development mock reaches this path.
+            bind_approved_shop(db, app)
     app.status = "approved" if body.approve else "rejected"
     app.reject_reason = "" if body.approve else body.reject_reason.strip()
     app.reviewed_by = admin.id
