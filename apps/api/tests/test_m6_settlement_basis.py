@@ -214,6 +214,21 @@ def _redeem_package(client, email, shop_id, price=150, quantity=1):
     return red.id, order
 
 
+def _model_unsent_legacy_redemption(redemption_id):
+    """Model a pre-Connect scan by removing only its provably unsent test intent."""
+    from app.models_connect import ConnectAccount, ConnectLedgerEntry
+    with TestingSession() as db:
+        red = db.get(models.Redemption, redemption_id)
+        assert db.query(ConnectAccount).filter_by(shop_id=red.shop_id).count() == 0
+        entries = db.query(ConnectLedgerEntry).filter_by(redemption_id=redemption_id).all()
+        assert len(entries) == 1
+        entry = entries[0]
+        assert entry.status == 'pending' and entry.dispatch_started is False
+        assert not entry.stripe_transfer_id and not entry.stripe_reversal_id
+        db.delete(entry)
+        db.commit()
+
+
 def _revoke(client, redemption_id):
     r = client.post(f"/api/v3/redemptions/{redemption_id}/revoke",
                     headers=_vendor_headers(client))
@@ -471,7 +486,8 @@ def test_m8_cash_voucher_snapshot_and_legacy_positive_value_never_payable(client
 def test_m8_price_coupon_nonzero_statement_can_be_marked_paid(client):
     fh = _finance_headers(client)
     _set_coupon_fields(33, coupon_type="Price", discount_price=25, cash_amount=None)
-    _redeem(client, "m8-price@example.com", coupon_id=33)  # shop 19
+    redemption_id = _redeem(client, "m8-price@example.com", coupon_id=33)  # shop 19
+    _model_unsent_legacy_redemption(redemption_id)
     result = _generate(client, fh, 19)
     assert result.status_code == 201, result.text
     s = result.json()["settlement"]
@@ -524,6 +540,7 @@ def test_paid_package_credit_and_cash_recovery_are_independent(client):
     finance = _finance_headers(client)
     email = "settlement-credit@example.com"
     rid, order = _redeem_package(client, email, 11, price=19.95, quantity=2)
+    _model_unsent_legacy_redemption(rid)
     customer = _login(client, email)
     sid = _generate(client, finance, 11).json()["settlement"]["id"]
     url = f"/api/v3/admin/settlements/{sid}"
@@ -567,13 +584,15 @@ def test_paid_package_credit_and_cash_recovery_are_independent(client):
 def test_per_line_rounding_and_late_paid_sale(client):
     finance = _finance_headers(client)
     for n in range(2):
-        _redeem_package(client, f"round-{n}@example.com", 12, price=1.05)
+        redemption_id, _ = _redeem_package(client, f"round-{n}@example.com", 12, price=1.05)
+        _model_unsent_legacy_redemption(redemption_id)
     s = _generate(client, finance, 12).json()["settlement"]
     url = f"/api/v3/admin/settlements/{s['id']}"
     assert (s["gross_amount"], s["commission"], s["net_amount"]) == (2.10, 0.20, 1.90)
     assert client.post(url + "/approve", headers=finance).status_code == 200
     assert client.post(url + "/pay", headers=finance).status_code == 200
-    _redeem_package(client, "late-sale@example.com", 12, price=1.05)
+    redemption_id, _ = _redeem_package(client, "late-sale@example.com", 12, price=1.05)
+    _model_unsent_legacy_redemption(redemption_id)
     s = client.get(url, headers=finance).json()["settlement"]
     assert (s["commission"], s["net_amount"], s["transferred_net"], s["outstanding_net"]) == (0.3, 2.85, 1.9, 0.95)
     assert client.post(url + "/transfers", headers=finance,
