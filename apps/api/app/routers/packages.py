@@ -37,8 +37,9 @@ import json
 import logging
 from uuid import uuid4
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -70,6 +71,33 @@ logger = logging.getLogger(__name__)
 GATEWAY_FAILURE_MESSAGE = "支付失败，请稍后重试"
 
 PAYMENT_METHODS = ("fps", "card")
+
+
+def _payment_mode():
+    if config.APP_ENV == "dev" and not config.STRIPE_SECRET_KEY:
+        return "demo"
+    if (config.STRIPE_SECRET_KEY.startswith("sk_test_") and
+            config.STRIPE_PUBLISHABLE_KEY.startswith("pk_test_")):
+        return "stripe_test"
+    return "unavailable"
+
+
+@router.get("/payment-options")
+def payment_options():
+    """Public availability only; no credentials or provider secrets."""
+    mode = _payment_mode()
+    return {"mode": mode, "card": mode in ("demo", "stripe_test"),
+            "fps": mode == "demo"}
+
+
+def _check_payment_method(method):
+    if method not in PAYMENT_METHODS:
+        raise HTTPException(400, "支付方式須為 fps 或 card")
+    mode = _payment_mode()
+    if mode == "unavailable":
+        raise HTTPException(503, "付款暫未開放，請稍後再試")
+    if mode == "stripe_test" and method != "card":
+        raise HTTPException(400, "目前只提供信用卡測試付款")
 
 
 from ..timeutil import utcnow as _now
@@ -195,6 +223,16 @@ def _release_stock(db: Session, order: Order):
 def _latest_payment(db: Session, order_id: int):
     return (db.query(Payment).filter(Payment.order_id == order_id)
             .order_by(Payment.id.desc()).first())
+
+
+def _gateway_amount_matches(order, attempt, intent):
+    amount = intent.get("amount")
+    return (intent.get("gateway_ref") == attempt.gateway_ref and
+            str(intent.get("currency", "")).upper() == "HKD" and
+            str(attempt.currency or "").upper() == "HKD" and
+            Decimal(str(attempt.amount)) == Decimal(str(order.amount)) and
+            isinstance(amount, int) and not isinstance(amount, bool) and
+            amount == int(Decimal(str(order.amount)) * 100))
 
 
 def _get_order_for_user(db: Session, order_id: int, user_id: int) -> Order:
@@ -870,8 +908,7 @@ def admin_listing_sweep(admin: models.User = Depends(require_role("admin")),
 def purchase_package(package_id: int, body: sp.PurchaseIn,
                      user: models.User = Depends(get_current_user),
                      db: Session = Depends(get_db)):
-    if body.payment_method not in PAYMENT_METHODS:
-        raise HTTPException(status_code=400, detail="支付方式須為 fps 或 card")
+    _check_payment_method(body.payment_method)
     # FIX-3: lock the package row; the stock check below then reads
     # the locked row, and a concurrent purchase blocks until commit.
     pkg = _get_package_locked(db, package_id)
@@ -962,8 +999,7 @@ def purchase_coupon(coupon_id: int, body: sp.PurchaseIn,
     lands in Q Wallet on success. One coupon per order (quantity > 1
     → 400); buying again = a new order. Free coupons are rejected
     here — claim them instead."""
-    if body.payment_method not in PAYMENT_METHODS:
-        raise HTTPException(status_code=400, detail="支付方式須為 fps 或 card")
+    _check_payment_method(body.payment_method)
     if body.quantity != 1:
         raise HTTPException(status_code=400, detail="付費券每次限購一張")
     # FIX-3: lock the coupon row; the stock check below then reads
@@ -1062,6 +1098,61 @@ def order_detail(order_id: int, user: models.User = Depends(get_current_user),
     return {"order": order_out(db, order)}
 
 
+@router.get("/orders/{order_id}/stripe-test-payment")
+def stripe_test_payment(order_id: int, response: Response,
+                        user: models.User = Depends(get_current_user),
+                        db: Session = Depends(get_db)):
+    """Return only the current owner's current test payment attempt."""
+    response.headers["Cache-Control"] = "no-store"
+    order = _get_order_for_user_locked(db, order_id, user.id)
+    _refresh_payment_timeout(db, order)
+    if _payment_mode() != "stripe_test":
+        raise HTTPException(503, "信用卡測試付款暫未開放")
+    attempt = _latest_payment(db, order.id)
+    if (order.payment_status != "pending" or not attempt or
+            attempt.status not in ("requires_payment", "processing") or
+            attempt.method != "card" or (attempt.currency or "").upper() != "HKD" or
+            Decimal(str(attempt.amount)) != Decimal(str(order.amount)) or
+            not (attempt.gateway_ref or "").startswith("pi_") or
+            not (attempt.client_secret or "").startswith(f"{attempt.gateway_ref}_secret_")):
+        raise HTTPException(409, "訂單付款資料需要核對，請返回訂單頁")
+    return {"payment_id": attempt.id, "client_secret": attempt.client_secret,
+            "publishable_key": config.STRIPE_PUBLISHABLE_KEY,
+            "amount": float(order.amount), "currency": "HKD"}
+
+
+@router.post("/orders/{order_id}/stripe-test-confirm")
+def stripe_test_confirm(order_id: int, body: sp.StripeTestConfirmIn,
+                        user: models.User = Depends(get_current_user),
+                        db: Session = Depends(get_db)):
+    """Fulfil only after verifying the current PaymentIntent with Stripe."""
+    if _payment_mode() != "stripe_test":
+        raise HTTPException(503, "信用卡測試付款暫未開放")
+    order = _get_order_for_user_locked(db, order_id, user.id)
+    _refresh_payment_timeout(db, order)
+    attempt = _latest_payment(db, order.id)
+    if not attempt or attempt.id != body.payment_id:
+        raise HTTPException(409, "此付款已不是目前的付款，請返回訂單頁")
+    if order.payment_status == "paid" and attempt.status == "succeeded":
+        return {"status": "paid", "order": order_out(db, order)}
+    if order.payment_status != "pending" or attempt.status not in ("requires_payment", "processing"):
+        raise HTTPException(409, "訂單已不在待支付狀態，請查看訂單")
+    try:
+        intent = retrieve_payment_intent(attempt.gateway_ref)
+    except GatewayError:
+        raise HTTPException(502, "暫時未能確認付款，請稍後再查詢")
+    if not _gateway_amount_matches(order, attempt, intent):
+        raise HTTPException(409, "付款資料需要核對，請聯絡客服")
+    status = intent.get("status")
+    if status == "succeeded":
+        _apply_payment_result(db, order, attempt, "succeeded")
+        return {"status": "paid", "order": order_out(db, order)}
+    if status == "canceled":
+        _apply_payment_result(db, order, attempt, "failed")
+        return {"status": "failed", "order": order_out(db, order)}
+    return {"status": "pending"}
+
+
 @router.post("/orders/{order_id}/demo-payment")
 def demo_payment(order_id: int, user: models.User = Depends(get_current_user), db: Session = Depends(get_db)):
     if config.APP_ENV != "dev" or config.STRIPE_SECRET_KEY:
@@ -1094,6 +1185,9 @@ def confirm_payment(order_id: int, body: sp.ConfirmPaymentIn,
         attempt = _latest_payment(db, order.id)
     if attempt is None:
         raise HTTPException(status_code=400, detail="訂單沒有待處理的支付")
+    latest = _latest_payment(db, order.id)
+    if latest is None or attempt.id != latest.id:
+        raise HTTPException(409, "此付款已不是目前的付款，請返回訂單頁")
     # FIX-1: the client-supplied outcome is never trusted on its own.
     # - Key configured: settle only after querying the gateway for the
     #   payment_intent status; body.outcome is ignored entirely.
@@ -1108,6 +1202,8 @@ def confirm_payment(order_id: int, body: sp.ConfirmPaymentIn,
             raise HTTPException(
                 status_code=502,
                 detail=GATEWAY_FAILURE_MESSAGE)
+        if not _gateway_amount_matches(order, attempt, intent):
+            raise HTTPException(409, "付款資料需要核對，請聯絡客服")
         status = intent.get("status", "")
         if status == "succeeded":
             outcome = "succeeded"
@@ -1146,8 +1242,7 @@ def retry_payment(order_id: int, body: sp.RetryPaymentIn,
     if order.payment_status not in ("failed", "timeout"):
         raise HTTPException(status_code=400, detail="只有支付失敗或逾時的訂單可以重試")
     method = body.payment_method or order.payment_method
-    if method not in PAYMENT_METHODS:
-        raise HTTPException(status_code=400, detail="支付方式須為 fps 或 card")
+    _check_payment_method(method)
     # P1-A: coupon orders re-reserve the coupon's remaining instead.
     pkg = coupon = None
     if order.package_id:
@@ -1385,6 +1480,10 @@ async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
                 "late_payment_refund": {"id": entry.id, "status": entry.status}}
     if not current:
         return {"received": True, "ignored": "payment already settled"}
+    if outcome == "succeeded" and (
+            Decimal(str(attempt.amount)) != Decimal(str(order.amount)) or
+            not late_payments._event_matches(attempt, obj)):
+        raise HTTPException(409, "付款資料需要核對，請聯絡客服")
     _apply_payment_result(db, order, attempt, outcome,
                           obj.get("last_payment_error", {}).get("message", "")
                           if isinstance(obj.get("last_payment_error"), dict) else "")

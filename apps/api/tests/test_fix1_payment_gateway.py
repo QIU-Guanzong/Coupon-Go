@@ -199,7 +199,8 @@ def _sign_webhook(secret, payload_bytes, ts=None):
 
 
 def _webhook_payload(gateway_ref, event_type="payment_intent.succeeded"):
-    return {"type": event_type, "data": {"object": {"id": gateway_ref}}}
+    return {"type": event_type, "data": {"object": {"id": gateway_ref,
+            "amount": 15000, "amount_received": 15000, "currency": "hkd"}}}
 
 
 def _post_webhook(client, payload, signature=None):
@@ -246,7 +247,7 @@ def test_fix1_confirm_payment_with_key_ignores_client_outcome(client, monkeypatc
     _set_env(monkeypatch, env="prod", key=FAKE_KEY, secret=FAKE_WEBHOOK_SECRET)
     monkeypatch.setattr(
         "app.routers.packages.retrieve_payment_intent",
-        lambda ref: {"status": "succeeded", "gateway_ref": ref},
+        lambda ref: {"status": "succeeded", "gateway_ref": ref, "amount": 15000, "currency": "HKD"},
         raising=False)
     r = client.post(f"/api/v3/orders/{order_id}/confirm-payment",
                     json={"outcome": "failed"}, headers=h)
@@ -263,7 +264,7 @@ def test_fix1_confirm_payment_with_key_gateway_pending_stays_pending(client, mon
     _set_env(monkeypatch, env="prod", key=FAKE_KEY, secret=FAKE_WEBHOOK_SECRET)
     monkeypatch.setattr(
         "app.routers.packages.retrieve_payment_intent",
-        lambda ref: {"status": "requires_payment_method", "gateway_ref": ref},
+        lambda ref: {"status": "requires_payment_method", "gateway_ref": ref, "amount": 15000, "currency": "HKD"},
         raising=False)
     r = client.post(f"/api/v3/orders/{order_id}/confirm-payment",
                     json={"outcome": "succeeded"}, headers=h)
@@ -280,7 +281,7 @@ def test_fix1_confirm_payment_with_key_gateway_canceled_marks_failed(client, mon
     _set_env(monkeypatch, env="prod", key=FAKE_KEY, secret=FAKE_WEBHOOK_SECRET)
     monkeypatch.setattr(
         "app.routers.packages.retrieve_payment_intent",
-        lambda ref: {"status": "canceled", "gateway_ref": ref},
+        lambda ref: {"status": "canceled", "gateway_ref": ref, "amount": 15000, "currency": "HKD"},
         raising=False)
     r = client.post(f"/api/v3/orders/{order_id}/confirm-payment",
                     json={"outcome": "succeeded"}, headers=h)
