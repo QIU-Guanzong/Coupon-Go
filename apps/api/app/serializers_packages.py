@@ -5,9 +5,10 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from . import config, models
+from .package_templates import current_package_coupon
 from .models_line_b import Review, ShopRating
 from .models_line_f import Settlement, SettlementItem, SettlementReversal
-from .models_packages import Order, Package, Payment, Refund
+from .models_packages import LatePaymentRefund, Order, Package, Payment, Refund
 
 REFUND_POLICY_TEXT = {
     "anytime": "未使用隨時退，過期自動退",
@@ -77,10 +78,7 @@ def package_out(db: Session, p: Package, user_id: int | None = None) -> dict:
     # shop image, de-duplicated, non-empty only. There is no separate
     # package gallery table; no image is invented when both are empty.
     images: list[str] = []
-    coupon = (db.query(models.Coupon)
-              .filter(models.Coupon.package_id == p.id,
-                      models.Coupon.kind == "package")
-              .first())
+    coupon = current_package_coupon(db, p.id)
     for src in (coupon.image if coupon else "",
                 shop.image if shop else ""):
         if src and src not in images:
@@ -190,6 +188,8 @@ def order_out(db: Session, o: Order) -> dict:
                      .order_by(Refund.id.desc()).first())
     payments = (db.query(Payment).filter(Payment.order_id == o.id)
                 .order_by(Payment.id).all())
+    late_refunds = (db.query(LatePaymentRefund).filter_by(order_id=o.id)
+                    .order_by(LatePaymentRefund.id).all())
     # Gap 10 — order_no: there is no stored order-number column; the
     # number is derived deterministically from the order id, so it is
     # stable and unique without inventing a separate sequence.
@@ -249,13 +249,18 @@ def order_out(db: Session, o: Order) -> dict:
         "order_type": o.order_type,
         "package_id": o.package_id,
         "quantity": o.quantity or 1,
-        "package_name": pkg.name if pkg else "",
+        "package_name": (wallet_item.coupon.coupon_name if wallet_item and wallet_item.coupon
+                         else db.get(models.Coupon, o.package_coupon_id).coupon_name
+                         if o.package_coupon_id and db.get(models.Coupon, o.package_coupon_id)
+                         else pkg.name if pkg else ""),
         "shop_name": shop.name if shop else "",
         "amount": float(o.amount or 0),
         "paid_amount": float(o.paid_amount or 0),
         "payment_method": o.payment_method or "",
         "payment_status": o.payment_status,
         "refund_status": o.refund_status,
+        "late_payment_refunds": [{"amount": float(r.amount), "currency": r.currency,
+                                  "status": r.status} for r in late_refunds],
         "latest_refund_reason": latest_refund.reason if latest_refund else "",
         "wallet_status": wallet_item.status if wallet_item else None,
         "refund_amount": refund_amount,

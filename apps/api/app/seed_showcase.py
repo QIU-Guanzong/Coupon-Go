@@ -68,12 +68,17 @@ def seed_showcase(db):
         db.flush()
         db.add(models.Branch(shop_id=shop.id, name=f"{name} · {district}店", address=shop.address))
         for title, people, original, price, slot, booking, contents, includes, excludes in offers:
-            _, coupon = store_package(db, shop, PackageCreateIn(shop_id=shop.id, name=title, person_count=people,
+            pkg, coupon = store_package(db, shop, PackageCreateIn(shop_id=shop.id, name=title, person_count=people,
                 original_price=original, package_price=price, valid_from=now, valid_to=now+timedelta(days=90),
                 items=[{"name": n, "qty": q} for n, q in contents], stock_total=24 if booking else 60,
                 refund_policy="anytime", usage_rules={"time_slots": [slot], "need_booking": booking,
                     "weekday_only": slot.startswith("星期一至五") or slot.startswith("星期二至五"),
                     "stackable": False, "includes": [includes], "excludes": [excludes]}))
+            # Showcase seed data is already-approved demo content:
+            # store_package creates pending_review (§3.2), so approve
+            # the seeded rows directly instead of leaving them unlisted.
+            pkg.status = "active"
+            coupon.status = "active"
             coupon.image = shop.image
     # Upgrade existing demo previews as well as fresh installations.
     # Only replace the known starter artwork; respect vendor-edited media.

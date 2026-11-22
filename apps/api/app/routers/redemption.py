@@ -57,7 +57,7 @@ def _check_item(db: Session, item: models.WalletItem, vendor: models.User):
         return coupon, "無效的 QR 碼！此碼屬於其他商店。"
     try:
         ensure_paid_voucher(db, item)
-        ensure_redeemable(coupon)
+        ensure_redeemable(coupon, purchased_package=(item.source == "purchase" and coupon.kind == "package"))
     except HTTPException as exc:
         return coupon, exc.detail
     return coupon, None

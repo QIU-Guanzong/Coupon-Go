@@ -65,7 +65,8 @@ class Package(Base):
     stock_total = Column(Integer, default=0, nullable=False)
     stock_left = Column(Integer, default=0, nullable=False)
     refund_policy = Column(String(20), default="anytime", nullable=False)
-    # active | inactive | sold_out
+    # active | inactive | sold_out | pending_review | draft | paused |
+    # scheduled (approved, waiting for valid_from)
     status = Column(String(20), default="active", nullable=False)
     created_at = Column(DateTime, default=_now)
 
@@ -85,6 +86,8 @@ class Order(Base):
     # package (report also reserves 'cashback-eligible' for line B)
     order_type = Column(String(30), default="package", nullable=False)
     package_id = Column(Integer, ForeignKey("packages.id"), nullable=True)
+    # Frozen when reserving stock; NULL denotes a pre-versioning order.
+    package_coupon_id = Column(Integer, ForeignKey("coupons.id"), nullable=True)
     quantity = Column(Integer, default=1, nullable=False)  # Gap 7: 购买份数
     amount = Column(Numeric(10, 2), nullable=False)       # 应付金额
     paid_amount = Column(Numeric(10, 2), default=0)       # 实付金额
@@ -142,3 +145,24 @@ class Refund(Base):
     status = Column(String(20), default="requested", nullable=False)
     gateway_ref = Column(String(80), default="")  # Stripe refund id
     created_at = Column(DateTime, default=_now)
+
+
+class LatePaymentRefund(Base):
+    """Compensation for one payment attempt that succeeded too late.
+
+    Kept separate from the order's normal refund: an old attempt can
+    succeed after a newer attempt has already paid for a valid voucher.
+    """
+    __tablename__ = "late_payment_refunds"
+    id = Column(Integer, primary_key=True)
+    payment_id = Column(Integer, ForeignKey("payments.id"), nullable=False, unique=True)
+    order_id = Column(Integer, ForeignKey("orders.id"), nullable=False, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    amount = Column(Numeric(10, 2), nullable=False)
+    currency = Column(String(10), nullable=False)
+    request_key = Column(String(80), nullable=False, unique=True)
+    gateway_ref = Column(String(80), nullable=False, default="", server_default="")
+    status = Column(String(20), nullable=False, default="pending", server_default="pending")
+    last_error = Column(String(100), nullable=False, default="", server_default="")
+    created_at = Column(DateTime, nullable=False, default=_now)
+    updated_at = Column(DateTime, nullable=False, default=_now, onupdate=_now)

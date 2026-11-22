@@ -172,6 +172,11 @@ def _vendor_headers(client):
     return _login(client, "vendor@coupon-go.example")
 
 
+
+def _admin_headers(client):
+    return _login(client, "admin@coupon-go.example")
+
+
 def _finance_headers(client):
     return _login(client, "finance@coupon-go.example")
 
@@ -282,6 +287,15 @@ def _create_package(client, name, stock=1, price=150, original=200):
     }
     r = client.post("/api/v3/packages", json=body, headers=vh)
     assert r.status_code == 201, r.text
+    pkg = r.json()["package"]
+    # Support both optional manual review and default auto-approval.
+    if pkg["status"] == "pending_review":
+        ah = _admin_headers(client)
+        r = client.post(f"/api/v3/admin/packages/{pkg['id']}/approve",
+                        params={"approve": True}, headers=ah)
+        assert r.status_code == 200, r.text
+    r = client.get("/api/v3/package-details", params={"package_id": pkg["id"]})
+    assert r.status_code == 200, r.text
     return r.json()["package"]
 
 

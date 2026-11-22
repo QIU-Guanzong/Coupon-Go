@@ -10,7 +10,7 @@ import secrets
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
-from sqlalchemy import exists, text
+from sqlalchemy import exists, func, select, text
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
@@ -43,13 +43,18 @@ def _refresh_expiry(db: Session, item: models.WalletItem):
 def ensure_paid_voucher(db, item):
     if item.source == "purchase":
         order = db.get(models.Order, item.order_id) if item.order_id else None
-        if not order or order.payment_status != "paid" or order.refund_status not in ("none", "rejected"):
+        if (not order or order.user_id != item.user_id or order.payment_status != "paid"
+                or order.refund_status not in ("none", "rejected")
+                or (item.coupon.kind == "package" and order.package_id != item.coupon.package_id)):
             raise errors.voucher_unpaid()
 
 
-def ensure_redeemable(coupon):
-    if coupon.status != "active":
+def ensure_redeemable(coupon, *, purchased_package=False):
+    allowed = ("active", "paused", "pending_review", "scheduled", "sold_out", "draft")
+    if coupon.status != "active" and not (purchased_package and coupon.status in allowed):
         raise errors.coupon_inactive()
+    if coupon.valid_to <= _now():
+        raise errors.coupon_expired()
     if coupon.valid_from > _now():
         raise errors.coupon_not_started()
 
@@ -77,32 +82,44 @@ def claim_coupon(coupon_id: int, user: models.User = Depends(get_current_user),
         raise errors.coupon_not_found()
     if coupon.status != "active" or coupon.valid_to <= _now():
         raise errors.coupon_expired()
+    if coupon.valid_from > _now():
+        raise errors.coupon_not_started()
     if coupon.kind == "package":
-        # Line C: package vouchers are bought, not claimed for free.
         raise errors.coupon_package_must_purchase()
+    if coupon.sale_price is not None and float(coupon.sale_price) > 0:
+        raise HTTPException(status_code=400, detail="付費券請購買，不可免費領取")
     if coupon.is_points_exchange:
         raise errors.coupon_points_only()
-    existing = db.query(models.WalletItem).filter(
+    limit = coupon.per_user_limit if coupon.per_user_limit else 1
+    claimed = db.query(models.WalletItem).filter(
         models.WalletItem.user_id == user.id,
-        models.WalletItem.coupon_id == coupon_id).first()
-    if existing:
+        models.WalletItem.coupon_id == coupon_id).count()
+    if claimed >= limit:
         raise errors.coupon_already_claimed()
     if coupon.remaining <= 0:
         raise errors.coupon_sold_out()
     # Serialize competing claims on the stock row before checking ownership
-    # again. This write also serializes writers on SQLite.
+    # again. This write also serializes writers on SQLite. The claim
+    # count is re-read inside the UPDATE, so two concurrent claims
+    # cannot both pass a per-user limit above 1.
+    claimed_sub = (select(func.count()).select_from(models.WalletItem)
+                   .where((models.WalletItem.user_id == user.id) &
+                          (models.WalletItem.coupon_id == coupon_id))
+                   .scalar_subquery())
     available = db.query(models.Coupon).filter(
         models.Coupon.id == coupon_id, models.Coupon.remaining > 0,
         models.Coupon.status == "active", models.Coupon.valid_to > _now(),
-        ~exists().where((models.WalletItem.user_id == user.id) &
-                        (models.WalletItem.coupon_id == coupon_id))).update({
+        models.Coupon.valid_from <= _now(),
+        claimed_sub < limit).update({
         models.Coupon.remaining: models.Coupon.remaining - 1,
         models.Coupon.downloads: models.Coupon.downloads + 1,
     }, synchronize_session=False)
-    if not available or db.query(models.WalletItem.id).filter_by(
-            user_id=user.id, coupon_id=coupon_id).first():
+    if not available:
         db.rollback()
-        if db.query(models.WalletItem.id).filter_by(user_id=user.id, coupon_id=coupon_id).first():
+        claimed_now = db.query(models.WalletItem).filter(
+            models.WalletItem.user_id == user.id,
+            models.WalletItem.coupon_id == coupon_id).count()
+        if claimed_now >= limit:
             raise errors.coupon_already_claimed()
         raise errors.coupon_unavailable()
     item = issue_wallet_item(db, user.id, coupon.id, "claim")
@@ -125,7 +142,7 @@ def generate_qr(wallet_item_id: int, user: models.User = Depends(get_current_use
     if item.status != 1:
         raise errors.coupon_not_usable()
     ensure_paid_voucher(db, item)
-    ensure_redeemable(item.coupon)
+    ensure_redeemable(item.coupon, purchased_package=(item.source == "purchase" and item.coupon.kind == "package"))
     # Line A anti-screenshot: a fresh code is generated on EVERY present,
     # so a screenshot / forwarded photo of an older code is dead as soon
     # as the owner re-presents. Each code is single-use (cleared on scan).
@@ -189,7 +206,7 @@ def _redeem_item(db: Session, item: models.WalletItem,
     if coupon.shop_id not in vendor_shop_ids(db, vendor):
         raise errors.qr_wrong_shop()
     ensure_paid_voucher(db, item)
-    ensure_redeemable(coupon)
+    ensure_redeemable(coupon, purchased_package=(item.source == "purchase" and coupon.kind == "package"))
     today_start = _now().replace(hour=0, minute=0, second=0, microsecond=0)
     scans_today = db.query(models.Redemption).filter(
         models.Redemption.scanned_by_vendor_id == vendor.id,

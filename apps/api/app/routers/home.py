@@ -22,8 +22,12 @@ from ..timeutil import utcnow as _now
 
 
 def _active_coupons(db: Session):
+    # §3.3: only live coupons — active AND inside their validity
+    # window. Scheduled (approved, valid_from in the future) and
+    # legacy active-but-early rows never appear on public lists.
     return db.query(models.Coupon).filter(
         models.Coupon.status == "active",
+        models.Coupon.valid_from <= _now(),
         models.Coupon.valid_to > _now(),
         models.Coupon.is_points_exchange.is_(False),
     )

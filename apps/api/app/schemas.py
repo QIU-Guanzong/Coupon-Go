@@ -122,7 +122,13 @@ class CouponOut(BaseModel):
     gift: str = ""
     discount_price: Optional[float] = None
     regular_price: Optional[float] = None
+    # §3.1 calibre (P1-A compatible): None = free; > 0 = paid.
+    sale_price: Optional[float] = None
+    is_paid: bool = False
+    refund_policy: str = "anytime"
     min_spend: float = 0
+    # §3.4: max claims per user (default 1).
+    per_user_limit: int = 1
     image: str = ""
     valid_from: datetime
     valid_to: datetime
@@ -182,7 +188,14 @@ class CouponCreateIn(BaseModel):
     gift: str = ""
     discount_price: Optional[float] = None
     regular_price: Optional[float] = None
+    # §3.1 calibre (P1-A compatible): None / 0 = free; > 0 = paid.
+    sale_price: Optional[float] = Field(default=None, ge=0)
+    # §3.1 calibre: refund policy for paid coupons (same 3 values as
+    # packages); free coupons keep the default.
+    refund_policy: str = "anytime"
     min_spend: float = 0
+    # §3.4: max claims per user; None = 1 (previous behaviour).
+    per_user_limit: Optional[int] = Field(default=None, ge=1)
     image: str = ""
     valid_from: datetime
     valid_to: datetime
@@ -190,6 +203,33 @@ class CouponCreateIn(BaseModel):
     additional_terms: str = ""
     is_limited_time: bool = False
     branch_ids: List[int] = []
+
+
+class CouponUpdateIn(BaseModel):
+    """Merchant edit of a coupon (§3.2). All fields optional; only the
+    supplied ones change. Editing an active / paused / scheduled coupon
+    sends it back to pending_review (re-review); editing a draft /
+    rejected coupon leaves it a draft; editing a pending_review coupon
+    keeps it pending_review. Expired / sold_out coupons cannot be
+    edited — create a new one."""
+    coupon_name: Optional[str] = None
+    name_en: Optional[str] = None
+    category_id: Optional[int] = None
+    cash_amount: Optional[float] = None
+    percentage: Optional[float] = None
+    gift: Optional[str] = None
+    discount_price: Optional[float] = None
+    regular_price: Optional[float] = None
+    sale_price: Optional[float] = Field(default=None, ge=0)
+    refund_policy: Optional[str] = None
+    min_spend: Optional[float] = None
+    per_user_limit: Optional[int] = Field(default=None, ge=1)
+    image: Optional[str] = None
+    valid_from: Optional[datetime] = None
+    valid_to: Optional[datetime] = None
+    total: Optional[int] = Field(default=None, ge=0)
+    additional_terms: Optional[str] = None
+    is_limited_time: Optional[bool] = None
 
 
 class CouponPreviewOut(BaseModel):

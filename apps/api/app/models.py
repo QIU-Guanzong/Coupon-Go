@@ -136,6 +136,15 @@ class Coupon(Base):
     gift = Column(String(160), default="")
     discount_price = Column(Numeric(10, 2), nullable=True)
     regular_price = Column(Numeric(10, 2), nullable=True)
+    # Dianping listing (§3.1 calibre, P1-A compatible): sale price
+    # (售價，HKD). NULL / 0 = free coupon, behaviour unchanged;
+    # > 0 = paid coupon: it can only be bought (P1-A's purchase
+    # endpoint), never claimed for free. This slice only stores and
+    # exposes the field and guards the free-claim path; it does NOT
+    # build the purchase flow.
+    sale_price = Column(Numeric(10, 2), nullable=True)
+    # §3.4: max claims per user (default 1 = previous behaviour).
+    per_user_limit = Column(Integer, default=1)
     min_spend = Column(Numeric(10, 2), default=0)          # 需消費金額
     image = Column(String(255), default="")
     valid_from = Column(DateTime, nullable=False)
@@ -144,7 +153,8 @@ class Coupon(Base):
     remaining = Column(Integer, default=0)
     downloads = Column(Integer, default=0)
     used_count = Column(Integer, default=0)
-    # draft | pending_review | active | rejected | expired
+    # draft | pending_review | active | rejected | expired | paused |
+    # scheduled (approved, waiting for valid_from) | sold_out
     status = Column(String(20), default="draft", nullable=False)
     additional_terms = Column(Text, default="")
     # Line E (bargain) / line C (packages) shared fields, §11.2:
@@ -159,6 +169,9 @@ class Coupon(Base):
     # kind: coupon (free) | package (paid set-meal voucher)
     kind = Column(String(20), default="coupon", nullable=False)
     package_id = Column(Integer, ForeignKey("packages.id"), nullable=True)
+    # NULL denotes a legacy template, True is the current sellable version,
+    # False preserves a version already issued to customers.
+    is_package_template = Column(Boolean, nullable=True)
     person_count = Column(Integer, nullable=True)
     # usage rules JSON (times / booking / includes-excludes)
     usage_rules = Column(Text, default="")

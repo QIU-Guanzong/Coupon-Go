@@ -65,7 +65,7 @@ Endpoint 名稱沿用 Coupon GO! 1.2.6 APK 逆向出的原始名稱（含原始�
 
 | 方法 | 路徑 | 說明 |
 |---|---|---|
-| POST | `/new-favorite-coupon?coupon_id=` | 領券 → Q Wallet，+10 分；重複領取 409 |
+| POST | `/new-favorite-coupon?coupon_id=` | 領券 → Q Wallet，+10 分；重複領取 409；上架變更（§3.4/§3.1）：每人限領 `per_user_limit` 張（默認 1，超限 409）；付費券（`sale_price > 0`）不可免費領（400，請購買）；未到 `valid_from` 不可領（400） |
 | POST | `/store-scaned-qr-values?wallet_item_id=` | 生成 QR 碼 + 6 位兌換碼，15:00 有效；每次出示輪換新碼（線 A 防截圖） |
 | POST | `/new-scan-coupon/prepare` | **線 A** 預核銷（唯讀查券，`{code}`）→ `can_redeem` + 5 分鐘 prepare token，不改券狀態 |
 | POST | `/new-scan-coupon` | 商戶掃碼核銷 `{code, idempotency_key?, prepare_token?}`，+20 分；錯店/已用/過期/每日 200 次上限；同 `idempotency_key` 重放只算一次（`duplicate: true`）；核銷後兌換碼失效 |
@@ -179,10 +179,15 @@ reviewed_by, reviewed_at, created_at}`。
 
 | 方法 | 路徑 | 說明 |
 |---|---|---|
-| GET | `/get-vendor-coupon-list` | 商戶的券 |
+| GET | `/get-vendor-coupon-list?status=` | 商戶的券（`status` 篩選：draft / pending_review / active / paused / scheduled / rejected / expired / sold_out） |
 | POST | `/add-coupon-preview` | 發券預覽（第一步，不寫庫） |
-| POST | `/coupon-previewed` | 發券建立（第二步，狀態 pending_review） |
-| POST | `/vendor/coupons/{id}/approve?approve=` | 管理員審核通過/拒絕 |
+| POST | `/coupon-previewed` | 發券建立（第二步，狀態 pending_review；請求新增 `sale_price`（空/0=免費，>0=付費，P1-A 口徑）、`refund_policy`（anytime/expiry_only/non_refundable，默認 anytime）、`per_user_limit`（默認 1）） |
+| POST | `/vendor/coupons/{id}/approve?approve=&reason=` | 管理員審核通過/拒絕（通過時 `valid_from` 未到 → `scheduled`，到點自動上架；駁回帶 `reason`，寫 `admin_audit_logs`） |
+| PATCH | `/vendor/coupons/{id}` | 商戶編輯券（改已上架/已暫停/已排期 → 回 pending_review 重審；草稿/被駁回 → 草稿；`total` 改動同步 `remaining`） |
+| POST | `/vendor/coupons/{id}/pause`、`/resume`、`/unlist`、`/submit` | 暫停 / 恢復上架 / 下架回草稿 / 提交審核（上架生命週期，見 `DIANPING_LISTING_API.md`） |
+| POST | `/vendor/coupons/bulk` | 批量建券（1–20 張，逐項報錯，全部進 pending_review） |
+| GET | `/coupon-templates` | 三個固定模板（滿減 / 折扣 / 買贈） |
+| POST | `/uploads/merchant-images` | 商戶圖片上傳（vendor/admin；jpg/png/webp，≤5MB，最多 9 張；返回 `/uploads/merchant-images/...` 供 `Coupon.image` / `Shop.image` 用） |
 | GET | `/get-vendor-usage-data-new` | 總下載/總使用 + 每券數據 |
 | GET | `/get-vendor-record-list` | 商戶核銷記錄 |
 | GET | `/get-company-list` | 商戶的公司/商店列表 |
@@ -224,9 +229,14 @@ M3 字段變更：`GET /bargain-sessions/{id}`、`POST /bargain-campaigns/{id}/s
 
 | 方法 | 路徑 | 說明 |
 |---|---|---|
-| GET | `/packages` | 套餐列表（`shop_id`、`status` 篩選；遊客可調） |
+| GET | `/packages` | 套餐列表（`shop_id`、`status` 篩選；遊客可調；`status` 新增 pending_review / draft / paused / scheduled） |
 | GET | `/package-details?package_id=` | 套餐詳情（菜品組合、原價/套餐價、退款規則） |
-| POST | `/packages` | 商戶/管理員建立套餐（同時生成 `kind=package` 券模板） |
+| POST | `/packages` | 商戶/管理員建立套餐（同時生成 `kind=package` 券模板；**上架變更：建完狀態為 `pending_review`，須管理員審批後才可購買**；菜品每項須 `{name: 非空, qty: >= 1}`，否則 422） |
+| PATCH | `/vendor/packages/{id}` | 商戶編輯套餐（改已上架/已暫停/已排期 → 回 pending_review 重審；`stock_total` 不可少於已售份數） |
+| POST | `/vendor/packages/{id}/pause`、`/resume`、`/unlist`、`/submit` | 暫停 / 恢復上架 / 下架回草稿 / 提交審核（見 `DIANPING_LISTING_API.md`） |
+| POST | `/admin/packages/{id}/approve?approve=&reason=` | 管理員審核套餐（通過時 `valid_from` 未到 → `scheduled`；模板券同步狀態） |
+| GET | `/admin/packages?status=&shop_id=` | 管理員套餐審核隊列 |
+| POST | `/admin/listing-sweep` | 管理員手動跑定時上架 sweep（到點上架 / 到期下架 / 售罄標記；冪等） |
 | POST | `/packages/{id}/purchase` | 下單（預留庫存，生成訂單 + 支付單；`client_ref` 冪等） |
 | POST | `/orders/{id}/demo-payment` | 本機模擬付款，只限開發環境、無支付密鑰且屬於當前用戶的模擬訂單 |
 | POST | `/orders/{id}/confirm-payment` | 測試模式支付結果 `{outcome: succeeded/failed/timeout}` |
@@ -937,7 +947,7 @@ reviews[]}`；`sort=latest`（默認）/ `helpful`，非法值 422
 
 | 方法 | 路徑 | 說明 |
 |---|---|---|
-| POST | `/new-favorite-coupon?coupon_id=` | 領券 → Q Wallet，+10 分；重複領取 409 |
+| POST | `/new-favorite-coupon?coupon_id=` | 領券 → Q Wallet，+10 分；重複領取 409；上架變更：每人限領 `per_user_limit` 張（默認 1，超限 409）；付費券（`sale_price > 0`）不可免費領（400）；未到 `valid_from` 不可領（400） |
 | POST | `/store-scaned-qr-values?wallet_item_id=` | 生成 QR 碼 + 6 位兌換碼，15:00 有效；每次出示輪換新碼 |
 | POST | `/new-scan-coupon/prepare` | 預核銷（唯讀查券，`{code}`）→ `can_redeem` + 5 分鐘 prepare token，不改券狀態 |
 | POST | `/new-scan-coupon` | 商戶掃碼核銷（商户 / admin 調用） |

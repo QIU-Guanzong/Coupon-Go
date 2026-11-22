@@ -1,4 +1,6 @@
 """Search suggestions (three-branch), search history, Places proxy, filters."""
+from datetime import datetime, timezone
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
@@ -10,6 +12,10 @@ from ..serializers import coupon_out, shop_out
 router = APIRouter()
 
 
+def _now():
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
 @router.post("/auto-suggestion-new")
 def auto_suggestion(keyword: str, db: Session = Depends(get_db)):
     """Three-branch suggestion (from REVERSE.md §2):
@@ -19,6 +25,8 @@ def auto_suggestion(keyword: str, db: Session = Depends(get_db)):
     out = []
     for c in (db.query(models.Coupon)
               .filter(models.Coupon.status == "active",
+                      models.Coupon.valid_from <= _now(),
+                      models.Coupon.valid_to > _now(),
                       models.Coupon.coupon_name.like(kw)).limit(5).all()):
         out.append({"kind": "coupon", "id": c.id, "title": c.coupon_name,
                     "subtitle": "", "has_branch": 0})

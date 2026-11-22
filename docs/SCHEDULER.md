@@ -1,4 +1,4 @@
-# M1 后台定时任务：过期退款 / 砍价结算 / 超时关闭 / 返现 sweep
+# M1 后台定时任务：过期退款 / 砍价结算 / 超时关闭 / 返现 sweep / 定时上架
 
 ## 问题
 
@@ -6,21 +6,24 @@
 承诺的文案，但此前代码里没有任何调度器：`POST /orders/process-expired-refunds`
 和 `POST /bargain/expire-sweep` 只能管理员手动调用；pending 订单 15 分钟关闭、
 返现 90 天作废也只在用户打开页面时顺带触发。
+上架同理：審批通過但 `valid_from` 未到的券 / 套餐（`scheduled`）、過了
+`valid_to` 的上架內容、庫存歸零的券，若無定時任務，只能等用戶打開頁面時
+順帶處理——見 `docs/DIANPING_LISTING_API.md` §5。
 
 ## 方案：进程内 APScheduler + run-once CLI
 
 - **进程内调度器**：`app/scheduler.py`，FastAPI 启动时（`app/main.py` startup）
 启动 `BackgroundScheduler`，每 `SCHEDULER_INTERVAL_SECONDS`（默认 300 秒）
-执行 4 个任务，各自独立的锁、会话与失败日志。
+执行 7 个任务，各自独立的锁、会话与失败日志。
 - **run-once CLI**（运维 / cron / 测试手动跑，不受 `SCHEDULER_ENABLED` 开关影响）：
 ```bash
 cd apps/api
-python -m app.scheduler run-once [--job expired-packages|bargain-expire|payment-timeouts|cashback-sweep|all] [--batch-size N]
+python -m app.scheduler run-once [--job expired-packages|bargain-expire|payment-timeouts|cashback-sweep|listing-schedule|coupon-expiry|late-payment-refunds|all] [--batch-size N]
 python -m app.scheduler run # 前台常驻调度器
 python -m app.scheduler status # 打印当前调度配置
 ```
 
-## 5 个任务（与手动接口共用同一份逻辑）
+## 7 个任务（与手动接口共用同一份逻辑）
 
 | 任务 | 共用逻辑 | 幂等保证 |
 |---|---|---|
@@ -28,7 +31,9 @@ python -m app.scheduler status # 打印当前调度配置
 | `bargain-expire` 砍价到期结算 | `routers/bargain.py: sweep_expired_bargains()`，手动接口 `POST /bargain/expire-sweep` 同调它 | `settle_session` 只迁移 active/success 会话；`_add_refund` 每个 (session, reason) 只建一行 |
 | `payment-timeouts` 超时 pending 关闭 | `routers/packages.py: sweep_payment_timeouts()`（与读订单时懒触发的 `_refresh_payment_timeout` 同逻辑） | 超时后订单不再是 pending，不再入选；库存按份数释放 |
 | `cashback-sweep` 返现 sweep | `cashback_service.py: sweep_all_users()`（全体用户，按 user id 游标分批，默认每批 100 人；单用户逻辑仍是 `sweep_user()`） | 已确认/已作废的交易不再是 pending，不再入选 |
-| `coupon-expiry` 券到期提醒与自动过期（dianping/unify） | `routers/coupons.py: sweep_coupon_expiry()`，手动接口 `POST /admin/coupon-expiry-sweep` 同调它 | 同一（用户，券）24 小时内只提醒一次；过期翻转只对 `status == 1` 的行生效 |
+| `coupon-expiry` 券到期提醒 | `routers/coupons.py: sweep_coupon_expiry()` | 同一用户和券 24 小时内只提醒一次；过期只更新未使用券 |
+| `late-payment-refunds` 遲到成功付款補償 | `late_payments.py: sweep()` | 每個付款嘗試保留單筆退款記錄及固定重試鍵 |
+| `listing-schedule` 定时上架 | `listing.py: sweep_listing_schedule()`，手动接口 `POST /admin/listing-sweep` 同调它 | 每次流转都把行移出入选集（scheduled→active、active→expired/sold_out）；重跑是 no-op；单条失败计 `failed`，下一周期重试 |
 
 单条失败不影响其他：每个 sweep 按条 try/except，失败写日志（`logger.exception`）、
 回滚该条、计入 `failed`，下一周期重试。网关失败的砍价退款仍保持 failed 状态，
@@ -36,12 +41,9 @@ python -m app.scheduler status # 打印当前调度配置
 
 ## 多实例只执行一次
 
-- **Postgres**：每任务一个固定 advisory lock key（`2026111701`–`2026111706`），
+- **Postgres**：每任务一个固定 advisory lock key（`2026111701`–`2026111708`），
 `pg_try_advisory_lock` 抢不到的实例直接跳过（结果 `skipped: true`），
 锁随会话结束自动释放。
-  > 注意：第 2 块的 `monthly-settlements` 与第 3 块的 `listing-schedule`
-  > 都用了 `2026111705`（撞号，待裁决）；本片的 `coupon-expiry` 取了下一个空号
-  > `2026111706`。
 - **其他数据库（SQLite 等）**：抢 `scheduler_locks` 表的一行
 （`INSERT... ON CONFLICT DO NOTHING` + 租约过期回收，默认租约
 `SCHEDULER_LOCK_LEASE_SECONDS=600` 秒；迁移 `0013_m1_scheduler_locks`）。
@@ -82,3 +84,6 @@ advisory lock / 锁行保证只有一个实例实际执行；单实例部署也�
 1 秒间隔调度器自动跑、两个真实子进程同时 `run-once` 只退一次、
 锁被占时跳过、单条失败不阻塞其他且下一周期重试、手动接口与调度器共用逻辑、
 非 dev 未配置警告、Postgres advisory lock 分支（stub 会话）。
+第 5 个任务 `listing-schedule` 由 `tests/test_dianping_listing.py` 覆盖
+（定時上架 / 到期下架 / 售罄標記 / 冪等重跑 / `run_all_jobs` 接線 /
+`run-once --job listing-schedule`）。

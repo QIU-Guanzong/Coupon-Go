@@ -57,6 +57,7 @@ from sqlalchemy.orm import Session
 from .. import models
 from ..demo_covers import BARGAIN_COVERS, cover_path
 from ..database import get_db
+from ..package_templates import current_package_coupon
 from ..deps import get_current_user, get_optional_user, require_role
 from ..models_bargain import (
     BargainCampaign, BargainHelp, BargainRefund, BargainSession,
@@ -126,9 +127,7 @@ def campaign_out(db: Session, c: BargainCampaign) -> dict:
     # no campaign image column; "" when neither exists.
     image = ""
     if c.package_id:
-        coupon = (db.query(models.Coupon)
-                  .filter(models.Coupon.package_id == c.package_id,
-                          models.Coupon.kind == "package").first())
+        coupon = current_package_coupon(db, c.package_id)
         if coupon is not None and coupon.image:
             image = coupon.image
     if not image and shop is not None:

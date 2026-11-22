@@ -31,12 +31,9 @@ from . import models
 from .models_line_b import AdminAuditLog
 from .models_packages import Package, REFUND_POLICIES
 from .timeutil import utcnow as _now
+from .package_templates import current_package_coupon
 
 logger = logging.getLogger(__name__)
-
-# Unify: the refund-policy triple lives once, in models_packages
-# (routers/packages.py used to define its own copy of the same tuple);
-# this module re-exports it so listing callers keep one import.
 
 # States a merchant may edit from (see vendor / package edit endpoints).
 EDITABLE_STATES = ("draft", "rejected", "pending_review", "active",
@@ -83,10 +80,7 @@ def sync_package_coupon_status(db: Session, package: Package, status: str):
     """The package template coupon (kind='package') mirrors the
     package status, so scan / claim guards that read the coupon see
     the same state as the listing."""
-    coupon = (db.query(models.Coupon)
-              .filter(models.Coupon.package_id == package.id,
-                      models.Coupon.kind == "package")
-              .first())
+    coupon = current_package_coupon(db, package.id)
     if coupon is not None:
         coupon.status = status
     return coupon
@@ -178,6 +172,27 @@ def _set(row, status: str, stats: dict):
 
 
 def _set_pkg(db: Session, package: Package, status: str, stats: dict):
+    # A merchant may change the listing after the sweep selected it. Acquire
+    # the same row lock as purchase/edit and re-check before any transition.
+    if db.get_bind().dialect.name == "sqlite":
+        db.query(Package).filter_by(id=package.id).update(
+            {"stock_left": Package.stock_left}, synchronize_session=False)
+    package = (db.query(Package).filter_by(id=package.id).with_for_update()
+               .populate_existing().one())
+    now = _now()
+    if status == "active":
+        if package.status != "scheduled" or package.valid_from > now or package.valid_to <= now:
+            return
+        status = live_status(package.valid_from, package.valid_to, package.stock_left)
+    elif status == "scheduled":
+        if package.status != "active" or package.valid_from <= now:
+            return
+    elif status == "expired":
+        if package.status not in ("active", "scheduled", "paused") or package.valid_to > now:
+            return
+    elif status == "sold_out":
+        if package.status not in ("active", "scheduled") or package.stock_left > 0:
+            return
     package.status = status
     sync_package_coupon_status(db, package, status)
     if status == "active":

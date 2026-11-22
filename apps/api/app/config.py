@@ -27,6 +27,11 @@ DATABASE_URL = os.environ.get(
 )
 REDIS_URL = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
 
+# Package review is optional in the MVP. Explicitly enable it when a review
+# process and an operator are available; an unset value is auto-approval.
+PACKAGE_REVIEW_REQUIRED = os.environ.get("PACKAGE_REVIEW_REQUIRED", "0").strip().lower() in (
+    "1", "true", "yes", "on")
+
 # Points rules (demo rules from the MVP; configurable, not hard-coded business law)
 POINTS_CLAIM = int(os.environ.get("POINTS_CLAIM", "10"))       # 領券 +10
 POINTS_REDEEM = int(os.environ.get("POINTS_REDEEM", "20"))     # 核銷 +20
