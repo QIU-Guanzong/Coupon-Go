@@ -566,6 +566,23 @@ def test_paid_order_prevents_changing_assigned_branches(client):
     assert client.post(endpoint, json={"coupon_id": coupon_id, "branch_ids": []}, headers=vendor).status_code == 200
 
 
+def test_my_shop_list_reports_actual_management_permissions(client):
+    owner = _vendor_headers(client)
+    cashier = _invite_as(client, 1, "shoplist-cashier@example.com", "cashier")
+    manager = _invite_as(client, 1, "shoplist-manager@example.com", "manager")
+    outsider = _register_and_login(client, "shoplist-outsider@example.com")
+    for headers, branch, members in ((owner, True, True), (manager, True, False),
+                                      (cashier, False, False)):
+        response = client.get("/api/v3/merchant/shops", headers=headers)
+        assert response.status_code == 200, response.text
+        shop = next(s for s in response.json()["shops"] if s["id"] == 1)
+        assert shop["can_manage_branches"] is branch
+        assert shop["can_manage_members"] is members
+        assert set(shop) == {"id", "name", "can_manage_branches", "can_manage_coupons",
+                             "can_redeem", "can_view_settlement", "is_owner", "can_manage_members"}
+    assert client.get("/api/v3/merchant/shops", headers=outsider).json()["shops"] == []
+
+
 def test_cashier_can_redeem_but_cannot_see_settlements(client):
     cashier = _invite_as(client, 1, "cashier1@example.com", "cashier")
     _h, _wid, code = _claim_and_present(client, "cashierbuyer@example.com", 2)

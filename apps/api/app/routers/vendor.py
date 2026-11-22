@@ -489,6 +489,28 @@ def approve_coupon(coupon_id: int, approve: bool = True, reason: str = "",
 
 
 # ---------- merchant shops & branches (dianping §1.2 / §1.4) ----------
+@router.get("/merchant/shops")
+def list_my_merchant_shops(user: models.User = Depends(get_current_user),
+                           db: Session = Depends(get_db)):
+    """List owned and active-member shops without exposing financial data."""
+    member_shops = db.query(models.ShopMember.shop_id).filter(
+        models.ShopMember.user_id == user.id,
+        models.ShopMember.status == "active")
+    query = db.query(models.Shop)
+    if user.role != "admin":
+        query = query.filter(or_(models.Shop.vendor_id == user.id,
+                                 models.Shop.id.in_(member_shops)))
+    shops = query.order_by(models.Shop.id).all()
+    return {"shops": [{"id": shop.id, "name": shop.name,
+                        "can_manage_branches": has_shop_perm(db, user, shop, "manage_coupons"),
+                        "can_manage_coupons": has_shop_perm(db, user, shop, "manage_coupons"),
+                        "can_redeem": has_shop_perm(db, user, shop, "redeem"),
+                        "can_view_settlement": has_shop_perm(db, user, shop, "view_settlement"),
+                        "is_owner": shop.vendor_id == user.id,
+                        "can_manage_members": user.role == "admin" or shop.vendor_id == user.id}
+                       for shop in shops]}
+
+
 @router.post("/merchant/shops", status_code=201)
 def create_shop(body: ShopCreateIn,
                 vendor: models.User = Depends(require_role("vendor", "admin")),
