@@ -52,7 +52,7 @@ def test_unknown_transfer_reconciles_once_then_dispatches_requested_reversal(cli
 @pytest.mark.parametrize("field,value", [
     ("destination", "acct_wrong"), ("amount", 1), ("currency", "usd"),
     ("transfer_group", "wrong"), ("metadata", {}), ("livemode", True),
-    ("amount_reversed", None), ("amount_reversed", False),
+    ("amount_reversed", None), ("amount_reversed", False), ("reversed", True),
 ])
 def test_transfer_mismatch_preserves_unknown(client, monkeypatch, field, value):
     suffix = "bad-" + field + ("-false" if value is False else "")

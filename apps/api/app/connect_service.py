@@ -740,14 +740,15 @@ def _reconcile_error(db, entry_id, admin_id, code, message, status=409):
 
 
 def _transfer_evidence(obj, entry_id, redemption_id, account_id, cents, provider_id):
-    return (obj.get("id") == provider_id and obj.get("object") == "transfer"
+    return (cents > 0 and obj.get("id") == provider_id and obj.get("object") == "transfer"
             and obj.get("livemode") is False and obj.get("destination") == account_id
             and type(obj.get("amount")) is int and obj.get("amount") == cents
             and str(obj.get("currency", "")).upper() == CURRENCY
             and obj.get("transfer_group") == f"coupon-go-redemption-{redemption_id}"
             and (obj.get("metadata") or {}).get("connect_operation_key") == f"transfer-{entry_id}"
             and type(obj.get("amount_reversed")) is int
-            and 0 <= obj["amount_reversed"] <= cents)
+            and 0 <= obj["amount_reversed"] <= cents
+            and obj.get("reversed") is (obj["amount_reversed"] == cents))
 
 
 def reconcile_transfer(db: Session, entry_id: int, provider_id: str, admin_id: int | None = None) -> dict:
