@@ -54,7 +54,9 @@ def _file_meta(db: Session, file_id):
 def _application_out(db: Session, a: MerchantApplication) -> dict:
     from ..models_line_b import (MerchantContractSignature,
                                  MerchantContractVersion)
+    from ..models_connect import ApplicationConnectAccount
     user = db.query(models.User).filter(models.User.id == a.user_id).first()
+    connect = db.query(ApplicationConnectAccount).filter_by(application_id=a.id).first()
     contract = None
     if a.contract_version_id:
         v = db.query(MerchantContractVersion).filter(
@@ -73,7 +75,8 @@ def _application_out(db: Session, a: MerchantApplication) -> dict:
     return {
         "id": a.id, "user_id": a.user_id,
         "applicant_email": user.email if user else "",
-        "shop_name": a.shop_name, "contact_name": a.contact_name or "",
+        "shop_name": a.shop_name, "approved_shop_id": a.approved_shop_id,
+        "contact_name": a.contact_name or "",
         "phone": a.phone or "", "address": a.address or "",
         "business_license": a.business_license or "",
         "id_card": a.id_card or "",
@@ -93,8 +96,10 @@ def _application_out(db: Session, a: MerchantApplication) -> dict:
         "stripe_account_id": a.stripe_account_id or "",
         "stripe_charges_enabled": bool(a.stripe_charges_enabled),
         "stripe_payouts_enabled": bool(a.stripe_payouts_enabled),
-        "stripe_status_source": ("simulated" if config.APP_ENV == "dev" else "unverified")
-        if a.stripe_account_id else "not_started",
+        "stripe_transfers_enabled": bool(connect.transfers_enabled) if connect else False,
+        "stripe_status_source": ("simulated" if connect.simulated else "stripe_test") if connect else (
+            ("simulated" if config.APP_ENV == "dev" else "unverified")
+            if a.stripe_account_id else "not_started"),
         "contract": contract,
         "status": a.status, "reject_reason": a.reject_reason or "",
         "reviewed_by": a.reviewed_by, "reviewed_at": a.reviewed_at,

@@ -235,6 +235,7 @@ def _parse_v2_account(data: dict) -> dict:
     return {"account_id": data.get("id", ""),
             "charges_enabled": card_status == "active",
             "payouts_enabled": payouts_status == "active",
+            "transfers_enabled": transfers_status == "active",
             "details_submitted": not due,
             "requirements": due,
             "capabilities": {"card_payments": card_status,
@@ -252,7 +253,7 @@ def create_account(email: str, country: str = "HK", *, idempotency_key=None) -> 
     key = _require_test_key()
     if not key:
         return _sim_idempotent(idempotency_key, "acct", f"{email}:{country}", lambda: {"account_id": _sim_ref("acct", f"{email}:{country}"),
-                "charges_enabled": False, "payouts_enabled": False,
+                "charges_enabled": False, "payouts_enabled": False, "transfers_enabled": False,
                 "details_submitted": False, "requirements": [],
                 "capabilities": {"card_payments": "pending",
                                  "payouts": "pending",
@@ -320,7 +321,7 @@ def retrieve_account(account_id: str) -> dict:
     key = _require_test_key()
     if not key:
         return {"account_id": account_id, "charges_enabled": True,
-                "payouts_enabled": True, "details_submitted": True,
+                "payouts_enabled": True, "transfers_enabled": True, "details_submitted": True,
                 "requirements": [],
                 "capabilities": {"card_payments": "active",
                                  "payouts": "active",

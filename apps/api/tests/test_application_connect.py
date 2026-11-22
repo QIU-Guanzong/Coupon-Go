@@ -12,6 +12,13 @@ from app.models_line_b import MerchantApplication, MerchantContractSignature, Me
 from app.payments_gateway import GatewayError
 from app.timeutil import utcnow
 
+if base.PG_URL:
+    from sqlalchemy.engine import make_url
+    parsed = make_url(base.PG_URL)
+    assert parsed.get_backend_name() == "postgresql"
+    assert parsed.host in (None, "", "localhost", "127.0.0.1", "::1") and not parsed.password
+    assert (parsed.database or "").startswith("coupon_p1d_test_")
+
 client = base.client
 
 
@@ -31,7 +38,7 @@ def provider(monkeypatch):
     monkeypatch.setattr(connect_gateway, "create_account_link",
                         lambda account, refresh, ret: {"url": "https://example.test/onboard"})
     monkeypatch.setattr(connect_gateway, "retrieve_account",
-                        lambda account: {"account_id": account, "charges_enabled": True, "payouts_enabled": True,
+                        lambda account: {"account_id": account, "charges_enabled": True, "payouts_enabled": True, "transfers_enabled": True,
                                          "details_submitted": True})
     monkeypatch.setattr(connect_gateway, "set_manual_payouts", lambda account: {"manual": True})
     return created, calls
@@ -66,6 +73,7 @@ def test_applicant_creates_account_and_approval_binds_one_shop(client, provider)
     assert sync.status_code == 200, sync.text
     approved = base._approve(client, base._admin_headers(client), app_id)
     assert approved.status_code == 200, approved.text
+    assert approved.json()["application"]["stripe_status_source"] == "stripe_test"
     db = base.TestingSession()
     app = db.get(MerchantApplication, app_id)
     row = db.query(ApplicationConnectAccount).filter_by(application_id=app_id).one()
@@ -75,7 +83,11 @@ def test_applicant_creates_account_and_approval_binds_one_shop(client, provider)
     assert account.stripe_account_id == row.stripe_account_id
     assert db.get(models.User, app.user_id).role == "vendor"
     assert len(provider[0]) == 1
+    shop_id = shop.id
     db.close()
+    assert approved.json()["application"]["approved_shop_id"] == shop_id
+    status = client.get("/api/v3/merchant/connect/status", params={"shop_id": shop_id}, headers=h)
+    assert status.status_code == 200 and status.json()["transfers_enabled"] is True
     assert base._approve(client, base._admin_headers(client), app_id).status_code == 400
 
 
@@ -90,6 +102,41 @@ def test_unknown_provider_result_reuses_original_operation(client, provider, mon
     monkeypatch.setattr(connect_gateway, "create_account", real_create)
     assert start(client, h, app_id).status_code == 200
     assert len(provider[0]) == 1 and len(set(provider[1])) == 1
+
+
+def test_provider_account_owned_by_another_application_cannot_be_reused(client, provider, monkeypatch):
+    first, first_id = applicant(client, "first-owner")
+    second, second_id = applicant(client, "second-owner")
+    assert start(client, first, first_id).status_code == 200
+    db = base.TestingSession()
+    account_id = db.query(ApplicationConnectAccount).filter_by(application_id=first_id).one().stripe_account_id
+    db.close()
+    monkeypatch.setattr(connect_gateway, "create_account", lambda *a, **kw: {"account_id": account_id})
+    assert start(client, second, second_id).status_code == 409
+
+
+def test_unconfirmed_manual_payout_schedule_blocks_approval(client, provider, monkeypatch):
+    h, app_id = applicant(client, "manual-not-confirmed")
+    assert start(client, h, app_id).status_code == 200
+    monkeypatch.setattr(connect_gateway, "set_manual_payouts", lambda account: {"manual": False})
+    response = base._approve(client, base._admin_headers(client), app_id)
+    assert response.status_code == 502
+    db = base.TestingSession()
+    assert db.get(MerchantApplication, app_id).approved_shop_id is None
+    db.close()
+
+
+def test_missing_transfer_capability_blocks_approval(client, provider, monkeypatch):
+    h, app_id = applicant(client, "transfer-disabled")
+    assert start(client, h, app_id).status_code == 200
+    monkeypatch.setattr(connect_gateway, "retrieve_account", lambda account: {
+        "account_id": account, "charges_enabled": True, "payouts_enabled": True,
+        "transfers_enabled": False, "details_submitted": True})
+    response = base._approve(client, base._admin_headers(client), app_id)
+    assert response.status_code == 400
+    db = base.TestingSession()
+    assert db.get(MerchantApplication, app_id).approved_shop_id is None
+    db.close()
 
 
 def test_stale_unknown_request_and_other_user_are_blocked(client, provider):
@@ -132,7 +179,7 @@ def test_simulated_provider_status_cannot_become_formal_approval(client, provide
     monkeypatch.setattr(config, "APP_ENV", "production")
     monkeypatch.setattr(config, "STRIPE_SECRET_KEY", "sk_test_placeholder")
     monkeypatch.setattr(connect_gateway, "retrieve_account", lambda account: {
-        "account_id": account, "charges_enabled": True, "payouts_enabled": True,
+        "account_id": account, "charges_enabled": True, "payouts_enabled": True, "transfers_enabled": True,
         "details_submitted": True, "simulated": True})
     db = base.TestingSession()
     with pytest.raises(Exception) as exc:
@@ -167,7 +214,6 @@ def test_existing_shop_opening_reuses_operation_after_unknown_result(client, pro
     db.close()
 
 
-@pytest.mark.skipif(not base.PG_URL, reason="requires disposable PostgreSQL")
 def test_concurrent_onboarding_reuses_single_provider_operation(client, provider):
     h, app_id = applicant(client, "concurrent")
     barrier = Barrier(2)

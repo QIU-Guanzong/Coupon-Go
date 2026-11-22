@@ -57,6 +57,7 @@ def application_connect_sync(application_id: int, user=Depends(get_current_user)
     db.commit()
     return {"application_id": application_id, "onboarding_status": row.state,
             "charges_enabled": row.charges_enabled, "payouts_enabled": row.payouts_enabled,
+            "transfers_enabled": row.transfers_enabled,
             "simulated": row.simulated}
 
 ALLOWED_EXTENSIONS = {"pdf", "jpg", "jpeg", "png"}

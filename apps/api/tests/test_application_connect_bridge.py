@@ -18,12 +18,18 @@ def test_old_schema_gains_application_connect_tables_preserving_records(database
         columns = {c["name"] for c in inspect(conn).get_columns("merchant_applications")}
         if "approved_shop_id" in columns:
             conn.execute(text("ALTER TABLE merchant_applications DROP COLUMN approved_shop_id"))
+        account_columns = {c["name"] for c in inspect(conn).get_columns("connect_accounts")}
+        if "transfers_enabled" in account_columns:
+            conn.execute(text("ALTER TABLE connect_accounts DROP COLUMN transfers_enabled"))
         conn.execute(text("INSERT INTO users(id,email,password_hash,role) VALUES (1,'legacy-connect@example.com','x','customer')"))
         conn.execute(text("INSERT INTO merchant_applications(id,user_id,shop_name,status,stripe_charges_enabled,stripe_payouts_enabled) VALUES (1,1,'existing','pending',false,false)"))
+        conn.execute(text("INSERT INTO shops(id,vendor_id,name) VALUES (1,1,'existing')"))
+        conn.execute(text("INSERT INTO connect_accounts(id,shop_id,stripe_account_id,charges_enabled,payouts_enabled,details_submitted,onboarding_status,manual_payouts) VALUES (1,1,'acct_legacy',true,true,true,'active',true)"))
     alembic(database_url, "upgrade", "head")
     with engine.connect() as conn:
         assert conn.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "0028_application_connect_bridge"
         assert conn.execute(text("SELECT shop_name, approved_shop_id FROM merchant_applications WHERE id=1")).one() == ("existing", None)
         assert inspect(conn).has_table("application_connect_accounts")
         assert inspect(conn).has_table("shop_connect_operations")
+        assert conn.execute(text("SELECT stripe_account_id,transfers_enabled FROM connect_accounts WHERE id=1")).one() == ("acct_legacy", None)
     engine.dispose()

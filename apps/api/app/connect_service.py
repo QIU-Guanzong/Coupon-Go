@@ -89,7 +89,7 @@ def get_account(db: Session, shop_id: int):
 
 def account_ready(account) -> bool:
     return bool(account is not None and account.charges_enabled
-                and account.payouts_enabled)
+                and account.payouts_enabled and account.transfers_enabled)
 
 
 def merchant_balance(db: Session, shop_id: int) -> dict:
@@ -122,9 +122,11 @@ def account_out(db: Session, account, shop_id: int) -> dict:
     return {
         "shop_id": shop_id,
         "stripe_account_id": account.stripe_account_id if account else None,
-        "onboarding_status": account.onboarding_status if account else "pending",
+        "onboarding_status": (("incomplete" if account.onboarding_status == "active" and not account_ready(account)
+                               else account.onboarding_status) if account else "pending"),
         "charges_enabled": bool(account.charges_enabled) if account else False,
         "payouts_enabled": bool(account.payouts_enabled) if account else False,
+        "transfers_enabled": bool(account.transfers_enabled) if account else False,
         "details_submitted": bool(account.details_submitted) if account else False,
         "manual_payouts": bool(account.manual_payouts) if account else False,
         "connect_configured": connect_configured(),
@@ -147,9 +149,10 @@ def sync_account(db: Session, account: ConnectAccount) -> ConnectAccount:
         raise HTTPException(status_code=502, detail=f"Stripe 查询帐户失败：{exc}")
     account.charges_enabled = bool(info.get("charges_enabled"))
     account.payouts_enabled = bool(info.get("payouts_enabled"))
+    account.transfers_enabled = bool(info.get("transfers_enabled"))
     account.details_submitted = bool(info.get("details_submitted"))
     account.onboarding_status = (
-        "active" if account.charges_enabled and account.payouts_enabled
+        "active" if account.charges_enabled and account.payouts_enabled and account.transfers_enabled
         else "incomplete")
     if account.payouts_enabled and not account.manual_payouts:
         try:

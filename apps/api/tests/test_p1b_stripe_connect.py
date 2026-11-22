@@ -43,15 +43,18 @@ TEST_DB = sqlite_test_path("coupon_go_test_p1b.db")
 # (row locks are real there; SQLite ignores with_for_update). Otherwise
 # it falls back to the throwaway SQLite file. BACKEND is reported so a
 # failure shows which run mode it ran in.
-PG_URL = os.environ.get(
-    "P1B_POSTGRES_URL",
-    # NOTE: explicit +psycopg2 driver — this venv ships psycopg2-binary
-    # only; a bare postgresql:// URL makes SQLAlchemy 2.x look for
-    # psycopg (v3) and fail to import.
-    "postgresql+psycopg2://coupon_go:coupon_go@localhost:5432/coupon_go_test_p1b")
+PG_URL = os.environ.get("P1B_POSTGRES_URL", "")
+if PG_URL:
+    from sqlalchemy.engine import make_url
+    parsed = make_url(PG_URL)
+    assert parsed.get_backend_name() == "postgresql"
+    assert parsed.host in (None, "", "localhost", "127.0.0.1", "::1") and not parsed.password
+    assert (parsed.database or "").startswith("coupon_p1b_test_")
 
 
 def _pg_reachable():
+    if not PG_URL:
+        return False
     try:
         from sqlalchemy import create_engine as _ce, text as _text
         probe = _ce(PG_URL, connect_args={"connect_timeout": 2})
@@ -241,7 +244,13 @@ def test_sync_records_flags_and_manual_payouts(client, monkeypatch):
     assert out["manual_payouts"] is False
     monkeypatch.setattr(connect_gateway, "retrieve_account", lambda account_id: {
         "account_id": account_id, "charges_enabled": True,
-        "payouts_enabled": True, "details_submitted": True,
+        "payouts_enabled": True, "transfers_enabled": False, "details_submitted": True,
+        "requirements": [], "simulated": True})
+    out = _sync(client, vh, shop_id=3)
+    assert out["onboarding_status"] == "incomplete" and out["transfers_enabled"] is False
+    monkeypatch.setattr(connect_gateway, "retrieve_account", lambda account_id: {
+        "account_id": account_id, "charges_enabled": True,
+        "payouts_enabled": True, "transfers_enabled": True, "details_submitted": True,
         "requirements": [], "simulated": True})
     out = _sync(client, vh, shop_id=3)
     assert out["onboarding_status"] == "active"

@@ -34,9 +34,17 @@ def upgrade():
             sa.Column("verified_at", sa.DateTime(), nullable=True),
             sa.Column("charges_enabled", sa.Boolean(), nullable=False),
             sa.Column("payouts_enabled", sa.Boolean(), nullable=False),
+            sa.Column("transfers_enabled", sa.Boolean(), nullable=False),
             sa.Column("details_submitted", sa.Boolean(), nullable=False),
             sa.Column("manual_payouts", sa.Boolean(), nullable=False),
         )
+    account_columns = {c["name"]: c for c in sa.inspect(bind).get_columns("connect_accounts")}
+    if "transfers_enabled" in account_columns:
+        c = account_columns["transfers_enabled"]
+        if not isinstance(c["type"], sa.Boolean) or not c["nullable"]:
+            raise RuntimeError("Incompatible connect_accounts.transfers_enabled")
+    else:
+        op.add_column("connect_accounts", sa.Column("transfers_enabled", sa.Boolean(), nullable=True))
     if not inspector.has_table("shop_connect_operations"):
         op.create_table(
             "shop_connect_operations",

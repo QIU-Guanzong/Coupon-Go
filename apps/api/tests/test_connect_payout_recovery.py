@@ -15,6 +15,13 @@ from app.database import Base
 from app.models_connect import ConnectAccount, ConnectLedgerEntry
 
 
+def test_legacy_account_is_not_presented_as_ready_until_transfer_capability_verified():
+    account = ConnectAccount(shop_id=1, stripe_account_id="acct_old", charges_enabled=True,
+                             payouts_enabled=True, transfers_enabled=None, onboarding_status="active")
+    out = connect_service.account_out(None, account, 1)
+    assert out["onboarding_status"] == "incomplete" and out["transfers_enabled"] is False
+
+
 @pytest.fixture(scope="module")
 def factory(tmp_path_factory):
     url = os.getenv("PAYOUT_TEST_DATABASE_URL")

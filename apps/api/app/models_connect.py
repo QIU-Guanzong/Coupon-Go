@@ -58,6 +58,8 @@ class ConnectAccount(Base):
     stripe_account_id = Column(String(60), nullable=False)
     charges_enabled = Column(Boolean, default=False, nullable=False)
     payouts_enabled = Column(Boolean, default=False, nullable=False)
+    # NULL on legacy rows means it has never been verified with Stripe.
+    transfers_enabled = Column(Boolean, nullable=True)
     details_submitted = Column(Boolean, default=False, nullable=False)
     onboarding_status = Column(String(20), default="pending", nullable=False)
     manual_payouts = Column(Boolean, default=False, nullable=False)
@@ -80,6 +82,7 @@ class ApplicationConnectAccount(Base):
     verified_at = Column(DateTime, nullable=True)
     charges_enabled = Column(Boolean, nullable=False, default=False)
     payouts_enabled = Column(Boolean, nullable=False, default=False)
+    transfers_enabled = Column(Boolean, nullable=False, default=False)
     details_submitted = Column(Boolean, nullable=False, default=False)
     manual_payouts = Column(Boolean, nullable=False, default=False)
 

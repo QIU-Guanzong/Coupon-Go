@@ -3,6 +3,7 @@ from datetime import timedelta
 from uuid import uuid4
 
 from fastapi import HTTPException
+from sqlalchemy.exc import IntegrityError
 
 from . import config, connect_gateway, models
 from .models_connect import ApplicationConnectAccount, ConnectAccount, ShopConnectOperation
@@ -12,6 +13,9 @@ from .timeutil import utcnow
 
 
 def _application(db, application_id, user_id=None):
+    if db.get_bind().dialect.name == "sqlite":
+        db.query(MerchantApplication).filter_by(id=application_id).update(
+            {"status": MerchantApplication.status}, synchronize_session=False)
     app = (db.query(MerchantApplication).filter_by(id=application_id)
            .with_for_update().populate_existing().first())
     if app is None or (user_id is not None and app.user_id != user_id):
@@ -57,10 +61,21 @@ def start(db, application_id, user, return_url, refresh_url):
         if not account_id:
             db.rollback()
             raise HTTPException(502, "開戶結果未確認，請稍後重試")
+        conflicting_application = (db.query(ApplicationConnectAccount.id)
+                                   .filter(ApplicationConnectAccount.stripe_account_id == account_id,
+                                           ApplicationConnectAccount.id != row.id).first())
+        conflicting_shop = db.query(ConnectAccount.id).filter_by(stripe_account_id=account_id).first()
+        if conflicting_application or conflicting_shop:
+            db.rollback()
+            raise HTTPException(409, "此開戶帳號已有綁定，請聯絡平台核對")
         row.stripe_account_id = account_id
         row.simulated = bool(created.get("simulated"))
         row.state = "incomplete"
-        db.commit()
+        try:
+            db.commit()
+        except IntegrityError:
+            db.rollback()
+            raise HTTPException(409, "此開戶帳號已有綁定，請聯絡平台核對")
     try:
         link = connect_gateway.create_account_link(row.stripe_account_id, refresh_url, return_url)
     except GatewayError:
@@ -72,6 +87,9 @@ def start(db, application_id, user, return_url, refresh_url):
 def start_existing_shop(db, shop_id, email):
     """Create at most one provider account for a pre-existing shop."""
     _enabled()
+    if db.get_bind().dialect.name == "sqlite":
+        db.query(models.Shop).filter_by(id=shop_id).update(
+            {"name": models.Shop.name}, synchronize_session=False)
     shop = (db.query(models.Shop).filter_by(id=shop_id).with_for_update()
             .populate_existing().one())
     account = db.query(ConnectAccount).filter_by(shop_id=shop.id).first()
@@ -84,6 +102,9 @@ def start_existing_shop(db, shop_id, email):
         db.add(op)
         db.commit()
     # The shop lock protects both the remote call and local account binding.
+    if db.get_bind().dialect.name == "sqlite":
+        db.query(models.Shop).filter_by(id=shop_id).update(
+            {"name": models.Shop.name}, synchronize_session=False)
     db.query(models.Shop).filter_by(id=shop_id).with_for_update().populate_existing().one()
     account = db.query(ConnectAccount).filter_by(shop_id=shop_id).first()
     if account:
@@ -127,6 +148,8 @@ def sync(db, application_id, user_id=None):
         manual = row.manual_payouts
         if info.get("payouts_enabled") and not manual:
             payout_info = connect_gateway.set_manual_payouts(row.stripe_account_id)
+            if not payout_info.get("manual"):
+                raise GatewayError("manual payout schedule not confirmed")
             if payout_info.get("simulated"):
                 row.simulated = True
             manual = True
@@ -134,11 +157,12 @@ def sync(db, application_id, user_id=None):
         raise HTTPException(502, "無法核實開戶狀態，請稍後重試")
     row.charges_enabled = bool(info.get("charges_enabled"))
     row.payouts_enabled = bool(info.get("payouts_enabled"))
+    row.transfers_enabled = bool(info.get("transfers_enabled"))
     row.details_submitted = bool(info.get("details_submitted"))
     row.simulated = row.simulated or bool(info.get("simulated"))
     row.manual_payouts = manual
     row.verified_at = utcnow()
-    row.state = "active" if row.charges_enabled and row.payouts_enabled else "incomplete"
+    row.state = "active" if row.charges_enabled and row.payouts_enabled and row.transfers_enabled else "incomplete"
     # The legacy application's fields are projections, never verification evidence.
     app.stripe_account_id = row.stripe_account_id
     app.stripe_charges_enabled = row.charges_enabled
@@ -153,7 +177,7 @@ def approve_binding(db, app):
     if config.APP_ENV != "dev" and (row.simulated or not config.STRIPE_SECRET_KEY
                                      or config.STRIPE_SECRET_KEY.startswith("sk_test_")):
         raise HTTPException(409, "測試或模擬開戶不能用於正式入駐")
-    if not (row.charges_enabled and row.payouts_enabled and row.manual_payouts):
+    if not (row.charges_enabled and row.payouts_enabled and row.transfers_enabled and row.manual_payouts):
         raise HTTPException(400, "尚未完成 Stripe 開戶")
     matches = (db.query(ConnectAccount, models.Shop)
                .join(models.Shop, models.Shop.id == ConnectAccount.shop_id)
@@ -170,6 +194,7 @@ def approve_binding(db, app):
     db.add(ConnectAccount(shop_id=shop.id, stripe_account_id=row.stripe_account_id,
                           charges_enabled=row.charges_enabled,
                           payouts_enabled=row.payouts_enabled,
+                          transfers_enabled=row.transfers_enabled,
                           details_submitted=row.details_submitted,
                           manual_payouts=row.manual_payouts,
                           onboarding_status=row.state))
