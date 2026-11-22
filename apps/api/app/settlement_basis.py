@@ -36,6 +36,7 @@ from sqlalchemy.orm import Session
 
 from . import models
 from .models_packages import Order
+from .order_allocation import read_frozen_allocations
 
 
 def settlement_basis(db: Session, coupon: models.Coupon = None,
@@ -56,6 +57,16 @@ def settlement_basis(db: Session, coupon: models.Coupon = None,
     # Refunded orders never settle, snapshot or not.
     if order is not None and order.refund_status == "refunded":
         return None
+    if order is not None:
+        count = db.query(models.WalletItem).filter_by(order_id=order.id).count()
+        if count > 1 or order.wallet_allocation_fingerprint is not None:
+            allocations = read_frozen_allocations(db, order)
+            amount = allocations[item.id]
+            if redemption is not None and redemption.face_value is not None:
+                if Decimal(str(redemption.face_value)) != amount:
+                    from fastapi import HTTPException
+                    raise HTTPException(409, "歷史核銷金額需要人工核對，請聯絡客服")
+            return amount
     # A Cash coupon is a discount, not money collected by the platform.
     # Also apply this rule to pre-M8 positive face-value snapshots.
     if order is None:

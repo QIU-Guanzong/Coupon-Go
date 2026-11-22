@@ -102,9 +102,22 @@ def shop_out(db: Session, s: models.Shop, user_id=None):
 def wallet_out(db: Session, w: models.WalletItem):
     c = db.query(models.Coupon).filter(models.Coupon.id == w.coupon_id).first()
     shop = db.query(models.Shop).filter(models.Shop.id == c.shop_id).first() if c else None
-    order = db.get(models.Order, w.order_id) if w.order_id and w.source == "purchase" else None
+    order = db.get(models.Order, w.order_id) if w.order_id else None
+    items = (db.query(models.WalletItem).filter_by(order_id=order.id).all() if order else [])
+    if order:
+        from .serializers_packages import order_wallet_refundable
+        from .order_allocation import wallet_order_consistent
+        order_refundable = order_wallet_refundable(db, order, items)
+        order_wallet_status = "ok" if wallet_order_consistent(order, items) else "needs_review"
+    else:
+        order_refundable = False
+        order_wallet_status = "ok"
     return {
-        "quantity": order.quantity if order else 1,
+        "quantity": (order.quantity or 1) if order and len(items) == 1 else 1,
+        "order_quantity": (order.quantity or 1) if order else None,
+        "order_paid_amount": (float(order.paid_amount) if order and order.payment_status == "paid" and order.paid_amount is not None else None),
+        "order_refundable": order_refundable,
+        "order_wallet_quantity_status": order_wallet_status,
         "refund_status": order.refund_status if order else "none",
         "id": w.id,
         "coupon_id": w.coupon_id,

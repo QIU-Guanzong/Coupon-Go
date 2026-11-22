@@ -97,6 +97,7 @@ class Order(Base):
     quantity = Column(Integer, default=1, nullable=False)  # Gap 7: 购买份数
     amount = Column(Numeric(10, 2), nullable=False)       # 应付金额
     paid_amount = Column(Numeric(10, 2), default=0)       # 实付金额
+    wallet_allocation_fingerprint = Column(String(64), nullable=True)
     payment_method = Column(String(20), default="")       # fps | card
     payment_status = Column(String(20), default="pending", nullable=False)
     refund_status = Column(String(20), default="none", nullable=False)

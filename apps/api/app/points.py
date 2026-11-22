@@ -9,8 +9,8 @@ Low-level ledger writes stay in ``deps.add_points`` /
 - review -> ``POINTS_REVIEW`` (+15)
 
 P1-C (points by spend, FEATURE_GAP §3.4) changes exactly one
-function: ``award_redeem_points`` — paid coupons award HK$1 = 1 point
-on the order's ``paid_amount`` at redeem time, free coupons keep the
+function: ``award_redeem_points`` — paid coupons earn points on their
+own frozen share of the order's actual payment; free coupons keep the
 flat value. Every redemption path (scan, supplementary, batch) calls
 that function, and every revoke path calls ``clawback_points`` with
 the award it reverses, so no caller re-derives the rule.
@@ -31,11 +31,11 @@ def award_claim_points(db: Session, user_id: int, coupon_id: int):
     add_points(db, user_id, config.POINTS_CLAIM, "claim", ref_id=coupon_id)
 
 
-def award_redeem_points(db: Session, user_id: int, wallet_item_id: int):
-    """Redemption: flat POINTS_REDEEM today (P1-C seam — see module
-    docstring). Ref = the wallet item, so revoke finds this award."""
-    add_points(db, user_id, config.POINTS_REDEEM, "redeem",
-               ref_id=wallet_item_id)
+def award_redeem_points(db: Session, user_id: int, wallet_item_id: int, *, paid_basis=None):
+    """Paid redemptions use their frozen share; free redemptions stay flat."""
+    from .points_service import award_redeem_points as award
+    item = db.get(models.WalletItem, wallet_item_id)
+    return award(db, user_id, item, paid_basis=paid_basis)
 
 
 def award_review_points(db: Session, user_id: int, wallet_item_id: int):

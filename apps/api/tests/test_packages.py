@@ -24,13 +24,17 @@ from app.database import Base, get_db  # noqa: E402
 from app.main import app  # noqa: E402
 from app.seed import seed  # noqa: E402
 
-engine = create_engine("sqlite://", connect_args={"check_same_thread": False},
-                       poolclass=StaticPool)
+PG_URL = os.environ.get("PACKAGES_TEST_POSTGRES_URL")
+engine = (create_engine(PG_URL, pool_size=5, max_overflow=5) if PG_URL else
+          create_engine("sqlite://", connect_args={"check_same_thread": False},
+                        poolclass=StaticPool))
 TestingSession = sessionmaker(bind=engine, autoflush=False)
 
 
 @pytest.fixture(scope="module")
 def client():
+    if PG_URL:
+        Base.metadata.drop_all(bind=engine)
     Base.metadata.create_all(bind=engine)
     db = TestingSession()
     seed(db)
@@ -47,6 +51,8 @@ def client():
     with TestClient(app) as c:
         yield c
     app.dependency_overrides.clear()
+    if PG_URL:
+        engine.dispose()
 
 
 def _register_and_login(client, email):
@@ -241,7 +247,9 @@ def test_package_voucher_redeem_via_scan(client):
     wallet = client.get("/api/v3/get-favorite-coupons-list",
                         params={"status": 2}, headers=h).json()
     assert any(i["id"] == wid for i in wallet["items"])
-    assert client.get("/api/v3/points", headers=h).json()["balance"] == 20
+    # P1-C: paid package voucher earns per-HKD-spent points (150 paid
+    # -> +150), no longer the old flat +20.
+    assert client.get("/api/v3/points", headers=h).json()["balance"] == 150
 
 
 # ---------- refunds ----------
