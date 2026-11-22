@@ -33,8 +33,16 @@ from app.main import app  # noqa: E402
 from app.seed import seed  # noqa: E402
 
 TEST_DB = os.path.join(_TMP, "test.db")
-
-engine = create_engine(f"sqlite:///{TEST_DB}", connect_args={"check_same_thread": False})
+PG_URL = os.environ.get("DIANPING17_POSTGRES_URL")
+if PG_URL:
+    from sqlalchemy.engine import make_url
+    parsed = make_url(PG_URL)
+    assert parsed.get_backend_name() == "postgresql" and not parsed.password
+    assert parsed.host in (None, "", "127.0.0.1", "localhost", "::1")
+    assert (parsed.database or "").startswith("coupon_merchant_test_")
+    engine = create_engine(PG_URL, pool_size=5, max_overflow=5)
+else:
+    engine = create_engine(f"sqlite:///{TEST_DB}", connect_args={"check_same_thread": False})
 TestingSession = sessionmaker(bind=engine)
 
 
@@ -293,10 +301,19 @@ def test_assign_branches_persists_and_enforces_at_redeem(client):
     assert r.status_code == 200 and r.json()["can_redeem"] is True
     r = client.post("/api/v3/new-scan-coupon",
                     json={"code": code, "branch_id": b1,
-                          "prepare_token": r.json()["prepare_token"]}, headers=vh)
+                          "prepare_token": r.json()["prepare_token"],
+                          "idempotency_key": "restricted-single"}, headers=vh)
     assert r.status_code == 200, r.text
     with TestingSession() as db:
         assert db.get(models.Redemption, r.json()["redemption_id"]).branch_id == b1
+    replay = client.post("/api/v3/new-scan-coupon",
+                         json={"code": code, "branch_id": b1,
+                               "idempotency_key": "restricted-single"}, headers=vh)
+    assert replay.status_code == 200 and replay.json()["duplicate"] is True
+    mismatch = client.post("/api/v3/new-scan-coupon",
+                           json={"code": code, "branch_id": b2,
+                                 "idempotency_key": "restricted-single"}, headers=vh)
+    assert mismatch.status_code == 409
 
 
 def test_unrestricted_redemption_with_or_without_branches(client):
@@ -380,7 +397,13 @@ def test_supplementary_scan_requires_branch_and_preserves_replay_scope(client):
     coupon_id = _make_coupon(client, 1, "補錄限店")
     assert client.post("/api/v3/assign-branches",
                        json={"coupon_id": coupon_id, "branch_ids": [branch]}, headers=vendor).status_code == 200
-    _, wallet_id, _ = _claim_and_present(client, "supplement-branch@example.com", coupon_id)
+    _, wallet_id, code = _claim_and_present(client, "supplement-branch@example.com", coupon_id)
+    lookup = client.get("/api/v3/merchant/redemptions/lookup",
+                        params={"code_suffix": code[-4:]}, headers=vendor)
+    assert lookup.status_code == 200, lookup.text
+    match = next(item for item in lookup.json()["items"] if item["wallet_item_id"] == wallet_id)
+    assert match["branch_required"] is True
+    assert match["branches"] == [{"id": branch, "name": "補錄限定店", "address": ""}]
     url = "/api/v3/merchant/redemptions/supplementary-scan"
     payload = {"wallet_item_id": wallet_id, "idempotency_key": "supplement-branch"}
     missing = client.post(url, json=payload, headers=vendor)

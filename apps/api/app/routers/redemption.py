@@ -298,9 +298,15 @@ def lookup_redemption(phone: str | None = None, code_suffix: str | None = None,
             continue
         shop = db.get(models.Shop, coupon.shop_id)
         order = db.get(models.Order, item.order_id) if item.order_id else None
+        allowed = coupon_branch_ids(db, coupon.id)
+        branches = (db.query(models.Branch).filter(
+            models.Branch.shop_id == coupon.shop_id,
+            models.Branch.id.in_(allowed)).order_by(models.Branch.id).all() if allowed else [])
         out.append({'wallet_item_id': item.id, 'coupon_id': coupon.id,
                     'coupon_name': coupon.coupon_name, 'shop_id': coupon.shop_id,
                     'shop_name': shop.name if shop else '',
+                    'branch_required': bool(allowed),
+                    'branches': [{'id': b.id, 'name': b.name, 'address': b.address or ''} for b in branches],
                     'customer_phone_last4': _phone_last4(owner.phone if owner else None),
                     'valid_to': coupon.valid_to.isoformat() if coupon.valid_to else None,
                     'order_id': item.order_id, 'package_quantity': (order.quantity or 1) if order else None,
