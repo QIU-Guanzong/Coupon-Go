@@ -373,9 +373,9 @@ def record_spend(db: Session,
         # for money never paid.
         order = db.query(models.Order).filter(
             models.Order.id == item.order_id).first()
-        if order is not None and order.paid_amount is not None \
-                and money(order.paid_amount) > 0:
-            paid = money(order.paid_amount)
+        if order is not None and order.payment_status == "paid" and redemption.face_value is not None \
+                and money(redemption.face_value) > 0:
+            paid = money(redemption.face_value)
     elif coupon.discount_price is not None \
             and money(coupon.discount_price) > 0:
         # Price coupon: the coupon's own server-side price is the paid

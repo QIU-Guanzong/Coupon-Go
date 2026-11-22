@@ -119,10 +119,26 @@ def revoke_redemption(redemption_id: int, acknowledge_existing: bool = False,
                       vendor: models.User = Depends(
                           require_role("vendor", "admin")),
                       db: Session = Depends(get_db)):
-    # FIX-3: lock the redemption row before the revoked_at check so a
-    # second concurrent revoke blocks here and sees revoked_at set.
-    # Serialize revocations, while allowing a statement being generated to
-    # take its foreign-key reference to this redemption before we credit it.
+    # Discover identity without locking, then use the same customer -> order
+    # -> wallet -> redemption order as scan/refund before rechecking state.
+    candidate = (db.query(models.Redemption.wallet_item_id, models.Redemption.shop_id)
+                 .filter_by(id=redemption_id).first())
+    if candidate is None:
+        raise errors.redemption_not_found()
+    if vendor.role != "admin" and candidate.shop_id not in vendor_shop_ids(db, vendor):
+        raise errors.forbidden()
+    owner = (db.query(models.WalletItem.user_id, models.WalletItem.order_id)
+             .filter_by(id=candidate.wallet_item_id).first())
+    if owner is None:
+        raise errors.redemption_not_found()
+    lock_account(db, owner.user_id)
+    if owner.order_id is not None:
+        from ..order_allocation import ensure_order_allocations
+        ensure_order_allocations(db, owner.order_id)
+    item = (db.query(models.WalletItem).filter_by(id=candidate.wallet_item_id)
+            .with_for_update().populate_existing().one())
+    if item.user_id != owner.user_id or item.order_id != owner.order_id:
+        raise HTTPException(409, "券資料需要核對")
     red = (db.query(models.Redemption).filter(
         models.Redemption.id == redemption_id)
         .with_for_update(key_share=True).populate_existing().first())
@@ -148,8 +164,8 @@ def revoke_redemption(redemption_id: int, acknowledge_existing: bool = False,
             return {"message": "此筆核銷已撤銷", "redemption_id": red.id,
                     "wallet_item_id": red.wallet_item_id, "revoked_at": red.revoked_at}
         raise errors.redemption_already_revoked()
-    item = db.query(models.WalletItem).filter_by(id=red.wallet_item_id).with_for_update().one()
-    lock_account(db, item.user_id)
+    if red.wallet_item_id != item.id:
+        raise HTTPException(409, "核銷資料需要核對")
     item.status = 3 if item.coupon.valid_to <= now else 1
     item.used_at = None
     item.code = ""

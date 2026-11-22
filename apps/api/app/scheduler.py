@@ -54,7 +54,7 @@ from .models_scheduler import SchedulerLock  # noqa: F401  (register table)
 logger = logging.getLogger(__name__)
 
 JOB_NAMES = ("expired-packages", "bargain-expire", "payment-timeouts",
-             "cashback-sweep", "coupon-expiry", "late-payment-refunds", "listing-schedule")
+             "cashback-sweep", "points-expire", "coupon-expiry", "late-payment-refunds", "listing-schedule")
 
 # Fixed Postgres advisory-lock keys, one per job (arbitrary but stable;
 # changing them orphans nothing — advisory locks die with the session).
@@ -63,9 +63,7 @@ ADVISORY_LOCK_KEYS = {
     "bargain-expire": 2026111702,
     "payment-timeouts": 2026111703,
     "cashback-sweep": 2026111704,
-    # 2026111705 is claimed by TWO unmerged blocks (stats
-    # monthly-settlements AND listing listing-schedule); this job
-    # takes the next free key instead of joining the collision.
+    "points-expire": 2026111705,
     "coupon-expiry": 2026111706,
     "late-payment-refunds": 2026111707,
     "listing-schedule": 2026111708,
@@ -249,6 +247,11 @@ def run_coupon_expiry(db):
     return _run_job(db, "coupon-expiry", cp.sweep_coupon_expiry)
 
 
+def run_points_expire(db):
+    from . import points_service as svc
+    return _run_job(db, "points-expire", svc.sweep_expired_points)
+
+
 JOB_RUNNERS = {
     "expired-packages": run_expired_packages,
     "bargain-expire": run_bargain_expire,
@@ -257,6 +260,7 @@ JOB_RUNNERS = {
     "coupon-expiry": run_coupon_expiry,
     "listing-schedule": run_listing_schedule,
     "late-payment-refunds": run_late_payment_refunds,
+    "points-expire": run_points_expire,
 }
 
 
@@ -266,7 +270,7 @@ def run_all_jobs(session_factory=None, batch_size=None):
     factory = session_factory or SessionLocal
     results = {}
     for name in ("expired-packages", "bargain-expire", "payment-timeouts",
-                 "coupon-expiry", "late-payment-refunds", "listing-schedule"):
+                 "coupon-expiry", "late-payment-refunds", "listing-schedule", "points-expire"):
         db = factory()
         try:
             results[name] = JOB_RUNNERS[name](db)
@@ -325,6 +329,10 @@ def create_scheduler(session_factory=None, interval_seconds=None):
     sched.add_job(lambda: _one(run_late_payment_refunds),
                   trigger=IntervalTrigger(seconds=interval),
                   id="late-payment-refunds", max_instances=1, coalesce=True,
+                  misfire_grace_time=60)
+    sched.add_job(lambda: _one(run_points_expire),
+                  trigger=IntervalTrigger(seconds=interval),
+                  id="points-expire", max_instances=1, coalesce=True,
                   misfire_grace_time=60)
     return sched
 

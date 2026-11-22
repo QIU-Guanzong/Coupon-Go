@@ -306,6 +306,9 @@ def app_config():
         "points_claim": config.POINTS_CLAIM,
         "points_redeem": config.POINTS_REDEEM,
         "points_review": config.POINTS_REVIEW,
+        # P1-C: paid voucher redeem rate and grant validity.
+        "points_per_hkd": config.POINTS_PER_HKD,
+        "points_expire_months": config.POINTS_EXPIRE_MONTHS,
         "qr_ttl_seconds": config.QR_TTL_SECONDS,
         "cashback_unlock_days": config.CASHBACK_DINEIN_UNLOCK_DAYS,
         # M10: cashback_enabled follows the CASHBACK_ENABLED switch;

@@ -16,7 +16,8 @@ from app import models_bargain  # noqa: E402,F401  (line E)
 config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
-config.set_main_option("sqlalchemy.url", app_config.DATABASE_URL)
+# ConfigParser interpolates percent signs; preserve encoded URL components.
+config.set_main_option("sqlalchemy.url", app_config.DATABASE_URL.replace("%", "%%"))
 target_metadata = Base.metadata
 
 
