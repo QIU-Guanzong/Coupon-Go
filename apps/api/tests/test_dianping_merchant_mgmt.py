@@ -420,6 +420,43 @@ def test_supplementary_scan_requires_branch_and_preserves_replay_scope(client):
     assert client.post(url, json=payload, headers=vendor).status_code == 409
 
 
+@pytest.mark.skipif(not PG_URL, reason="requires isolated PostgreSQL")
+def test_restricted_batch_and_single_scan_race_stays_atomic(client):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+
+    vendor = _vendor_headers(client)
+    branch = client.post("/api/v3/merchant/shops/1/branches",
+                         json={"name": "併發限定店"}, headers=vendor).json()["branch"]["id"]
+    coupon_id = _make_coupon(client, 1, "併發限店券")
+    assert client.post("/api/v3/assign-branches",
+                       json={"coupon_id": coupon_id, "branch_ids": [branch]}, headers=vendor).status_code == 200
+    _, first_id, first_code = _claim_and_present(client, "race-branch-a@example.com", coupon_id)
+    _, second_id, second_code = _claim_and_present(client, "race-branch-b@example.com", coupon_id)
+    barrier = Barrier(2)
+
+    def batch():
+        barrier.wait(timeout=10)
+        return client.post("/api/v3/new-scan-coupon/batch",
+                           json={"codes": [first_code, second_code], "branch_ids": [branch, branch],
+                                 "idempotency_key": "branch-race-batch"}, headers=vendor)
+
+    def single():
+        barrier.wait(timeout=10)
+        return client.post("/api/v3/new-scan-coupon",
+                           json={"code": first_code, "branch_id": branch}, headers=vendor)
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        requests = [pool.submit(batch), pool.submit(single)]
+        batch_result, single_result = [request.result(timeout=30) for request in requests]
+    assert sorted([batch_result.status_code, single_result.status_code]) == [200, 400]
+    with TestingSession() as db:
+        rows = db.query(models.Redemption).filter(models.Redemption.wallet_item_id.in_([first_id, second_id])).all()
+        assert len(rows) == (2 if batch_result.status_code == 200 else 1)
+        assert all(row.branch_id == branch for row in rows)
+        assert db.get(models.WalletItem, second_id).status == (2 if batch_result.status_code == 200 else 1)
+
+
 # ---------- 1.3 staff roles (P1) ----------
 def _invite_as(client, shop_id, email, role):
     h = _register_and_login(client, email)

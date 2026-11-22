@@ -148,6 +148,12 @@ Base URL：`http://localhost:8000`，路径前缀 `/api/v3`。
 分店不在适用范围返回 400 `此優惠券不適用於此分店`；分店不属于该店返回 400 `找不到此分店`。
 受限券不传 `branch_id` 返回 400，提示先选择分店，券不会被核销；不受限券无需传分店。
 
+批量核销 `POST /new-scan-coupon/batch` 可传与 `codes` 等长的 `branch_ids`；
+受限券填写所选分店 id，不受限券可填 null。缺失或不适用时整批不核销，400 响应的
+`results` 提供每项原因与 `allowed_branches`。旧的不传分店批次及其幂等重试仍可用于
+不受限券。补录查询 `/merchant/redemptions/lookup` 每项返回 `branch_required` 和
+`branches`，受限券补录须传 `branch_id`。成功核销的分店保存在流水中，历史流水为空。
+
 ## 1.3 店员三级权限（P1）
 
 ### `POST /admin/shops/{shop_id}/members`（改动：邀请带角色，店主 / admin）· 201
