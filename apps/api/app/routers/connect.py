@@ -154,6 +154,7 @@ def connect_balance(shop_id: int = Query(...),
     balance = merchant_balance(db, shop.id)
     account = get_account(db, shop.id)
     return {"shop_id": shop.id, "currency": connect_service.CURRENCY,
+            "connect_mode": connect_service.connect_mode(),
             "pending": _money(balance["pending"]),
             "available": _money(balance["available"]),
             "paid_out": _money(balance["paid_out"]),
@@ -199,6 +200,7 @@ def active_payouts(shop_id: int = Query(...),
                     ConnectLedgerEntry.status.in_(("processing", "payout_unknown", "submitted")))
             .order_by(ConnectLedgerEntry.id.desc()).all())
     return {"shop_id": shop.id, "currency": connect_service.CURRENCY,
+            "connect_mode": connect_service.connect_mode(),
             "payouts": [{"entry_id": row.id, "request_id": row.payout_request_id,
                          "amount": _money(-row.net_amount), "status": row.status,
                          "stripe_payout_id": row.stripe_payout_id or None,

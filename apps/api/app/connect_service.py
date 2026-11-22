@@ -70,6 +70,14 @@ def connect_configured() -> bool:
                 (key.startswith("sk_test_") or (not key and config.APP_ENV == "dev")))
 
 
+def connect_mode() -> str:
+    """Current runtime mode; this does not assert a historical entry's origin."""
+    if not connect_configured():
+        return "unavailable"
+    return "stripe_test" if (config.STRIPE_SECRET_KEY or "").strip() else "simulated"
+
+
+
 def effective_commission_rate(db: Session, shop_id: int) -> Decimal:
     configured = (db.query(MerchantCommissionRate)
                   .filter(MerchantCommissionRate.shop_id == shop_id).first())
@@ -578,7 +586,7 @@ def retry_entry(db: Session, entry_id: int) -> dict:
 
 def _payout_out(db, entry):
     balance = merchant_balance(db, entry.shop_id)
-    return {"shop_id": entry.shop_id, "entry_id": entry.id,
+    return {"shop_id": entry.shop_id, "entry_id": entry.id, "connect_mode": connect_mode(),
             "amount": _money(-entry.net_amount), "currency": CURRENCY,
             "stripe_payout_id": entry.stripe_payout_id or None,
             "status": entry.status,

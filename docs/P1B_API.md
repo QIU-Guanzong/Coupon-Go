@@ -13,6 +13,8 @@
 
 财务核对可用 `POST /api/v3/admin/connect/transfers/{id}/reconcile`，提交 Stripe 转账对象的 `provider_id`；未知冲回使用 `POST /api/v3/admin/connect/transfers/{id}/reversal/reconcile`，提交冲回对象的 `provider_id`。后端只读取供应商对象，并比对转账时保存的原商户账户、金额、币种和唯一操作标识；冲回还需匹配原转账及全额冲回。核对失败的流水仍保持待处理并记录原因，不会重发转账或冲回。没有原账户快照或唯一操作标识的历史记录不能通过此接口确认，需保留并人工核对；接口不会把“未找到对象”当作款项未发生。
 
+`GET /api/v3/merchant/connect/payouts/active?shop_id=...` 返回该店全部待确认提款及其原请求编号、金额和状态；旧流水可能没有编号，不能自动重发。余额、待确认提款和提款响应中的 `connect_mode` 仅说明当前配置是本地模拟、Stripe 测试或不可用，不代表历史流水的来源。
+
 当前固定的 Accounts v2 版本为 `2026-11-18.preview`，可用 `STRIPE_V2_VERSION` 配置。2026-11-22 核对时，Stripe 的[创建账户接口参考](https://docs.stripe.com/api/v2/core/accounts/create)示例使用 `2026-11-18.endive`，而 [Connect Accounts v2 指南](https://docs.stripe.com/connect/accounts-v2)示例仍使用 `2026-11-18.preview`。两个示例存在差异；切换版本之前需要用测试账户验证完整开户与结算行为。
 
 ## 接口与运维状态

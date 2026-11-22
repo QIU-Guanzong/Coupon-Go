@@ -3,7 +3,7 @@ from decimal import Decimal
 
 import pytest
 
-from app import connect_gateway, models
+from app import config, connect_gateway, models
 from app.models_connect import ConnectLedgerEntry
 from app.payments_gateway import GatewayError
 from tests import test_p1b_connect_fixes as base
@@ -77,4 +77,21 @@ def test_active_payout_reuses_request_after_unknown_result(client, monkeypatch):
     assert (row["request_id"], row["amount"], row["status"]) == (request["request_id"], 20.0, "payout_unknown")
     replay = client.post("/api/v3/merchant/connect/payouts", json=request, headers=vendor)
     assert replay.status_code == 200 and replay.json()["status"] == "payout_unknown"
+    assert replay.json()["connect_mode"] == "simulated"
     assert len(calls) == 1
+
+
+def test_current_connect_mode_is_visible_without_provider_calls(client, monkeypatch):
+    vendor = base._vendor_headers(client)
+    monkeypatch.setattr(config, "STRIPE_CONNECT_ENABLED_RAW", "1")
+    def assert_mode(expected):
+        for path in ("/api/v3/merchant/connect/balance", "/api/v3/merchant/connect/payouts/active"):
+            response = client.get(path, params={"shop_id": 1}, headers=vendor)
+            assert response.status_code == 200 and response.json()["connect_mode"] == expected
+    monkeypatch.setattr(config, "APP_ENV", "dev")
+    monkeypatch.setattr(config, "STRIPE_SECRET_KEY", "")
+    assert_mode("simulated")
+    monkeypatch.setattr(config, "STRIPE_SECRET_KEY", "sk_test_example")
+    assert_mode("stripe_test")
+    monkeypatch.setattr(config, "STRIPE_CONNECT_ENABLED_RAW", "0")
+    assert_mode("unavailable")
