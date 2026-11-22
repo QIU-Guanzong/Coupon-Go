@@ -12,6 +12,8 @@ class Coupon {
         percentage = (j['percentage'] as num?)?.toDouble(),
         gift = j['gift'] as String? ?? '',
         discountPrice = (j['discount_price'] as num?)?.toDouble(),
+        salePrice = (j['sale_price'] as num?)?.toDouble(),
+        isPaid = j['is_paid'] == true || ((j['sale_price'] as num?) ?? 0) > 0,
         regularPrice = (j['regular_price'] as num?)?.toDouble(),
         minSpend = (j['min_spend'] as num?)?.toDouble() ?? 0,
         image = j['image'] as String? ?? '',
@@ -37,6 +39,8 @@ class Coupon {
   final double? percentage;
   final String gift;
   final double? discountPrice;
+  final double? salePrice;
+  final bool isPaid;
   final double? regularPrice;
   final double minSpend;
   final String image;

@@ -7,6 +7,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../api_client.dart';
 import '../language.dart';
 import '../models.dart';
+import '../stripe_test_bridge.dart';
 import '../theme.dart';
 import '../widgets/widgets.dart';
 import '../widgets/wallet_updates.dart';
@@ -633,21 +634,38 @@ class PackageCheckoutScreen extends StatefulWidget {
 class _PackageCheckoutScreenState extends State<PackageCheckoutScreen> {
   int _qty = 1;
   final Map<String, String> _checkoutRefs = {};
-  String _method = 'fps';
+  String _method = 'card';
   bool _agreed = false;
   bool _busy = false;
+  bool _optionsLoading = true;
+  bool _cardAvailable = false;
+  bool _fpsAvailable = false;
+  String _paymentMode = 'unavailable';
 
   @override
   void initState() {
     super.initState();
-    _loadLastMethod();
+    _loadPaymentOptions();
   }
 
-  Future<void> _loadLastMethod() async {
-    final prefs = await SharedPreferences.getInstance();
-    final last = prefs.getString('last_payment_method');
-    if (mounted && (last == 'fps' || last == 'card')) {
-      setState(() => _method = last!);
+  Future<void> _loadPaymentOptions() async {
+    if (mounted) setState(() => _optionsLoading = true);
+    try {
+      final options = await widget.api.get('/payment-options');
+      final prefs = await SharedPreferences.getInstance();
+      if (!mounted) return;
+      final fps = options['fps'] == true;
+      final card = options['card'] == true;
+      final last = prefs.getString('last_payment_method');
+      setState(() {
+        _fpsAvailable = fps;
+        _cardAvailable = card;
+        _paymentMode = options['mode'] as String? ?? 'unavailable';
+        _method = last == 'fps' && fps ? 'fps' : 'card';
+        _optionsLoading = false;
+      });
+    } catch (_) {
+      if (mounted) setState(() => _optionsLoading = false);
     }
   }
 
@@ -775,20 +793,28 @@ class _PackageCheckoutScreenState extends State<PackageCheckoutScreen> {
           const Text('支付方式', style: TextStyle(fontWeight: FontWeight.bold)),
           RadioGroup<String>(
             groupValue: _method,
-            onChanged: (v) => setState(() => _method = v ?? 'fps'),
-            child: const Column(
+            onChanged: (v) => setState(() => _method = v ?? 'card'),
+            child: Column(
               children: [
                 RadioListTile<String>(
-                  title: Text('FPS 轉數快'),
+                  title: Text(_fpsAvailable ? 'FPS 轉數快' : 'FPS 轉數快（暫未提供）'),
                   value: 'fps',
+                  enabled: _fpsAvailable,
                 ),
                 RadioListTile<String>(
-                  title: Text('信用卡'),
+                  title: const Text('信用卡'),
                   value: 'card',
+                  enabled: _cardAvailable,
                 ),
               ],
             ),
           ),
+          if (_paymentMode == 'demo')
+            const Text('目前為模擬付款，不會扣款。'),
+          if (_paymentMode == 'stripe_test')
+            const Text('目前為 Stripe 測試付款，不會產生真實扣款。'),
+          if (!_optionsLoading && !_cardAvailable && !_fpsAvailable)
+            TextButton(onPressed: _loadPaymentOptions, child: const Text('付款暫未開放，點此重新載入')),
           const SizedBox(height: 8),
           // 金额明细
           const Text('金額明細', style: TextStyle(fontWeight: FontWeight.bold)),
@@ -862,7 +888,9 @@ class _PackageCheckoutScreenState extends State<PackageCheckoutScreen> {
           child: ElevatedButton(
             style: ElevatedButton.styleFrom(
                 minimumSize: const Size(double.infinity, 48)),
-            onPressed: (_agreed && !_busy && !soldOut) ? _confirmPay : null,
+            onPressed: (_agreed && !_busy && !soldOut && !_optionsLoading &&
+                    (_method == 'card' ? _cardAvailable : _fpsAvailable))
+                ? _confirmPay : null,
             child: Text(_busy ? context.tr('處理中…', 'Processing…') :
                 context.tr('確認支付 ${formatHkd(_displayTotal)}', 'Confirm payment ${formatHkd(_displayTotal)}')),
           ),
@@ -1430,7 +1458,7 @@ Future<bool?> showPaymentSheet(BuildContext context, ApiClient api, PackageOrder
       content: Text(
           '訂單 #${order.id} · ${formatHkd(order.amount)}\n'
           '支付方式：${order.paymentMethodText}\n'
-          '${order.demoPayment ? '這是模擬付款，不會扣款。' : '請在支付頁面完成支付，完成後返回此頁確認結果。'}'),
+          '${order.demoPayment ? '這是模擬付款，不會扣款。' : '即將前往 Stripe 測試付款頁，並由系統確認付款結果。'}'),
       actions: [
         TextButton(
           onPressed: () => Navigator.of(ctx).pop(false),
@@ -1438,12 +1466,35 @@ Future<bool?> showPaymentSheet(BuildContext context, ApiClient api, PackageOrder
         ),
         ElevatedButton(
           onPressed: () => Navigator.of(ctx).pop(true),
-          child: Text(order.demoPayment ? '模擬付款' : '我已完成支付'),
+          child: Text(order.demoPayment ? '模擬付款' : '前往測試付款'),
         ),
       ],
     ),
   );
-  if (confirmed != true || !order.demoPayment) return confirmed;
+  if (confirmed != true) return false;
+  if (!order.demoPayment) {
+    try {
+      final details = await api.get('/orders/${order.id}/stripe-test-payment');
+      final token = api.paymentAccessToken;
+      if (token == null || !context.mounted) return false;
+      final opened = await openStripeTestPayment({
+        ...details,
+        'order_id': order.id,
+        'api_base': api.baseUrl,
+        'access_token': token,
+        'return_url': Uri.base.toString(),
+      });
+      if (!opened && context.mounted) {
+        showCgToast(context, '請使用網頁版完成測試付款');
+      }
+    } on ApiException catch (e) {
+      if (context.mounted) showCgToast(context, e.message);
+    } catch (_) {
+      if (context.mounted) showCgToast(context, '未能開啟付款頁，請稍後重試');
+    }
+    // Web navigation replaces this screen; never treat opening the page as payment.
+    return false;
+  }
   try {
     await api.post('/orders/${order.id}/demo-payment');
     return true;
