@@ -29,8 +29,9 @@
 不明的提款继续占用余额；`POST /admin/connect/payouts/{entry_id}/reconcile`
 由后台提供供应商记录编号以核对。`GET /admin/connect/recoveries` 列出
 负余额、待核对转账、待处理冲回和未完成提款。结果不明的转账与冲回
-不会自动重复发送；当前尚无供应商核对确认接口，必须人工核对，不能
-将其当作已自动闭环。`POST /merchant/connect/transfers/{entry_id}/retry`
+不会自动重复发送；财务须取得供应商对象编号后使用上方核对接口。
+旧流水缺少原账户或找不到匹配对象时仍需人工处理，不能将其当作自动闭环。
+`POST /merchant/connect/transfers/{entry_id}/retry`
 仅适用于允许重试的状态，不会重发结果不明的转账。
 
 调度器 `connect-transfers` 可使用配置的批次大小或 `run-once --batch-size`
