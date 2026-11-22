@@ -10,7 +10,7 @@ Coupon types: Cash / Discount / Gift / Price.
 from datetime import datetime, timezone
 
 from sqlalchemy import (
-    Boolean, Column, DateTime, ForeignKey, Integer, Numeric, String, Text, UniqueConstraint,
+    Boolean, Column, DateTime, ForeignKey, Index, Integer, Numeric, String, Text, UniqueConstraint,
 )
 from sqlalchemy.orm import relationship
 
@@ -212,6 +212,10 @@ class Redemption(Base):
 
 class PointTransaction(Base):
     __tablename__ = "point_transactions"
+    __table_args__ = (
+        Index("ix_point_tx_expiry_user", "expires_at", "user_id"),
+        Index("ix_point_tx_user_reason_ref", "user_id", "reason", "ref_id"),
+    )
     id = Column(Integer, primary_key=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     delta = Column(Integer, nullable=False)                 # +10 / +20 / +15 / -9 ...
@@ -224,6 +228,13 @@ class PointTransaction(Base):
     created_at = Column(DateTime, default=_now)
 
     user = relationship("User", back_populates="points")
+
+
+class PointExpiryFinalization(Base):
+    """A due grant already fully spent before expiry; not a ledger entry."""
+    __tablename__ = "point_expiry_finalizations"
+    grant_id = Column(Integer, ForeignKey("point_transactions.id"), primary_key=True)
+    checked_at = Column(DateTime, default=_now, nullable=False)
 
 
 class Favorite(Base):

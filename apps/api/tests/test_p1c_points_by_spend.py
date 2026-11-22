@@ -37,44 +37,22 @@ from app.main import app  # noqa: E402
 from app.models_packages import Order  # noqa: E402
 from app.seed import seed  # noqa: E402
 
-TEST_DB = "/tmp/coupon_go_test_p1c.db"
-
-# Postgres-or-SQLite switch, same convention as test_f3 / test_fix3 /
-# test_m3: when a real Postgres is reachable (P1C_POSTGRES_URL or the
-# default local coupon_go URL) the suite runs against it, so the
-# migration backfill, the expiry sweep and the advisory-lock job path
-# are verified on the production dialect; otherwise SQLite.
-PG_URL = os.environ.get(
-    "P1C_POSTGRES_URL",
-    "postgresql+psycopg2://coupon_go:coupon_go@localhost:5432/coupon_go_test_p1c")
-
-
-def _pg_reachable():
-    try:
-        probe = create_engine(PG_URL, connect_args={"connect_timeout": 2})
-        with probe.connect() as conn:
-            conn.execute(text("SELECT 1"))
-        probe.dispose()
-        return True
-    except Exception:
-        return False
-
-
-BACKEND = "postgres" if _pg_reachable() else "sqlite"
-
-if BACKEND == "postgres":
-    engine = create_engine(PG_URL, pool_size=5, max_overflow=5)
-else:
-    engine = create_engine(f"sqlite:///{TEST_DB}", connect_args={"check_same_thread": False})
-TestingSession = sessionmaker(bind=engine)
+PG_URL = os.environ.get("P1C_POSTGRES_URL")
+engine = None
+TestingSession = None
 
 
 @pytest.fixture(scope="module")
-def client():
-    if BACKEND == "postgres":
+def client(tmp_path_factory):
+    global engine, TestingSession
+    if PG_URL:
+        # This suite resets its explicitly supplied, disposable database.
+        engine = create_engine(PG_URL, pool_size=5, max_overflow=5)
         Base.metadata.drop_all(bind=engine)
-    elif os.path.exists(TEST_DB):
-        os.remove(TEST_DB)
+    else:
+        database = tmp_path_factory.mktemp("p1c-points") / "points.db"
+        engine = create_engine(f"sqlite:///{database}", connect_args={"check_same_thread": False})
+    TestingSession = sessionmaker(bind=engine)
     Base.metadata.create_all(bind=engine)
     db = TestingSession()
     seed(db)
@@ -91,6 +69,7 @@ def client():
     with TestClient(app) as c:
         yield c
     app.dependency_overrides.clear()
+    engine.dispose()
 
 
 def _now():

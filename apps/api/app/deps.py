@@ -99,6 +99,10 @@ def add_months(dt: datetime, months: int) -> datetime:
 
 def add_points(db: Session, user_id: int, delta: int, reason: str, ref_id=None,
                expires_at=None):
+    # Share the customer-row lock with balance checks, expiry and cashback.
+    # It is held until the caller commits or rolls back the business action.
+    from .cashback_service import lock_account
+    lock_account(db, user_id)
     # P1-C: every positive grant expires POINTS_EXPIRE_MONTHS after it
     # is earned unless the caller pins an explicit expiry. Negative /
     # reversal rows never expire themselves (expires_at stays NULL).

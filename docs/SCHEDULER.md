@@ -28,7 +28,7 @@ python -m app.scheduler status # 打印当前调度配置
 | `bargain-expire` 砍价到期结算 | `routers/bargain.py: sweep_expired_bargains()`，手动接口 `POST /bargain/expire-sweep` 同调它 | `settle_session` 只迁移 active/success 会话；`_add_refund` 每个 (session, reason) 只建一行 |
 | `payment-timeouts` 超时 pending 关闭 | `routers/packages.py: sweep_payment_timeouts()`（与读订单时懒触发的 `_refresh_payment_timeout` 同逻辑） | 超时后订单不再是 pending，不再入选；库存按份数释放 |
 | `cashback-sweep` 返现 sweep | `cashback_service.py: sweep_all_users()`（全体用户，按 user id 游标分批，默认每批 100 人；单用户逻辑仍是 `sweep_user()`） | 已确认/已作废的交易不再是 pending，不再入选 |
-| `points-expire` 积分过期（P1-C） | `points_service.py: sweep_expired_points()`（每笔积分自获得起 `POINTS_EXPIRE_MONTHS`、默认 12 个月有效；过期未用完的部分写 `reason=expire` 流水冲回） | 已过期的 lot 剩余为 0，重跑不再入选；每 lot 单独提交，单条失败不影响其他 |
+| `points-expire` 积分过期（P1-C） | `points_service.py: sweep_expired_points()`（每笔积分自获得起 `POINTS_EXPIRE_MONTHS`、默认 12 个月有效；仅检查有未处理到期批次的顾客，未用完部分写 `reason=expire` 流水） | 以顾客事务锁与兑换/扣回串行，按顾客提交，单批次用保存点隔离；已过期或已用尽的批次重跑不再入选 |
 
 单条失败不影响其他：每个 sweep 按条 try/except，失败写日志（`logger.exception`）、
 回滚该条、计入 `failed`，下一周期重试。网关失败的砍价退款仍保持 failed 状态，

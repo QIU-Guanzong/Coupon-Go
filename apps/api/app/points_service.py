@@ -15,7 +15,8 @@ code change:
   any future transfer) via require_spendable_balance().
 
 Lot accounting (FIFO): spends and clawbacks consume the oldest
-grant first, so "expiring soon" is the unspent remainder of lots
+grant first; expiry rows consume their referenced grant. Therefore
+"expiring soon" is the unspent remainder of lots
 whose expires_at falls inside the window. points_balance() itself
 stays the plain ledger sum — the sweep writes real negative rows,
 so the sum is always the available balance, negative included.
@@ -31,7 +32,7 @@ from decimal import Decimal, ROUND_FLOOR
 
 from fastapi import HTTPException
 from sqlalchemy import func
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, aliased
 
 from . import config, models
 from .deps import add_months, add_points, points_balance
@@ -77,19 +78,30 @@ def award_redeem_points(db: Session, user_id: int,
 
 def lot_remaining(db: Session, user_id: int):
     """[(grant tx, unspent remainder)] for positive grants, oldest
-    first, after allocating every negative delta FIFO (oldest grant
-    consumed first). A negative remainder beyond all grants is
+    first, after allocating spend and clawback deltas FIFO and each
+    expiry delta to its referenced grant. A negative remainder beyond all grants is
     negative-balance debt and is tracked by no lot — the plain
     ledger sum in points_balance() is the balance."""
     txs = (db.query(models.PointTransaction)
            .filter(models.PointTransaction.user_id == user_id)
            .order_by(models.PointTransaction.id).all())
     lots = []
+    grants = {}
     for t in txs:
         if t.delta > 0:
-            lots.append([t, t.delta])
+            lot = [t, t.delta]
+            lots.append(lot)
+            grants[t.id] = lot
         elif t.delta < 0:
             need = -t.delta
+            # Expiry rows explicitly name the grant they remove. Applying
+            # these to a different older, still-valid grant can expire the
+            # intended grant again on the next sweep when expiry dates vary.
+            if t.reason == "expire" and t.ref_id in grants:
+                target = grants[t.ref_id]
+                take = min(target[1], need)
+                target[1] -= take
+                need -= take
             for lot in lots:
                 if need <= 0:
                     break
@@ -117,36 +129,73 @@ def expiring_soon_points(db: Session, user_id: int, days=None) -> int:
 
 def sweep_expired_points(db: Session) -> dict:
     """Expire every lot past expires_at. One reason=expire row per
-    lot (ref_id = the grant's tx id), committed per lot so one bad
-    lot never blocks the rest. Idempotent: an expired lot has zero
+    lot (ref_id = the grant's tx id). Each user's lots are calculated
+    while holding that customer's transaction lock; savepoints isolate
+    individual bad lots. Idempotent: an expired lot has zero
     remainder afterwards, so a re-run finds nothing. Returns
     {expired, points, users, failed}."""
     now = _now()
-    user_ids = [r[0] for r in
-                db.query(models.PointTransaction.user_id).distinct().all()]
-    lots = []
-    for uid in user_ids:
-        for tx, rem in lot_remaining(db, uid):
-            if (rem > 0 and tx.expires_at is not None
-                    and tx.expires_at <= now):
-                lots.append((uid, tx, rem))
+    # First restrict work to accounts with a positive grant whose expiry has
+    # arrived. FIFO allocation below still determines whether that grant has
+    # any unspent remainder; an already-consumed lot must never be expired.
+    # The expiry-first index supports this global range scan on large ledgers.
+    grant = aliased(models.PointTransaction)
+    expiry = aliased(models.PointTransaction)
+    expired_already = (db.query(expiry.id)
+                       .filter(expiry.user_id == grant.user_id,
+                               expiry.reason == "expire",
+                               expiry.ref_id == grant.id).exists())
+    finalized = (db.query(models.PointExpiryFinalization.grant_id)
+                 .filter(models.PointExpiryFinalization.grant_id == grant.id).exists())
+    user_ids = [r[0] for r in db.query(grant.user_id)
+                .filter(grant.delta > 0,
+                        grant.expires_at.isnot(None), grant.expires_at <= now,
+                        ~expired_already, ~finalized)
+                .distinct().all()]
     expired = points = failed = 0
     expired_users = set()
-    for uid, tx, rem in lots:
+    from .cashback_service import lock_account
+    for uid in user_ids:
+        completed = []
+        user_failures = 0
         try:
-            add_points(db, uid, -rem, "expire", ref_id=tx.id)
+            lock_account(db, uid)
+            eligible = {r[0] for r in db.query(grant.id)
+                        .filter(grant.user_id == uid, grant.delta > 0,
+                                grant.expires_at.isnot(None), grant.expires_at <= now,
+                                ~expired_already, ~finalized)}
+            lots = [(tx.id, rem) for tx, rem in lot_remaining(db, uid)
+                    if tx.id in eligible]
+            for tx_id, rem in lots:
+                try:
+                    with db.begin_nested():
+                        if rem > 0:
+                            add_points(db, uid, -rem, "expire", ref_id=tx_id)
+                        else:
+                            # Once spent, an immutable grant cannot regain
+                            # points. Remember it without adding a zero-value
+                            # ledger row, so future sweeps can skip this user.
+                            db.add(models.PointExpiryFinalization(grant_id=tx_id,
+                                                                  checked_at=now))
+                            db.flush()
+                    if rem > 0:
+                        completed.append(rem)
+                except Exception:
+                    logger.exception("points-expire failed user=%s grant_tx=%s", uid, tx_id)
+                    user_failures += 1
             db.commit()
-            expired += 1
-            points += rem
-            expired_users.add(uid)
+            expired += len(completed)
+            points += sum(completed)
+            failed += user_failures
+            if completed:
+                expired_users.add(uid)
         except Exception:
-            logger.exception("points-expire failed user=%s grant_tx=%s",
-                             uid, tx.id)
+            logger.exception("points-expire transaction failed user=%s", uid)
             try:
                 db.rollback()
             except Exception:
                 pass
-            failed += 1
+            failed += user_failures + max(1, len(completed))
     return {"expired": expired, "points": points,
             "users": len(expired_users), "failed": failed}
 
@@ -161,6 +210,8 @@ def clawback_order_points(db: Session, order: Order) -> int:
     nothing to claw back or this order was already clawed back.
     The caller owns the surrounding transaction (the refund path
     commits); this only flushes."""
+    from .cashback_service import lock_account
+    lock_account(db, order.user_id)
     item_ids = [i.id for i in db.query(models.WalletItem).filter(
         models.WalletItem.order_id == order.id).all()]
     if not item_ids:
@@ -197,6 +248,8 @@ def require_spendable_balance(db: Session, user_id: int) -> int:
     balance — left by a refund clawback — blocks spending outright,
     with an explicit error instead of the generic 'insufficient'
     message. Returns the balance when spending is allowed."""
+    from .cashback_service import lock_account
+    lock_account(db, user_id)
     balance = points_balance(db, user_id)
     if balance < 0:
         raise HTTPException(
