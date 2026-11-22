@@ -345,14 +345,15 @@ class _IssueCouponScreenState extends State<IssueCouponScreen> {
     final session = _session;
     setState(() { _shops = null; _shopsError = null; _shopId = null; _branchIds = null; });
     try {
-      final data = await widget.api.vendorPackageWorkspace();
+      final data = await widget.api.get('/merchant/shops');
       final rows = data['shops'];
       if (rows is! List || rows.any((v) => v is! Map || v['id'] is! int || v['name'] is! String)) {
         throw const FormatException();
       }
       if (!mounted || session != _session) return;
       setState(() {
-        _shops = rows.map((v) => Map<String, dynamic>.from(v as Map)).toList();
+        _shops = rows.where((v) => (v as Map)['can_manage_coupons'] == true)
+            .map((v) => Map<String, dynamic>.from(v as Map)).toList();
         if (_shops!.isNotEmpty) _shopId = _shops!.first['id'] as int;
       });
     } catch (e) {

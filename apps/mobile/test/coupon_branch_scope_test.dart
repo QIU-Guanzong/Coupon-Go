@@ -21,6 +21,13 @@ class ScopeApi extends ApiClient {
   @override
   Future<Map<String, dynamic>> get(String path,
       {Map<String, String>? query}) async {
+    if (path == '/merchant/shops') {
+      return {'shops': [
+      {'id': 2, 'name': '其他商店', 'can_manage_coupons': true},
+      {'id': 9, 'name': '目標商店', 'can_manage_coupons': true},
+      {'id': 10, 'name': '無權商店', 'can_manage_coupons': false},
+    ]};
+    }
     if (path == '/coupon-details-new') {
       return {
         'coupon': {
@@ -65,6 +72,7 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('其他商店'));
     await tester.pumpAndSettle();
+    expect(find.text('無權商店'), findsNothing);
     await tester.tap(find.text('目標商店').last);
     await tester.pumpAndSettle();
     await tester.enterText(find.byType(TextField).first, '新券');
