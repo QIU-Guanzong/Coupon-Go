@@ -73,6 +73,7 @@ TestingSession = None
 @pytest.fixture(scope="module")
 def client(tmp_path_factory):
     global engine, TestingSession, _SQLITE_URL
+    connect_gateway._reset_simulator_idempotency()
     if BACKEND == "postgres":
         Base.metadata.drop_all(bind=engine)
     else:
@@ -96,6 +97,7 @@ def client(tmp_path_factory):
     with TestClient(app) as c:
         yield c
     app.dependency_overrides.clear()
+    connect_gateway._reset_simulator_idempotency()
 
 
 def _db():
