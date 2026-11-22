@@ -243,15 +243,17 @@ def _generate(client, headers, shop_id, period, rate=0.10):
     return r.json()["settlement"]
 
 
-def _pending_settlement(client, email, coupon_id, shop_id, period=PERIOD):
+def _pending_settlement(client, email, coupon_id, shop_id, period=PERIOD, legacy=False):
     """Redeem one cash coupon and generate its settlement (pending)."""
-    _redeem(client, email, coupon_id)
+    _, _, redemption_id = _redeem(client, email, coupon_id)
+    if legacy:
+        _make_legacy_redemption(redemption_id)
     fh = _finance_headers(client)
     return _generate(client, fh, shop_id, period)
 
 
-def _approved_settlement(client, email, coupon_id, shop_id, period=PERIOD):
-    s = _pending_settlement(client, email, coupon_id, shop_id, period)
+def _approved_settlement(client, email, coupon_id, shop_id, period=PERIOD, legacy=False):
+    s = _pending_settlement(client, email, coupon_id, shop_id, period, legacy=legacy)
     fh = _finance_headers(client)
     r = client.post(f"/api/v3/admin/settlements/{s['id']}/approve",
                     headers=fh)
@@ -269,11 +271,21 @@ def _disputed_settlement(client, email, coupon_id, shop_id, period=PERIOD):
 
 
 def _paid_settlement(client, email, coupon_id, shop_id, period=PERIOD):
-    s = _approved_settlement(client, email, coupon_id, shop_id, period)
+    s = _approved_settlement(client, email, coupon_id, shop_id, period, legacy=True)
     fh = _finance_headers(client)
     r = client.post(f"/api/v3/admin/settlements/{s['id']}/pay", headers=fh)
     assert r.status_code == 200, r.text
     return r.json()["settlement"]
+
+
+def _make_legacy_redemption(redemption_id):
+    """Model a pre-Connect sale; no provider request was dispatched."""
+    from app.models_connect import ConnectLedgerEntry
+    with TestingSession() as db:
+        entry = db.query(ConnectLedgerEntry).filter_by(redemption_id=redemption_id).one()
+        assert entry.status == "pending" and not entry.dispatch_started
+        db.delete(entry)
+        db.commit()
 
 
 def _get_status(client, settlement_id):
@@ -298,7 +310,7 @@ def _final_status(settlement_id):
 def test_concurrent_pay_vs_dispute_paid_never_reverts__row_lock(
         client, monkeypatch):
     import app.routers.admin_v2 as admin_router
-    s = _approved_settlement(client, "f3-pay-dispute@example.com", 2, 1)
+    s = _approved_settlement(client, "f3-pay-dispute@example.com", 2, 1, legacy=True)
     fh = _finance_headers(client)
     # _log() runs after the status flip, before the commit — in both
     # pay and dispute — so this widens the race window for both sides.
@@ -536,6 +548,7 @@ def test_approve_dispute_resolve_issue_select_for_update__lock_present(
 
 def test_pay_racing_with_revocation_preserves_cash_and_effective_balance(client):
     _, _, rid = _redeem(client, "f3-revoke-pay@example.com", 11)
+    _make_legacy_redemption(rid)
     finance, vendor = _finance_headers(client), _vendor_headers(client)
     s = _generate(client, finance, 6, PERIOD)
     url = f"/api/v3/admin/settlements/{s['id']}"
@@ -605,3 +618,23 @@ def test_concurrent_invoice_credits_cannot_exceed_issued_amount(client):
     assert sorted(r.status_code for r in results) == [200, 409]
     issued = client.get(path, headers=finance).json()["invoice"]
     assert issued["credited_amount"] == 60 and len(issued["credits"]) == 1
+
+
+def test_connect_pay_racing_dispute_never_creates_manual_payment(client):
+    """Connect-backed sale and manual settlement payment cannot both pay."""
+    from app.models_line_f import SettlementTransfer
+    with TestingSession() as db:
+        coupon = db.get(models.Coupon, 13)
+        coupon.coupon_type, coupon.discount_price = 'Price', 70
+        db.commit()
+    statement = _approved_settlement(client, 'f3-connect-dispute@example.com', 13, 7)
+    assert statement['payment_mode'] == 'connect'
+    headers = _finance_headers(client)
+    url = f"/api/v3/admin/settlements/{statement['id']}"
+    pay, dispute = _run_two(lambda i, tc:
+        tc.post(url + '/pay', headers=headers) if i == 0 else
+        tc.post(url + '/dispute', json={'reason': '核對金額'}, headers=headers))
+    assert pay.status_code == 409 and dispute.status_code == 200
+    with TestingSession() as db:
+        assert db.query(SettlementTransfer).filter_by(settlement_id=statement['id']).count() == 0
+        assert db.get(Settlement, statement['id']).status == 'disputed'
