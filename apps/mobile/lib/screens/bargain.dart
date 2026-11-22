@@ -446,9 +446,12 @@ class _BargainCampaignScreenState extends State<BargainCampaignScreen> {
                 backgroundColor: CgColors.orange,
                 foregroundColor: Colors.white,
               ),
-              onPressed: (const bool.fromEnvironment('PUBLIC_DEMO') || _busy || c.isSoldOut) ? null : _start,
+              onPressed: (const bool.fromEnvironment('PUBLIC_DEMO') ||
+                      const bool.fromEnvironment('PUBLIC_TRIAL') || _busy || c.isSoldOut) ? null : _start,
               child: Text(const bool.fromEnvironment('PUBLIC_DEMO')
                   ? context.tr('只供瀏覽', 'Browse only')
+                  : const bool.fromEnvironment('PUBLIC_TRIAL')
+                  ? context.tr('體驗版暫不支援發起', 'Not available in this trial')
                   : _busy
                   ? context.tr('處理中…', 'Processing…')
                   : c.isSoldOut
