@@ -240,6 +240,20 @@ def revoke_redemption(redemption_id: int, acknowledge_existing: bool = False,
     return _revoke_redemption(db, redemption_id, vendor, acknowledge_existing)
 
 
+@router.get("/admin/redemptions/{redemption_id}/force-review")
+def force_revoke_review(redemption_id: int,
+                        admin: models.User = Depends(require_role("admin", "support")),
+                        db: Session = Depends(get_db)):
+    red = db.get(models.Redemption, redemption_id)
+    if red is None:
+        raise errors.redemption_not_found()
+    coupon = db.get(models.Coupon, red.coupon_id)
+    shop = db.get(models.Shop, red.shop_id)
+    return {"redemption_id": red.id, "coupon_name": coupon.coupon_name if coupon else "",
+            "shop_name": shop.name if shop else "", "scanned_at": red.scanned_at,
+            "revoked": red.revoked_at is not None, "method": red.method or "scan"}
+
+
 @router.post("/admin/redemptions/{redemption_id}/force-revoke")
 def force_revoke_redemption(redemption_id: int, body: schemas.ForceRevokeIn,
                             admin: models.User = Depends(require_role("admin", "support")),

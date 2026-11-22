@@ -7,6 +7,7 @@ import '../theme.dart';
 import '../widgets/widgets.dart';
 import 'reviews_admin.dart';
 import 'withdrawal_review.dart';
+import 'redemption_recovery.dart';
 
 /// Admin v2 home (line F). UI_SPEC §9 first phase: onboarding review,
 /// orders and settlements are the three first-phase blocks; the other
@@ -47,6 +48,8 @@ class AdminHomeScreen extends StatelessWidget {
               builder: (_) => ContentScreen(api: api))),
       ('角色與權限', Icons.admin_panel_settings, ['admin'],
           () => MaterialPageRoute(builder: (_) => RolesScreen(api: api))),
+      ('客服撤銷核銷', Icons.assignment_return_outlined, ['admin', 'support'],
+          () => MaterialPageRoute(builder: (_) => ForceRevokeRedemptionScreen(api: api))),
       ('評價申訴', Icons.rate_review, ['admin', 'support'],
           () => MaterialPageRoute(
               builder: (_) => ReviewDisputesScreen(api: api))),
