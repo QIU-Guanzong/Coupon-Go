@@ -18,7 +18,7 @@ String? _unresolved(Map? balance) {
   if (transfers == 0 && reversals == 0) return null;
   final amount = balance?['unknown_transfer_amount'];
   final amountText =
-      amount is num && transfers > 0 ? '（${_money(amount)} 已列入待轉帳）' : '';
+      amount is num && transfers > 0 ? '（涉及 ${_money(amount)}）' : '';
   return '有 ${_count(transfers)} 筆轉帳$amountText及 ${_count(reversals)} 筆沖回待核對；待確認金額不代表已到帳。';
 }
 
