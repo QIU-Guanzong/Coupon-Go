@@ -482,6 +482,25 @@ def test_old_purchase_remains_redeemable_while_edited_listing_is_under_review(cl
     assert _approve_package(client, pkg["id"], approve=True).json()["status"] == "active"
 
 
+def test_edit_refund_policy_does_not_change_previously_purchased_coupon(client, monkeypatch):
+    monkeypatch.setattr(config, "PACKAGE_REVIEW_REQUIRED", False)
+    pkg = _create_package(client, name="退款政策版本", refund_policy="anytime")
+    old_buyer = _register_and_login(client, "version-old-policy@example.com")
+    old = client.post(f"/api/v3/packages/{pkg['id']}/purchase", json={"payment_method": "fps"}, headers=old_buyer).json()["order"]
+    paid = client.post(f"/api/v3/orders/{old['id']}/confirm-payment", json={"outcome": "succeeded"}, headers=old_buyer)
+    assert paid.status_code == 200, paid.text
+    edited = client.patch(f"/api/v3/vendor/packages/{pkg['id']}", json={"refund_policy": "non_refundable"}, headers=_vendor_headers(client))
+    assert edited.status_code == 200, edited.text
+    new_buyer = _register_and_login(client, "version-new-policy@example.com")
+    new = client.post(f"/api/v3/packages/{pkg['id']}/purchase", json={"payment_method": "fps"}, headers=new_buyer).json()["order"]
+    paid_new = client.post(f"/api/v3/orders/{new['id']}/confirm-payment", json={"outcome": "succeeded"}, headers=new_buyer)
+    assert paid_new.status_code == 200, paid_new.text
+    old_refund = client.post(f"/api/v3/orders/{old['id']}/refund", json={}, headers=old_buyer)
+    assert old_refund.status_code == 200, old_refund.text
+    new_refund = client.post(f"/api/v3/orders/{new['id']}/refund", json={}, headers=new_buyer)
+    assert new_refund.status_code == 400 and "不設退款" in new_refund.text
+
+
 # ---------- P0-6: package review flow ----------
 
 def test_package_create_is_pending_review_not_active(client):
