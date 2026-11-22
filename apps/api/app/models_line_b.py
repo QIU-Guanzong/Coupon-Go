@@ -174,6 +174,8 @@ class MerchantApplication(Base):
     stripe_charges_enabled = Column(Boolean, default=False, nullable=False)
     stripe_payouts_enabled = Column(Boolean, default=False, nullable=False)
     stripe_onboarding_updated_at = Column(DateTime, nullable=True)
+    # Set only during approval; never infer ownership from the account ID.
+    approved_shop_id = Column(Integer, nullable=True)
     # --- P1-D e-contract (denormalised pointer to the latest signature) ---
     contract_version_id = Column(
         Integer, ForeignKey("merchant_contract_versions.id"), nullable=True)

@@ -785,3 +785,111 @@ def test_access_log_filter_strips_query_string():
     assert "token=" not in rendered and "exp=" not in rendered
     assert "/api/v3/merchant-files/12/download" in rendered
     assert "GET" in rendered and "200" in rendered
+
+
+def test_simulated_approval_creates_shop_and_unlocks_workspace(client):
+    merchant = _register_and_login(client, 'p1d-workspace-new@example.com')
+    admin = _admin_headers(client)
+    app_id, _ = _submit_with_files(client, merchant, 'workspace-new')
+    assert _sign_current(client, merchant, app_id).status_code == 201
+    assert _set_stripe_onboarding(client, admin, app_id).status_code == 200
+    approved = _approve(client, admin, app_id)
+    assert approved.status_code == 200, approved.text
+    app = approved.json()['application']
+    assert app['stripe_status_source'] == 'simulated'
+    shop_id = app['approved_shop_id']
+    workspace = client.get('/api/v3/vendor/package-workspace', headers=merchant)
+    assert workspace.status_code == 200, workspace.text
+    assert workspace.json()['shops'] == [{'id': shop_id, 'name': '茶餐廳 A'}]
+    assert _approve(client, admin, app_id).status_code == 400
+    with TestingSession() as db:
+        shop = db.get(models.Shop, shop_id)
+        assert shop is not None and shop.is_approved
+        assert shop.vendor_id == app['user_id']
+        assert db.query(models.Shop).filter_by(vendor_id=app['user_id']).count() == 1
+
+
+def test_approval_reuses_only_same_owner_matching_shop(client):
+    merchant = _register_and_login(client, 'p1d-workspace-existing@example.com')
+    other = _register_and_login(client, 'p1d-workspace-other@example.com')
+    del other
+    admin = _admin_headers(client)
+    app_id, _ = _submit_with_files(client, merchant, 'workspace-existing')
+    with TestingSession() as db:
+        user = db.query(models.User).filter_by(email='p1d-workspace-existing@example.com').one()
+        other_user = db.query(models.User).filter_by(email='p1d-workspace-other@example.com').one()
+        own = models.Shop(vendor_id=user.id, name='茶餐廳 A', address='旺角彌敦道 123 號', phone='old-number', is_approved=False)
+        stranger = models.Shop(vendor_id=other_user.id, name='茶餐廳 A', address='旺角彌敦道 123 號', is_approved=True)
+        db.add_all([own, stranger]); db.commit()
+        own_id, other_id, uid, other_uid = own.id, stranger.id, user.id, other_user.id
+    assert _sign_current(client, merchant, app_id).status_code == 201
+    assert _set_stripe_onboarding(client, admin, app_id).status_code == 200
+    result = _approve(client, admin, app_id)
+    assert result.status_code == 200, result.text
+    assert result.json()['application']['approved_shop_id'] == own_id
+    with TestingSession() as db:
+        assert db.get(models.Shop, own_id).phone == 'old-number'
+        assert db.get(models.Shop, other_id).vendor_id == other_uid
+        assert db.query(models.Shop).filter_by(vendor_id=uid).count() == 1
+
+
+def test_approval_refuses_ambiguous_existing_shop(client):
+    merchant = _register_and_login(client, 'p1d-workspace-ambiguous@example.com')
+    admin = _admin_headers(client)
+    app_id, _ = _submit_with_files(client, merchant, 'workspace-ambiguous')
+    with TestingSession() as db:
+        user = db.query(models.User).filter_by(email='p1d-workspace-ambiguous@example.com').one()
+        uid = user.id
+        db.add(models.Shop(vendor_id=uid, name='茶餐廳 A', address='', is_approved=False))
+        db.commit()
+    assert _sign_current(client, merchant, app_id).status_code == 201
+    assert _set_stripe_onboarding(client, admin, app_id).status_code == 200
+    result = _approve(client, admin, app_id)
+    assert result.status_code == 409 and '核對地址' in result.json()['detail']
+    with TestingSession() as db:
+        assert db.get(models.User, uid).role == 'customer'
+        assert db.query(models.Shop).filter_by(vendor_id=uid).count() == 1
+        assert db.query(models.MerchantApplication).filter_by(id=app_id).one().approved_shop_id is None
+
+
+@pytest.mark.skipif(not PG_URL, reason='row locks require PostgreSQL')
+def test_simultaneous_approval_creates_only_one_shop(client):
+    merchant = _register_and_login(client, 'p1d-approval-race@example.com')
+    admin1 = _admin_headers(client)
+    admin2 = _register_and_login(client, 'p1d-approval-race-admin@example.com')
+    with TestingSession() as db:
+        second = db.query(models.User).filter_by(email='p1d-approval-race-admin@example.com').one()
+        second.role = 'admin'
+        db.commit()
+    app_id, _ = _submit_with_files(client, merchant, 'approval-race')
+    assert _sign_current(client, merchant, app_id).status_code == 201
+    assert _set_stripe_onboarding(client, admin1, app_id).status_code == 200
+    barrier = threading.Barrier(2, timeout=10)
+    def approve(admin):
+        barrier.wait()
+        return _approve(client, admin, app_id)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures = [pool.submit(approve, admin) for admin in (admin1, admin2)]
+        results = [future.result() for future in futures]
+    assert sorted(result.status_code for result in results) == [200, 400]
+    application = next(result.json()['application'] for result in results if result.status_code == 200)
+    with TestingSession() as db:
+        shops = db.query(models.Shop).filter_by(vendor_id=application['user_id']).all()
+        assert len(shops) == 1 and shops[0].id == application['approved_shop_id']
+
+
+def test_approval_rejects_existing_pointer_to_other_users_shop(client):
+    merchant = _register_and_login(client, 'p1d-wrong-shop@example.com')
+    _register_and_login(client, 'p1d-wrong-shop-owner@example.com')
+    admin = _admin_headers(client)
+    app_id, _ = _submit_with_files(client, merchant, 'wrong-shop')
+    with TestingSession() as db:
+        stranger = db.query(models.User).filter_by(email='p1d-wrong-shop-owner@example.com').one()
+        shop = models.Shop(vendor_id=stranger.id, name='different shop', is_approved=True)
+        db.add(shop); db.flush()
+        db.get(models.MerchantApplication, app_id).approved_shop_id = shop.id
+        db.commit()
+    assert _sign_current(client, merchant, app_id).status_code == 201
+    assert _set_stripe_onboarding(client, admin, app_id).status_code == 200
+    response = _approve(client, admin, app_id)
+    assert response.status_code == 409 and '不屬於' in response.json()['detail']
