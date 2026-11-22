@@ -25,6 +25,7 @@ from ..database import get_db
 from ..merchant_shop import bind_approved_shop
 from ..deps import get_current_user, require_role
 from ..models_line_b import AdminAuditLog, MerchantApplication, Review
+from ..notify import notify
 from ..permissions_line_f import ALL_ROLES
 from ..serializers import coupon_out, shop_out
 from ..shared import audit_log as _log, csv_response, paginate
@@ -267,13 +268,80 @@ def review_application(application_id: int,
     app.reviewed_at = _now()
     if body.approve and applicant is not None and applicant.role == "customer":
         applicant.role = "vendor"
+    shop = None
+    if body.approve and applicant is not None:
+        # The existing approval flow has already bound exactly one shop
+        # (and, when applicable, its verified Connect account).
+        shop = db.get(models.Shop, app.approved_shop_id)
+        if shop is None or shop.vendor_id != applicant.id:
+            raise HTTPException(409, "店舖資料需要核對")
+        notify(db, applicant.id, "入駐申請已通過",
+               f"「{app.shop_name}」已通過審核，門店已開通，請完善門店資料後上架優惠券。",
+               "application_approved", target_shop_id=shop.id)
+    if not body.approve and applicant is not None:
+        notify(db, applicant.id, "入駐申請被拒絕",
+               f"「{app.shop_name}」未通過審核。原因：{app.reject_reason}",
+               "application_rejected")
     action = ("merchant_application.approve" if body.approve
               else "merchant_application.reject")
     _log(db, admin.id, action, "merchant_application", app.id,
          f"shop_name={app.shop_name}" + ("" if body.approve
-                                         else f"; reason={app.reject_reason}"))
+                                         else f"; reason={app.reject_reason}")
+         + (f"; shop_id={shop.id}" if shop is not None else ""))
     db.commit()
     return {"message": "入駐申請已通過" if body.approve else "入駐申請已拒絕",
+            "application": _application_out(db, app),
+            "shop": shop_out(db, shop) if shop is not None else None}
+
+
+@router.patch("/admin/merchant-applications/{application_id}")
+def update_application(application_id: int,
+                       body: schemas_line_b.MerchantApplicationUpdateIn,
+                       admin: models.User = Depends(admin_only),
+                       db: Session = Depends(get_db)):
+    """Dianping §1.6: edit a PENDING application in place (admin only).
+
+    A rejected application is still resubmitted as a NEW application —
+    this only corrects material while the review is still open."""
+    owner_id = db.query(MerchantApplication.user_id).filter_by(id=application_id).scalar()
+    if owner_id is None:
+        raise HTTPException(status_code=404, detail="找不到此入駐申請")
+    from ..cashback_service import lock_account
+    from ..models_line_b import MerchantContractSignature
+    lock_account(db, owner_id)
+    if db.get_bind().dialect.name == "sqlite":
+        db.query(MerchantApplication).filter_by(id=application_id).update(
+            {"id": MerchantApplication.id}, synchronize_session=False)
+    app = (db.query(MerchantApplication).filter_by(id=application_id)
+           .with_for_update().populate_existing().first())
+    if app is None or app.user_id != owner_id:
+        raise HTTPException(status_code=409, detail="申請資料已變更，請重新核對")
+    if app.status != "pending":
+        raise HTTPException(status_code=400, detail="只有待審核的申請可以修改")
+    if (body.shop_name is not None and body.shop_name != app.shop_name
+            and db.query(MerchantContractSignature.id).filter_by(application_id=app.id).first()):
+        raise HTTPException(409, "合約已簽署，不能修改商戶名稱；請重新申請")
+    if body.shop_name is not None:
+        app.shop_name = body.shop_name
+    if body.contact_name is not None:
+        app.contact_name = body.contact_name
+    if body.phone is not None:
+        app.phone = body.phone
+    if body.address is not None:
+        app.address = body.address
+    if body.business_license is not None:
+        app.business_license = body.business_license
+    if body.id_card is not None:
+        app.id_card = body.id_card
+    if body.shop_photos is not None:
+        app.shop_photos = json.dumps(body.shop_photos, ensure_ascii=False)
+    if body.industry_license is not None:
+        app.industry_license = body.industry_license
+    _log(db, admin.id, "merchant_application.update", "merchant_application",
+         app.id, f"shop_name={app.shop_name}")
+    db.commit()
+    db.refresh(app)
+    return {"message": "入駐申請已更新",
             "application": _application_out(db, app)}
 
 

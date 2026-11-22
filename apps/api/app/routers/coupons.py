@@ -18,7 +18,8 @@ from sqlalchemy.orm import Session
 from .. import cashback_service, config, connect_service, errors, models, points, schemas
 from ..database import get_db
 from ..deps import get_current_user, require_role
-from ..serializers import coupon_out
+from ..permissions_line_f import can_redeem_shop, shop_member_role
+from ..serializers import coupon_branch_ids, coupon_out
 from ..settlement_ledger import add_scanned_sale, lock_shop
 from ..settlement_basis import settlement_basis
 from ..shared import issue_wallet_item, vendor_shop_ids
@@ -177,7 +178,7 @@ def generate_qr(wallet_item_id: int, user: models.User = Depends(get_current_use
 
 def _redeem_item(db: Session, item: models.WalletItem,
                  vendor: models.User, code: str, *,
-                 idempotency_key=None, prepared_at=None) -> models.Redemption:
+                 idempotency_key=None, prepared_at=None, branch_id=None) -> models.Redemption:
     """The single consume chain (dianping unify).
 
     QR scan, manual code entry, supplementary scan and batch scan all
@@ -204,8 +205,22 @@ def _redeem_item(db: Session, item: models.WalletItem,
     if item.qr_expires_at and item.qr_expires_at < _now():
         raise errors.qr_expired()
     coupon = db.query(models.Coupon).filter(models.Coupon.id == item.coupon_id).first()
-    if coupon.shop_id not in vendor_shop_ids(db, vendor):
+    shop = db.get(models.Shop, coupon.shop_id) if coupon else None
+    if shop is None:
         raise errors.qr_wrong_shop()
+    if not can_redeem_shop(db, vendor, shop):
+        if shop_member_role(db, vendor, shop) is not None:
+            raise HTTPException(403, "沒有核銷權限")
+        raise errors.qr_wrong_shop()
+    allowed = coupon_branch_ids(db, coupon.id)
+    if allowed and branch_id is None:
+        raise HTTPException(400, "此優惠券限指定分店使用，請先選擇分店")
+    if branch_id is not None:
+        branch = db.get(models.Branch, branch_id)
+        if branch is None or branch.shop_id != shop.id:
+            raise HTTPException(400, "找不到此分店")
+        if allowed and branch_id not in allowed:
+            raise HTTPException(400, "此優惠券不適用於此分店")
     ensure_paid_voucher(db, item)
     ensure_redeemable(coupon, purchased_order=item.source == "purchase")
     connect_service.ensure_prior_transfer_closed(db, item.id)
@@ -280,7 +295,7 @@ def _scan_response(red: models.Redemption, coupon, duplicate: bool) -> dict:
 
 @router.post("/new-scan-coupon")
 def scan_coupon(body: schemas.ScanIn,
-                vendor: models.User = Depends(require_role("vendor", "admin")),
+                vendor: models.User = Depends(get_current_user),
                 db: Session = Depends(get_db)):
     # Line A idempotency: replaying the same idempotency_key returns the
     # original result once, never a second redemption / second +20 points.
@@ -332,7 +347,7 @@ def scan_coupon(body: schemas.ScanIn,
     try:
         red = _redeem_item(db, item, vendor, body.code,
                            idempotency_key=body.idempotency_key,
-                           prepared_at=prepared_at)
+                           prepared_at=prepared_at, branch_id=body.branch_id)
     except errors.ApiError as exc:
         # A lost consume race against a replayed idempotency key: the
         # other request already committed this redemption — return it

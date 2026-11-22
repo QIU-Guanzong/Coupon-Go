@@ -162,6 +162,18 @@ class MerchantApplicationReviewIn(BaseModel):
     reject_reason: str = ""
 
 
+class MerchantApplicationUpdateIn(BaseModel):
+    """Administrative correction to a pending application."""
+    shop_name: Optional[str] = None
+    contact_name: Optional[str] = None
+    phone: Optional[str] = None
+    address: Optional[str] = None
+    business_license: Optional[str] = None
+    id_card: Optional[str] = None
+    shop_photos: Optional[List[str]] = None
+    industry_license: Optional[str] = None
+
+
 class StripeOnboardingIn(BaseModel):
     """P1-B bridge: record a merchant's Stripe Connect onboarding result.
 

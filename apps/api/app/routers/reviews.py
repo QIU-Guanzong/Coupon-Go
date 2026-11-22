@@ -52,6 +52,7 @@ from ..deps import (get_current_user, get_optional_user,
                     points_balance, require_role)
 from ..shared import paginate
 from ..models_line_b import Review, ReviewHelpfulVote, ShopRating
+from ..notify import notify
 
 router = APIRouter()
 
@@ -262,6 +263,13 @@ def create_review(body: schemas_line_b.ReviewCreateIn,
     recompute_rating(db, red.shop_id)
     db.commit()
     db.refresh(review)
+    # §1.5: tell the shop owner a new review arrived.
+    _shop = db.query(models.Shop).filter(models.Shop.id == red.shop_id).first()
+    if _shop is not None:
+        notify(db, _shop.vendor_id, "收到新評價",
+               f"「{_shop.name}」收到一則 {overall} 星評價。",
+               "review_received", target_shop_id=_shop.id)
+        db.commit()
     msg = (f"評價成功，+{config.POINTS_REVIEW} 分，已計入商户星級"
            if points_given else "評價成功，已計入商户星級")
     return {"message": msg, "review": review_out(db, review),
