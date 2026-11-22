@@ -1,13 +1,21 @@
 """#19 reporting stays consistent while #16 verifies uncertain provider results."""
 from datetime import datetime, timedelta, timezone
+import pytest
 
 from tests import test_p1b_connect_fixes as base
 from tests.test_connect_transfer_reconcile import _uncertain_transfer, _uncertain_reversal
-from app import models
+from app import connect_gateway, models
 from app.models_connect import ConnectLedgerEntry
 from app.models_line_f import Settlement, SettlementTransfer
 
 client = base.client
+
+
+@pytest.fixture(autouse=True)
+def isolated_simulated_provider():
+    connect_gateway._reset_simulator_idempotency()
+    yield
+    connect_gateway._reset_simulator_idempotency()
 
 
 def _last_month():
