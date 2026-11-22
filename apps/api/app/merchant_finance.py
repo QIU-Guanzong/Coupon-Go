@@ -14,7 +14,7 @@ from sqlalchemy import extract, func, or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from . import models
+from . import config, models
 from .models_line_f import (
     MerchantCommissionRate, Settlement, SettlementItem,
     SettlementReversal, SettlementTransfer,
@@ -59,6 +59,18 @@ def effective_commission_rate(db: Session, shop_id: int) -> Decimal:
     return Decimal(str(row.rate)) if row is not None else DEFAULT_COMMISSION_RATE
 
 
+def connect_mode() -> str:
+    """Describe the configured ledger provider without claiming a live transfer."""
+    if not config.connect_enabled().get('enabled'):
+        return 'unavailable'
+    key = config.STRIPE_SECRET_KEY or ''
+    if key.startswith('sk_test_'):
+        return 'stripe_test'
+    if not key and config.APP_ENV == 'dev':
+        return 'simulated'
+    return 'unavailable'
+
+
 def shop_balance(db: Session, shop: models.Shop) -> dict:
     """Connect is the single source of truth for payout balances."""
     from .connect_service import merchant_balance
@@ -101,6 +113,7 @@ def shop_balance(db: Session, shop: models.Shop) -> dict:
             legacy_count += 1
     return {
         "shop_id": shop.id, "shop_name": shop.name,
+        "connect_mode": connect_mode(),
         "pending_settlement": _money(balance["pending"]),
         "withdrawable": _money(balance["available"]),
         "reserved": _money(balance["processing"]),

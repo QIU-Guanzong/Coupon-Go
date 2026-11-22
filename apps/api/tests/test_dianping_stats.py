@@ -679,3 +679,23 @@ def test_unknown_transfer_and_revoked_reversal_remain_visible(client):
     assert _balance(client, shop_id, headers)['unknown_reversal_count'] == 0
     entries = client.get(f'/api/v3/merchant/shops/{shop_id}/balance/entries', headers=headers).json()['entries']
     assert next(row for row in entries if row['redemption_id'] == redemption_id)['state'] == 'reversed'
+
+
+@pytest.mark.parametrize('enabled,environment,key,expected', [
+    ('1', 'dev', '', 'simulated'),
+    ('1', 'dev', 'sk_test_placeholder', 'stripe_test'),
+    ('0', 'dev', '', 'unavailable'),
+    ('1', 'dev', 'not_a_test_key', 'unavailable'),
+    ('1', 'prod', '', 'unavailable'),
+])
+def test_balance_reports_configured_provider_mode(client, monkeypatch, enabled, environment, key, expected):
+    from app import config, legal
+    headers = _vendor_headers(client)
+    monkeypatch.setattr(config, 'STRIPE_CONNECT_ENABLED_RAW', enabled)
+    monkeypatch.setattr(config, 'STRIPE_SECRET_KEY', key)
+    monkeypatch.setattr(config, 'APP_ENV', environment)
+    monkeypatch.setattr(legal, 'documents', lambda: {})
+    for path in ('/api/v3/merchant/balance', f'/api/v3/merchant/shops/{PRICE_SHOP}/balance'):
+        response = client.get(path, headers=headers)
+        assert response.status_code == 200, response.text
+        assert response.json()['connect_mode'] == expected
