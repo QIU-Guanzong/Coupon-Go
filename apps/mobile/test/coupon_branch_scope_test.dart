@@ -92,6 +92,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(api.previewBody!['shop_id'], 9);
     expect(api.previewBody!['branch_ids'], [90]);
+    expect(find.textContaining('適用：指定 1 間分店'), findsOneWidget);
     await tester.tap(find.text('提交審核'));
     await tester.pumpAndSettle();
     expect(api.createBody!['branch_ids'], [90]);

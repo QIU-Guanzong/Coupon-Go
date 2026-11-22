@@ -468,16 +468,18 @@ class _IssueCouponScreenState extends State<IssueCouponScreen> {
                 ElevatedButton.styleFrom(backgroundColor: CgColors.vendorGold),
             onPressed: _shopId == null || _branchIds == null || _submitting ? null : () async {
               final session = _session;
+              final draft = _body();
+              final scope = _branchIds!.isEmpty ? '所有分店' : '指定 ${_branchIds!.length} 間分店';
               setState(() => _submitting = true);
               try {
-                final preview = await widget.api.couponPreview(_body());
+                final preview = await widget.api.couponPreview(draft);
                 if (!context.mounted || session != _session) return;
                 final ok = await showDialog<bool>(
                   context: context,
                   builder: (c) => AlertDialog(
-                    title: const Text('Coupon Preview'),
+                    title: const Text('預覽優惠券'),
                     content: Text(
-                        '${preview['coupon_name']}\n${preview['amount_text']}\n數量：${preview['total']}'),
+                        '${preview['coupon_name']}\n${preview['amount_text']}\n商店：${preview['shop_name']}\n適用：$scope\n數量：${preview['total']}'),
                     actions: [
                       TextButton(
                           onPressed: () => Navigator.pop(c, false),
@@ -489,7 +491,7 @@ class _IssueCouponScreenState extends State<IssueCouponScreen> {
                   ),
                 );
                 if (ok == true && session == _session) {
-                  final res = await widget.api.couponCreate(_body());
+                  final res = await widget.api.couponCreate(draft);
                   if (context.mounted && session == _session) {
                     showCgToast(context, res['message'] as String? ?? '已提交審核');
                     Navigator.of(context).pop();
