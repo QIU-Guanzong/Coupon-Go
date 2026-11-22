@@ -4,6 +4,7 @@ from concurrent.futures import ThreadPoolExecutor
 from threading import Barrier
 
 import pytest
+from fastapi import HTTPException
 
 from tests import test_p1d_merchant_onboarding as base
 from app import application_connect, config, connect_gateway, models
@@ -267,3 +268,32 @@ def test_concurrent_onboarding_reuses_single_provider_operation(client, provider
     db = base.TestingSession()
     assert db.query(ApplicationConnectAccount).filter_by(application_id=app_id).count() == 1
     db.close()
+
+
+def test_application_and_legacy_shop_do_not_create_two_provider_accounts(client, provider):
+    h, app_id = applicant(client, "cross-entry")
+    db = base.TestingSession()
+    app = db.get(MerchantApplication, app_id)
+    user = db.get(models.User, app.user_id)
+    shop = models.Shop(vendor_id=app.user_id, name=app.shop_name, address=app.address)
+    db.add(shop)
+    db.commit()
+    shop_id, email = shop.id, user.email
+    db.close()
+    barrier = Barrier(2)
+    def application_request():
+        barrier.wait(timeout=5)
+        return start(client, h, app_id).status_code
+    def shop_request():
+        barrier.wait(timeout=5)
+        with base.TestingSession() as session:
+            try:
+                application_connect.start_existing_shop(session, shop_id, email)
+                return 200
+            except HTTPException as exc:
+                return exc.status_code
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first, second = pool.submit(application_request), pool.submit(shop_request)
+        outcomes = [first.result(timeout=20), second.result(timeout=20)]
+    assert sorted(outcomes) == [200, 409]
+    assert len(provider[0]) == 1
