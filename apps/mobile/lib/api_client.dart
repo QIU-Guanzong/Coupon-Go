@@ -73,6 +73,22 @@ class ApiClient extends ChangeNotifier {
     await prefs.remove(_tokenStorageKey);
   }
 
+  /// Stage trial identity before tearing down the old route. The active
+  /// in-memory identity is changed only after persistence succeeds.
+  Future<void> prepareTrialToken(String? token) async {
+    final prefs = await SharedPreferences.getInstance();
+    final saved = token == null
+        ? await prefs.remove(_tokenStorageKey)
+        : await prefs.setString(_tokenStorageKey, token);
+    if (!saved) throw StateError('Unable to save trial identity');
+  }
+
+  void activateTrialToken(String? token) {
+    _token = token;
+    _sessionRevision++;
+    notifyListeners();
+  }
+
   bool get isLoggedIn => _token != null;
 
   /// Used only to resume the authenticated test-payment flow in this tab.
