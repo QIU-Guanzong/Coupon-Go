@@ -5,9 +5,12 @@ import '../api_client.dart';
 /// Visible on every route in the isolated public trial. The backend creates a
 /// separate synthetic dataset for each browser and never contacts Stripe.
 class TrialBanner extends StatefulWidget {
-  const TrialBanner({super.key, required this.api, required this.onRoleChanged});
+  const TrialBanner({super.key, required this.api, required this.onRoleChanged,
+    required this.onRoleChanging, required this.onRoleChangeFailed});
   final ApiClient api;
   final ValueChanged<String> onRoleChanged;
+  final Future<void> Function() onRoleChanging;
+  final VoidCallback onRoleChangeFailed;
 
   @override
   State<TrialBanner> createState() => _TrialBannerState();
@@ -21,19 +24,39 @@ class _TrialBannerState extends State<TrialBanner> {
   Future<void> _select(String role) async {
     if (_busy) return;
     setState(() { _busy = true; _open = false; _error = null; });
+    final previousToken = widget.api.paymentAccessToken;
+    var staged = false;
+    var changing = false;
     try {
-      if (role == 'guest') {
-        await widget.api.clearToken();
-      } else {
+      String? token;
+      if (role != 'guest') {
         final result = await widget.api.post('/trial/role', body: {'role': role});
-        final token = result['access_token'];
-        if (token is! String || token.isEmpty) throw const FormatException();
-        await widget.api.saveToken(token);
+        final value = result['access_token'];
+        if (value is! String || value.isEmpty) throw const FormatException();
+        token = value;
       }
-      if (!mounted) return;
+      await widget.api.prepareTrialToken(token);
+      staged = true;
+      if (!mounted) {
+        await widget.api.prepareTrialToken(previousToken);
+        return;
+      }
+      changing = true;
+      await widget.onRoleChanging();
+      if (!mounted) {
+        await widget.api.prepareTrialToken(previousToken);
+        return;
+      }
+      widget.api.activateTrialToken(token);
       widget.onRoleChanged(role);
     } catch (_) {
-      if (mounted) setState(() => _error = '切換失敗，請重試');
+      if (staged) {
+        try { await widget.api.prepareTrialToken(previousToken); } catch (_) {}
+      }
+      if (mounted) {
+        if (changing) widget.onRoleChangeFailed();
+        setState(() => _error = '切換失敗，請重試');
+      }
     } finally {
       if (mounted) setState(() => _busy = false);
     }

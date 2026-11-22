@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -9,6 +10,18 @@ import 'package:coupon_go/screens/trial_banner.dart';
 class FakeTrialApi extends ApiClient {
   final roles = <String>[];
   bool fail = false;
+  bool failPersistence = false;
+  final overviewTokens = <String?>[];
+  @override
+  Future<Map<String, dynamic>> adminOverview() async {
+    overviewTokens.add(paymentAccessToken);
+    return {};
+  }
+  @override
+  Future<void> prepareTrialToken(String? token) async {
+    if (failPersistence) throw Exception('storage unavailable');
+    await super.prepareTrialToken(token);
+  }
   @override
   Future<Map<String, dynamic>> post(String path,
       {Map<String, dynamic>? body, Map<String, String>? query}) async {
@@ -27,7 +40,7 @@ void main() {
     await tester.pumpWidget(MaterialApp(
       builder: (_, child) => Column(verticalDirection: VerticalDirection.up, children: [
         Expanded(child: child!),
-        TrialBanner(api: api, onRoleChanged: selected.add),
+        TrialBanner(api: api, onRoleChanging: () async {}, onRoleChangeFailed: () {}, onRoleChanged: selected.add),
       ]),
       home: const Scaffold(),
     ));
@@ -50,6 +63,82 @@ void main() {
     semantics.dispose();
   });
 
+  testWidgets('old route is removed before the new identity becomes active', (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    final api = FakeTrialApi();
+    await api.saveToken('old-admin');
+    final gate = Completer<void>();
+    final events = <String>[];
+    api.addListener(() => events.add('active:${api.paymentAccessToken}'));
+    await tester.pumpWidget(MaterialApp(home: Scaffold(body: TrialBanner(
+      api: api,
+      onRoleChanging: () { events.add('remove-old-route'); return gate.future; },
+      onRoleChangeFailed: () => events.add('failed'),
+      onRoleChanged: (role) => events.add('show:$role'),
+    ))));
+    await tester.tap(find.text('切換身份 ▾'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('示例商戶'));
+    await tester.pump();
+    await tester.pump();
+    expect(events, ['remove-old-route']);
+    expect(api.paymentAccessToken, 'old-admin');
+    gate.complete();
+    await tester.pumpAndSettle();
+    expect(events, ['remove-old-route', 'active:example-token', 'show:vendor']);
+  });
+
+  testWidgets('old overview never requests with the switched merchant identity', (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    final api = FakeTrialApi();
+    await api.saveToken('old-admin');
+    var hidden = false;
+    await tester.pumpWidget(MaterialApp(home: StatefulBuilder(builder: (context, setHarnessState) {
+      return Scaffold(body: Column(children: [
+        if (!hidden) AnimatedBuilder(animation: api, builder: (context, _) {
+          api.adminOverview();
+          return const Text('old admin overview');
+        }),
+        TrialBanner(api: api,
+          onRoleChanging: () async {
+            setHarnessState(() => hidden = true);
+            await WidgetsBinding.instance.endOfFrame;
+          },
+          onRoleChangeFailed: () => setHarnessState(() => hidden = false),
+          onRoleChanged: (_) {},
+        ),
+      ]));
+    })));
+    expect(api.overviewTokens, ['old-admin']);
+    await tester.tap(find.text('切換身份 ▾'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('示例商戶'));
+    await tester.pumpAndSettle();
+    expect(find.text('old admin overview'), findsNothing);
+    expect(api.paymentAccessToken, 'example-token');
+    expect(api.overviewTokens, everyElement('old-admin'));
+    expect(api.overviewTokens, isNotEmpty);
+  });
+
+  testWidgets('failed identity persistence retains the previous route and token', (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    final api = FakeTrialApi();
+    await api.saveToken('old-admin');
+    api.failPersistence = true;
+    var removed = false;
+    await tester.pumpWidget(MaterialApp(home: Scaffold(body: TrialBanner(
+      api: api, onRoleChanging: () async { removed = true; },
+      onRoleChangeFailed: () {}, onRoleChanged: (_) {},
+    ))));
+    await tester.tap(find.text('切換身份 ▾'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('示例商戶'));
+    await tester.pumpAndSettle();
+    expect(removed, isFalse);
+    expect(api.paymentAccessToken, 'old-admin');
+    expect(find.text('切換失敗，請重試'), findsOneWidget);
+  });
+
   testWidgets('identity controls fit a narrow screen', (tester) async {
     SharedPreferences.setMockInitialValues({});
     await tester.binding.setSurfaceSize(const Size(320, 640));
@@ -57,7 +146,7 @@ void main() {
     await tester.pumpWidget(MaterialApp(
       builder: (_, child) => Column(verticalDirection: VerticalDirection.up, children: [
         Expanded(child: child!),
-        TrialBanner(api: FakeTrialApi(), onRoleChanged: (_) {}),
+        TrialBanner(api: FakeTrialApi(), onRoleChanging: () async {}, onRoleChangeFailed: () {}, onRoleChanged: (_) {}),
       ]),
       home: const Scaffold(),
     ));

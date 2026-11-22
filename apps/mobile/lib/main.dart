@@ -47,6 +47,7 @@ class _CouponGoAppState extends State<CouponGoApp> {
   bool _authed = false;
   bool _vendorMode = false;
   String? _trialError;
+  bool _changingTrialRole = false;
   final _navigatorKey = GlobalKey<NavigatorState>();
 
   @override
@@ -71,10 +72,29 @@ class _CouponGoAppState extends State<CouponGoApp> {
     }
   }
 
+  Future<void> _trialRoleChanging() async {
+    if (!mounted) return;
+    setState(() => _changingTrialRole = true);
+    // Wait until the old navigation tree is disposed before using the new identity.
+    await WidgetsBinding.instance.endOfFrame;
+  }
+
+  void _trialRoleChangeFailed() {
+    if (mounted) setState(() => _changingTrialRole = false);
+  }
+
   void _trialRoleChanged(String role) {
-    _navigatorKey.currentState?.popUntil((route) => route.isFirst);
-    if (mounted) setState(() { _authed = _api.isLoggedIn; _vendorMode = role == 'vendor'; });
-    if (role == 'admin') _navigatorKey.currentState?.pushNamed('/admin');
+    if (!mounted) return;
+    setState(() {
+      _changingTrialRole = false;
+      _authed = _api.isLoggedIn;
+      _vendorMode = role == 'vendor';
+    });
+    if (role == 'admin') {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && !_changingTrialRole) _navigatorKey.currentState?.pushNamed('/admin');
+      });
+    }
   }
 
   void _sessionChanged() {
@@ -110,8 +130,9 @@ class _CouponGoAppState extends State<CouponGoApp> {
       navigatorKey: _navigatorKey,
       builder: (context, child) => const bool.fromEnvironment('PUBLIC_TRIAL')
           ? Column(verticalDirection: VerticalDirection.up, children: [
-              Expanded(child: child ?? const SizedBox.shrink()),
-              TrialBanner(api: _api, onRoleChanged: _trialRoleChanged)])
+              Expanded(child: _changingTrialRole ? const SizedBox.shrink() : (child ?? const SizedBox.shrink())),
+              TrialBanner(api: _api, onRoleChanging: _trialRoleChanging,
+                  onRoleChangeFailed: _trialRoleChangeFailed, onRoleChanged: _trialRoleChanged)])
           : (child ?? const SizedBox.shrink()),
       theme: CgTheme.light(),
       home: HomeShell(
