@@ -1,6 +1,6 @@
 """Pydantic schemas for the /api/v3 contract."""
 from datetime import datetime
-from typing import List, Optional
+from typing import List, Literal, Optional
 
 from pydantic import BaseModel, EmailStr, Field, field_validator
 
@@ -243,6 +243,34 @@ class CouponUpdateIn(BaseModel):
         return naive_utc(value)
 
 
+class ForceRevokeIn(BaseModel):
+    reason: str = Field(min_length=1, max_length=500)
+
+
+class SupplementaryScanIn(BaseModel):
+    wallet_item_id: int
+    branch_id: Optional[int] = None
+    idempotency_key: Optional[str] = Field(default=None, min_length=1, max_length=80)
+    reason: Optional[str] = Field(default=None, max_length=500)
+    note: Optional[str] = Field(default=None, max_length=500)
+
+
+class ScanBatchIn(BaseModel):
+    model_config = {"extra": "forbid"}
+    codes: List[str] = Field(min_length=1, max_length=20)
+    prepare_tokens: Optional[List[str]] = None
+    branch_ids: Optional[List[Optional[int]]] = None
+    idempotency_key: str = Field(min_length=1, max_length=80)
+    note: Optional[str] = Field(default=None, max_length=500)
+
+    @field_validator('idempotency_key')
+    @classmethod
+    def _batch_key_nonblank(cls, value):
+        if not value.strip():
+            raise ValueError('批次識別碼不可為空')
+        return value
+
+
 class CouponPreviewOut(BaseModel):
     coupon_name: str
     coupon_type: str
@@ -280,6 +308,7 @@ class QrOut(BaseModel):
 
 class ScanIn(BaseModel):
     code: str
+    method: Literal['scan', 'manual'] = 'scan'
     # Line A: idempotency key (repeat submit of the same scan = one
     # redemption) and optional prepare token from /new-scan-coupon/prepare.
     idempotency_key: Optional[str] = None

@@ -10,7 +10,7 @@ from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.engine import make_url
 
 API = Path(__file__).resolve().parents[1]
-HEAD = '0030_dianping_mgmt_bridge'
+HEAD = '0031_dianping_mgmt_bridge'
 
 
 @pytest.fixture(params=['sqlite', 'postgres'])

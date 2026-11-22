@@ -339,6 +339,64 @@ def test_coupon_creation_persists_and_validates_branch_scope(client):
     assert [failure["index"] for failure in bulk.json()["failed"]] == [1]
 
 
+def test_batch_requires_branches_atomically_and_replays_same_scope(client):
+    vendor = _vendor_headers(client)
+    branch = client.post("/api/v3/merchant/shops/1/branches",
+                         json={"name": "批次限定店"}, headers=vendor).json()["branch"]["id"]
+    limited = _make_coupon(client, 1, "批次限店")
+    unrestricted = _make_coupon(client, 1, "批次不限店")
+    assert client.post("/api/v3/assign-branches",
+                       json={"coupon_id": limited, "branch_ids": [branch]}, headers=vendor).status_code == 200
+    _, first_id, first_code = _claim_and_present(client, "batch-branch-a@example.com", limited)
+    _, second_id, second_code = _claim_and_present(client, "batch-branch-b@example.com", unrestricted)
+    payload = {"codes": [first_code, second_code], "idempotency_key": "branch-batch"}
+    missing = client.post("/api/v3/new-scan-coupon/batch", json=payload, headers=vendor)
+    assert missing.status_code == 400, missing.text
+    assert missing.json()["redeemed_count"] == 0
+    assert missing.json()["results"][0]["branch_selection_required"] is True
+    assert missing.json()["results"][0]["allowed_branches"][0]["id"] == branch
+    with TestingSession() as db:
+        assert [db.get(models.WalletItem, wid).status for wid in (first_id, second_id)] == [1, 1]
+    wrong = client.post("/api/v3/new-scan-coupon/batch",
+                        json=dict(payload, branch_ids=[999999, None]), headers=vendor)
+    assert wrong.status_code == 400 and wrong.json()["redeemed_count"] == 0
+    valid = dict(payload, branch_ids=[branch, None])
+    response = client.post("/api/v3/new-scan-coupon/batch", json=valid, headers=vendor)
+    assert response.status_code == 200 and response.json()["redeemed_count"] == 2, response.text
+    with TestingSession() as db:
+        red_ids = [entry["redemption_id"] for entry in response.json()["results"]]
+        assert [db.get(models.Redemption, rid).branch_id for rid in red_ids] == [branch, None]
+    replay = client.post("/api/v3/new-scan-coupon/batch", json=valid, headers=vendor)
+    assert replay.status_code == 200 and replay.json()["duplicate_count"] == 2
+    mismatch = client.post("/api/v3/new-scan-coupon/batch",
+                           json=dict(payload, branch_ids=[None, None]), headers=vendor)
+    assert mismatch.status_code == 409
+
+
+def test_supplementary_scan_requires_branch_and_preserves_replay_scope(client):
+    vendor = _vendor_headers(client)
+    branch = client.post("/api/v3/merchant/shops/1/branches",
+                         json={"name": "補錄限定店"}, headers=vendor).json()["branch"]["id"]
+    coupon_id = _make_coupon(client, 1, "補錄限店")
+    assert client.post("/api/v3/assign-branches",
+                       json={"coupon_id": coupon_id, "branch_ids": [branch]}, headers=vendor).status_code == 200
+    _, wallet_id, _ = _claim_and_present(client, "supplement-branch@example.com", coupon_id)
+    url = "/api/v3/merchant/redemptions/supplementary-scan"
+    payload = {"wallet_item_id": wallet_id, "idempotency_key": "supplement-branch"}
+    missing = client.post(url, json=payload, headers=vendor)
+    assert missing.status_code == 400 and "選擇分店" in missing.json()["detail"]
+    with TestingSession() as db:
+        assert db.get(models.WalletItem, wallet_id).status == 1
+    selected = dict(payload, branch_id=branch)
+    success = client.post(url, json=selected, headers=vendor)
+    assert success.status_code == 200, success.text
+    with TestingSession() as db:
+        assert db.get(models.Redemption, success.json()["redemption_id"]).branch_id == branch
+    replay = client.post(url, json=selected, headers=vendor)
+    assert replay.status_code == 200 and replay.json()["duplicate"] is True
+    assert client.post(url, json=payload, headers=vendor).status_code == 409
+
+
 # ---------- 1.3 staff roles (P1) ----------
 def _invite_as(client, shop_id, email, role):
     h = _register_and_login(client, email)

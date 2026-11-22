@@ -28,7 +28,7 @@ def test_forward_bridge_preserves_existing_shop_and_branch_links(database_url, p
             conn.execute(text("INSERT INTO coupon_branches(id,coupon_id,branch_id,created_at) VALUES (1,1,1,'2026-01-01')"))
     alembic(database_url, "upgrade", "head")
     with engine.connect() as conn:
-        assert conn.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "0030_dianping_mgmt_bridge"
+        assert conn.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "0031_dianping_mgmt_bridge"
         assert conn.execute(text("SELECT name FROM shops WHERE id=1")).scalar_one() == "existing shop"
         assert "branch_id" in {c["name"] for c in inspect(conn).get_columns("redemptions")}
         if prior == "0023_dianping_merchant_mgmt":

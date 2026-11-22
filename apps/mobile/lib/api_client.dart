@@ -14,11 +14,11 @@ import 'package:shared_preferences/shared_preferences.dart';
 /// dev server. Guest calls (home, banners) need no token; Bearer token is
 /// attached automatically when present.
 class ApiClient extends ChangeNotifier {
-  ApiClient({String? baseUrl})
-      : baseUrl = baseUrl ?? configuredBase;
+  ApiClient({String? baseUrl}) : baseUrl = baseUrl ?? configuredBase;
 
   static String get configuredBase {
-    const url = String.fromEnvironment('API_BASE_URL', defaultValue: 'http://localhost:8000');
+    const url = String.fromEnvironment('API_BASE_URL',
+        defaultValue: 'http://localhost:8000');
     return resolveBaseUrl(url, Uri.base);
   }
 
@@ -32,28 +32,39 @@ class ApiClient extends ChangeNotifier {
   final String baseUrl;
   late final appConfig = AppConfigStore(() => get('/app-config'));
   String? _token;
+  int _sessionRevision = 0;
+  int get sessionRevision => _sessionRevision;
 
   Future<void> loadToken() async {
+    final revision = _sessionRevision;
     final prefs = await SharedPreferences.getInstance();
-    _token = prefs.getString('access_token');
+    if (revision != _sessionRevision) return;
+    final token = prefs.getString('access_token');
+    if (_token != token) {
+      _token = token;
+      _sessionRevision++;
+      notifyListeners();
+    }
   }
 
   Future<void> saveToken(String token, {bool persist = true}) async {
     _token = token;
+    _sessionRevision++;
+    notifyListeners();
     final prefs = await SharedPreferences.getInstance();
     if (persist) {
       await prefs.setString('access_token', token);
     } else {
       await prefs.remove('access_token');
     }
-    notifyListeners();
   }
 
   Future<void> clearToken() async {
     _token = null;
+    _sessionRevision++;
+    notifyListeners();
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove('access_token');
-    notifyListeners();
   }
 
   bool get isLoggedIn => _token != null;
@@ -63,39 +74,44 @@ class ApiClient extends ChangeNotifier {
         if (_token != null) 'Authorization': 'Bearer $_token',
       };
 
-  Future<Map<String, dynamic>> get(String path, {Map<String, String>? query}) async {
-    final uri = Uri.parse('$baseUrl/api/v3$path').replace(queryParameters: query);
+  Future<Map<String, dynamic>> get(String path,
+      {Map<String, String>? query}) async {
+    final uri =
+        Uri.parse('$baseUrl/api/v3$path').replace(queryParameters: query);
     final res = await http.get(uri, headers: _headers);
     return _decode(res);
   }
 
   Future<Map<String, dynamic>> post(String path,
       {Map<String, dynamic>? body, Map<String, String>? query}) async {
-    final uri = Uri.parse('$baseUrl/api/v3$path').replace(queryParameters: query);
-    final res = await http.post(uri, headers: _headers,
-        body: body == null ? null : jsonEncode(body));
+    final uri =
+        Uri.parse('$baseUrl/api/v3$path').replace(queryParameters: query);
+    final res = await http.post(uri,
+        headers: _headers, body: body == null ? null : jsonEncode(body));
     return _decode(res);
   }
 
   Future<Map<String, dynamic>> put(String path,
       {Map<String, dynamic>? body, Map<String, String>? query}) async {
-    final uri = Uri.parse('$baseUrl/api/v3$path').replace(queryParameters: query);
-    final res = await http.put(uri, headers: _headers,
-        body: body == null ? null : jsonEncode(body));
+    final uri =
+        Uri.parse('$baseUrl/api/v3$path').replace(queryParameters: query);
+    final res = await http.put(uri,
+        headers: _headers, body: body == null ? null : jsonEncode(body));
     return _decode(res);
   }
 
   Future<Map<String, dynamic>> patch(String path,
       {Map<String, dynamic>? body}) async {
     final uri = Uri.parse('$baseUrl/api/v3$path');
-    final res = await http.patch(uri, headers: _headers,
-        body: body == null ? null : jsonEncode(body));
+    final res = await http.patch(uri,
+        headers: _headers, body: body == null ? null : jsonEncode(body));
     return _decode(res);
   }
 
   Future<Map<String, dynamic>> delete(String path,
       {Map<String, String>? query}) async {
-    final uri = Uri.parse('$baseUrl/api/v3$path').replace(queryParameters: query);
+    final uri =
+        Uri.parse('$baseUrl/api/v3$path').replace(queryParameters: query);
     final res = await http.delete(uri, headers: _headers);
     return _decode(res);
   }
@@ -124,12 +140,16 @@ class ApiClient extends ChangeNotifier {
       final detail = data is Map ? data['detail'] : null;
       var message = detail is String ? detail : '請求失敗';
       if (res.statusCode == 422 && detail is List) {
-        final invalidEmail = detail.any((entry) => entry is Map &&
-            entry['loc'] is List && (entry['loc'] as List).contains('email'));
+        final invalidEmail = detail.any((entry) =>
+            entry is Map &&
+            entry['loc'] is List &&
+            (entry['loc'] as List).contains('email'));
         message = invalidEmail ? '請輸入有效的電郵地址' : '請檢查輸入資料';
       }
       throw ApiException(res.statusCode, message,
-          code: data is Map && data['code'] is String ? data['code'] as String : null);
+          code: data is Map && data['code'] is String
+              ? data['code'] as String
+              : null);
     }
     return data as Map<String, dynamic>;
   }
@@ -143,9 +163,11 @@ class ApiClient extends ChangeNotifier {
   Future<Map<String, dynamic>> uploadMerchantDocument(
       String kind, String filename, Uint8List bytes) async {
     final ext = filename.split('.').last.toLowerCase();
-    final type = ext == 'pdf' ? MediaType('application', 'pdf')
+    final type = ext == 'pdf'
+        ? MediaType('application', 'pdf')
         : MediaType('image', ext == 'png' ? 'png' : 'jpeg');
-    final req = http.MultipartRequest('POST', Uri.parse('$baseUrl/api/v3/merchant-files'));
+    final req = http.MultipartRequest(
+        'POST', Uri.parse('$baseUrl/api/v3/merchant-files'));
     if (_token != null) req.headers['Authorization'] = 'Bearer $_token';
     req.fields['kind'] = kind;
     req.files.add(http.MultipartFile.fromBytes('file', bytes,
@@ -167,17 +189,44 @@ class ApiClient extends ChangeNotifier {
       post('/merchant-applications/$id/connect/onboarding', body: {});
   Future<Map<String, dynamic>> syncApplicationConnect(int id) =>
       post('/merchant-applications/$id/connect/sync', body: {});
+  Future<Map<String, dynamic>> merchantConnectBalance(int shopId) =>
+      get('/merchant/connect/balance', query: {'shop_id': '$shopId'});
+  Future<Map<String, dynamic>> activeMerchantPayouts(int shopId) =>
+      get('/merchant/connect/payouts/active', query: {'shop_id': '$shopId'});
+  Future<Map<String, dynamic>> createMerchantPayout(
+          int shopId, String amount, String requestId) =>
+      post('/merchant/connect/payouts', body: {
+        'shop_id': shopId,
+        'amount': amount,
+        'request_id': requestId,
+      });
+
+  Future<Map<String, dynamic>> merchantBalance() => get('/merchant/balance');
+  Future<Map<String, dynamic>> merchantDashboard(int days) =>
+      get('/merchant/dashboard', query: {'days': '$days'});
+  Future<Map<String, dynamic>> merchantShopBalance(int shopId) =>
+      get('/merchant/shops/$shopId/balance');
+  Future<Map<String, dynamic>> merchantShopDashboard(int shopId, int days) =>
+      get('/merchant/shops/$shopId/dashboard', query: {'days': '$days'});
+  Future<Map<String, dynamic>> merchantBalanceEntries(int shopId, int page) =>
+      get('/merchant/shops/$shopId/balance/entries', query: {'page': '$page'});
 
   // ---- auth ----
   Future<Map<String, dynamic>> login(String email, String password) async {
-    final data = await post('/login', body: {'email': email, 'password': password});
+    final data =
+        await post('/login', body: {'email': email, 'password': password});
     await saveToken(data['access_token'] as String);
     return data;
   }
 
-  Future<void> register(String email, String password, String name, String role) =>
-      post('/new-register',
-          body: {'email': email, 'password': password, 'name': name, 'role': role});
+  Future<void> register(
+          String email, String password, String name, String role) =>
+      post('/new-register', body: {
+        'email': email,
+        'password': password,
+        'name': name,
+        'role': role
+      });
 
   Future<Map<String, dynamic>> verifyOtp(
           String email, String code, String purpose) async =>
@@ -210,8 +259,8 @@ class ApiClient extends ChangeNotifier {
         if (area != null) 'area': area,
       }))['coupons'] as List<dynamic>;
   Future<List<dynamic>> suggestions(String keyword) async =>
-      (await post('/auto-suggestion-new', query: {'keyword': keyword}))['suggestions']
-          as List<dynamic>;
+      (await post('/auto-suggestion-new',
+          query: {'keyword': keyword}))['suggestions'] as List<dynamic>;
 
   // ---- wallet / points ----
   Future<Map<String, dynamic>> claimCoupon(int couponId) =>
@@ -252,7 +301,9 @@ class ApiClient extends ChangeNotifier {
         'claim_points': claimPoints,
       });
   Future<Map<String, dynamic>> shopReviews(int shopId,
-          {int page = 1, bool hasImages = false, String sort = 'latest'}) async =>
+          {int page = 1,
+          bool hasImages = false,
+          String sort = 'latest'}) async =>
       get('/shops/$shopId/reviews', query: {
         'page': '$page',
         if (hasImages) 'has_images': 'true',
@@ -285,8 +336,7 @@ class ApiClient extends ChangeNotifier {
           {String rejectReason = ''}) =>
       post('/admin/merchant-applications/$id/review',
           body: {'approve': approve, 'reject_reason': rejectReason});
-  Future<Map<String, dynamic>> adminShops() async =>
-      get('/admin/shops');
+  Future<Map<String, dynamic>> adminShops() async => get('/admin/shops');
   Future<Map<String, dynamic>> adminCoupons({String? status}) async =>
       get('/admin/coupons', query: {
         if (status != null) 'status': status,
@@ -319,8 +369,9 @@ class ApiClient extends ChangeNotifier {
       (await get('/cashback/transactions', query: {
         if (status != null) 'status': status,
       }))['transactions'] as List<dynamic>;
-  Future<Map<String, dynamic>> withdrawCashback(double amount, String method,
-          String accountName, String accountRef, {String? requestKey}) =>
+  Future<Map<String, dynamic>> withdrawCashback(
+          double amount, String method, String accountName, String accountRef,
+          {String? requestKey}) =>
       post('/cashback/withdraw', body: {
         'amount': amount,
         'method': method,
@@ -329,12 +380,17 @@ class ApiClient extends ChangeNotifier {
         if (requestKey != null) 'request_key': requestKey,
       });
   Future<Map<String, dynamic>> withdrawalPage({int? before}) =>
-      get('/cashback/withdrawals', query: {if (before != null) 'before': '$before'});
+      get('/cashback/withdrawals',
+          query: {if (before != null) 'before': '$before'});
   Future<List<dynamic>> cashbackMissingAppeals() async =>
       (await get('/cashback/missing'))['appeals'] as List<dynamic>;
   Future<Map<String, dynamic>> submitMissingCashback(
-          int merchantId, String orderNo, String spentAt, double amount,
-          String evidence, String note) =>
+          int merchantId,
+          String orderNo,
+          String spentAt,
+          double amount,
+          String evidence,
+          String note) =>
       post('/cashback/missing', body: {
         'merchant_id': merchantId,
         'order_no': orderNo,
@@ -346,15 +402,13 @@ class ApiClient extends ChangeNotifier {
 
   // ---- favourites / notifications / records ----
   Future<bool> toggleFavoriteCoupon(int id) async =>
-      (await post('/favorite-coupon-all', query: {'coupon_id': '$id'}))
-          ['is_coupon_favorite'] as bool;
-  Future<bool> toggleFavoriteShop(int id) async =>
-      (await post('/favorite-shop', query: {'shop_id': '$id'}))
-          ['is_shop_favorite'] as bool;
+      (await post('/favorite-coupon-all',
+          query: {'coupon_id': '$id'}))['is_coupon_favorite'] as bool;
+  Future<bool> toggleFavoriteShop(int id) async => (await post('/favorite-shop',
+      query: {'shop_id': '$id'}))['is_shop_favorite'] as bool;
   Future<Map<String, dynamic>> notifications() async =>
       get('/get-notification-list');
-  Future<void> markNotificationRead(int id) =>
-      post('/notifications/$id/read');
+  Future<void> markNotificationRead(int id) => post('/notifications/$id/read');
   Future<void> markAllNotificationsRead() => post('/notifications/read-all');
   Future<List<dynamic>> records() async =>
       (await get('/get-user-record-list'))['records'] as List<dynamic>;
@@ -364,10 +418,10 @@ class ApiClient extends ChangeNotifier {
   // the list response now carries rating / has_coupons / has_packages /
   // created_at, so no per-shop rating calls are needed to sort.
   Future<Map<String, dynamic>> nearbyShops(
-      {required double lat,
-      required double lng,
-      double radiusKm = 10,
-      String sort = 'distance'}) async =>
+          {required double lat,
+          required double lng,
+          double radiusKm = 10,
+          String sort = 'distance'}) async =>
       get('/nearby-shops', query: {
         'lat': '$lat',
         'lng': '$lng',
@@ -381,7 +435,8 @@ class ApiClient extends ChangeNotifier {
   Future<Map<String, dynamic>> prepareScan(String code) async =>
       post('/new-scan-coupon/prepare', body: {'code': code});
   Future<Map<String, dynamic>> revokeRedemption(int redemptionId) async =>
-      post('/redemptions/$redemptionId/revoke', query: {'acknowledge_existing': 'true'});
+      post('/redemptions/$redemptionId/revoke',
+          query: {'acknowledge_existing': 'true'});
   Future<Map<String, dynamic>> vendorRedemptionsExport() async =>
       get('/vendor/redemptions/export');
   // UI_SPEC §8 — vendor redemption records with a client-side date
@@ -413,6 +468,7 @@ class ApiClient extends ChangeNotifier {
     }
     return res.body;
   }
+
   // ---- bargain 2C (line E) ----
   /// Stable per-device id for the bargain anti-fraud device check.
   /// Stored locally; never a credential, just a dedupe key.
@@ -434,8 +490,7 @@ class ApiClient extends ChangeNotifier {
   Future<Map<String, dynamic>> startBargain(int campaignId) async =>
       post('/bargain-campaigns/$campaignId/start');
   Future<Map<String, dynamic>> helpBargain(int sessionId, String deviceId) =>
-      post('/bargain-sessions/$sessionId/help',
-          body: {'device_id': deviceId});
+      post('/bargain-sessions/$sessionId/help', body: {'device_id': deviceId});
   Future<Map<String, dynamic>> purchaseBargain(int sessionId) =>
       post('/bargain-sessions/$sessionId/purchase');
   Future<List<dynamic>> myBargainSessions() async =>
@@ -447,7 +502,8 @@ class ApiClient extends ChangeNotifier {
       get('/vendor/package-workspace');
   Future<Map<String, dynamic>> createVendorPackage(Map<String, dynamic> body) =>
       post('/packages', body: body);
-  Future<Map<String, dynamic>> editVendorPackage(int id, Map<String, dynamic> body) =>
+  Future<Map<String, dynamic>> editVendorPackage(
+          int id, Map<String, dynamic> body) =>
       patch('/vendor/packages/$id', body: body);
   Future<Map<String, dynamic>> vendorPackageAction(int id, String action) =>
       post('/vendor/packages/$id/$action');
@@ -472,15 +528,12 @@ class ApiClient extends ChangeNotifier {
   // polls GET /orders/{id} (see PaymentResultScreen). The old wrapper
   // was removed so no call site can regress.
   Future<Map<String, dynamic>> retryPayment(int orderId, String method) =>
-      post('/orders/$orderId/retry-payment',
-          body: {'payment_method': method});
+      post('/orders/$orderId/retry-payment', body: {'payment_method': method});
   Future<Map<String, dynamic>> cancelOrder(int orderId) =>
       post('/orders/$orderId/cancel');
-  Future<Map<String, dynamic>> refundOrder(int orderId,
-          {String reason = ''}) =>
+  Future<Map<String, dynamic>> refundOrder(int orderId, {String reason = ''}) =>
       post('/orders/$orderId/refund', body: {'reason': reason});
-  Future<Map<String, dynamic>> refundPackage(int id,
-          {String reason = ''}) =>
+  Future<Map<String, dynamic>> refundPackage(int id, {String reason = ''}) =>
       post('/packages/$id/refund', body: {'reason': reason});
   Future<List<dynamic>> orders({String? status}) async =>
       (await get('/orders', query: {
@@ -496,7 +549,7 @@ class ApiClient extends ChangeNotifier {
   Future<Map<String, dynamic>> usageData() async =>
       get('/get-vendor-usage-data-new');
   Future<Map<String, dynamic>> scanCoupon(String code,
-      {String? idempotencyKey, String? prepareToken}) async =>
+          {String? idempotencyKey, String? prepareToken}) async =>
       post('/new-scan-coupon', body: {
         'code': code,
         if (idempotencyKey != null) 'idempotency_key': idempotencyKey,
@@ -507,16 +560,19 @@ class ApiClient extends ChangeNotifier {
 
   // ---- admin v2 (line F) ----
   Future<Map<String, dynamic>> adminOverview() async => get('/admin/overview');
-  Future<Map<String, dynamic>> settlements({int? shopId, String? status, int page = 1}) async =>
+  Future<Map<String, dynamic>> settlements(
+          {int? shopId, String? status, int page = 1}) async =>
       get('/admin/settlements', query: {
         'page': '$page',
         if (shopId != null) 'shop_id': '$shopId',
         if (status != null) 'status': status,
       });
-  Future<Map<String, dynamic>> generateSettlement(
-          int shopId, String period, [double? commissionRate]) async =>
+  Future<Map<String, dynamic>> generateSettlement(int shopId, String period,
+          [double? commissionRate]) async =>
       post('/admin/settlements/generate', body: {
-        'shop_id': shopId, 'period': period, if (commissionRate != null) 'commission_rate': commissionRate,
+        'shop_id': shopId,
+        'period': period,
+        if (commissionRate != null) 'commission_rate': commissionRate,
       });
   Future<Map<String, dynamic>> approveSettlement(int id) async =>
       post('/admin/settlements/$id/approve');
@@ -526,13 +582,16 @@ class ApiClient extends ChangeNotifier {
           int id, String decision, String note) async =>
       post('/admin/settlements/$id/resolve',
           body: {'decision': decision, 'note': note});
-  Future<Map<String, dynamic>> paySettlement(int id, num amount, String reference) async =>
-      post('/admin/settlements/$id/pay', body: {'amount': amount, 'reference': reference});
-  Future<Map<String, dynamic>> reconciliationRun(int shopId, String period) async =>
+  Future<Map<String, dynamic>> paySettlement(
+          int id, num amount, String reference) async =>
+      post('/admin/settlements/$id/pay',
+          body: {'amount': amount, 'reference': reference});
+  Future<Map<String, dynamic>> reconciliationRun(
+          int shopId, String period) async =>
       post('/admin/reconciliation/run',
           body: {'shop_id': shopId, 'period': period});
   Future<Map<String, dynamic>> reconciliationReports(
-      {int? shopId, String? period}) async =>
+          {int? shopId, String? period}) async =>
       get('/admin/reconciliation/reports', query: {
         if (shopId != null) 'shop_id': '$shopId',
         if (period != null) 'period': period,
@@ -575,7 +634,8 @@ class ApiClient extends ChangeNotifier {
       delete('/admin/announcements/$id');
   Future<List<dynamic>> adminCategories() async =>
       (await get('/admin/categories'))['categories'] as List<dynamic>;
-  Future<Map<String, dynamic>> createCategory(Map<String, dynamic> body) async =>
+  Future<Map<String, dynamic>> createCategory(
+          Map<String, dynamic> body) async =>
       post('/admin/categories', body: body);
   Future<Map<String, dynamic>> deactivateCategory(int id) async =>
       post('/admin/categories/$id/deactivate');
