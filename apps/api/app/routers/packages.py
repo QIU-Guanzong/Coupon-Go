@@ -44,7 +44,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from .. import cashback_service, config, connect_service, late_payments, listing, models, points_service
-from ..order_allocation import wallet_order_consistent
+from ..order_allocation import read_frozen_allocations, wallet_order_consistent
 from ..package_templates import current_package_coupon, sync_edited_package_template
 from ..settlement_ledger import reverse_sale
 from ..database import get_db
@@ -263,10 +263,19 @@ def _issue_voucher(db: Session, order: Order, package: Package = None):
     Idempotent: a second confirm of the same order returns the voucher.
     Package orders issue the package's coupon template; P1-A coupon
     orders issue the coupon itself."""
-    existing = (db.query(models.WalletItem)
-                .filter(models.WalletItem.order_id == order.id).first())
-    if existing is not None:
-        return existing
+    if (order.payment_status != "paid" or order.refund_status not in ("none", "rejected")
+            or order.settlement_status == "void"):
+        raise HTTPException(409, "訂單狀態需要人工核對，無法補發優惠券")
+    existing = (db.query(models.WalletItem).filter(models.WalletItem.order_id == order.id)
+                .order_by(models.WalletItem.id).with_for_update().populate_existing().all())
+    if order.wallet_allocation_fingerprint is not None:
+        # A frozen paid amount and voucher set are one historical record.
+        # Never recreate missing rows or accept a partially changed set.
+        read_frozen_allocations(db, order)
+    elif existing and not wallet_order_consistent(order, existing):
+        raise HTTPException(409, "訂單優惠券需要人工核對")
+    if existing:
+        return existing[0]
     if order.coupon_id is not None:
         coupon = db.get(models.Coupon, order.coupon_id)
         if coupon is None or coupon.kind == "package":
