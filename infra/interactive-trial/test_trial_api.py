@@ -55,6 +55,8 @@ def test_browser_sessions_are_independent_and_complete_business_journey(gateway)
     assert b.post('/api/v3/trial/session').json()['reset'] is True
     assert a.post('/api/v3/trial/session').json()['reset'] is False
     assert a.get('/api/v3/home').status_code == 200  # anonymous browsing
+    options = a.get('/api/v3/payment-options')
+    assert options.status_code == 200 and options.json()['mode'] == 'demo'
     ac, bc = role(a, 'customer'), role(b, 'customer')
     assert b.get('/api/v3/me', headers=ac).status_code == 401
     claimed = a.post('/api/v3/new-favorite-coupon', params={'coupon_id': 1}, headers=ac)
