@@ -35,5 +35,3 @@ def bind_approved_shop(db: Session, app: MerchantApplication):
         db.flush()
     app.approved_shop_id = shop.id
     return shop
-
-
