@@ -8,7 +8,7 @@ import pytest
 from fastapi import HTTPException
 
 from tests import test_p1b_connect_fixes as base
-from app import config, connect_gateway, connect_service
+from app import application_connect, config, connect_gateway, connect_service
 from app.models_connect import ConnectLedgerEntry
 from app.models_line_b import AdminAuditLog
 from app.payments_gateway import GatewayError
@@ -32,6 +32,38 @@ def test_simulator_rejects_same_transfer_operation_with_different_parameters(mon
         connect_gateway.create_transfer("acct_sim_x", Decimal("20"), "group-x", idempotency_key="unique-mismatch-test")
     with pytest.raises(GatewayError):
         connect_gateway.create_transfer("acct_sim_y", Decimal("10"), "group-x", idempotency_key="unique-mismatch-test")
+
+
+def test_non_development_missing_key_never_marks_simulated_transfer_complete(client, monkeypatch):
+    base._onboard_sync(client, 11)
+    scan, _ = base._scan_package(client, "reconcile-no-key@example.com", 11)
+    entry_id = scan["connect"]["entry_id"]
+    monkeypatch.setattr(config, "APP_ENV", "production")
+    monkeypatch.setattr(config, "STRIPE_CONNECT_ENABLED_RAW", "1")
+    monkeypatch.setattr(config, "STRIPE_SECRET_KEY", "")
+    assert not connect_service.connect_configured()
+    with pytest.raises(HTTPException) as exc:
+        application_connect._enabled()
+    assert exc.value.status_code == 503
+    base._sweep()
+    row = base._entry(entry_id)
+    assert row["status"] == "pending" and not row["stripe_transfer_id"]
+    with pytest.raises(GatewayError):
+        connect_gateway.create_transfer("acct_test", Decimal("10"), "group", idempotency_key="no-key-production")
+    # Leave no unrelated pending work for the following simulated sweep.
+    with base._db() as db:
+        db.get(ConnectLedgerEntry, entry_id).status = "reversed"
+        db.commit()
+
+
+def test_non_test_connect_key_is_rejected_before_dispatch(monkeypatch):
+    monkeypatch.setattr(config, "APP_ENV", "dev")
+    monkeypatch.setattr(config, "STRIPE_CONNECT_ENABLED_RAW", "1")
+    monkeypatch.setattr(config, "STRIPE_SECRET_KEY", "not_a_test_key")
+    assert not connect_service.connect_configured()
+    with pytest.raises(HTTPException) as exc:
+        application_connect._enabled()
+    assert exc.value.status_code == 503
 
 
 def _uncertain_transfer(client, monkeypatch, name, shop_id):

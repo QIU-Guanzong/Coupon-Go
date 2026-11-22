@@ -73,6 +73,7 @@ TestingSession = None
 @pytest.fixture(scope="module")
 def client(tmp_path_factory):
     global engine, TestingSession, _SQLITE_URL
+    connect_gateway._reset_simulator_idempotency()
     if BACKEND == "postgres":
         Base.metadata.drop_all(bind=engine)
     else:
@@ -96,6 +97,7 @@ def client(tmp_path_factory):
     with TestClient(app) as c:
         yield c
     app.dependency_overrides.clear()
+    connect_gateway._reset_simulator_idempotency()
 
 
 def _db():
@@ -396,6 +398,22 @@ def test_sweep_unknown_transfer_is_not_sent_again(client, monkeypatch):
     monkeypatch.setattr(connect_gateway, "create_transfer", uncertain)
     assert _sweep()["transferred"] == 0
     assert _entry(entry_id)["status"] == "transfer_unknown"
+    ah = _admin_headers(client)
+    recoveries = client.get("/api/v3/admin/connect/recoveries", headers=ah)
+    assert recoveries.status_code == 200
+    assert any(row["id"] == entry_id and row["status"] == "transfer_unknown"
+               for row in recoveries.json()["needs_manual_transfers"])
+    with _db() as db:
+        entry = db.get(ConnectLedgerEntry, entry_id)
+        entry.status = "transferring"
+        db.commit()
+    recoveries = client.get("/api/v3/admin/connect/recoveries", headers=ah)
+    assert any(row["id"] == entry_id and row["status"] == "transferring"
+               for row in recoveries.json()["needs_manual_transfers"])
+    with _db() as db:
+        entry = db.get(ConnectLedgerEntry, entry_id)
+        entry.status = "transfer_unknown"
+        db.commit()
     for _ in range(5):
         _sweep()
     assert keys == [f"transfer-{entry_id}"]

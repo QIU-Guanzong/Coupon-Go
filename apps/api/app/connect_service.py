@@ -31,10 +31,9 @@ queue §F 2026-11-21):
 - A balance MAY go negative (a transfer reversed after the merchant
   already paid the money out). While negative, new payouts are
   refused; the admin recoveries board lists the shop.
-- A failed transfer / reversal attempt increments retry_count; after
-  CONNECT_MAX_TRANSFER_RETRIES (default 5) the entry goes
-  ``needs_manual`` and an admin notification is raised once. The
-  manual retry endpoint is the recovery path.
+- An uncertain transfer or reversal is recorded and reported for
+  provider reconciliation; it is not automatically resent. Legacy
+  ``needs_manual`` entries remain visible for review.
 - A later scan of the same voucher is held while its previous transfer
   or reversal remains unresolved; a confirmed reversal permits retry.
 """
@@ -66,13 +65,17 @@ CURRENCY = "HKD"
 
 
 def connect_configured() -> bool:
-    return bool(config.connect_enabled().get("enabled"))
+    key = (config.STRIPE_SECRET_KEY or "").strip()
+    return bool(config.connect_enabled().get("enabled") and
+                (key.startswith("sk_test_") or (not key and config.APP_ENV == "dev")))
 
 
-def _max_retries() -> int:
-    """Failed attempts per entry before it goes needs_manual. Read at
-    call time so tests can monkeypatch config."""
-    return int(config.CONNECT_MAX_TRANSFER_RETRIES)
+def connect_mode() -> str:
+    """Current runtime mode; this does not assert a historical entry's origin."""
+    if not connect_configured():
+        return "unavailable"
+    return "stripe_test" if (config.STRIPE_SECRET_KEY or "").strip() else "simulated"
+
 
 
 def effective_commission_rate(db: Session, shop_id: int) -> Decimal:
@@ -141,8 +144,7 @@ def sync_account(db: Session, account: ConnectAccount) -> ConnectAccount:
     if not connect_configured():
         raise HTTPException(
             status_code=503,
-            detail="Stripe Connect 未配置：请先在部署环境开启 "
-                   "STRIPE_CONNECT_ENABLED")
+            detail="Stripe Connect 尚未配置，請聯絡平台")
     try:
         info = connect_gateway.retrieve_account(account.stripe_account_id)
     except GatewayError as exc:
@@ -446,10 +448,8 @@ def sweep_pending_transfers(db: Session, batch_size=None) -> dict:
 def _attempt_reversal(db: Session, entry: ConnectLedgerEntry) -> dict:
     """Transfer Reversal for an already-transferred entry. Returns
     {"reversed": bool, "reason": str}. Never raises: on failure the
-    entry keeps its transferred status and is flagged pending_reversal
-    for the retry endpoint. A gateway failure counts toward
-    retry_count; after CONNECT_MAX_TRANSFER_RETRIES an admin
-    notification is raised once."""
+    entry keeps its transferred status and pending_reversal. An uncertain
+    provider response requires reconciliation and is not resent."""
     if entry.note != "reversal_queued":
         return {"reversed": False, "reason": "reversal_result_unknown"}
     account = get_account(db, entry.shop_id)
@@ -567,8 +567,7 @@ def retry_entry(db: Session, entry_id: int) -> dict:
     if not connect_configured():
         raise HTTPException(
             status_code=503,
-            detail="Stripe Connect 未配置：请先在部署环境开启 "
-                   "STRIPE_CONNECT_ENABLED")
+            detail="Stripe Connect 尚未配置，請聯絡平台")
     out = _attempt_transfer(db, entry)
     if out["transferred"]:
         db.commit()
@@ -587,7 +586,7 @@ def retry_entry(db: Session, entry_id: int) -> dict:
 
 def _payout_out(db, entry):
     balance = merchant_balance(db, entry.shop_id)
-    return {"shop_id": entry.shop_id, "entry_id": entry.id,
+    return {"shop_id": entry.shop_id, "entry_id": entry.id, "connect_mode": connect_mode(),
             "amount": _money(-entry.net_amount), "currency": CURRENCY,
             "stripe_payout_id": entry.stripe_payout_id or None,
             "status": entry.status,
@@ -910,7 +909,8 @@ def recoveries(db: Session) -> dict:
                 "note": entry.note or ""}
 
     needs_manual = (db.query(ConnectLedgerEntry)
-                    .filter_by(kind="transfer", status="needs_manual")
+                    .filter(ConnectLedgerEntry.kind == "transfer",
+                            ConnectLedgerEntry.status.in_(("needs_manual", "transfer_unknown", "transferring")))
                     .order_by(ConnectLedgerEntry.id).all())
     pending_reversals = (db.query(ConnectLedgerEntry)
                          .filter_by(pending_reversal=True)

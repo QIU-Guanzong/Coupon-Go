@@ -50,6 +50,7 @@ def merchant_balance(user: models.User = Depends(get_current_user),
              .order_by(models.Shop.id).all()) if shop_ids else []
     per_shop = [mf.shop_balance(db, s) for s in shops]
     return {
+        "connect_mode": mf.connect_mode(),
         "pending_settlement": _sum_money(s["pending_settlement"] for s in per_shop),
         "withdrawable": _sum_money(s["withdrawable"] for s in per_shop),
         "reserved": _sum_money(s["reserved"] for s in per_shop),

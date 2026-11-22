@@ -30,7 +30,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 os.environ["COUPON_GO_ENV"] = "dev"
 os.environ["SEED_ON_STARTUP"] = "0"
 
-from app import config, connect_service, models  # noqa: E402
+from app import config, connect_gateway, connect_service, models  # noqa: E402
 from app.database import Base, get_db  # noqa: E402
 from app.main import app  # noqa: E402
 from app.seed import seed  # noqa: E402
@@ -77,6 +77,7 @@ TestingSession = sessionmaker(bind=engine)
 
 @pytest.fixture(scope="module")
 def client():
+    connect_gateway._reset_simulator_idempotency()
     if BACKEND == "postgres":
         Base.metadata.drop_all(bind=engine)
     elif os.path.exists(TEST_DB):
@@ -97,6 +98,7 @@ def client():
     with TestClient(app) as c:
         yield c
     app.dependency_overrides.clear()
+    connect_gateway._reset_simulator_idempotency()
 
 
 def _db():

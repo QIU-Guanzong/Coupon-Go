@@ -679,3 +679,44 @@ def test_unknown_transfer_and_revoked_reversal_remain_visible(client):
     assert _balance(client, shop_id, headers)['unknown_reversal_count'] == 0
     entries = client.get(f'/api/v3/merchant/shops/{shop_id}/balance/entries', headers=headers).json()['entries']
     assert next(row for row in entries if row['redemption_id'] == redemption_id)['state'] == 'reversed'
+
+
+@pytest.mark.parametrize('enabled,environment,key,expected', [
+    ('1', 'dev', '', 'simulated'),
+    ('1', 'dev', 'sk_test_placeholder', 'stripe_test'),
+    ('0', 'dev', '', 'unavailable'),
+    ('1', 'dev', 'not_a_test_key', 'unavailable'),
+    ('1', 'prod', '', 'unavailable'),
+])
+def test_balance_reports_configured_provider_mode(client, monkeypatch, enabled, environment, key, expected):
+    from app import config, legal
+    headers = _vendor_headers(client)
+    monkeypatch.setattr(config, 'STRIPE_CONNECT_ENABLED_RAW', enabled)
+    monkeypatch.setattr(config, 'STRIPE_SECRET_KEY', key)
+    monkeypatch.setattr(config, 'APP_ENV', environment)
+    monkeypatch.setattr(legal, 'documents', lambda: {})
+    for path in ('/api/v3/merchant/balance', f'/api/v3/merchant/shops/{PRICE_SHOP}/balance'):
+        response = client.get(path, headers=headers)
+        assert response.status_code == 200, response.text
+        assert response.json()['connect_mode'] == expected
+
+
+def test_run_all_jobs_runs_connect_and_monthly_once(monkeypatch):
+    from app import scheduler
+    calls = []
+    class Session:
+        def close(self):
+            pass
+    def simple(name):
+        return lambda db: calls.append((name, None)) or {}
+    for name in scheduler.JOB_RUNNERS:
+        monkeypatch.setitem(scheduler.JOB_RUNNERS, name, simple(name))
+    monkeypatch.setattr(scheduler, 'run_connect_transfers',
+                        lambda db, batch_size=None: calls.append(('connect-transfers', batch_size)) or {})
+    monkeypatch.setattr(scheduler, 'run_cashback_sweep',
+                        lambda db, batch_size=None: calls.append(('cashback-sweep', batch_size)) or {})
+    result = scheduler.run_all_jobs(session_factory=Session, batch_size=7)
+    assert len(calls) == len(scheduler.JOB_NAMES)
+    assert calls.count(('connect-transfers', 7)) == 1
+    assert calls.count(('monthly-settlements', None)) == 1
+    assert set(result) == set(scheduler.JOB_NAMES)

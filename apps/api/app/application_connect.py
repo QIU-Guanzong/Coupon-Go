@@ -57,7 +57,8 @@ def _application_operation_exists(db, shop):
 
 
 def _enabled():
-    if not config.connect_enabled()["enabled"]:
+    from .connect_service import connect_configured
+    if not connect_configured():
         raise HTTPException(503, "Stripe Connect 尚未配置")
 
 

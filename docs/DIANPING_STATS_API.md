@@ -16,6 +16,8 @@
 不能按结算单推断已转款。`balance_complete=false` 与
 `legacy_untracked_redemptions` 指示缺少 Connect 流水的历史核销数，
 此时所示余额仅代表已接入 Connect 的部分。
+`connect_mode` 是当前配置而非到账证明：`simulated` 为本地模拟，
+`stripe_test` 为 Stripe 测试环境，`unavailable` 为关闭或配置不可用。
 `unknown_transfer_count` / `unknown_transfer_amount` 表示转账结果尚待
 确认的笔数和净额；尚未进入冲回的部分包含在待处理金额中，均不表示已到账。`unknown_reversal_count`
 表示冲回结果未知的笔数。商户端应提示待核对，不应表示这些金额已到账。
