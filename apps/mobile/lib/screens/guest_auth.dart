@@ -172,6 +172,43 @@ class _AuthScreenState extends State<AuthScreen> {
 
   @override
   Widget build(BuildContext context) {
+    if (const bool.fromEnvironment('PUBLIC_TRIAL')) {
+      final role = widget.vendor ? 'vendor' : 'customer';
+      return Scaffold(
+        appBar: AppBar(title: const Text('示例體驗')),
+        body: Center(child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: ConstrainedBox(constraints: const BoxConstraints(maxWidth: 420),
+            child: Column(mainAxisSize: MainAxisSize.min, children: [
+              Text(widget.vendor ? '使用示例商戶' : '使用示例顧客',
+                  style: Theme.of(context).textTheme.titleLarge),
+              const SizedBox(height: 12),
+              const Text('這是獨立示例資料，付款為模擬，不會扣款。請勿輸入真實個人資料。',
+                  textAlign: TextAlign.center),
+              const SizedBox(height: 20),
+              if (error != null) Text(error!, style: const TextStyle(color: Colors.red)),
+              FilledButton(
+                onPressed: busy ? null : () async {
+                  setState(() { busy = true; error = null; });
+                  try {
+                    final result = await widget.api.post('/trial/role', body: {'role': role});
+                    final token = result['access_token'];
+                    if (token is! String || token.isEmpty) throw const FormatException();
+                    await widget.api.saveToken(token);
+                    if (mounted) widget.onAuthed();
+                  } catch (_) {
+                    if (mounted) setState(() => error = '無法開始體驗，請重試');
+                  } finally {
+                    if (mounted) setState(() => busy = false);
+                  }
+                },
+                child: Text(busy ? '準備中…' : '開始體驗'),
+              ),
+            ]),
+          ),
+        )),
+      );
+    }
     final t = context.tr;
     final accent = widget.vendor ? CgColors.vendorGold : CgColors.primary;
     final title = switch (step) {

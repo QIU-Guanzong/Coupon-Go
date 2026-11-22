@@ -1,4 +1,5 @@
 import 'screens/merchant_onboarding.dart';
+import 'screens/trial_banner.dart';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -45,19 +46,35 @@ class _CouponGoAppState extends State<CouponGoApp> {
   bool _ready = false;
   bool _authed = false;
   bool _vendorMode = false;
+  String? _trialError;
+  final _navigatorKey = GlobalKey<NavigatorState>();
 
   @override
   void initState() {
     super.initState();
     _api.addListener(_sessionChanged);
-    unawaited(_api.appConfig.load());
-    Future.wait([_api.loadToken(), _language.load()]).then((_) {
-      if (!mounted) return;
-      setState(() {
-        _ready = true;
-        _authed = _api.isLoggedIn;
-      });
-    });
+    unawaited(_initialise());
+  }
+
+  Future<void> _initialise() async {
+    if (mounted) setState(() { _trialError = null; _ready = false; });
+    try {
+      if (const bool.fromEnvironment('PUBLIC_TRIAL')) {
+        final session = await _api.post('/trial/session');
+        if (session['reset'] == true) await _api.clearToken();
+      }
+      await Future.wait([_api.loadToken(), _language.load()]);
+      unawaited(_api.appConfig.load());
+      if (mounted) setState(() { _ready = true; _authed = _api.isLoggedIn; });
+    } catch (_) {
+      if (mounted) setState(() { _trialError = '體驗暫時無法開始，請稍後重試。'; });
+    }
+  }
+
+  void _trialRoleChanged(String role) {
+    _navigatorKey.currentState?.popUntil((route) => route.isFirst);
+    if (mounted) setState(() { _authed = _api.isLoggedIn; _vendorMode = role == 'vendor'; });
+    if (role == 'admin') _navigatorKey.currentState?.pushNamed('/admin');
   }
 
   void _sessionChanged() {
@@ -77,12 +94,24 @@ class _CouponGoAppState extends State<CouponGoApp> {
 
   @override
   Widget build(BuildContext context) {
-    if (!_ready) return const Directionality(textDirection: TextDirection.ltr, child: SplashScreen());
+    if (!_ready) {
+      if (_trialError != null) {
+        return MaterialApp(home: Scaffold(body: Center(child: Column(
+          mainAxisSize: MainAxisSize.min, children: [Text(_trialError!),
+          TextButton(onPressed: _initialise, child: const Text('重試'))]))));
+      }
+      return const Directionality(textDirection: TextDirection.ltr, child: SplashScreen());
+    }
     return LanguageScope(language: _language, child: Builder(builder: (c) => MaterialApp(
       locale: LanguageScope.of(c).english ? const Locale('en') : const Locale.fromSubtags(languageCode: 'zh', scriptCode: 'Hant', countryCode: 'HK'),
       supportedLocales: const [Locale('en'), Locale.fromSubtags(languageCode: 'zh', scriptCode: 'Hant', countryCode: 'HK')],
       localizationsDelegates: GlobalMaterialLocalizations.delegates,
       title: 'Coupon GO!',
+      navigatorKey: _navigatorKey,
+      builder: (context, child) => const bool.fromEnvironment('PUBLIC_TRIAL')
+          ? Column(children: [TrialBanner(api: _api, onRoleChanged: _trialRoleChanged),
+              Expanded(child: child ?? const SizedBox.shrink())])
+          : (child ?? const SizedBox.shrink()),
       theme: CgTheme.light(),
       home: HomeShell(
               api: _api,
