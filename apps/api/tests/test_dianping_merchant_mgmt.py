@@ -376,6 +376,14 @@ def test_prepared_branch_cannot_change_before_confirmation(client):
     original = client.post("/api/v3/new-scan-coupon",
                            json={"code": code, "branch_id": branches[0], "prepare_token": token}, headers=vendor)
     assert original.status_code == 200, original.text
+    _, expired_id, expired_code = _claim_and_present(client, "expired-branch@example.com", coupon_id)
+    with TestingSession() as db:
+        db.get(models.WalletItem, expired_id).qr_expires_at = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(seconds=1)
+        db.commit()
+    expired = client.post("/api/v3/new-scan-coupon/prepare", json={"code": expired_code}, headers=vendor)
+    assert expired.status_code == 200 and expired.json()["can_redeem"] is False
+    assert expired.json()["branch_selection_required"] is False
+    assert "過期" in expired.json()["reason"]
 
 
 def test_batch_requires_branches_atomically_and_replays_same_scope(client):

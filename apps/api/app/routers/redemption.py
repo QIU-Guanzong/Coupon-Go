@@ -113,7 +113,9 @@ def prepare_scan(body: dict,
                 "prepare_token": None, "wallet_item_id": item.id,
                 "coupon_name": coupon.coupon_name if coupon else "",
                 "shop_id": coupon.shop_id if coupon else None,
-                "branch_selection_required": bool(allowed and branch_id is None),
+                "branch_selection_required": bool(
+                    allowed and branch_id is None
+                    and reason == "此優惠券限指定分店使用，請先選擇分店"),
                 "allowed_branches": options}
     token, _issued = prepare_token.issue_prepare_token(
         item.id, binding=prepare_token.redemption_binding(vendor.id, code, branch_id))
