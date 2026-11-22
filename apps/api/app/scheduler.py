@@ -280,7 +280,8 @@ def run_all_jobs(session_factory=None, batch_size=None):
     factory = session_factory or SessionLocal
     results = {}
     for name in ("expired-packages", "bargain-expire", "payment-timeouts",
-                 "coupon-expiry", "late-payment-refunds", "listing-schedule", "points-expire"):
+                 "coupon-expiry", "late-payment-refunds", "listing-schedule", "points-expire",
+                 "monthly-settlements"):
         db = factory()
         try:
             results[name] = JOB_RUNNERS[name](db)
@@ -361,7 +362,7 @@ def validate_scheduler_config():
         logger.warning(
             "Scheduler disabled: %s. Expired-package refunds, bargain "
             "settlement, payment-timeout close, cashback sweep and "
-            "coupon-expiry reminders will "
+            "coupon-expiry reminders and monthly settlement generation will "
             "NOT run automatically; only the admin manual endpoints "
             "can backfill them.", status["reason"])
     else:

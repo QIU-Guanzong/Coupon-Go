@@ -437,14 +437,20 @@ def catch_up_monthly_settlements(db: Session) -> dict:
                         extract('year', models.Redemption.scanned_at),
                         extract('month', models.Redemption.scanned_at))
                .filter(models.Redemption.scanned_at < cutoff,
-                       models.Redemption.revoked_at.is_(None))
+                       models.Redemption.revoked_at.is_(None),
+                       ~models.Redemption.id.in_(db.query(SettlementItem.redemption_id)))
                .distinct().all())
     existing = set(db.query(Settlement.shop_id, Settlement.period).all())
+    blocked = sorted({(shop_id, f'{int(year):04d}-{int(month):02d}')
+                      for shop_id, year, month in periods
+                      if (shop_id, f'{int(year):04d}-{int(month):02d}') in existing})
     missing = sorted({(int(year), int(month)) for shop_id, year, month in periods
                       if (shop_id, f'{int(year):04d}-{int(month):02d}') not in existing})
     results = [sweep_monthly_settlements(db, f'{year:04d}-{month:02d}')
                for year, month in missing]
     return {"periods": results,
+            "blocked_existing_periods": [{"shop_id": shop_id, "period": period}
+                                         for shop_id, period in blocked],
             "generated": sum(result['generated'] for result in results),
             "skipped": sum(result['skipped'] for result in results),
             "failed": sum(result['failed'] for result in results)}

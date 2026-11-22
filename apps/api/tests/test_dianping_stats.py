@@ -539,3 +539,69 @@ def test_legacy_free_voucher_with_old_positive_snapshot_is_not_untracked(client)
         db.commit()
     after = _balance(client, GIFT_SHOP)
     assert after['legacy_untracked_redemptions'] == before['legacy_untracked_redemptions']
+
+
+def test_monthly_catchup_retries_failed_old_period_and_is_idempotent(client, monkeypatch):
+    from app import merchant_finance as finance
+    from app.models_line_f import Settlement
+    period = f'{datetime.now(timezone.utc).year - 2}-04'
+    _, _, red_id = _redeem(client, 'stats-catchup-retry@example.com', PRICE_COUPON)
+    _backdate_redemption(red_id, period)
+    original = finance.generate_settlement_for_shop
+    attempts = []
+    def fail_once(db, shop, target_period, *args, **kwargs):
+        if shop.id == PRICE_SHOP and target_period == period and not attempts:
+            attempts.append('simulated failure')
+            raise RuntimeError('simulated temporary failure')
+        return original(db, shop, target_period, *args, **kwargs)
+    monkeypatch.setattr(finance, 'generate_settlement_for_shop', fail_once)
+    with TestingSession() as db:
+        first = finance.catch_up_monthly_settlements(db)
+        assert first['failed'] >= 1
+        assert not db.query(Settlement).filter_by(shop_id=PRICE_SHOP, period=period).first()
+    with TestingSession() as db:
+        second = finance.catch_up_monthly_settlements(db)
+        assert second['generated'] >= 1
+        assert db.query(Settlement).filter_by(shop_id=PRICE_SHOP, period=period).count() == 1
+    with TestingSession() as db:
+        finance.catch_up_monthly_settlements(db)
+        assert db.query(Settlement).filter_by(shop_id=PRICE_SHOP, period=period).count() == 1
+
+
+def test_conversion_excludes_redemptions_of_earlier_claims(client):
+    _, wallet_id, _ = _redeem(client, 'stats-claim-cohort@example.com', PRICE_COUPON)
+    with TestingSession() as db:
+        db.get(models.WalletItem, wallet_id).claimed_at = _now() - timedelta(days=60)
+        db.commit()
+    response = client.get(f'/api/v3/merchant/shops/{PRICE_SHOP}/dashboard',
+                          params={'days': 30}, headers=_vendor_headers(client))
+    assert response.status_code == 200, response.text
+    row = next(c for c in response.json()['coupons'] if c['coupon_id'] == PRICE_COUPON)
+    assert 0 <= row['conversion_rate'] <= 1
+    assert row['conversion_rate'] == pytest.approx(row['redeemed_claims'] / row['claims'] if row['claims'] else 0)
+    assert row['redemptions'] > row['redeemed_claims']
+
+
+def test_monthly_catchup_never_rewrites_existing_paid_period(client):
+    from app import merchant_finance as finance
+    from app.models_line_f import Settlement, SettlementItem
+    period = f'{datetime.now(timezone.utc).year - 3}-03'
+    shop_id = 11
+    original = _approved_settlement(client, 'stats-paid-month@example.com', shop_id, period)
+    coupon = _priced_coupon_for_shop(shop_id, 100)
+    _, _, orphan = _redeem(client, 'stats-paid-orphan@example.com', coupon)
+    _backdate_redemption(orphan, period)
+    with TestingSession() as db:
+        statement = db.get(Settlement, original['id'])
+        statement.status = 'paid'
+        original_gross, original_net = statement.gross_amount, statement.net_amount
+        old_count = db.query(SettlementItem).filter_by(settlement_id=statement.id).count()
+        db.commit()
+    with TestingSession() as db:
+        result = finance.catch_up_monthly_settlements(db)
+        assert {'shop_id': shop_id, 'period': period} in result['blocked_existing_periods']
+        statements = db.query(Settlement).filter_by(shop_id=shop_id, period=period).all()
+        assert len(statements) == 1 and statements[0].status == 'paid'
+        assert (statements[0].gross_amount, statements[0].net_amount) == (original_gross, original_net)
+        assert db.query(SettlementItem).filter_by(settlement_id=statements[0].id).count() == old_count
+        assert not db.query(SettlementItem).filter_by(redemption_id=orphan).first()
