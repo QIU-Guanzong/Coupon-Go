@@ -605,3 +605,24 @@ def test_monthly_catchup_never_rewrites_existing_paid_period(client):
         assert (statements[0].gross_amount, statements[0].net_amount) == (original_gross, original_net)
         assert db.query(SettlementItem).filter_by(settlement_id=statements[0].id).count() == old_count
         assert not db.query(SettlementItem).filter_by(redemption_id=orphan).first()
+
+
+def test_monthly_allocation_conflict_is_failure_not_duplicate_skip(client, monkeypatch):
+    from fastapi import HTTPException
+    from app import merchant_finance as finance
+    from app.models_line_f import Settlement
+    period = f'{datetime.now(timezone.utc).year - 4}-05'
+    _, _, red_id = _redeem(client, 'stats-allocation-conflict@example.com', PRICE_COUPON)
+    _backdate_redemption(red_id, period)
+    original = finance.generate_settlement_for_shop
+    def conflict(db, shop, target_period, *args, **kwargs):
+        if shop.id == PRICE_SHOP and target_period == period:
+            raise HTTPException(409, 'allocation needs review')
+        return original(db, shop, target_period, *args, **kwargs)
+    monkeypatch.setattr(finance, 'generate_settlement_for_shop', conflict)
+    with TestingSession() as db:
+        result = finance.catch_up_monthly_settlements(db)
+        item = next(p for p in result['periods'] if p['period'] == period)
+        assert item['failed'] >= 1
+        assert any(x['shop_id'] == PRICE_SHOP for x in item['failures'])
+        assert not db.query(Settlement).filter_by(shop_id=PRICE_SHOP, period=period).first()

@@ -412,7 +412,8 @@ def sweep_monthly_settlements(db: Session, period: str = None) -> dict:
             generated += 1
         except HTTPException as e:
             db.rollback()
-            if e.status_code == 409:
+            if (e.status_code == 409 and db.query(Settlement.id)
+                    .filter_by(shop_id=shop_id, period=period).first()):
                 skipped += 1
             else:
                 failed += 1
@@ -444,10 +445,36 @@ def catch_up_monthly_settlements(db: Session) -> dict:
     blocked = sorted({(shop_id, f'{int(year):04d}-{int(month):02d}')
                       for shop_id, year, month in periods
                       if (shop_id, f'{int(year):04d}-{int(month):02d}') in existing})
-    missing = sorted({(int(year), int(month)) for shop_id, year, month in periods
+    missing = sorted({(shop_id, f'{int(year):04d}-{int(month):02d}')
+                      for shop_id, year, month in periods
                       if (shop_id, f'{int(year):04d}-{int(month):02d}') not in existing})
-    results = [sweep_monthly_settlements(db, f'{year:04d}-{month:02d}')
-               for year, month in missing]
+    results_by_period = {}
+    for shop_id, period in missing:
+        result = results_by_period.setdefault(period, {
+            'period': period, 'generated': 0, 'skipped': 0, 'failed': 0, 'failures': []})
+        shop = db.get(models.Shop, shop_id)
+        if shop is None:
+            result['failed'] += 1
+            result['failures'].append({'shop_id': shop_id, 'error': 'shop not found'})
+            continue
+        try:
+            generate_settlement_for_shop(db, shop, period)
+            result['generated'] += 1
+        except HTTPException as exc:
+            db.rollback()
+            if (exc.status_code == 409 and db.query(Settlement.id)
+                    .filter_by(shop_id=shop_id, period=period).first()):
+                result['skipped'] += 1
+            else:
+                result['failed'] += 1
+                result['failures'].append({'shop_id': shop_id, 'error': exc.detail})
+                logger.exception('monthly catch-up failed shop=%s period=%s', shop_id, period)
+        except Exception:
+            db.rollback()
+            result['failed'] += 1
+            result['failures'].append({'shop_id': shop_id, 'error': 'job failed; see server log'})
+            logger.exception('monthly catch-up failed shop=%s period=%s', shop_id, period)
+    results = list(results_by_period.values())
     return {"periods": results,
             "blocked_existing_periods": [{"shop_id": shop_id, "period": period}
                                          for shop_id, period in blocked],
