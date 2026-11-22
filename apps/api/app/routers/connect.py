@@ -102,8 +102,7 @@ def start_onboarding(body: OnboardingBody,
     if not connect_configured():
         raise HTTPException(
             status_code=503,
-            detail="Stripe Connect 未配置：请先在部署环境开启 "
-                   "STRIPE_CONNECT_ENABLED")
+            detail="Stripe Connect 尚未配置，請聯絡平台")
     return_url = body.return_url or config.STRIPE_CONNECT_RETURN_URL
     refresh_url = body.refresh_url or config.STRIPE_CONNECT_REFRESH_URL
     if not return_url or not refresh_url:

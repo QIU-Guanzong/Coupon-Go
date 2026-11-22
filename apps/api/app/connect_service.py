@@ -136,8 +136,7 @@ def sync_account(db: Session, account: ConnectAccount) -> ConnectAccount:
     if not connect_configured():
         raise HTTPException(
             status_code=503,
-            detail="Stripe Connect 未配置：请先在部署环境开启 "
-                   "STRIPE_CONNECT_ENABLED")
+            detail="Stripe Connect 尚未配置，請聯絡平台")
     try:
         info = connect_gateway.retrieve_account(account.stripe_account_id)
     except GatewayError as exc:
@@ -560,8 +559,7 @@ def retry_entry(db: Session, entry_id: int) -> dict:
     if not connect_configured():
         raise HTTPException(
             status_code=503,
-            detail="Stripe Connect 未配置：请先在部署环境开启 "
-                   "STRIPE_CONNECT_ENABLED")
+            detail="Stripe Connect 尚未配置，請聯絡平台")
     out = _attempt_transfer(db, entry)
     if out["transferred"]:
         db.commit()
