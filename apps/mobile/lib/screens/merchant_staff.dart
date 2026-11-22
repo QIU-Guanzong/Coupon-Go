@@ -9,6 +9,13 @@ const _roles = <String, String>{
   'merchant-admin': '店舖管理員',
 };
 
+const _roleDescriptions = <String, String>{
+  'cashier': '核銷優惠券及查看核銷記錄。',
+  'manager': '核銷優惠券、查看核銷記錄及管理優惠券。',
+  'finance': '查看本店結算及使用收款相關功能。',
+  'merchant-admin': '管理優惠券、核銷及查看本店結算。',
+};
+
 String _message(Object e) => e is ApiException ? e.message : '連線失敗，請稍後重試';
 
 /// Owner-managed staff for a single shop. The server enforces shop ownership.
@@ -110,16 +117,22 @@ class _MerchantStaffScreenState extends State<MerchantStaffScreen> {
     final session = widget.api.sessionRevision;
     String email = '';
     String role = 'cashier';
+    String? emailError;
     final selection = await showDialog<Map<String, String>>(
       context: context,
       builder: (dialogContext) => StatefulBuilder(
           builder: (context, update) => AlertDialog(
                 title: const Text('邀請店員'),
-                content: Column(mainAxisSize: MainAxisSize.min, children: [
+                content: SingleChildScrollView(
+                    child: Column(mainAxisSize: MainAxisSize.min, children: [
                   TextField(
-                      onChanged: (value) => email = value,
+                      onChanged: (value) {
+                        email = value;
+                        if (emailError != null) update(() => emailError = null);
+                      },
                       keyboardType: TextInputType.emailAddress,
-                      decoration: const InputDecoration(labelText: '店員的註冊電郵')),
+                      decoration: InputDecoration(
+                          labelText: '店員的註冊電郵', errorText: emailError)),
                   const SizedBox(height: 12),
                   DropdownButtonFormField<String>(
                       initialValue: role,
@@ -130,15 +143,20 @@ class _MerchantStaffScreenState extends State<MerchantStaffScreen> {
                           .toList(),
                       onChanged: (value) => update(() => role = value ?? role)),
                   const SizedBox(height: 8),
+                  Text(_roleDescriptions[role] ?? ''),
+                  const SizedBox(height: 4),
                   const Text('對方確認邀請後才可使用店舖功能。'),
-                ]),
+                ])),
                 actions: [
                   TextButton(
                       onPressed: () => Navigator.pop(dialogContext),
                       child: const Text('取消')),
                   FilledButton(
                       onPressed: () {
-                        if (email.trim().isEmpty) return;
+                        if (!email.trim().contains('@')) {
+                          update(() => emailError = '請輸入已註冊的電郵');
+                          return;
+                        }
                         Navigator.pop(dialogContext,
                             {'email': email.trim(), 'role': role});
                       },
@@ -162,7 +180,13 @@ class _MerchantStaffScreenState extends State<MerchantStaffScreen> {
               children: _roles.entries
                   .map((entry) => SimpleDialogOption(
                       onPressed: () => Navigator.pop(context, entry.key),
-                      child: Text(entry.value)))
+                      child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(entry.value),
+                            Text(_roleDescriptions[entry.key] ?? '',
+                                style: Theme.of(context).textTheme.bodySmall)
+                          ])))
                   .toList(),
             ));
     if (selected == null || !_current(session)) return;
