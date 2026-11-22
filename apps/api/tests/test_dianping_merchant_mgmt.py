@@ -295,6 +295,8 @@ def test_assign_branches_persists_and_enforces_at_redeem(client):
                     json={"code": code, "branch_id": b1,
                           "prepare_token": r.json()["prepare_token"]}, headers=vh)
     assert r.status_code == 200, r.text
+    with TestingSession() as db:
+        assert db.get(models.Redemption, r.json()["redemption_id"]).branch_id == b1
 
 
 def test_unrestricted_redemption_with_or_without_branches(client):

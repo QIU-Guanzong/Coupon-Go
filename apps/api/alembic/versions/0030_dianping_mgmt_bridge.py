@@ -11,6 +11,11 @@ depends_on = None
 def upgrade():
     bind = op.get_bind()
     inspector = sa.inspect(bind)
+    redemption_columns = {c["name"]: c for c in inspector.get_columns("redemptions")}
+    if "branch_id" not in redemption_columns:
+        op.add_column("redemptions", sa.Column("branch_id", sa.Integer(), nullable=True))
+    elif not isinstance(redemption_columns["branch_id"]["type"], sa.Integer):
+        raise RuntimeError("Incompatible redemption branch_id column")
     columns = {c["name"]: c for c in inspector.get_columns("shops")}
     for name, default in (("business_hours", ""), ("gallery", "[]"), ("announcement", "")):
         if name not in columns:

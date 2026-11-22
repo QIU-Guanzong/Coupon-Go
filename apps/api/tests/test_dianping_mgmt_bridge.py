@@ -17,6 +17,8 @@ def test_forward_bridge_preserves_existing_shop_and_branch_links(database_url, p
             for name in ("business_hours", "gallery", "announcement"):
                 if name in {c["name"] for c in inspect(conn).get_columns("shops")}:
                     conn.execute(text(f"ALTER TABLE shops DROP COLUMN {name}"))
+        if "branch_id" in {c["name"] for c in inspect(conn).get_columns("redemptions")}:
+            conn.execute(text("ALTER TABLE redemptions DROP COLUMN branch_id"))
         conn.execute(text("INSERT INTO users(id,email,password_hash,role) VALUES (1,'old-merchant@example.com','x','vendor')"))
         conn.execute(text("INSERT INTO shops(id,vendor_id,name) VALUES (1,1,'existing shop')"))
         conn.execute(text("INSERT INTO branches(id,shop_id,name) VALUES (1,1,'existing branch')"))
@@ -28,6 +30,7 @@ def test_forward_bridge_preserves_existing_shop_and_branch_links(database_url, p
     with engine.connect() as conn:
         assert conn.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "0030_dianping_mgmt_bridge"
         assert conn.execute(text("SELECT name FROM shops WHERE id=1")).scalar_one() == "existing shop"
+        assert "branch_id" in {c["name"] for c in inspect(conn).get_columns("redemptions")}
         if prior == "0023_dianping_merchant_mgmt":
             assert conn.execute(text("SELECT business_hours,announcement FROM shops WHERE id=1")).one() == ("09:00-18:00", "old notice")
             assert conn.execute(text("SELECT coupon_id,branch_id FROM coupon_branches WHERE id=1")).one() == (1, 1)

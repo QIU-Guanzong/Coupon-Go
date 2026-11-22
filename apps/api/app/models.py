@@ -241,6 +241,8 @@ class Redemption(Base):
     coupon_id = Column(Integer, ForeignKey("coupons.id"), nullable=False)
     shop_id = Column(Integer, ForeignKey("shops.id"), nullable=False)
     scanned_by_vendor_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    # Historical scans predate branch selection and remain NULL.
+    branch_id = Column(Integer, nullable=True)
     scanned_at = Column(DateTime, default=_now)
     # F6: face value snapshot at scan time (Numeric, nullable). The
     # settlement amount for this redemption is frozen here, so a later

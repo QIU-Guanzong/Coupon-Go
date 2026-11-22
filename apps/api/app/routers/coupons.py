@@ -254,7 +254,7 @@ def _redeem_item(db: Session, item: models.WalletItem,
     commission_rate = connect_service.effective_commission_rate(db, coupon.shop_id)
     red = models.Redemption(
         wallet_item_id=item.id, coupon_id=coupon.id, shop_id=coupon.shop_id,
-        scanned_by_vendor_id=vendor.id, face_value=face_value,
+        scanned_by_vendor_id=vendor.id, branch_id=branch_id, face_value=face_value,
         idempotency_key=idempotency_key or None, commission_rate_snapshot=commission_rate,
         prepared_at=prepared_at)
     db.add(red)
