@@ -15,6 +15,7 @@ import 'vendor_packages.dart';
 import 'redemption_recovery.dart';
 import 'merchant_dashboard.dart';
 import 'scan_batch.dart';
+import 'merchant_branches.dart';
 
 /// Vendor home: gold theme, usage summary, issue-coupon entry.
 class VendorHomeScreen extends StatefulWidget {
@@ -31,24 +32,53 @@ class VendorHomeScreen extends StatefulWidget {
 class _VendorHomeScreenState extends State<VendorHomeScreen> {
   Map<String, dynamic>? _usage;
   List<Coupon> _coupons = [];
+  List<Map<String, dynamic>> _shops = [];
+  String? _loadError;
+  bool _loading = true;
+  late int _session;
+  bool _allows(String permission) => widget.showAdmin || _shops.any((shop) => shop[permission] == true);
 
   @override
   void initState() {
     super.initState();
+    _session = widget.api.sessionRevision;
+    widget.api.addListener(_sessionChanged);
     _load();
   }
 
+  void _sessionChanged() {
+    if (_session == widget.api.sessionRevision) return;
+    _session = widget.api.sessionRevision;
+    setState(() { _shops = []; _coupons = []; _usage = null; _loading = true; _loadError = null; });
+    _load();
+  }
+
+  @override
+  void dispose() {
+    widget.api.removeListener(_sessionChanged);
+    super.dispose();
+  }
+
   Future<void> _load() async {
+    final session = _session;
     try {
-      final usage = await widget.api.usageData();
-      final list = await widget.api.vendorCoupons();
-      if (!mounted) return;
+      final data = await widget.api.get('/merchant/shops');
+      final shops = (data['shops'] as List? ?? []).whereType<Map>().map((s) => Map<String, dynamic>.from(s)).toList();
+      final isOwner = widget.showAdmin || shops.any((s) => s['is_owner'] == true);
+      final canManage = widget.showAdmin || shops.any((s) => s['can_manage_coupons'] == true);
+      final usage = isOwner ? await widget.api.usageData() : null;
+      final list = canManage ? await widget.api.vendorCoupons() : <dynamic>[];
+      if (!mounted || session != _session) return;
       setState(() {
+        _shops = shops;
         _usage = usage;
         _coupons = list.map((e) => Coupon.fromJson(e)).toList();
+        _loading = false;
+        _loadError = null;
       });
-    } on ApiException catch (e) {
-      if (mounted) showCgToast(context, e.message);
+    } catch (error) {
+      if (!mounted || session != _session) return;
+      setState(() { _loading = false; _loadError = error is ApiException ? error.message : '未能載入，請重試。'; });
     }
   }
 
@@ -65,7 +95,9 @@ class _VendorHomeScreenState extends State<VendorHomeScreen> {
         child: ListView(
           padding: const EdgeInsets.all(16),
           children: [
-            Row(
+            if (_loading) const Center(child: CircularProgressIndicator()),
+            if (_loadError != null) ...[Text(_loadError!), TextButton(onPressed: _load, child: const Text('重試'))],
+            if (_allows('is_owner')) Row(
               children: [
                 Expanded(
                     child:
@@ -76,7 +108,7 @@ class _VendorHomeScreenState extends State<VendorHomeScreen> {
               ],
             ),
             const SizedBox(height: 16),
-            ElevatedButton(
+            if (_allows('can_manage_coupons')) ElevatedButton(
               style: ElevatedButton.styleFrom(
                   backgroundColor: CgColors.vendorGold),
               onPressed: () => Navigator.of(context)
@@ -86,34 +118,40 @@ class _VendorHomeScreenState extends State<VendorHomeScreen> {
                   style: TextStyle(color: CgColors.textPrimary)),
             ),
             const SizedBox(height: 8),
-            OutlinedButton.icon(
+            if (_allows('is_owner')) OutlinedButton.icon(
               onPressed: () => Navigator.of(context).push(MaterialPageRoute(
                   builder: (_) => VendorPackagesScreen(api: widget.api))),
               icon: const Icon(Icons.restaurant_menu),
               label: Text(context.tr('套餐管理', 'Packages')),
             ),
             const SizedBox(height: 8),
-            OutlinedButton.icon(
+            if (_allows('can_view_settlement')) OutlinedButton.icon(
               onPressed: () => Navigator.of(context).push(MaterialPageRoute(
                   builder: (_) => MerchantDashboardScreen(api: widget.api))),
               icon: const Icon(Icons.insights_outlined),
               label: Text(context.tr('經營與餘額', 'Business and balance')),
             ),
             const SizedBox(height: 8),
-            OutlinedButton.icon(
+            if (_allows('is_owner')) OutlinedButton.icon(
               onPressed: () => Navigator.of(context).push(MaterialPageRoute(
                   builder: (_) => MerchantRedemptionRecoveryScreen(api: widget.api))),
               icon: const Icon(Icons.manage_search),
               label: const Text('補錄核銷'),
             ),
             const SizedBox(height: 8),
-            OutlinedButton(
+            OutlinedButton.icon(
+              onPressed: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => MerchantBranchesScreen(api: widget.api))),
+              icon: const Icon(Icons.storefront_outlined),
+              label: const Text('店舖與分店'),
+            ),
+            const SizedBox(height: 8),
+            if (_allows('is_owner')) OutlinedButton(
               onPressed: () =>
                   Navigator.of(context).pushNamed('/vendor/records'),
               child: const Text('核銷記錄'),
             ),
             const SizedBox(height: 8),
-            OutlinedButton(
+            if (_allows('is_owner')) OutlinedButton(
               onPressed: () {
                 if (_coupons.isEmpty) {
                   showCgToast(context, '暫無商戶資料，無法查看評價');
@@ -135,11 +173,11 @@ class _VendorHomeScreenState extends State<VendorHomeScreen> {
                 child: const Text('管理後台（結算 / 對賬 / 發票 / 內容 / 角色）'),
               ),
             const SizedBox(height: 16),
-            OutlinedButton(
+            if (_allows('can_view_settlement')) OutlinedButton(
                 onPressed: () =>
                     Navigator.of(context).pushNamed('/vendor/settlements'),
                 child: const Text('商家結算單')),
-            const Text('我的優惠券', style: TextStyle(fontWeight: FontWeight.bold)),
+            if (_allows('can_manage_coupons')) const Text('我的優惠券', style: TextStyle(fontWeight: FontWeight.bold)),
             ..._coupons.map((c) => Card(
                   margin: const EdgeInsets.only(top: 8),
                   child: ListTile(
@@ -150,7 +188,7 @@ class _VendorHomeScreenState extends State<VendorHomeScreen> {
                         Text('剩餘 ${c.remaining} · 已核銷 ${c.usedCount ?? '—'}'),
                   ),
                 )),
-            if (_coupons.isEmpty)
+            if (_allows('can_manage_coupons') && _coupons.isEmpty && !_loading && _loadError == null)
               const Padding(
                 padding: EdgeInsets.only(top: 24),
                 child: Text('暫時沒有優惠券，點上面發第一張吧！'),
