@@ -64,6 +64,24 @@ def test_failure_and_success_race_still_fulfills_once(client, fake_stripe):
         assert db.query(LatePaymentRefund).filter_by(order_id=oid).count() == 0
 
 
+def test_failure_and_gateway_cancel_race_release_stock_once(client, fake_stripe):
+    _, pkg, oid, pid, ref = _buy(client, 'fail-canceled')
+    kinds = ('payment_intent.payment_failed', 'payment_intent.canceled')
+    results = _run_two(lambda i, c: c.post('/api/v3/payments/webhook',
+        json=_event(ref, kinds[i]), headers={'Stripe-Signature': 'fixture'}))
+    assert all(r.status_code == 200 for r in results), [r.text for r in results]
+    again = client.post('/api/v3/payments/webhook',
+                        json=_event(ref, 'payment_intent.canceled'),
+                        headers={'Stripe-Signature': 'fixture'})
+    assert again.status_code == 200
+    with TestingSession() as db:
+        assert db.get(Order, oid).payment_status == 'failed'
+        assert db.get(Payment, pid).status == 'failed'
+        assert db.get(Package, pkg).stock_left == 3
+        assert db.query(models.WalletItem).filter_by(order_id=oid).count() == 0
+        assert db.query(LatePaymentRefund).filter_by(order_id=oid).count() == 0
+
+
 def test_customer_cancel_races_success_without_double_entitlement(client, fake_stripe, monkeypatch):
     user, pkg, oid, pid, ref = _buy(client, 'cancel-success')
     calls = []
