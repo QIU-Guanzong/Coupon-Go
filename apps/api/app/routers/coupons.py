@@ -356,8 +356,9 @@ def scan_coupon(body: schemas.ScanIn,
     # Line A: a prepare token, when supplied, must be valid for this item.
     prepared_at = None
     if body.prepare_token:
-        from ..prepare_token import verify_prepare_token
-        issued = verify_prepare_token(body.prepare_token, item.id, binding=f"{vendor.id}:{body.code}")
+        from ..prepare_token import redemption_binding, verify_prepare_token
+        issued = verify_prepare_token(body.prepare_token, item.id,
+                                      binding=redemption_binding(vendor.id, body.code, body.branch_id))
         if issued is None:
             raise errors.prepare_expired()
         prepared_at = datetime.fromtimestamp(issued, tz=timezone.utc).replace(

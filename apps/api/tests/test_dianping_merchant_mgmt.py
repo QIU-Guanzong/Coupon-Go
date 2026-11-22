@@ -356,6 +356,28 @@ def test_coupon_creation_persists_and_validates_branch_scope(client):
     assert [failure["index"] for failure in bulk.json()["failed"]] == [1]
 
 
+def test_prepared_branch_cannot_change_before_confirmation(client):
+    vendor = _vendor_headers(client)
+    branches = [client.post("/api/v3/merchant/shops/1/branches", json={"name": name},
+                            headers=vendor).json()["branch"]["id"] for name in ("預檢店 A", "預檢店 B")]
+    coupon_id = _make_coupon(client, 1, "雙分店券")
+    assert client.post("/api/v3/assign-branches",
+                       json={"coupon_id": coupon_id, "branch_ids": branches}, headers=vendor).status_code == 200
+    _, wallet_id, code = _claim_and_present(client, "prepare-branch@example.com", coupon_id)
+    prepared = client.post("/api/v3/new-scan-coupon/prepare",
+                           json={"code": code, "branch_id": branches[0]}, headers=vendor)
+    assert prepared.status_code == 200 and prepared.json()["can_redeem"] is True
+    token = prepared.json()["prepare_token"]
+    changed = client.post("/api/v3/new-scan-coupon",
+                          json={"code": code, "branch_id": branches[1], "prepare_token": token}, headers=vendor)
+    assert changed.status_code == 400
+    with TestingSession() as db:
+        assert db.get(models.WalletItem, wallet_id).status == 1
+    original = client.post("/api/v3/new-scan-coupon",
+                           json={"code": code, "branch_id": branches[0], "prepare_token": token}, headers=vendor)
+    assert original.status_code == 200, original.text
+
+
 def test_batch_requires_branches_atomically_and_replays_same_scope(client):
     vendor = _vendor_headers(client)
     branch = client.post("/api/v3/merchant/shops/1/branches",

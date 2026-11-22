@@ -115,7 +115,8 @@ def prepare_scan(body: dict,
                 "shop_id": coupon.shop_id if coupon else None,
                 "branch_selection_required": bool(allowed and branch_id is None),
                 "allowed_branches": options}
-    token, _issued = prepare_token.issue_prepare_token(item.id, binding=f"{vendor.id}:{code}")
+    token, _issued = prepare_token.issue_prepare_token(
+        item.id, binding=prepare_token.redemption_binding(vendor.id, code, branch_id))
     shop = db.query(models.Shop).filter(
         models.Shop.id == coupon.shop_id).first()
     # Gap 5: customer phone last-4 (User.phone, via the wallet owner)
@@ -468,8 +469,9 @@ def batch_scan(body: schemas.ScanBatchIn,
             item = items[item_id]
             prepared_at = None
             if body.prepare_tokens is not None:
-                issued = prepare_token.verify_prepare_token(body.prepare_tokens[index], item.id,
-                                                            binding=f'{vendor.id}:{code}')
+                issued = prepare_token.verify_prepare_token(
+                    body.prepare_tokens[index], item.id,
+                    binding=prepare_token.redemption_binding(vendor.id, code, branch_ids[index]))
                 if issued is None:
                     raise HTTPException(400, '預核銷已失效，請重新預核銷')
                 prepared_at = datetime.fromtimestamp(issued, tz=timezone.utc).replace(tzinfo=None)
