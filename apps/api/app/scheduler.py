@@ -45,6 +45,7 @@ from uuid import uuid4
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.interval import IntervalTrigger
+from apscheduler.triggers.cron import CronTrigger
 from sqlalchemy import text
 
 from . import config
@@ -54,7 +55,7 @@ from .models_scheduler import SchedulerLock  # noqa: F401  (register table)
 logger = logging.getLogger(__name__)
 
 JOB_NAMES = ("expired-packages", "bargain-expire", "payment-timeouts",
-             "cashback-sweep", "points-expire", "coupon-expiry", "late-payment-refunds", "listing-schedule")
+             "cashback-sweep", "points-expire", "coupon-expiry", "late-payment-refunds", "listing-schedule", "monthly-settlements")
 
 # Fixed Postgres advisory-lock keys, one per job (arbitrary but stable;
 # changing them orphans nothing — advisory locks die with the session).
@@ -67,6 +68,7 @@ ADVISORY_LOCK_KEYS = {
     "coupon-expiry": 2026111706,
     "late-payment-refunds": 2026111707,
     "listing-schedule": 2026111708,
+    "monthly-settlements": 2026111710,
 }
 
 
@@ -252,6 +254,13 @@ def run_points_expire(db):
     return _run_job(db, "points-expire", svc.sweep_expired_points)
 
 
+def run_monthly_settlements(db, period=None):
+    from . import merchant_finance as mf
+    if period:
+        return _run_job(db, "monthly-settlements", mf.sweep_monthly_settlements, period=period)
+    return _run_job(db, "monthly-settlements", mf.catch_up_monthly_settlements)
+
+
 JOB_RUNNERS = {
     "expired-packages": run_expired_packages,
     "bargain-expire": run_bargain_expire,
@@ -261,6 +270,7 @@ JOB_RUNNERS = {
     "listing-schedule": run_listing_schedule,
     "late-payment-refunds": run_late_payment_refunds,
     "points-expire": run_points_expire,
+    "monthly-settlements": run_monthly_settlements,
 }
 
 
@@ -334,6 +344,10 @@ def create_scheduler(session_factory=None, interval_seconds=None):
                   trigger=IntervalTrigger(seconds=interval),
                   id="points-expire", max_instances=1, coalesce=True,
                   misfire_grace_time=60)
+    sched.add_job(lambda: _one(run_monthly_settlements),
+                  trigger=CronTrigger(hour=2, minute=0, timezone="UTC"),
+                  id="monthly-settlements", max_instances=1, coalesce=True,
+                  misfire_grace_time=3600)
     return sched
 
 

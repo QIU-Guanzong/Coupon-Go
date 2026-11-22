@@ -39,6 +39,31 @@ from .models_packages import Order
 from .order_allocation import read_frozen_allocations
 
 
+BASIS_EXPLAINER = (
+    "結算按每張券的已凍結實付分攤計算；未關聯訂單的價格券按既有結算口徑，"
+    "現金券和免費券不計入結算，已退款訂單不結算。佣金按每次核銷時的費率計算。")
+
+
+def settlement_basis_note(db: Session, coupon: models.Coupon = None,
+                          redemption: models.Redemption = None,
+                          wallet_item: models.WalletItem = None) -> str:
+    item = wallet_item
+    if item is None and redemption is not None:
+        item = db.get(models.WalletItem, redemption.wallet_item_id)
+    order = db.get(Order, item.order_id) if item and item.order_id else None
+    if order is not None:
+        if order.refund_status == "refunded":
+            return "refunded_skip"
+        return "package_paid" if order.order_type == "package" else "paid_coupon"
+    if coupon is None and redemption is not None:
+        coupon = db.get(models.Coupon, redemption.coupon_id)
+    if coupon is not None and (coupon.coupon_type or "").strip().lower() == "cash":
+        return "cash_zero"
+    if coupon is not None and coupon.discount_price is not None:
+        return "price_coupon"
+    return "free_zero"
+
+
 def settlement_basis(db: Session, coupon: models.Coupon = None,
                      redemption: models.Redemption = None,
                      wallet_item: models.WalletItem = None):
