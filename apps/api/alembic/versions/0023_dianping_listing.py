@@ -53,16 +53,6 @@ def upgrade():
 
 
 def downgrade():
-    bind = op.get_bind()
-    constraints = {c["name"] for c in
-                   sa.inspect(bind).get_check_constraints("coupons")}
-    if COUPON_CK in constraints:
-        with op.batch_alter_table("coupons") as batch_op:
-            batch_op.drop_constraint(COUPON_CK, type_="check")
-    coupon_cols = {c["name"] for c in sa.inspect(bind).get_columns("coupons")}
-    if "per_user_limit" in coupon_cols:
-        with op.batch_alter_table("coupons") as batch_op:
-            batch_op.drop_column("per_user_limit")
-    if "sale_price" in coupon_cols:
-        with op.batch_alter_table("coupons") as batch_op:
-            batch_op.drop_column("sale_price")
+    # sale_price may predate this revision or be shared with paid coupons.
+    # There is no safe way to prove ownership or recover deleted values.
+    raise RuntimeError("Cannot safely downgrade shared listing price and inventory columns")
