@@ -82,6 +82,7 @@ CENT = Decimal("0.01")
 # remembers {key: first result} in-process. Real Stripe calls never
 # touch this. Tests reset it via _reset_simulator_idempotency().
 _SIM_IDEMPOTENCY: dict = {}
+_SIM_REQUESTS: dict = {}
 _SIM_TRANSFERS: dict = {}
 _SIM_REVERSALS: dict = {}
 
@@ -89,6 +90,7 @@ _SIM_REVERSALS: dict = {}
 def _reset_simulator_idempotency():
     """Test helper: clear the simulator's idempotency memory."""
     _SIM_IDEMPOTENCY.clear()
+    _SIM_REQUESTS.clear()
     _SIM_TRANSFERS.clear()
     _SIM_REVERSALS.clear()
 
@@ -109,10 +111,13 @@ def _sim_idempotent(key, prefix, seed, build):
     if key is not None:
         hit = _SIM_IDEMPOTENCY.get(key)
         if hit is not None:
+            if _SIM_REQUESTS.get(key) != (prefix, seed):
+                raise GatewayError("相同操作標識對應不同請求，請核對")
             return dict(hit)
     result = build()
     if key is not None:
         _SIM_IDEMPOTENCY[key] = dict(result)
+        _SIM_REQUESTS[key] = (prefix, seed)
     return result
 
 # Configurations applied to every merchant account: merchant (accept
@@ -369,7 +374,7 @@ def create_transfer(account_id: str, amount_hkd,
                   else Decimal(str(amount_hkd)))
     if not key:
         result = _sim_idempotent(
-            idempotency_key, "tr", f"{account_id}:{transfer_group}",
+            idempotency_key, "tr", f"{account_id}:{transfer_group}:{_to_cents(amount_dec)}:{currency.upper()}",
             lambda: {"transfer_id": _sim_ref(
                 "tr", f"{account_id}:{transfer_group}"),
                 "status": "paid", "amount": float(amount_dec),
@@ -405,7 +410,7 @@ def reverse_transfer(transfer_id: str, amount_hkd,
                   else Decimal(str(amount_hkd)))
     if not key:
         result = _sim_idempotent(
-            idempotency_key, "trr", f"{transfer_id}:{amount_dec}",
+            idempotency_key, "trr", f"{transfer_id}:{_to_cents(amount_dec)}:{currency.upper()}",
             lambda: {"reversal_id": _sim_ref(
                 "trr", f"{transfer_id}:{amount_dec}"),
                 "status": "succeeded", "amount": float(amount_dec),
@@ -463,7 +468,7 @@ def create_payout(account_id: str, amount_hkd,
                   else Decimal(str(amount_hkd)))
     if not key:
         return _sim_idempotent(
-            idempotency_key, "po", f"{account_id}:{amount_dec}",
+            idempotency_key, "po", f"{account_id}:{_to_cents(amount_dec)}:{currency.upper()}",
             lambda: {"payout_id": _sim_ref(
                 "po", f"{account_id}:{amount_dec}"),
                 "status": "paid", "amount": float(amount_dec),
