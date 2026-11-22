@@ -6,6 +6,7 @@ import 'app_config.dart';
 
 import 'package:flutter/foundation.dart' show ChangeNotifier;
 import 'package:http/http.dart' as http;
+import 'package:http_parser/http_parser.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 /// API client for /api/v3 (endpoint names mirror the original app).
@@ -124,6 +125,29 @@ class ApiClient extends ChangeNotifier {
     appConfig.dispose();
     super.dispose();
   }
+
+  Future<Map<String, dynamic>> uploadMerchantDocument(
+      String kind, String filename, Uint8List bytes) async {
+    final ext = filename.split('.').last.toLowerCase();
+    final type = ext == 'pdf' ? MediaType('application', 'pdf')
+        : MediaType('image', ext == 'png' ? 'png' : 'jpeg');
+    final req = http.MultipartRequest('POST', Uri.parse('$baseUrl/api/v3/merchant-files'));
+    if (_token != null) req.headers['Authorization'] = 'Bearer $_token';
+    req.fields['kind'] = kind;
+    req.files.add(http.MultipartFile.fromBytes('file', bytes,
+        filename: filename, contentType: type));
+    return _decode(await http.Response.fromStream(await req.send()));
+  }
+
+  Future<Map<String, dynamic>> myMerchantApplications() =>
+      get('/merchant-applications/mine');
+  Future<Map<String, dynamic>> currentMerchantContract() =>
+      get('/merchant-contracts/current');
+  Future<Map<String, dynamic>> signMerchantContract(int id, int versionId) =>
+      post('/merchant-applications/$id/sign-contract',
+          body: {'contract_version_id': versionId});
+  Future<Map<String, dynamic>> merchantContractPdf(int id) =>
+      get('/merchant-applications/$id/contract-pdf');
 
   // ---- auth ----
   Future<Map<String, dynamic>> login(String email, String password) async {
