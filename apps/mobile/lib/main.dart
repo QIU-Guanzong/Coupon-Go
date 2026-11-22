@@ -581,14 +581,17 @@ class _HomeShellState extends State<HomeShell> {
               Navigator.of(context).pushNamed('/admin/apply');
             },
           ),
-          if (_role == 'admin')
+          if (_role == 'admin' || _role == 'support')
             ListTile(
               leading: const Icon(Icons.admin_panel_settings,
                   color: CgColors.primary),
               title: Text(context.tr('管理後台','Administration')),
               onTap: () {
+                final role = _role;
+                if (role == null) return;
                 Navigator.of(context).pop();
-                Navigator.of(context).pushNamed('/admin');
+                Navigator.of(context).push(MaterialPageRoute(
+                    builder: (_) => AdminHomeScreen(api: widget.api, role: role)));
               },
             ),
           ListTile(leading: const Icon(Icons.chat_outlined), title: const Text('Q仔'),
