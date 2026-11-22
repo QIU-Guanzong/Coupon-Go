@@ -16,6 +16,7 @@ import 'redemption_recovery.dart';
 import 'merchant_dashboard.dart';
 import 'scan_batch.dart';
 import 'merchant_branches.dart';
+import 'merchant_staff.dart';
 
 /// Vendor home: gold theme, usage summary, issue-coupon entry.
 class VendorHomeScreen extends StatefulWidget {
@@ -97,7 +98,7 @@ class _VendorHomeScreenState extends State<VendorHomeScreen> {
           children: [
             if (_loading) const Center(child: CircularProgressIndicator()),
             if (_loadError != null) ...[Text(_loadError!), TextButton(onPressed: _load, child: const Text('重試'))],
-            if (_allows('is_owner')) Row(
+            if (_usage != null && _allows('is_owner')) Row(
               children: [
                 Expanded(
                     child:
@@ -140,7 +141,7 @@ class _VendorHomeScreenState extends State<VendorHomeScreen> {
             ),
             const SizedBox(height: 8),
             OutlinedButton.icon(
-              onPressed: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => MerchantBranchesScreen(api: widget.api))),
+              onPressed: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => MerchantBranchesScreen(api: widget.api, staffBuilder: (shopId) => MerchantStaffScreen(api: widget.api, shopId: shopId)))),
               icon: const Icon(Icons.storefront_outlined),
               label: const Text('店舖與分店'),
             ),

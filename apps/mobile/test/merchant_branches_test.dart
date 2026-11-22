@@ -91,6 +91,18 @@ void main() {
     expect(find.text('中環店'), findsOneWidget);
   });
 
+  testWidgets('店主從選中的店舖打開員工頁', (tester) async {
+    final api = BranchApi();
+    await tester.pumpWidget(MaterialApp(
+        home: MerchantBranchesScreen(
+            api: api, staffBuilder: (id) => Scaffold(body: Text('員工店舖 $id')))));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('員工與角色'));
+    await tester.tap(find.text('員工與角色'));
+    await tester.pumpAndSettle();
+    expect(find.text('員工店舖 1'), findsOneWidget);
+  });
+
   testWidgets('只有查看權限時不展示新增或編輯', (tester) async {
     final api = BranchApi()..canManage = false;
     await tester.pumpWidget(
