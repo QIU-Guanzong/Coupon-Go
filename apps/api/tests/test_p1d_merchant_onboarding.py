@@ -181,7 +181,7 @@ def _sign_current(client, headers, app_id):
 
 
 def _set_stripe_onboarding(client, admin_headers, app_id, **over):
-    body = {"stripe_account_id": "acct_test123",
+    body = {"stripe_account_id": f"acct_test{app_id}",
             "charges_enabled": True, "payouts_enabled": True}
     body.update(over)
     return client.post(
@@ -354,6 +354,7 @@ def test_current_contract_exists(client):
     assert r.status_code == 200, r.text
     assert r.json()["version"] == "1"
     assert r.json()["body_text"]
+    assert r.json()["test_only"] is True
 
 
 def test_sign_contract_records_version_time_ip_and_pdf(client):
@@ -475,6 +476,36 @@ def test_approve_passes_with_contract_and_stripe(client):
     assert r.json()["application"]["status"] == "approved"
     assert client.get("/api/v3/get-profile",
                       headers=h).json()["role"] == "vendor"
+
+
+def test_mock_stripe_is_labeled_and_cannot_be_used_in_production(client, monkeypatch):
+    h = _register_and_login(client, "p1d-mock-prod@example.com")
+    ah = _admin_headers(client)
+    app_id, _ = _submit_with_files(client, h, "mock-prod")
+    assert _sign_current(client, h, app_id).status_code == 201
+    recorded = _set_stripe_onboarding(client, ah, app_id)
+    assert recorded.status_code == 200
+    assert recorded.json()["application"]["stripe_status_source"] == "simulated"
+    # Isolate the onboarding policy from production's unrelated legal
+    # document configuration, which is not configured in this test DB.
+    from app import legal
+    monkeypatch.setattr(legal, "documents", lambda: {})
+    monkeypatch.setattr(config, "APP_ENV", "prod")
+    assert _set_stripe_onboarding(client, ah, app_id).status_code == 409
+    response = _approve(client, ah, app_id)
+    assert response.status_code == 409
+    assert "核驗" in response.json()["detail"]
+
+
+def test_mock_account_identity_cannot_move_to_another_application(client):
+    ah = _admin_headers(client)
+    h1 = _register_and_login(client, "p1d-account-owner@example.com")
+    h2 = _register_and_login(client, "p1d-account-other@example.com")
+    app1, _ = _submit_with_files(client, h1, "owner-account")
+    app2, _ = _submit_with_files(client, h2, "other-account")
+    assert _set_stripe_onboarding(client, ah, app1, stripe_account_id="acct_shared").status_code == 200
+    assert _set_stripe_onboarding(client, ah, app2, stripe_account_id="acct_shared").status_code == 409
+    assert _set_stripe_onboarding(client, ah, app1, stripe_account_id="acct_different").status_code == 409
 
 
 def test_reject_still_needs_no_gates(client):

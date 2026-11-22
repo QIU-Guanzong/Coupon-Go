@@ -1,5 +1,9 @@
 # P1-D 商户入驻接口清单（Stage 1）
 
+当前实现：占位合同仅供测试，不是正式协议。手填 Stripe 状态仅供开发
+环境模拟，接口会标记 `stripe_status_source=simulated`；正式环境关闭
+此模拟接口并暂不批准入驻，须待 #16 接入真实账户核验及正式合同后启用。
+
 基线：main @ `c1f3bef`（2026-11-20，PR #6 合入后；最初基于 `7e9c4f9` 开发，
 已 rebase 到 `c1f3bef`，无冲突）。分支：`stage1/p1-d-merchant-onboarding`。
 迁移：`0022_p1d_merchant_onboarding`（`down_revision = 0021_account_deletion`，
@@ -184,7 +188,7 @@ Body `{approve: bool, reject_reason}` 不变。**批准**时新增两道门禁�
 1. **已签当前版本合约**：申请须有一条签署记录，且签署的版本 =
    当前 `is_current` 的合约版本。未签 → 400 `尚未簽署當前版本合約`；
    只签了旧版 → 400 `合約版本已更新，請簽署當前版本`。
-2. **已完成 Stripe 开户**：`stripe_account_id` 非空，且
+2. **测试环境模拟开户**：`stripe_account_id` 非空，且
    `stripe_charges_enabled` 与 `stripe_payouts_enabled` 均为 true。
    否则 400 `尚未完成 Stripe 開戶`。
 
@@ -203,12 +207,8 @@ Body：
 }
 ```
 
-- 作用：把 P1-B 的开户结果写进申请记录，供批准门禁读取；同时写入
-  `admin_audit_logs`（`merchant_application.stripe_onboarding`）。
-- **这是过渡桥接**：P1-B 未合入前，由 admin 在 Stripe Dashboard 核实后
-  手动登记；P1-B 合入后，P1-B 的开户完成回调应直接写同一组字段
-  （`stripe_account_id` / `stripe_charges_enabled` /
-  `stripe_payouts_enabled`），本端点即退为后台补录口。
+- 此端点仅在开发环境模拟，不查询 Stripe、不证明真实开户；正式环境
+  返回 409。已绑定的申请不能换账号，同一模拟账号不能绑定其他申请人。
 - 银行帐户由 Stripe 收集，**我们不存银行帐号**（FEATURE_GAP §3.3）。
 
 ## 3. 电子合约
@@ -336,9 +336,9 @@ Body：`{}`（签当前版）或 `{"contract_version_id": 2}`（明确指定版�
 - 衔接字段（申请记录上，P1-B 直接写同一组列）：`stripe_account_id`
   （Stripe Connect 帐户 id，如 `acct_…`）、`stripe_charges_enabled`、
   `stripe_payouts_enabled`（均须为 true 才算「已完成开户」）。
-- P1-B 未合入前，批准门禁的开户状态由 admin 经
-  `POST /admin/merchant-applications/{id}/stripe-onboarding` 登记。
-- 批准门禁只读这三个字段，不调 Stripe、不依赖 P1-B 的路由是否存在。
+- P1-B 未合入前只允许开发环境模拟；正式环境不允许凭手填状态批准。
+- P1-B 必须核验并复用申请中的同一 Stripe 账户，不能重复开户；通过
+  真实状态校验与正式合同门禁后，才能替换目前的正式环境阻断。
 
 ## 6. 旧字段数据的迁移处理（0022）
 

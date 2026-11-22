@@ -13,13 +13,14 @@ v1 scope (task contract):
 NOT in v1 (do not add here): orders (no orders table until the package
 line lands), settlements, banners/CMS, invoice handling, role changes.
 """
+import hashlib
 import json
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import func
+from sqlalchemy import func, text
 from sqlalchemy.orm import Session
 
-from .. import models, schemas_line_b
+from .. import config, models, schemas_line_b
 from ..database import get_db
 from ..deps import get_current_user, require_role
 from ..models_line_b import AdminAuditLog, MerchantApplication, Review
@@ -92,6 +93,8 @@ def _application_out(db: Session, a: MerchantApplication) -> dict:
         "stripe_account_id": a.stripe_account_id or "",
         "stripe_charges_enabled": bool(a.stripe_charges_enabled),
         "stripe_payouts_enabled": bool(a.stripe_payouts_enabled),
+        "stripe_status_source": ("simulated" if config.APP_ENV == "dev" else "unverified")
+        if a.stripe_account_id else "not_started",
         "contract": contract,
         "status": a.status, "reject_reason": a.reject_reason or "",
         "reviewed_by": a.reviewed_by, "reviewed_at": a.reviewed_at,
@@ -196,7 +199,7 @@ def review_application(application_id: int,
                        admin: models.User = Depends(admin_only),
                        db: Session = Depends(get_db)):
     app = db.query(MerchantApplication).filter(
-        MerchantApplication.id == application_id).first()
+        MerchantApplication.id == application_id).with_for_update().first()
     if app is None:
         raise HTTPException(status_code=404, detail="找不到此入駐申請")
     if app.status != "pending":
@@ -227,6 +230,12 @@ def review_application(application_id: int,
                     detail="合約版本已更新，請簽署當前版本")
             raise HTTPException(status_code=400,
                                 detail="尚未簽署當前版本合約")
+        # These columns can currently only be entered manually in the
+        # development simulator; they are not evidence of a real account.
+        # Connect must replace this guard with a verified provider lookup.
+        if config.APP_ENV != "dev":
+            raise HTTPException(status_code=409,
+                                detail="正式 Stripe 開戶核驗尚未接通，暫不能批准")
         if (not (app.stripe_account_id or "").strip()
                 or not app.stripe_charges_enabled
                 or not app.stripe_payouts_enabled):
@@ -255,20 +264,36 @@ def record_stripe_onboarding(
         body: schemas_line_b.StripeOnboardingIn,
         admin: models.User = Depends(admin_only),
         db: Session = Depends(get_db)):
-    """P1-B bridge: record a merchant's Stripe Connect onboarding result
-    on the application (admin-only, audited).
-
-    Until P1-B lands, admin fills this in after verifying in the Stripe
-    Dashboard. After P1-B lands, P1-B's onboarding callback should write
-    the same three columns directly and this endpoint stays as a
-    back-office correction path. Bank account numbers are never stored:
-    Stripe collects identity + bank details.
-    """
+    """Development-only mock; never represents a provider verification."""
+    if config.APP_ENV != "dev":
+        raise HTTPException(status_code=409,
+                            detail="模擬開戶僅供測試環境使用")
     app = db.query(MerchantApplication).filter(
-        MerchantApplication.id == application_id).first()
+        MerchantApplication.id == application_id).with_for_update().first()
     if app is None:
         raise HTTPException(status_code=404, detail="找不到此入駐申請")
-    app.stripe_account_id = body.stripe_account_id.strip()
+    if app.status != "pending":
+        raise HTTPException(status_code=409, detail="已審核的申請不能修改開戶資料")
+    account_id = body.stripe_account_id.strip()
+    if not account_id:
+        raise HTTPException(status_code=422, detail="請填寫模擬帳戶編號")
+    if app.stripe_account_id and app.stripe_account_id != account_id:
+        raise HTTPException(status_code=409, detail="申請已綁定其他模擬帳戶")
+    if db.bind.dialect.name == "postgresql":
+        # Serialize claims for one account across concurrent applications.
+        key = int.from_bytes(hashlib.sha256(account_id.encode()).digest()[:8],
+                             byteorder="big", signed=True)
+        db.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": key})
+    else:
+        # SQLite serializes writers rather than supporting FOR UPDATE.
+        app.stripe_onboarding_updated_at = _now()
+        db.flush()
+    claimed = db.query(MerchantApplication.id).filter(
+        MerchantApplication.stripe_account_id == account_id,
+        MerchantApplication.user_id != app.user_id).first()
+    if claimed:
+        raise HTTPException(status_code=409, detail="模擬帳戶已綁定其他申請人")
+    app.stripe_account_id = account_id
     app.stripe_charges_enabled = bool(body.charges_enabled)
     app.stripe_payouts_enabled = bool(body.payouts_enabled)
     app.stripe_onboarding_updated_at = _now()
@@ -279,7 +304,7 @@ def record_stripe_onboarding(
          f"payouts={app.stripe_payouts_enabled}")
     db.commit()
     db.refresh(app)
-    return {"message": "Stripe 開戶狀態已登記",
+    return {"message": "已登記模擬 Stripe 開戶狀態，僅供測試",
             "application": _application_out(db, app)}
 
 

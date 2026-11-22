@@ -274,6 +274,7 @@ def get_current_contract(user: models.User = Depends(get_current_user),
         raise HTTPException(status_code=404, detail="尚無可簽署的合約版本")
     return {"id": v.id, "version": v.version, "title": v.title,
             "body_text": v.body_text,
+            "test_only": "【待法務確認】" in (v.body_text or ""),
             "published_at": v.published_at.isoformat()
             if v.published_at else None}
 
