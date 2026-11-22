@@ -1816,7 +1816,7 @@ class _PaymentResultScreenState extends State<PaymentResultScreen> {
         const Icon(Icons.confirmation_number,
             size: 72, color: CgColors.primary),
         const SizedBox(height: 16),
-        const Text('套餐券已存入錢包',
+        const Text('優惠券已存入錢包',
             textAlign: TextAlign.center,
             style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
         const SizedBox(height: 24),
