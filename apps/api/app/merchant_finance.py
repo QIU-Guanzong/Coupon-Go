@@ -452,6 +452,9 @@ def catch_up_monthly_settlements(db: Session) -> dict:
     blocked = sorted({(shop_id, f'{int(year):04d}-{int(month):02d}')
                       for shop_id, year, month in periods
                       if (shop_id, f'{int(year):04d}-{int(month):02d}') in existing})
+    if blocked:
+        logger.warning('Monthly catch-up found %d existing periods with unmatched redemptions: %s',
+                       len(blocked), blocked)
     missing = sorted({(shop_id, f'{int(year):04d}-{int(month):02d}')
                       for shop_id, year, month in periods
                       if (shop_id, f'{int(year):04d}-{int(month):02d}') not in existing})

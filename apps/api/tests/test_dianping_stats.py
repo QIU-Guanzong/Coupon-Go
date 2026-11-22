@@ -6,6 +6,7 @@ import os
 import sys
 import tempfile
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 
 import pytest
 from fastapi.testclient import TestClient
@@ -331,8 +332,9 @@ def test_monthly_settlement_sweep(client):
 
 
 def test_scheduler_registers_monthly_settlements_job(client):
-    from app.scheduler import JOB_NAMES, create_scheduler
+    from app.scheduler import ADVISORY_LOCK_KEYS, JOB_NAMES, create_scheduler
     assert "monthly-settlements" in JOB_NAMES
+    assert len(set(ADVISORY_LOCK_KEYS.values())) == len(ADVISORY_LOCK_KEYS)
     sched = create_scheduler(session_factory=TestingSession,
                              interval_seconds=3600)
     job = sched.get_job("monthly-settlements")
@@ -554,6 +556,12 @@ def test_monthly_catchup_retries_failed_old_period_and_is_idempotent(client, mon
     def fail_once(db, shop, target_period, *args, **kwargs):
         if shop.id == shop_id and target_period == period and not attempts:
             attempts.append('simulated failure')
+            start, end = finance._period_bounds(period)
+            db.add(Settlement(shop_id=shop.id, period=period, period_start=start,
+                              period_end=end, gross_amount=100, commission=10,
+                              commission_rate=Decimal('0.10'), net_amount=90,
+                              redemption_count=1, status='pending'))
+            db.flush()
             raise RuntimeError('simulated temporary failure')
         return original(db, shop, target_period, *args, **kwargs)
     monkeypatch.setattr(finance, 'generate_settlement_for_shop', fail_once)
