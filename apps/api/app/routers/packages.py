@@ -147,6 +147,14 @@ def _check_coupon_reservation(db, coupon, quantity=1):
         raise HTTPException(400, "此優惠券暫停發售或不在有效期內")
 
 
+def _sync_paid_coupon_stock(coupon):
+    """Keep the sellable state in sync when paid-coupon stock moves."""
+    if coupon.remaining <= 0 and coupon.status == "active":
+        coupon.status = "sold_out"
+    elif coupon.remaining > 0 and coupon.status == "sold_out":
+        coupon.status = listing.live_status(coupon.valid_from, coupon.valid_to, coupon.remaining)
+
+
 def _release_stock(db: Session, order: Order):
     if order.coupon_id is not None:
         # P1-A: return the reserved unit(s) to the coupon's remaining,
@@ -162,6 +170,7 @@ def _release_stock(db: Session, order: Order):
                 Order.payment_status.in_(("pending", "paid")), Order.refund_status != "refunded", Order.settlement_status != "void").scalar()
             available = max(0, (coupon.total or 0) - reserved)
             coupon.remaining = min(available, (coupon.remaining or 0) + qty)
+            _sync_paid_coupon_stock(coupon)
         return
     if order.package_id is None:
         return
@@ -934,6 +943,7 @@ def purchase_coupon(coupon_id: int, body: sp.PurchaseIn,
         db.add(order)
         # Reserve 1 unit until the payment settles / fails / times out.
         coupon.remaining -= 1
+        _sync_paid_coupon_stock(coupon)
         db.flush()
         try:
             intent = create_payment_intent(order.id, float(total),
@@ -943,6 +953,7 @@ def purchase_coupon(coupon_id: int, body: sp.PurchaseIn,
             # half-made order and release the reservation so a retry is clean.
             db.delete(order)
             coupon.remaining += 1
+            _sync_paid_coupon_stock(coupon)
             db.commit()
             logger.exception("coupon purchase gateway failed coupon_id=%s: %s",
                              coupon_id, exc)
@@ -1098,6 +1109,7 @@ def retry_payment(order_id: int, body: sp.RetryPaymentIn,
         _sync_coupon_stock(db, pkg)
     else:
         coupon.remaining -= quantity
+        _sync_paid_coupon_stock(coupon)
     try:
         db.flush()
         try:

@@ -31,6 +31,7 @@ def test_prelisting_database_keeps_order_voucher_and_nullable_snapshots(tmp_path
         assert db.execute('select coupon_id,order_id from wallet_items where id=1').fetchone() == (1, 1)
         assert db.execute('pragma foreign_key_check').fetchall() == []
     result = alembic('downgrade', '0021_account_deletion')
-    assert result.returncode != 0 and 'Cannot safely downgrade' in result.stderr
+    assert result.returncode != 0 and ('Cannot safely downgrade' in result.stderr or
+                                       'coordinated restore' in result.stderr)
     with sqlite3.connect(database) as db:
         assert db.execute('select coupon_id,order_id from wallet_items where id=1').fetchone() == (1, 1)

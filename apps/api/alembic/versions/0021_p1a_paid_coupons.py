@@ -1,7 +1,7 @@
 """P1-A: paid coupons — coupons.sale_price + orders.coupon_id.
 
-The listing migration already owns sale_price and its stock constraint;
-this revision only adds order.coupon_id if it is absent.
+The historical revision and parent are retained for databases that ran
+this branch before merge. A later forward bridge joins it to listing.
 
 Idempotent: skips when the columns already exist (fresh databases
 built from Base.metadata.create_all already have them).
@@ -9,8 +9,8 @@ built from Base.metadata.create_all already have them).
 from alembic import op
 import sqlalchemy as sa
 
-revision = "0025_p1a_paid_coupons"
-down_revision = "0024_listing_template_versions"
+revision = "0021_p1a_paid_coupons"
+down_revision = "0020_m92_legal_consents"
 branch_labels = None
 depends_on = None
 
@@ -32,9 +32,9 @@ def upgrade():
                           sa.ForeignKey("coupons.id"), nullable=True))
     # FIX-3 backstop (mirrors packages.stock_left): remaining can never
     # go below zero even if a row lock fails to serialise. Clamp any
-    # legacy negative rows first so the constraint cannot fail on
-    # existing data.
-    bind.execute(sa.text("UPDATE coupons SET remaining = 0 WHERE remaining < 0"))
+    # legacy negative rows need manual reconciliation, not silent rewriting.
+    if bind.execute(sa.text("SELECT COUNT(*) FROM coupons WHERE remaining < 0")).scalar():
+        raise RuntimeError("Negative coupon stock requires reconciliation before migration")
     constraints = {c["name"] for c in
                    sa.inspect(bind).get_check_constraints("coupons")}
     if COUPON_CK not in constraints:
@@ -43,10 +43,4 @@ def upgrade():
 
 
 def downgrade():
-    bind = op.get_bind()
-    order_cols = {c["name"] for c in sa.inspect(bind).get_columns("orders")}
-    if "coupon_id" in order_cols:
-        if bind.execute(sa.text("SELECT COUNT(*) FROM orders WHERE coupon_id IS NOT NULL")).scalar():
-            raise RuntimeError("Paid coupon orders require a coordinated restore before downgrade")
-        with op.batch_alter_table("orders") as batch_op:
-            batch_op.drop_column("coupon_id")
+    raise RuntimeError("Paid coupon history requires a coordinated restore before downgrade")

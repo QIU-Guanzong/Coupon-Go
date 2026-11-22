@@ -34,11 +34,12 @@ from app import models  # noqa: E402
 from app.database import Base, get_db  # noqa: E402
 from app.main import app  # noqa: E402
 from app.seed import seed  # noqa: E402
+from tests.db_isolation import sqlite_test_path  # noqa: E402
 
 PG_URL = os.environ.get(
     "P1A_POSTGRES_URL",
     "postgresql+psycopg2://coupon_go:coupon_go@localhost:5432/coupon_go_test_p1a")
-SQLITE_DB = "/tmp/coupon_go_test_p1a.db"
+SQLITE_DB = sqlite_test_path("coupon_go_test_p1a.db")
 
 
 def _pg_reachable():
@@ -100,11 +101,15 @@ def _run_two(fn):
     in launch order."""
     barrier = threading.Barrier(2)
     results = [None, None]
+    exceptions = [None, None]
 
     def worker(i):
-        tc = TestClient(app)
-        barrier.wait(timeout=30)
-        results[i] = fn(i, tc)
+        try:
+            tc = TestClient(app)
+            barrier.wait(timeout=30)
+            results[i] = fn(i, tc)
+        except BaseException as exc:
+            exceptions[i] = exc
 
     threads = [threading.Thread(target=worker, args=(i,)) for i in range(2)]
     for t in threads:
@@ -112,6 +117,9 @@ def _run_two(fn):
     for t in threads:
         t.join(timeout=60)
     assert all(t.is_alive() is False for t in threads), "concurrent worker hung"
+    for exc in exceptions:
+        if exc is not None:
+            raise exc
     return results
 
 
@@ -623,3 +631,93 @@ def test_settlement_basis_refunded_paid_coupon_is_none(client):
     item = db.get(models.WalletItem, paid["wallet_item_id"])
     assert settlement_basis(db, item.coupon, wallet_item=item) is None
     db.close()
+
+
+@pytest.mark.parametrize("phase", ["pending", "failed", "timeout", "paid", "refunded"])
+def test_paid_coupon_order_prevents_rewriting_its_terms(client, phase):
+    h = _register_and_login(client, f"p1a-terms-{phase}@example.com")
+    coupon = _create_coupon(client, name=f"已訂購條款 {phase}", sale_price=20, total=5)
+    oid = _purchase(client, h, coupon["id"])["order"]["id"]
+    if phase in ("failed", "timeout"):
+        _pay(client, h, oid, phase)
+    elif phase in ("paid", "refunded"):
+        _pay(client, h, oid)
+        if phase == "refunded":
+            assert client.post(f"/api/v3/orders/{oid}/refund", json={}, headers=h).status_code == 200
+    edited = client.patch(f"/api/v3/vendor/coupons/{coupon['id']}",
+                          json={"refund_policy": "non_refundable", "discount_price": 1},
+                          headers=_vendor_headers(client))
+    assert edited.status_code == 409, edited.text
+    with TestingSession() as db:
+        row = db.get(models.Coupon, coupon["id"])
+        assert row.refund_policy == "anytime" and row.discount_price == 80
+        assert db.get(models.Order, oid).amount == 20
+
+
+def test_paid_coupon_remains_redeemable_when_merchant_pauses_listing(client):
+    h = _register_and_login(client, "p1a-paused-purchased@example.com")
+    coupon = _create_coupon(client, name="已售券暫停上架", sale_price=20)
+    _, paid = _buy_paid(client, h, coupon["id"])
+    paused = client.post(f"/api/v3/vendor/coupons/{coupon['id']}/pause", headers=_vendor_headers(client))
+    assert paused.status_code == 200, paused.text
+    qr = client.post("/api/v3/store-scaned-qr-values",
+                     params={"wallet_item_id": paid["wallet_item_id"]}, headers=h)
+    assert qr.status_code == 200, qr.text
+    scan = client.post("/api/v3/new-scan-coupon", json={"code": qr.json()["code"]},
+                       headers=_vendor_headers(client))
+    assert scan.status_code == 200, scan.text
+
+
+def test_coupon_edit_cannot_race_past_paid_order_reservation(client):
+    h = _register_and_login(client, "p1a-edit-race@example.com")
+    coupon = _create_coupon(client, name="訂購編輯競態", sale_price=20)
+    vh = _vendor_headers(client)
+    def submit(index, tc):
+        if index == 0:
+            return tc.post(f"/api/v3/coupons/{coupon['id']}/purchase",
+                           json={"payment_method": "fps"}, headers=h)
+        return tc.patch(f"/api/v3/vendor/coupons/{coupon['id']}",
+                        json={"refund_policy": "non_refundable"}, headers=vh)
+    purchase, edit = _run_two(submit)
+    if purchase.status_code == 200:
+        assert edit.status_code == 409, edit.text
+        with TestingSession() as db:
+            assert db.get(models.Coupon, coupon["id"]).refund_policy == "anytime"
+    else:
+        assert purchase.status_code == 400 and edit.status_code == 200, (purchase.text, edit.text)
+        with TestingSession() as db:
+            assert db.get(models.Coupon, coupon["id"]).refund_policy == "non_refundable"
+
+
+def test_paid_coupon_cancel_then_late_payment_refunded_once_without_restocking_twice(client):
+    from app.models_packages import LatePaymentRefund, Payment
+    h = _register_and_login(client, "p1a-cancel-late-success@example.com")
+    coupon = _create_coupon(client, name="取消後遲到付款", sale_price=20, total=5)
+    oid = _purchase(client, h, coupon["id"])["order"]["id"]
+    with TestingSession() as db:
+        gateway_ref = db.query(Payment).filter_by(order_id=oid).one().gateway_ref
+    assert client.post(f"/api/v3/orders/{oid}/cancel", headers=h).status_code == 200
+    payload = {"type": "payment_intent.succeeded", "data": {"object": {"id": gateway_ref}}}
+    for _ in range(2):
+        response = client.post("/api/v3/payments/webhook", json=payload)
+        assert response.status_code == 200, response.text
+        assert response.json()["late_payment_refund"]["status"] == "refunded"
+    with TestingSession() as db:
+        assert db.get(models.Coupon, coupon["id"]).remaining == 5
+        assert db.get(models.Order, oid).payment_status == "cancelled"
+        assert db.query(models.WalletItem).filter_by(order_id=oid).count() == 0
+        assert db.query(LatePaymentRefund).filter_by(order_id=oid, status="refunded").count() == 1
+
+
+def test_sold_out_paid_coupon_becomes_sellable_again_after_refund(client):
+    h = _register_and_login(client, "p1a-refund-reactivate@example.com")
+    coupon = _create_coupon(client, name="退款恢復發售", sale_price=20, total=1)
+    _, paid = _buy_paid(client, h, coupon["id"])
+    with TestingSession() as db:
+        row = db.get(models.Coupon, coupon["id"])
+        assert row.remaining == 0 and row.status == "sold_out"
+    response = client.post(f"/api/v3/orders/{paid['id']}/refund", json={}, headers=h)
+    assert response.status_code == 200, response.text
+    with TestingSession() as db:
+        row = db.get(models.Coupon, coupon["id"])
+        assert row.remaining == 1 and row.status == "active"

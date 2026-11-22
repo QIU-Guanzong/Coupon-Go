@@ -5,7 +5,7 @@ per-user claim limit, sale_price / refund-policy listing calibre,
 merchant image upload, admin package review queue.
 
 Run:  cd apps/api && ../../.venv/bin/python -m pytest tests/test_dianping_listing.py -v
-Own throwaway SQLite file (/tmp/coupon_go_test_listing.db); Postgres run
+Own per-process temporary SQLite file; Postgres run
 uses LISTING_TEST_POSTGRES_URL (same pattern as M8_TEST_POSTGRES_URL).
 """
 import io
@@ -28,8 +28,9 @@ from app.database import Base, get_db  # noqa: E402
 from app.main import app  # noqa: E402
 from app.models_packages import Package  # noqa: E402
 from app.seed import seed  # noqa: E402
+from tests.db_isolation import sqlite_test_path  # noqa: E402
 
-TEST_DB = "/tmp/coupon_go_test_listing.db"
+TEST_DB = sqlite_test_path("coupon_go_test_listing.db")
 PG_URL = os.getenv("LISTING_TEST_POSTGRES_URL")
 if PG_URL:
     engine = create_engine(PG_URL)
