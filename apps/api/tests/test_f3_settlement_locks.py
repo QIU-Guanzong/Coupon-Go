@@ -631,10 +631,13 @@ def test_connect_pay_racing_dispute_never_creates_manual_payment(client):
     assert statement['payment_mode'] == 'connect'
     headers = _finance_headers(client)
     url = f"/api/v3/admin/settlements/{statement['id']}"
+    assert client.post(url + '/pay', headers=headers).status_code == 409
     pay, dispute = _run_two(lambda i, tc:
         tc.post(url + '/pay', headers=headers) if i == 0 else
         tc.post(url + '/dispute', json={'reason': '核對金額'}, headers=headers))
-    assert pay.status_code == 409 and dispute.status_code == 200
+    # The dispute may win first; then the payment state guard returns 400
+    # instead of the Connect-specific 409. Neither order may pay.
+    assert pay.status_code in (400, 409) and dispute.status_code == 200
     with TestingSession() as db:
         assert db.query(SettlementTransfer).filter_by(settlement_id=statement['id']).count() == 0
         assert db.get(Settlement, statement['id']).status == 'disputed'
