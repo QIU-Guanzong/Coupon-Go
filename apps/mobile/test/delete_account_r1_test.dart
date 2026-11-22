@@ -11,6 +11,7 @@ class _Api extends ApiClient {
   bool loggedIn;
   final double balance;
   bool failDelete = false;
+  ApiException? deleteConflict;
   bool failBalance = false;
   int deletes = 0;
   int cashbackReads = 0;
@@ -36,6 +37,7 @@ class _Api extends ApiClient {
     expect(body, isEmpty);
     deletes++;
     if (failDelete) throw ApiException(503, 'Unavailable');
+    if (deleteConflict != null) throw deleteConflict!;
     return {};
   }
 
@@ -48,7 +50,10 @@ Future<void> _mount(WidgetTester tester, _Api api, [VoidCallback? onLogout]) =>
       language: AppLanguage()..english = true,
       child: MaterialApp(
         home: SettingsScreen(api: api, onLogout: onLogout ?? () {}),
-        routes: {'/cashback': (_) => const Scaffold(body: Text('Cashback'))},
+        routes: {
+          '/cashback': (_) => const Scaffold(body: Text('Cashback')),
+          '/orders': (_) => const Scaffold(body: Text('My orders')),
+        },
       ),
     ));
 
@@ -94,8 +99,7 @@ void main() {
     if (!cashbackEnabled) {
       expect(find.text('Withdraw cashback'), findsNothing);
       expect(find.text('Review cashback'), findsNothing);
-      expect(find.textContaining('Withdraw any available cashback'), findsNothing);
-      expect(find.textContaining('outstanding funds'), findsOneWidget);
+      expect(find.textContaining('Withdraw any available cashback'), findsOneWidget);
       expect(api.cashbackReads, 0);
       expect(api.deletes, 0);
       return;
@@ -126,6 +130,23 @@ void main() {
     await _tap(tester, 'Review cashback');
     expect(find.text('Cashback'), findsOneWidget);
     expect(api.deletes, 0);
+  });
+
+  testWidgets('paid-voucher blocker offers refund or use and opens orders', (tester) async {
+    final api = _Api()..deleteConflict = ApiException(
+      409, '仍有未使用的付費優惠券，請先退款或使用', code: 'unused_paid_voucher',
+    );
+    await _mount(tester, api);
+    await _tap(tester, 'Delete account');
+    expect(find.text('Refund or use any unused paid vouchers first.'), findsOneWidget);
+    await _tap(tester, 'Continue to delete');
+    await _tap(tester, 'Confirm deletion');
+    expect(find.text('Can’t delete account yet'), findsOneWidget);
+    expect(find.text('Refund or use any unused paid vouchers first.'), findsOneWidget);
+    await _tap(tester, 'View orders');
+    expect(find.text('My orders'), findsOneWidget);
+    expect(api.loggedIn, isTrue);
+    expect(api.deletes, 1);
   });
 
   testWidgets('a failed confirmed request preserves the session', (tester) async {

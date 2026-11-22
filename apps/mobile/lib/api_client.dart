@@ -113,7 +113,8 @@ class ApiClient extends ChangeNotifier {
     final data = res.body.isEmpty ? {} : jsonDecode(res.body);
     if (res.statusCode >= 400) {
       throw ApiException(res.statusCode,
-          (data is Map && data['detail'] != null) ? '${data['detail']}' : '請求失敗');
+          (data is Map && data['detail'] != null) ? '${data['detail']}' : '請求失敗',
+          code: data is Map && data['code'] is String ? data['code'] as String : null);
     }
     return data as Map<String, dynamic>;
   }
@@ -555,9 +556,10 @@ class ApiClient extends ChangeNotifier {
 }
 
 class ApiException implements Exception {
-  ApiException(this.status, this.message);
+  ApiException(this.status, this.message, {this.code});
   final int status;
   final String message;
+  final String? code;
   @override
   String toString() => message;
 }

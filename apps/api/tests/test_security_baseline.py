@@ -157,8 +157,10 @@ def test_otp_uses_secrets(client, monkeypatch):
         calls.append(1)
         return real_choice(seq)
 
-    monkeypatch.setattr(auth_router.secrets, "choice", spy)
     email = "sec-secrets@example.com"
+    # Resend only issues codes for a real pending registration.
+    assert _register(client, email).status_code == 200
+    monkeypatch.setattr(auth_router.secrets, "choice", spy)
     assert client.post("/api/v3/new-resent-otp", json={
         "email": email, "purpose": "register"}).status_code == 200
     assert calls, "OTP must be generated with secrets.choice, not random"
