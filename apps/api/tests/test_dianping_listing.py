@@ -458,6 +458,30 @@ def test_listing_sweep_rechecks_stale_package_before_overwriting_pause(client, m
         db.close()
 
 
+def test_old_purchase_remains_redeemable_while_edited_listing_is_under_review(client, monkeypatch):
+    monkeypatch.setattr(config, "PACKAGE_REVIEW_REQUIRED", False)
+    pkg = _create_package(client, name="原套餐審核前", package_price=150)
+    buyer = _register_and_login(client, "version-review@example.com")
+    purchase = client.post(f"/api/v3/packages/{pkg['id']}/purchase", json={"payment_method": "fps"}, headers=buyer)
+    order_id = purchase.json()["order"]["id"]
+    paid = client.post(f"/api/v3/orders/{order_id}/confirm-payment", json={"outcome": "succeeded"}, headers=buyer)
+    assert paid.status_code == 200, paid.text
+    old_item = paid.json()["order"]["wallet_item_id"]
+    monkeypatch.setattr(config, "PACKAGE_REVIEW_REQUIRED", True)
+    vendor = _vendor_headers(client)
+    edit = client.patch(f"/api/v3/vendor/packages/{pkg['id']}", headers=vendor,
+                        json={"name": "新版待審套餐", "package_price": 120})
+    assert edit.status_code == 200 and edit.json()["package"]["status"] == "pending_review"
+    blocked = client.post(f"/api/v3/packages/{pkg['id']}/purchase", json={"payment_method": "fps"}, headers=buyer)
+    assert blocked.status_code == 400
+    qr = client.post("/api/v3/store-scaned-qr-values", params={"wallet_item_id": old_item}, headers=buyer)
+    assert qr.status_code == 200, qr.text
+    scan = client.post("/api/v3/new-scan-coupon", json={"code": qr.json()["code"]}, headers=vendor)
+    assert scan.status_code == 200, scan.text
+    assert scan.json()["coupon_name"] == "原套餐審核前"
+    assert _approve_package(client, pkg["id"], approve=True).json()["status"] == "active"
+
+
 # ---------- P0-6: package review flow ----------
 
 def test_package_create_is_pending_review_not_active(client):
