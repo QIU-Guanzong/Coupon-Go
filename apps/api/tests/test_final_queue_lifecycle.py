@@ -2,7 +2,7 @@
 from datetime import datetime, timezone
 from decimal import Decimal
 
-from app import models
+from app import config, models
 from app.merchant_finance import sweep_monthly_settlements
 from app.models_cashback import CashbackTransaction
 from app.models_connect import ConnectLedgerEntry
@@ -12,7 +12,8 @@ from tests.test_packages import client
 from tests.test_paid_points_allocation import make_order, scan
 
 
-def test_multi_voucher_settlement_reversal_refund_and_monthly_retry(client):
+def test_multi_voucher_settlement_reversal_refund_and_monthly_retry(client, monkeypatch):
+    monkeypatch.setattr(config, 'CASHBACK_ENABLED', True)
     customer, package, order, voucher_ids = make_order(client, 'final-queue-lifecycle', count=3)
     merchant, admin = base._vendor_headers(client), base._admin_headers(client)
     stock_after_purchase = base._stock_left(client, package['id'])
@@ -49,7 +50,8 @@ def test_multi_voucher_settlement_reversal_refund_and_monthly_retry(client):
         assert sum(row.commission for row in lines) + sum(row.commission for row in reversals) == Decimal('0')
         assert (statement.gross_amount, statement.commission, statement.net_amount) == (Decimal('0'), Decimal('0'), Decimal('0'))
         assert all(db.get(models.WalletItem, item_id).status == 3 for item_id in voucher_ids)
-        assert all(row.status == 'void' for row in db.query(CashbackTransaction).filter(CashbackTransaction.redemption_id.in_(redemptions)))
+        cashback = db.query(CashbackTransaction).filter(CashbackTransaction.redemption_id.in_(redemptions)).all()
+        assert len(cashback) == 3 and all(row.status == 'void' for row in cashback)
         awards = db.query(models.PointTransaction).filter(models.PointTransaction.reason == 'redeem', models.PointTransaction.ref_id.in_(voucher_ids)).all()
         reversals = db.query(models.PointTransaction).filter(models.PointTransaction.reason == 'revoke', models.PointTransaction.ref_id.in_(redemptions)).all()
         assert sum(row.delta for row in awards) + sum(row.delta for row in reversals) == 0
