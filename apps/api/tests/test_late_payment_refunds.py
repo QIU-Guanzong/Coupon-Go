@@ -129,6 +129,31 @@ def test_mismatched_provider_amount_or_currency_requires_manual_reconciliation(c
         assert entry.last_error == 'payment_event_mismatch'
 
 
+def test_provider_amount_and_amount_received_must_both_match(client, monkeypatch):
+    _, _, oid, ref = _cancelled(client, 'inconsistent-amount')
+    monkeypatch.setattr(late_payments, 'refund_payment', lambda *a, **kw: pytest.fail('unexpected refund'))
+    response = _callback(client, ref, amount_received=15000, amount=20000, currency='hkd')
+    assert response.json()['late_payment_refund']['status'] == 'manual_review'
+    with TestingSession() as db:
+        assert db.query(LatePaymentRefund).filter_by(order_id=oid).one().last_error == 'payment_event_mismatch'
+
+
+def test_pending_refund_lookup_must_return_same_gateway_reference(client, monkeypatch):
+    _, _, oid, ref = _cancelled(client, 'refund-reference')
+    def pending(payment_ref, amount, **kwargs):
+        return {'gateway_ref': 're_first', 'payment_intent': payment_ref,
+                'amount': amount, 'currency': 'HKD', 'status': 'pending'}
+    def wrong_ref(gateway_ref):
+        return {'gateway_ref': 're_other', 'payment_intent': ref,
+                'amount': 150, 'currency': 'HKD', 'status': 'succeeded'}
+    monkeypatch.setattr(late_payments, 'refund_payment', pending)
+    monkeypatch.setattr(late_payments, 'retrieve_refund', wrong_ref)
+    assert _callback(client, ref).json()['late_payment_refund']['status'] == 'pending'
+    with TestingSession() as db:
+        assert late_payments.sweep(db)['manual_review'] == 1
+        assert db.query(LatePaymentRefund).filter_by(order_id=oid).one().last_error == 'refund_result_mismatch'
+
+
 def test_expired_idempotency_window_requires_manual_reconciliation(client, monkeypatch):
     _, _, oid, ref = _cancelled(client, 'window')
     monkeypatch.setattr(late_payments, 'refund_payment', lambda *a, **kw: (_ for _ in ()).throw(GatewayError()))

@@ -14,13 +14,13 @@ logger = logging.getLogger(__name__)
 
 def _event_matches(attempt, obj):
     """Amounts in a Stripe event are integer cents; absent fields are dev-only."""
-    received = obj.get("amount_received", obj.get("amount"))
+    amounts = [obj[key] for key in ("amount_received", "amount") if obj.get(key) is not None]
     currency = obj.get("currency")
-    if received is None or currency is None:
+    if not amounts or currency is None:
         return config.APP_ENV == "dev" and not config.STRIPE_WEBHOOK_SECRET and not config.STRIPE_SECRET_KEY
     try:
-        return (not isinstance(received, bool) and
-                Decimal(str(received)) == Decimal(str(attempt.amount)) * 100 and
+        return (all(not isinstance(value, bool) and
+                    Decimal(str(value)) == Decimal(str(attempt.amount)) * 100 for value in amounts) and
                 str(currency).upper() == (attempt.currency or "").upper() == "HKD")
     except (InvalidOperation, TypeError, ValueError):
         return False
@@ -76,6 +76,7 @@ def dispatch(db, entry_id):
         return entry
     try:
         matches = (bool(result.get("gateway_ref")) and
+                   (not entry.gateway_ref or result.get("gateway_ref") == entry.gateway_ref) and
                    result.get("payment_intent") == attempt.gateway_ref and
                    str(result.get("currency", "")).upper() == entry.currency.upper() and
                    Decimal(str(result.get("amount"))) == Decimal(str(entry.amount)))
