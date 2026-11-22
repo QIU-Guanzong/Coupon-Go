@@ -345,7 +345,9 @@ class _MerchantOnboardingScreenState extends State<MerchantOnboardingScreen> {
                               Text(switch (source) {
                                 'simulated' => '收款帳戶：測試模擬狀態，並非正式開戶',
                                 'unverified' => '收款帳戶：狀態尚未驗證',
-                                _ => '收款帳戶：尚未開始',
+                                'not_started' => '收款帳戶：尚未開始',
+                                'stripe_test' => '收款帳戶：Stripe 測試狀態，並非正式入駐',
+                                _ => '收款帳戶：狀態待確認',
                               }),
                               const SizedBox(height: 12),
                               if (status == 'pending')

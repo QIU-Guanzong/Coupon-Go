@@ -4,7 +4,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 class OnboardingApi extends ApiClient {
-  OnboardingApi({this.existing = false, this.failLoad = false});
+  OnboardingApi(
+      {this.existing = false,
+      this.failLoad = false,
+      this.source = 'simulated'});
+  String source;
   bool existing;
   bool failLoad;
   bool signed = false;
@@ -21,7 +25,7 @@ class OnboardingApi extends ApiClient {
                 'id': 8,
                 'shop_name': '測試店舖',
                 'status': 'pending',
-                'stripe_status_source': 'simulated',
+                'stripe_status_source': source,
                 'contract': signed ? {'version': 'v2'} : null,
               }
             ]
@@ -105,5 +109,16 @@ void main() {
     expect(find.text('進度暫時不可用'), findsOneWidget);
     expect(find.text('提交申請'), findsNothing);
     expect(find.text('刷新申請進度'), findsOneWidget);
+  });
+  testWidgets('測試及未知收款來源不顯示為未開始或正式開戶', (tester) async {
+    final api = OnboardingApi(existing: true, source: 'stripe_test');
+    await tester
+        .pumpWidget(MaterialApp(home: MerchantOnboardingScreen(api: api)));
+    await tester.pumpAndSettle();
+    expect(find.text('收款帳戶：Stripe 測試狀態，並非正式入駐'), findsOneWidget);
+    api.source = 'future_state';
+    await tester.tap(find.text('刷新進度'));
+    await tester.pumpAndSettle();
+    expect(find.text('收款帳戶：狀態待確認'), findsOneWidget);
   });
 }

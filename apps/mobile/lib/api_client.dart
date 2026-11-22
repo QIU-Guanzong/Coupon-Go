@@ -121,8 +121,14 @@ class ApiClient extends ChangeNotifier {
   Map<String, dynamic> _decode(http.Response res) {
     final data = res.body.isEmpty ? {} : jsonDecode(res.body);
     if (res.statusCode >= 400) {
-      throw ApiException(res.statusCode,
-          (data is Map && data['detail'] != null) ? '${data['detail']}' : '請求失敗',
+      final detail = data is Map ? data['detail'] : null;
+      var message = detail is String ? detail : '請求失敗';
+      if (res.statusCode == 422 && detail is List) {
+        final invalidEmail = detail.any((entry) => entry is Map &&
+            entry['loc'] is List && (entry['loc'] as List).contains('email'));
+        message = invalidEmail ? '請輸入有效的電郵地址' : '請檢查輸入資料';
+      }
+      throw ApiException(res.statusCode, message,
           code: data is Map && data['code'] is String ? data['code'] as String : null);
     }
     return data as Map<String, dynamic>;
