@@ -125,6 +125,34 @@ OPEN_LOGIN = os.environ.get("OPEN_LOGIN", "false").strip().lower() in ("1", "tru
 # in the repo. With STRIPE_SECRET_KEY unset the gateway runs its local
 # test-mode simulator; with a key set only sk_test_… is accepted.
 STRIPE_SECRET_KEY = os.environ.get("STRIPE_SECRET_KEY", "")
+
+# Connect runs in the existing explicitly configured test environment only.
+STRIPE_CONNECT_ENABLED_RAW = os.environ.get("STRIPE_CONNECT_ENABLED")
+STRIPE_CONNECT_RETURN_URL = os.environ.get("STRIPE_CONNECT_RETURN_URL", "")
+STRIPE_CONNECT_REFRESH_URL = os.environ.get("STRIPE_CONNECT_REFRESH_URL", "")
+STRIPE_V2_VERSION = os.environ.get("STRIPE_V2_VERSION", "2026-11-18.preview")
+STRIPE_CONNECT_PAYOUT_HOLD_DAYS = int(os.environ.get("STRIPE_CONNECT_PAYOUT_HOLD_DAYS", "90"))
+# Legacy configuration retained for compatibility; uncertain results are not auto-retried.
+CONNECT_MAX_TRANSFER_RETRIES = int(os.environ.get("CONNECT_MAX_TRANSFER_RETRIES", "5"))
+SCHEDULER_CONNECT_BATCH_SIZE = int(os.environ.get("SCHEDULER_CONNECT_BATCH_SIZE", "50"))
+
+
+def connect_enabled():
+    """Report whether Connect is enabled and why."""
+    raw = STRIPE_CONNECT_ENABLED_RAW
+    if raw is not None:
+        enabled = raw.strip().lower() in ("1", "true", "yes", "on")
+        return {"enabled": enabled, "configured_explicitly": True,
+                "reason": ("STRIPE_CONNECT_ENABLED=1：Stripe Connect 已启用"
+                           if enabled else
+                           "STRIPE_CONNECT_ENABLED=0：Stripe Connect 已显式关闭，开户 / 转帐 / 提款不可用")}
+    if APP_ENV == "dev":
+        return {"enabled": True, "configured_explicitly": False,
+                "reason": "开发环境默认启用 Stripe Connect，未配置密钥时为模拟"}
+    return {"enabled": False, "configured_explicitly": False,
+            "reason": "非开发环境未配置 STRIPE_CONNECT_ENABLED，Stripe Connect 未启用"}
+
+
 STRIPE_PUBLISHABLE_KEY = os.environ.get("STRIPE_PUBLISHABLE_KEY", "")
 STRIPE_WEBHOOK_SECRET = os.environ.get("STRIPE_WEBHOOK_SECRET", "")
 # Stripe webhook signature timestamp tolerance (seconds; Stripe default 300).
@@ -192,20 +220,23 @@ def scheduler_status() -> dict:
                   f"{SCHEDULER_INTERVAL_SECONDS} 秒执行一次"
                   if enabled else
                   "SCHEDULER_ENABLED=0：调度器已显式关闭，过期退款 / 砍价结算 / "
-                  "超时关闭 / 返现 sweep / 积分过期不会自动执行，只能手动接口补跑")
+                  "超时关闭 / 返现 sweep / 积分过期 / 上架调度 / 迟到支付退款 / 商户转账不会自动执行，只能手动接口补跑")
         return {"enabled": enabled, "configured_explicitly": True,
                 "interval_seconds": SCHEDULER_INTERVAL_SECONDS,
                 "cashback_batch_size": SCHEDULER_CASHBACK_BATCH_SIZE,
+                "connect_batch_size": SCHEDULER_CONNECT_BATCH_SIZE,
                 "reason": reason}
     if APP_ENV == "dev":
         return {"enabled": True, "configured_explicitly": False,
                 "interval_seconds": SCHEDULER_INTERVAL_SECONDS,
                 "cashback_batch_size": SCHEDULER_CASHBACK_BATCH_SIZE,
+                "connect_batch_size": SCHEDULER_CONNECT_BATCH_SIZE,
                 "reason": "开发环境默认启用调度器，"
                           f"每 {SCHEDULER_INTERVAL_SECONDS} 秒执行一次"}
     return {"enabled": False, "configured_explicitly": False,
             "interval_seconds": SCHEDULER_INTERVAL_SECONDS,
             "cashback_batch_size": SCHEDULER_CASHBACK_BATCH_SIZE,
+            "connect_batch_size": SCHEDULER_CONNECT_BATCH_SIZE,
             "reason": "非开发环境未配置 SCHEDULER_ENABLED，调度器未启动："
                       "过期套餐退款 / 砍价到期结算 / 超时订单关闭 / 返现 sweep / "
-                      "积分过期不会自动执行。请设置 SCHEDULER_ENABLED=1 再启动"}
+                      "积分过期 / 上架调度 / 迟到支付退款 / 商户转账不会自动执行。请设置 SCHEDULER_ENABLED=1 再启动"}

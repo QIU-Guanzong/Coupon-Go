@@ -17,6 +17,7 @@ import uuid
 from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from .. import config, models, schemas_line_b
@@ -32,6 +33,32 @@ from ..routers.uploads import strip_exif
 
 router = APIRouter()
 admin_only = require_role("admin")
+
+
+class ConnectOnboardingIn(BaseModel):
+    return_url: str | None = None
+    refresh_url: str | None = None
+
+
+@router.post("/merchant-applications/{application_id}/connect/onboarding")
+def application_connect_onboarding(application_id: int, body: ConnectOnboardingIn,
+                                   user=Depends(get_current_user), db=Depends(get_db)):
+    from .. import application_connect
+    return application_connect.start(db, application_id, user,
+                                     body.return_url or config.STRIPE_CONNECT_RETURN_URL,
+                                     body.refresh_url or config.STRIPE_CONNECT_REFRESH_URL)
+
+
+@router.post("/merchant-applications/{application_id}/connect/sync")
+def application_connect_sync(application_id: int, user=Depends(get_current_user),
+                             db=Depends(get_db)):
+    from .. import application_connect
+    row = application_connect.sync(db, application_id, user.id)
+    db.commit()
+    return {"application_id": application_id, "onboarding_status": row.state,
+            "charges_enabled": row.charges_enabled, "payouts_enabled": row.payouts_enabled,
+            "transfers_enabled": row.transfers_enabled,
+            "simulated": row.simulated}
 
 ALLOWED_EXTENSIONS = {"pdf", "jpg", "jpeg", "png"}
 

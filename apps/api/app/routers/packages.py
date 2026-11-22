@@ -43,7 +43,7 @@ from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from .. import cashback_service, config, late_payments, listing, models, points_service
+from .. import cashback_service, config, connect_service, late_payments, listing, models, points_service
 from ..order_allocation import wallet_order_consistent
 from ..package_templates import current_package_coupon, sync_edited_package_template
 from ..settlement_ledger import reverse_sale
@@ -392,6 +392,7 @@ def _resume_refund(db, order_id):
             if red.revoked_at is not None:
                 cashback_service.void_for_revocation(db, red)
             reverse_sale(db, red, "refunded")
+            connect_service.reverse_redemption(db, red, "refunded")
         points_service.clawback_order_points(db, order)
         attempt.status = "refunded"
         order.settlement_status = "void"
