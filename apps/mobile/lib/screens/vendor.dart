@@ -17,7 +17,8 @@ import 'merchant_dashboard.dart';
 
 /// Vendor home: gold theme, usage summary, issue-coupon entry.
 class VendorHomeScreen extends StatefulWidget {
-  const VendorHomeScreen({super.key, required this.api, this.showAdmin = false});
+  const VendorHomeScreen(
+      {super.key, required this.api, this.showAdmin = false});
 
   final ApiClient api;
   final bool showAdmin;
@@ -66,14 +67,17 @@ class _VendorHomeScreenState extends State<VendorHomeScreen> {
             Row(
               children: [
                 Expanded(
-                    child: _stat('總下載次數', '${_usage?['total_downloads'] ?? 0}')),
+                    child:
+                        _stat('總下載次數', '${_usage?['total_downloads'] ?? 0}')),
                 const SizedBox(width: 12),
-                Expanded(child: _stat('總使用量', '${_usage?['total_usage'] ?? 0}')),
+                Expanded(
+                    child: _stat('總使用量', '${_usage?['total_usage'] ?? 0}')),
               ],
             ),
             const SizedBox(height: 16),
             ElevatedButton(
-              style: ElevatedButton.styleFrom(backgroundColor: CgColors.vendorGold),
+              style: ElevatedButton.styleFrom(
+                  backgroundColor: CgColors.vendorGold),
               onPressed: () => Navigator.of(context)
                   .pushNamed('/vendor/issue')
                   .then((_) => _load()),
@@ -103,7 +107,8 @@ class _VendorHomeScreenState extends State<VendorHomeScreen> {
             ),
             const SizedBox(height: 8),
             OutlinedButton(
-              onPressed: () => Navigator.of(context).pushNamed('/vendor/records'),
+              onPressed: () =>
+                  Navigator.of(context).pushNamed('/vendor/records'),
               child: const Text('核銷記錄'),
             ),
             const SizedBox(height: 8),
@@ -125,20 +130,23 @@ class _VendorHomeScreenState extends State<VendorHomeScreen> {
             const SizedBox(height: 8),
             if (widget.showAdmin)
               OutlinedButton(
-                onPressed: () =>
-                    Navigator.of(context).pushNamed('/admin'),
+                onPressed: () => Navigator.of(context).pushNamed('/admin'),
                 child: const Text('管理後台（結算 / 對賬 / 發票 / 內容 / 角色）'),
               ),
             const SizedBox(height: 16),
-            OutlinedButton(onPressed: () => Navigator.of(context).pushNamed('/vendor/settlements'),
+            OutlinedButton(
+                onPressed: () =>
+                    Navigator.of(context).pushNamed('/vendor/settlements'),
                 child: const Text('商家結算單')),
             const Text('我的優惠券', style: TextStyle(fontWeight: FontWeight.bold)),
             ..._coupons.map((c) => Card(
                   margin: const EdgeInsets.only(top: 8),
                   child: ListTile(
-                    leading: const Icon(Icons.local_offer, color: CgColors.amber),
+                    leading:
+                        const Icon(Icons.local_offer, color: CgColors.amber),
                     title: Text(c.name),
-                    subtitle: Text('剩餘 ${c.remaining} · 已核銷 ${c.usedCount ?? '—'}'),
+                    subtitle:
+                        Text('剩餘 ${c.remaining} · 已核銷 ${c.usedCount ?? '—'}'),
                   ),
                 )),
             if (_coupons.isEmpty)
@@ -159,7 +167,8 @@ class _VendorHomeScreenState extends State<VendorHomeScreen> {
         child: Column(
           children: [
             Text(value,
-                style: const TextStyle(fontSize: 28, fontWeight: FontWeight.bold)),
+                style:
+                    const TextStyle(fontSize: 28, fontWeight: FontWeight.bold)),
             Text(label, style: const TextStyle(color: CgColors.textSecondary)),
           ],
         ),
@@ -201,11 +210,14 @@ class _VendorAccountScreenState extends State<VendorAccountScreen> {
               }
               if (snapshot.hasError) {
                 return ListTile(
-                  title: Text(context.tr('未能載入帳戶', 'Could not load the account')),
+                  title:
+                      Text(context.tr('未能載入帳戶', 'Could not load the account')),
                   trailing: TextButton(
                     onPressed: () {
                       final result = widget.api.get('/me');
-                      setState(() { _profile = result; });
+                      setState(() {
+                        _profile = result;
+                      });
                     },
                     child: Text(context.tr('重試', 'Retry')),
                   ),
@@ -214,12 +226,14 @@ class _VendorAccountScreenState extends State<VendorAccountScreen> {
               final name = snapshot.data?['name'] as String? ?? '';
               final email = snapshot.data?['email'] as String? ?? '';
               if (name.isEmpty && email.isEmpty) {
-                return ListTile(title: Text(context.tr('未有帳戶資料', 'No account details')));
+                return ListTile(
+                    title: Text(context.tr('未有帳戶資料', 'No account details')));
               }
               return ListTile(
                 leading: const Icon(Icons.storefront),
                 title: Text(name.isEmpty ? email : name),
-                subtitle: name.isNotEmpty && email.isNotEmpty ? Text(email) : null,
+                subtitle:
+                    name.isNotEmpty && email.isNotEmpty ? Text(email) : null,
               );
             },
           ),
@@ -260,7 +274,8 @@ class _IssueCouponScreenState extends State<IssueCouponScreen> {
         'shop_id': _shopId,
         'coupon_type': _type,
         'coupon_name': _name.text,
-        'percentage': _type == 'Discount' ? double.tryParse(_percentage.text) : null,
+        'percentage':
+            _type == 'Discount' ? double.tryParse(_percentage.text) : null,
         'cash_amount': _type == 'Cash' ? double.tryParse(_cash.text) : null,
         'min_spend': double.tryParse(_minSpend.text) ?? 0,
         'total': int.tryParse(_total.text) ?? 100,
@@ -336,7 +351,8 @@ class _IssueCouponScreenState extends State<IssueCouponScreen> {
           ),
           const SizedBox(height: 16),
           ElevatedButton(
-            style: ElevatedButton.styleFrom(backgroundColor: CgColors.vendorGold),
+            style:
+                ElevatedButton.styleFrom(backgroundColor: CgColors.vendorGold),
             onPressed: () async {
               try {
                 final preview = await widget.api.couponPreview(_body());
@@ -410,6 +426,10 @@ class _ScanScreenState extends State<ScanScreen> {
   // Line A two-step redemption: prepare (read-only check) -> confirm consume.
   Map<String, dynamic>? _prepared;
   String? _pendingCode;
+  List<Map<String, dynamic>> _branchChoices = [];
+  int? _selectedBranchId;
+  String? _selectedBranchName;
+  String? _branchError;
   String? _attemptKey;
   int? _lastRedemptionId;
   bool _revoking = false;
@@ -440,6 +460,11 @@ class _ScanScreenState extends State<ScanScreen> {
     setState(() {
       _prepared = null;
       _pendingCode = null;
+      _branchChoices = [];
+      _selectedBranchId = null;
+      _selectedBranchName = null;
+      _branchError = null;
+      _attemptKey = null;
       _successCouponName = null;
       _revokedMessage = null;
       _redeemedAt = null;
@@ -451,7 +476,13 @@ class _ScanScreenState extends State<ScanScreen> {
   }
 
   Future<void> _prepare(String code) async {
-    if (_handled || _prepared != null || _errorReason != null || _successCouponName != null) return;
+    if (_handled ||
+        _prepared != null ||
+        _branchChoices.isNotEmpty ||
+        _errorReason != null ||
+        _successCouponName != null) {
+      return;
+    }
     code = code.trim();
     if (!RegExp(r'^[0-9]{6}$').hasMatch(code)) {
       setState(() => _errorReason = '請輸入券上的六位兌換碼');
@@ -467,8 +498,24 @@ class _ScanScreenState extends State<ScanScreen> {
           _prepared = res;
           _pendingCode = code;
           final random = Random.secure();
-          _attemptKey = List.generate(16, (_) => random.nextInt(256).toRadixString(16).padLeft(2, '0')).join();
+          _attemptKey = List.generate(16,
+                  (_) => random.nextInt(256).toRadixString(16).padLeft(2, '0'))
+              .join();
           _errorReason = null;
+        } else if (res['branch_selection_required'] == true) {
+          final branches = res['allowed_branches'];
+          if (branches is List &&
+              branches.isNotEmpty &&
+              branches.every(
+                  (b) => b is Map && b['id'] is int && b['name'] is String)) {
+            _branchChoices = branches
+                .map((b) => Map<String, dynamic>.from(b as Map))
+                .toList();
+            _pendingCode = code;
+            _branchError = null;
+          } else {
+            _errorReason = '此券需要指定分店，但暫無可選分店，請聯絡平台。';
+          }
         } else {
           // Invalid / already used / other-shop code: full-screen red page.
           _errorReason = res['reason'] as String? ?? '無法核銷';
@@ -486,22 +533,60 @@ class _ScanScreenState extends State<ScanScreen> {
     }
   }
 
+  Future<void> _chooseBranch(Map<String, dynamic> branch) async {
+    final code = _pendingCode;
+    final id = branch['id'];
+    if (_handled || code == null || id is! int) return;
+    setState(() {
+      _handled = true;
+      _branchError = null;
+    });
+    try {
+      final result = await widget.api.prepareScan(code, branchId: id);
+      if (!mounted) return;
+      setState(() {
+        if (result['can_redeem'] == true) {
+          _prepared = result;
+          _selectedBranchId = id;
+          _selectedBranchName = branch['name'] as String;
+          final random = Random.secure();
+          _attemptKey = List.generate(16,
+                  (_) => random.nextInt(256).toRadixString(16).padLeft(2, '0'))
+              .join();
+        } else {
+          _branchError = result['reason'] as String? ?? '此分店未能核銷，請重新選擇。';
+        }
+      });
+    } on ApiException catch (e) {
+      if (mounted) setState(() => _branchError = e.message);
+    } catch (_) {
+      if (mounted) setState(() => _branchError = '未能連線，請重試');
+    } finally {
+      if (mounted) setState(() => _handled = false);
+    }
+  }
+
   Future<void> _confirmConsume() async {
     final code = _pendingCode;
     final token = _prepared?['prepare_token'] as String?;
-    if (_handled || code == null || token == null || _attemptKey == null) return;
+    if (_handled || code == null || token == null || _attemptKey == null) {
+      return;
+    }
     setState(() => _handled = true);
     try {
       final res = await widget.api.scanCoupon(code,
           prepareToken: token,
+          branchId: _selectedBranchId,
           idempotencyKey: _attemptKey!);
       if (!mounted) return;
       setState(() {
-        _successCouponName =
-            res['coupon_name'] as String? ?? _prepared?['coupon_name'] as String? ?? '';
+        _successCouponName = res['coupon_name'] as String? ??
+            _prepared?['coupon_name'] as String? ??
+            '';
         _lastRedemptionId = res['redemption_id'] as int?;
         _revokeSeconds = ((res['revoke_window_minutes'] as int?) ?? 10) * 60;
-        _redeemedAt = DateTime.tryParse(res['scanned_at'] as String? ?? '') ?? DateTime.now();
+        _redeemedAt = DateTime.tryParse(res['scanned_at'] as String? ?? '') ??
+            DateTime.now();
         _prepared = null;
         _pendingCode = null;
         _errorReason = null;
@@ -591,11 +676,16 @@ class _ScanScreenState extends State<ScanScreen> {
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(_revokedMessage == null ? Icons.check_circle : Icons.undo, size: 72,
-              color: _revokedMessage == null ? CgColors.success : CgColors.textSecondary),
+          Icon(_revokedMessage == null ? Icons.check_circle : Icons.undo,
+              size: 72,
+              color: _revokedMessage == null
+                  ? CgColors.success
+                  : CgColors.textSecondary),
           const SizedBox(height: 16),
-          Text(_revokedMessage ?? '已核銷', textAlign: TextAlign.center,
-              style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
+          Text(_revokedMessage ?? '已核銷',
+              textAlign: TextAlign.center,
+              style:
+                  const TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
           const SizedBox(height: 8),
           Text(_successCouponName ?? '',
               textAlign: TextAlign.center,
@@ -648,8 +738,7 @@ class _ScanScreenState extends State<ScanScreen> {
             child: ElevatedButton(
               style: ElevatedButton.styleFrom(backgroundColor: Colors.white),
               onPressed: _resetScan,
-              child: const Text('繼續掃碼',
-                  style: TextStyle(color: Colors.red)),
+              child: const Text('繼續掃碼', style: TextStyle(color: Colors.red)),
             ),
           ),
         ],
@@ -671,68 +760,104 @@ class _ScanScreenState extends State<ScanScreen> {
               ? _successPage()
               : ListView(
                   children: [
-                    if (_prepared == null) SizedBox(
-                      height: MediaQuery.sizeOf(context).height * .48,
-                      child: Stack(
-                        children: [
-                          MobileScanner(
-                            errorBuilder: (_, __, ___) => const ColoredBox(
-                              color: Colors.black,
-                              child: Center(child: Text('相機未能使用，請手動輸入兌換碼',
-                                style: TextStyle(color: Colors.white))),
+                    if (_prepared == null && _branchChoices.isEmpty)
+                      SizedBox(
+                        height: MediaQuery.sizeOf(context).height * .48,
+                        child: Stack(
+                          children: [
+                            MobileScanner(
+                              errorBuilder: (_, __, ___) => const ColoredBox(
+                                color: Colors.black,
+                                child: Center(
+                                    child: Text('相機未能使用，請手動輸入兌換碼',
+                                        style: TextStyle(color: Colors.white))),
+                              ),
+                              onDetect: (capture) {
+                                final value =
+                                    capture.barcodes.firstOrNull?.rawValue;
+                                if (value != null) {
+                                  final code = Uri.tryParse(value)
+                                          ?.queryParameters['code'] ??
+                                      value;
+                                  _prepare(code);
+                                }
+                              },
                             ),
-                            onDetect: (capture) {
-                              final value =
-                                  capture.barcodes.firstOrNull?.rawValue;
-                              if (value != null) {
-                                final code = Uri.tryParse(value)
-                                        ?.queryParameters['code'] ??
-                                    value;
-                                _prepare(code);
-                              }
-                            },
-                          ),
-                          Center(
-                            child: Image.asset(
-                              'assets/images/ic_scan_frame.png',
-                              width: 260,
-                              errorBuilder: (_, __, ___) => Container(
+                            Center(
+                              child: Image.asset(
+                                'assets/images/ic_scan_frame.png',
                                 width: 260,
-                                height: 260,
-                                decoration: BoxDecoration(
-                                  border: Border.all(
-                                      color: CgColors.primary, width: 3),
-                                  borderRadius: BorderRadius.circular(12),
+                                errorBuilder: (_, __, ___) => Container(
+                                  width: 260,
+                                  height: 260,
+                                  decoration: BoxDecoration(
+                                    border: Border.all(
+                                        color: CgColors.primary, width: 3),
+                                    borderRadius: BorderRadius.circular(12),
+                                  ),
                                 ),
                               ),
                             ),
-                          ),
-                        ],
+                          ],
+                        ),
                       ),
-                    ),
-                    if (_prepared == null) const Padding(
-                      padding: EdgeInsets.all(8),
-                      child: Text('請將 QR 碼放入方框中並進行掃描\n先預核銷確認券面與門店，再按確認核銷'),
-                    ),
+                    if (_prepared == null && _branchChoices.isEmpty)
+                      const Padding(
+                        padding: EdgeInsets.all(8),
+                        child: Text('請將 QR 碼放入方框中並進行掃描\n先預核銷確認券面與門店，再按確認核銷'),
+                      ),
+                    if (_prepared == null && _branchChoices.isNotEmpty)
+                      Padding(
+                        padding: const EdgeInsets.all(16),
+                        child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text('選擇核銷分店',
+                                  style:
+                                      Theme.of(context).textTheme.titleLarge),
+                              const SizedBox(height: 8),
+                              const Text('此券只適用於以下分店，請選擇顧客所在分店。'),
+                              if (_branchError != null)
+                                Text(_branchError!,
+                                    style: TextStyle(
+                                        color: Theme.of(context)
+                                            .colorScheme
+                                            .error)),
+                              for (final branch in _branchChoices)
+                                ListTile(
+                                  title: Text(branch['name'] as String),
+                                  subtitle: branch['address'] is String &&
+                                          (branch['address'] as String)
+                                              .isNotEmpty
+                                      ? Text(branch['address'] as String)
+                                      : null,
+                                  trailing: const Icon(Icons.chevron_right),
+                                  enabled: !_handled,
+                                  onTap: () => _chooseBranch(branch),
+                                ),
+                              TextButton(
+                                  onPressed: _handled ? null : _resetScan,
+                                  child: const Text('取消')),
+                            ]),
+                      ),
                     if (_prepared != null && _prepared!['can_redeem'] == true)
                       Padding(
-                        padding:
-                            const EdgeInsets.symmetric(horizontal: 16),
+                        padding: const EdgeInsets.symmetric(horizontal: 16),
                         child: Card(
                           child: Padding(
                             padding: const EdgeInsets.all(16),
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                Text(
-                                    _prepared!['coupon_name'] as String? ??
-                                        '',
+                                Text(_prepared!['coupon_name'] as String? ?? '',
                                     style: const TextStyle(
                                         fontWeight: FontWeight.bold,
                                         fontSize: 16)),
                                 const SizedBox(height: 8),
-                                _detailRow('門店',
-                                    '${_prepared!['shop_name'] ?? ''}'),
+                                _detailRow(
+                                    '門店', '${_prepared!['shop_name'] ?? ''}'),
+                                if (_selectedBranchName != null)
+                                  _detailRow('核銷分店', _selectedBranchName!),
                                 // Customer phone last-4 / validity come
                                 // from prepare_scan when the backend
                                 // sends them; '—' until then.
@@ -741,26 +866,37 @@ class _ScanScreenState extends State<ScanScreen> {
                                     _prepared!['customer_phone_last4']
                                             as String? ??
                                         '—'),
-                                _detailRow('有效期',
-                                    _dateText(_prepared!['valid_to'] as String?)),
+                                _detailRow(
+                                    '有效期',
+                                    _dateText(
+                                        _prepared!['valid_to'] as String?)),
                                 if (_prepared!['package_quantity'] != null)
-                                  _detailRow('整券核銷', "${_prepared!['package_quantity']} 份"),
+                                  _detailRow('整券核銷',
+                                      "${_prepared!['package_quantity']} 份"),
                                 _detailRow('是否已使用', '未使用'),
                                 const SizedBox(height: 12),
                                 Row(
                                   children: [
                                     Expanded(
                                       child: ElevatedButton(
-                                        onPressed: _handled ? null : _confirmConsume,
+                                        onPressed:
+                                            _handled ? null : _confirmConsume,
                                         child: Text(_handled ? '核銷中…' : '確認核銷'),
                                       ),
                                     ),
                                     const SizedBox(width: 8),
                                     TextButton(
-                                      onPressed: _handled ? null : () => setState(() {
-                                        _prepared = null;
-                                        _pendingCode = null;
-                                      }),
+                                      onPressed: _handled
+                                          ? null
+                                          : () => setState(() {
+                                                _prepared = null;
+                                                _pendingCode = null;
+                                                _branchChoices = [];
+                                                _selectedBranchId = null;
+                                                _selectedBranchName = null;
+                                                _branchError = null;
+                                                _attemptKey = null;
+                                              }),
                                       child: const Text('取消'),
                                     ),
                                   ],
@@ -770,33 +906,40 @@ class _ScanScreenState extends State<ScanScreen> {
                           ),
                         ),
                       ),
-                    if (_prepared == null) Padding(
-                      padding: const EdgeInsets.all(16),
-                      child: Row(
-                        children: [
-                          Expanded(
-                            child: TextField(
-                              controller: _code,
-                              inputFormatters: [FilteringTextInputFormatter.digitsOnly, LengthLimitingTextInputFormatter(6)],
-                              onSubmitted: _prepare,
-                              keyboardType: TextInputType.number,
-                              decoration: const InputDecoration(
-                                  hintText: '或手動輸入兌換碼'),
+                    if (_prepared == null && _branchChoices.isEmpty)
+                      Padding(
+                        padding: const EdgeInsets.all(16),
+                        child: Row(
+                          children: [
+                            Expanded(
+                              child: TextField(
+                                controller: _code,
+                                inputFormatters: [
+                                  FilteringTextInputFormatter.digitsOnly,
+                                  LengthLimitingTextInputFormatter(6)
+                                ],
+                                onSubmitted: _prepare,
+                                keyboardType: TextInputType.number,
+                                decoration:
+                                    const InputDecoration(hintText: '或手動輸入兌換碼'),
+                              ),
                             ),
-                          ),
-                          const SizedBox(width: 8),
-                          ElevatedButton(
-                            style: ElevatedButton.styleFrom(minimumSize: const Size(88, 56)),
-                            onPressed: _handled ? null : () {
-                              if (_code.text.isNotEmpty) {
-                                _prepare(_code.text);
-                              }
-                            },
-                            child: const Text('預核銷'),
-                          ),
-                        ],
+                            const SizedBox(width: 8),
+                            ElevatedButton(
+                              style: ElevatedButton.styleFrom(
+                                  minimumSize: const Size(88, 56)),
+                              onPressed: _handled
+                                  ? null
+                                  : () {
+                                      if (_code.text.isNotEmpty) {
+                                        _prepare(_code.text);
+                                      }
+                                    },
+                              child: const Text('預核銷'),
+                            ),
+                          ],
+                        ),
                       ),
-                    ),
                   ],
                 ),
     );
@@ -833,8 +976,7 @@ class _RedemptionRecordsScreenState extends State<RedemptionRecordsScreen> {
       _error = null;
     });
     try {
-      final records =
-          await widget.api.vendorRedemptions(from: _from, to: _to);
+      final records = await widget.api.vendorRedemptions(from: _from, to: _to);
       if (!mounted) return;
       setState(() {
         _records = records;
@@ -862,7 +1004,9 @@ class _RedemptionRecordsScreenState extends State<RedemptionRecordsScreen> {
       await widget.api.revokeRedemption(id);
       if (mounted) await _load();
     } catch (e) {
-      if (mounted) showCgToast(context, e is ApiException ? e.message : '未能確認撤銷結果，請重試');
+      if (mounted) {
+        showCgToast(context, e is ApiException ? e.message : '未能確認撤銷結果，請重試');
+      }
     } finally {
       if (mounted) setState(() => _revokingId = null);
     }
@@ -911,8 +1055,7 @@ class _RedemptionRecordsScreenState extends State<RedemptionRecordsScreen> {
               child: const Text('複製全部'),
             ),
             TextButton(
-                onPressed: () => Navigator.pop(c),
-                child: const Text('關閉')),
+                onPressed: () => Navigator.pop(c), child: const Text('關閉')),
           ],
         ),
       );
@@ -1017,25 +1160,30 @@ class _RedemptionRecordsScreenState extends State<RedemptionRecordsScreen> {
                               itemBuilder: (_, i) {
                                 final r = _records[i];
                                 final revoked = r['revoked'] == true;
-                                final deadline = DateTime.tryParse(r['revoke_until'] as String? ?? '');
-                                final canRevoke = !revoked && deadline != null && deadline.isAfter(DateTime.now());
+                                final deadline = DateTime.tryParse(
+                                    r['revoke_until'] as String? ?? '');
+                                final canRevoke = !revoked &&
+                                    deadline != null &&
+                                    deadline.isAfter(DateTime.now());
                                 return Card(
-                                  margin: const EdgeInsets.fromLTRB(
-                                      12, 8, 12, 0),
+                                  margin:
+                                      const EdgeInsets.fromLTRB(12, 8, 12, 0),
                                   child: ListTile(
-                                    title: Text(
-                                        '${r['coupon_name'] ?? ''}'),
+                                    title: Text('${r['coupon_name'] ?? ''}'),
                                     subtitle: Text(
                                         '${r['shop_name'] ?? ''} · ${r['scanned_at'] ?? ''}'),
-                                    trailing: canRevoke ? TextButton(
-                                      onPressed: _revokingId == null ? () => _revokeRecord(r) : null,
-                                      child: const Text('撤銷核銷'),
-                                    ) : Text(
-                                        revoked ? '已撤銷' : '已核銷',
-                                        style: TextStyle(
-                                            color: revoked
-                                                ? CgColors.textSecondary
-                                                : CgColors.success)),
+                                    trailing: canRevoke
+                                        ? TextButton(
+                                            onPressed: _revokingId == null
+                                                ? () => _revokeRecord(r)
+                                                : null,
+                                            child: const Text('撤銷核銷'),
+                                          )
+                                        : Text(revoked ? '已撤銷' : '已核銷',
+                                            style: TextStyle(
+                                                color: revoked
+                                                    ? CgColors.textSecondary
+                                                    : CgColors.success)),
                                   ),
                                 );
                               },

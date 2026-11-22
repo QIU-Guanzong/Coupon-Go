@@ -432,8 +432,12 @@ class ApiClient extends ChangeNotifier {
       get('/shops/$shopId/map');
 
   // ---- line A: redemption hardening ----
-  Future<Map<String, dynamic>> prepareScan(String code) async =>
-      post('/new-scan-coupon/prepare', body: {'code': code});
+  Future<Map<String, dynamic>> prepareScan(String code,
+          {int? branchId}) async =>
+      post('/new-scan-coupon/prepare', body: {
+        'code': code,
+        if (branchId != null) 'branch_id': branchId,
+      });
   Future<Map<String, dynamic>> revokeRedemption(int redemptionId) async =>
       post('/redemptions/$redemptionId/revoke',
           query: {'acknowledge_existing': 'true'});
@@ -549,9 +553,12 @@ class ApiClient extends ChangeNotifier {
   Future<Map<String, dynamic>> usageData() async =>
       get('/get-vendor-usage-data-new');
   Future<Map<String, dynamic>> scanCoupon(String code,
-          {String? idempotencyKey, String? prepareToken}) async =>
+          {String? idempotencyKey,
+          String? prepareToken,
+          int? branchId}) async =>
       post('/new-scan-coupon', body: {
         'code': code,
+        if (branchId != null) 'branch_id': branchId,
         if (idempotencyKey != null) 'idempotency_key': idempotencyKey,
         if (prepareToken != null) 'prepare_token': prepareToken,
       });
