@@ -257,11 +257,14 @@ FIX-2 已刪除 `POST /cashback/record`：返現只能由核銷成功後服務�
 **提現戶名（P1-4）**：收款賬戶姓名須與註冊姓名（`User.name`）一致；
 未填註冊姓名時拒絕提現，不再跳過校驗。
 
-## 還沒做的事
+## 原始待辦記錄（2026-11-16）
 
-- Flutter 真機編譯與 `flutter analyze`（本機無 Flutter SDK，未驗證；線 A
-  新增的 `url_launcher` / `geolocator` 依賴未跑過 `flutter pub get`，須在
-  有 SDK 的機器上驗證；含線 C 新增的套餐購買頁/訂單頁；管理端頁面只做了括號平衡粗查）
+以下為當時的工作記錄，不代表目前各功能的狀態。2026-11-22 已在
+Flutter 3.35.7 工作面成功執行 `flutter pub get`、`flutter analyze --no-pub`
+及 Web release 構建；實體手機和相機掃碼仍需另外驗證。
+
+- Flutter 真機編譯與分析：當時沒有本機 Flutter SDK；現在的 Web 構建與
+  分析結果見上方說明。
 - Google Maps 實景瓦片地圖視圖（線 A 目前是位置示意 marker 圖；接
   `google_maps_flutter` 需原生 API Key 配置 + 真機驗證）
 - 出示頁原生防截屏（Android FLAG_SECURE / iOS 截屏遮罩；線 A 目前是動態
