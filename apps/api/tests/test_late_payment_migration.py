@@ -17,7 +17,7 @@ def test_legacy_database_gains_compensation_table_and_keeps_records(tmp_path):
     with sqlite3.connect(path) as db:
         db.execute('DROP TABLE IF EXISTS late_payment_refunds')
         db.execute("INSERT INTO users (email,password_hash,role) VALUES ('legacy@example.invalid','none','customer')")
-    result = alembic('upgrade', 'head')
+    result = alembic('upgrade', '0022_late_payment_refunds')
     assert result.returncode == 0, result.stderr
     with sqlite3.connect(path) as db:
         assert db.execute('SELECT version_num FROM alembic_version').fetchone()[0] == '0022_late_payment_refunds'
