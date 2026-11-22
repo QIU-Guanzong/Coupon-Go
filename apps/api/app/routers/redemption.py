@@ -23,14 +23,14 @@ This module adds:
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from fastapi.responses import PlainTextResponse
 from sqlalchemy.orm import Session
 
-from .. import config, models, prepare_token
+from .. import config, errors, models, points, prepare_token
 from ..cashback_service import lock_account, void_for_revocation
 from ..settlement_ledger import reverse_sale
 from ..database import get_db
-from ..deps import add_points, require_role
+from ..deps import require_role
+from ..shared import csv_response, vendor_shop_ids
 from .coupons import _refresh_expiry, ensure_paid_voucher, ensure_redeemable, presented_item
 from .reviews import hide_reviews_for_revoked_redemption
 
@@ -39,13 +39,7 @@ router = APIRouter()
 REVOKE_WINDOW = timedelta(minutes=config.REVOKE_WINDOW_MINUTES)
 
 
-def _now():
-    return datetime.now(timezone.utc).replace(tzinfo=None)
-
-
-def _vendor_shop_ids(db: Session, vendor: models.User):
-    return [s.id for s in db.query(models.Shop).filter(
-        models.Shop.vendor_id == vendor.id).all()]
+from ..timeutil import utcnow as _now
 
 
 def _check_item(db: Session, item: models.WalletItem, vendor: models.User):
@@ -59,7 +53,7 @@ def _check_item(db: Session, item: models.WalletItem, vendor: models.User):
         return coupon, "此優惠券已失效"
     if item.qr_expires_at and item.qr_expires_at < _now():
         return coupon, "QR 碼已過期，請重新出示"
-    if coupon is None or coupon.shop_id not in _vendor_shop_ids(db, vendor):
+    if coupon is None or coupon.shop_id not in vendor_shop_ids(db, vendor):
         return coupon, "無效的 QR 碼！此碼屬於其他商店。"
     try:
         ensure_paid_voucher(db, item)
@@ -133,17 +127,17 @@ def revoke_redemption(redemption_id: int, acknowledge_existing: bool = False,
         models.Redemption.id == redemption_id)
         .with_for_update(key_share=True).populate_existing().first())
     if red is None:
-        raise HTTPException(status_code=404, detail="找不到此核銷記錄")
-    if vendor.role != "admin" and red.shop_id not in _vendor_shop_ids(db, vendor):
-        raise HTTPException(403, "沒有權限")
+        raise errors.redemption_not_found()
+    if vendor.role != "admin" and red.shop_id not in vendor_shop_ids(db, vendor):
+        raise errors.forbidden()
     now = _now()
     if red.revoked_at is not None:
         if acknowledge_existing:
             return {"message": "此筆核銷已撤銷", "redemption_id": red.id,
                     "wallet_item_id": red.wallet_item_id, "revoked_at": red.revoked_at}
-        raise HTTPException(400, "此核銷已被撤销")
+        raise errors.redemption_already_revoked()
     if now - red.scanned_at > REVOKE_WINDOW:
-        raise HTTPException(400, f"已超過 {config.REVOKE_WINDOW_MINUTES} 分鐘撤销窗口，請聯絡客服處理")
+        raise errors.revoke_window_expired(config.REVOKE_WINDOW_MINUTES)
 
     # The conditional write also serializes duplicate requests on SQLite.
     marked = db.query(models.Redemption).filter_by(id=red.id, revoked_at=None).update(
@@ -153,7 +147,7 @@ def revoke_redemption(redemption_id: int, acknowledge_existing: bool = False,
             db.refresh(red)
             return {"message": "此筆核銷已撤銷", "redemption_id": red.id,
                     "wallet_item_id": red.wallet_item_id, "revoked_at": red.revoked_at}
-        raise HTTPException(400, "此核銷已被撤销")
+        raise errors.redemption_already_revoked()
     item = db.query(models.WalletItem).filter_by(id=red.wallet_item_id).with_for_update().one()
     lock_account(db, item.user_id)
     item.status = 3 if item.coupon.valid_to <= now else 1
@@ -164,11 +158,8 @@ def revoke_redemption(redemption_id: int, acknowledge_existing: bool = False,
                                    models.Coupon.used_count > 0).update(
         {models.Coupon.used_count: models.Coupon.used_count - 1}, synchronize_session=False)
     # Refund the actual ledger award even if the points policy changed since the scan.
-    award = db.query(models.PointTransaction).filter_by(
-        user_id=item.user_id, reason="redeem", ref_id=item.id
-    ).order_by(models.PointTransaction.id.desc()).first()
-    if award is not None:
-        add_points(db, item.user_id, -award.delta, "revoke", ref_id=red.id)
+    points.clawback_points(db, item.user_id, "redeem", item.id,
+                           revoke_reason="revoke", revoke_ref_id=red.id)
     # P1-1: void this redemption's own cashback earning and roll back
     # the dine-in unlocks it triggered; already-withdrawn money is
     # recorded as a negative adjustment (never a negative transaction).
@@ -190,13 +181,44 @@ def revoke_redemption(redemption_id: int, acknowledge_existing: bool = False,
 
 @router.get("/vendor/redemptions/export")
 def export_redemptions(format: str = Query("json", pattern="^(json|csv)$"),
+                       from_: str | None = Query(None, alias="from"),
+                       to: str | None = Query(None),
+                       coupon_id: int | None = Query(None),
+                       revoked: bool | None = Query(None),
                        vendor: models.User = Depends(
                            require_role("vendor", "admin")),
                        db: Session = Depends(get_db)):
-    shop_ids = None if vendor.role == "admin" else _vendor_shop_ids(db, vendor)
+    """Redemption export (GAP §4.5 filters, §5.9 shared CSV writer).
+
+    ``from`` / ``to`` are ``YYYY-MM-DD`` on ``scanned_at``, inclusive
+    on both ends; ``coupon_id`` narrows to one coupon; ``revoked``
+    to revoked / not-revoked only. JSON shape is unchanged; CSV uses
+    the one shared writer (``shared.csv_response``) with the same
+    column order as before — quoting is now correct for names that
+    contain commas.
+    """
+    try:
+        from_date = (datetime.strptime(from_, "%Y-%m-%d")
+                     if from_ else None)
+        to_date = (datetime.strptime(to, "%Y-%m-%d")
+                   if to else None)
+    except ValueError:
+        raise errors.bad_request("日期格式不正確，請用 YYYY-MM-DD")
+    shop_ids = None if vendor.role == "admin" else vendor_shop_ids(db, vendor)
     q = db.query(models.Redemption)
     if shop_ids is not None:
         q = q.filter(models.Redemption.shop_id.in_(shop_ids)) if shop_ids else q.filter(False)
+    if from_date is not None:
+        q = q.filter(models.Redemption.scanned_at >= from_date)
+    if to_date is not None:
+        q = q.filter(models.Redemption.scanned_at
+                     < to_date + timedelta(days=1))
+    if coupon_id is not None:
+        q = q.filter(models.Redemption.coupon_id == coupon_id)
+    if revoked is True:
+        q = q.filter(models.Redemption.revoked_at.is_not(None))
+    elif revoked is False:
+        q = q.filter(models.Redemption.revoked_at.is_(None))
     reds = q.order_by(models.Redemption.scanned_at.desc()).all()
     records = []
     for r in reds:
@@ -220,16 +242,12 @@ def export_redemptions(format: str = Query("json", pattern="^(json|csv)$"),
     for rec in records:
         by_shop[rec["shop_name"]] = by_shop.get(rec["shop_name"], 0) + 1
     if format == "csv":
-        lines = ["redemption_id,wallet_item_id,coupon_name,shop_name,"
-                 "scanned_at,revoked,revoked_at,idempotency_key"]
-        for rec in records:
-            lines.append(",".join(str(rec[k] if rec[k] is not None else "")
-                                  for k in ("redemption_id", "wallet_item_id",
-                                            "coupon_name", "shop_name",
-                                            "scanned_at", "revoked",
-                                            "revoked_at", "idempotency_key")))
-        return PlainTextResponse("\n".join(lines),
-                                 media_type="text/csv; charset=utf-8")
+        columns = ("redemption_id", "wallet_item_id", "coupon_name",
+                   "shop_name", "scanned_at", "revoked", "revoked_at",
+                   "idempotency_key")
+        rows = [[str(rec[k] if rec[k] is not None else "")
+                 for k in columns] for rec in records]
+        return csv_response("redemptions.csv", list(columns), rows)
     return {"total": len(records),
             "revoked_count": sum(1 for r in records if r["revoked"]),
             "by_shop": by_shop,

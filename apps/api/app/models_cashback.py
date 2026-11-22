@@ -24,8 +24,7 @@ from sqlalchemy import Column, DateTime, ForeignKey, Integer, Numeric, String, T
 from .database import Base
 
 
-def _now():
-    return datetime.now(timezone.utc).replace(tzinfo=None)
+from .timeutil import utcnow as _now
 
 
 # D-extension: "withdrawn" is a terminal state the report's enum does not
@@ -71,7 +70,7 @@ class CashbackTransaction(Base):
     confirmed_at = Column(DateTime, nullable=True)
     withdrawn_amount = Column(Numeric(10, 2), default=Decimal("0"), nullable=False)
     withdrawal_id = Column(Integer, ForeignKey("cashback_withdrawals.id"), nullable=True)
-    void_reason = Column(String(30), nullable=True)          # cancelled | returned | expired_90d | revoked
+    void_reason = Column(String(30), nullable=True)          # cancelled | returned | expired_90d | revoked | account_delete
     # P1-1: which redemption unlocked this earning (dine-in next-visit
     # unlock, set in record_spend). Lets a later revoke of THAT
     # redemption roll the unlock back precisely, without touching

@@ -261,8 +261,8 @@ class _QBotScreenState extends State<QBotScreen> {
                       'Answered by DeepSeek AI. Answers may be inaccurate; check offer details. Do not enter personal information or redemption codes.'),
                   style: Theme.of(context).textTheme.bodySmall),
               if (const bool.fromEnvironment('PUBLIC_DEMO'))
-                Text(t('毋須登入，即可向 Q仔查詢優惠。',
-                    'Ask Q仔 about offers without signing in.'),
+                Text(t('以下商戶及優惠為範例資料，僅供瀏覽。',
+                    'The shops and offers below are sample data for browsing only.'),
                     style: Theme.of(context).textTheme.bodySmall),
               if (_messages.isEmpty) ...[
                 const SizedBox(height: 12),

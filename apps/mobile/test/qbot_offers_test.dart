@@ -218,14 +218,13 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
     if (const bool.fromEnvironment('PUBLIC_DEMO')) {
-      expect(find.textContaining('use Q仔 without signing in'), findsOneWidget);
+      expect(find.text('The shops and offers below are sample data for browsing only.'), findsOneWidget);
     }
     await tester.tap(find.text('Q仔'));
     await tester.pumpAndSettle();
     expect(find.byType(QBotScreen), findsOneWidget);
     if (const bool.fromEnvironment('PUBLIC_DEMO')) {
-      expect(find.text('Ask Q仔 about offers without signing in.'), findsOneWidget);
-      expect(find.textContaining('Shops and offers are examples.'), findsNothing);
+      expect(find.text('The shops and offers below are sample data for browsing only.'), findsOneWidget);
     }
     await tester.enterText(find.byType(TextField), 'What can I browse?');
     await tester.tap(find.byTooltip('Send'));

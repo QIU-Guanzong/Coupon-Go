@@ -1,6 +1,6 @@
 # 上架（Dianping listing，GAP §3）API
 
-- 基線：遠端 main `3f2d8bc`；分支 `dianping/listing`；遷移 `0021_dianping_listing`
+- 基線：遠端 main `3f2d8bc`；分支 `dianping/listing`；遷移 `0023_dianping_listing`
  （`down_revision = 0020_m92_legal_consents`，見末節「遷移與合入順序」）。
 - 範圍：`GAP_ANALYSIS_20261121.md` §3.2–§3.6。§3.1（普通券售價與購買流程）
   不在本片：購買流程是 P1-A 的活；本片只把售價字段的口徑建好（見「與 P1-A 的銜接點」），免費券行為不變。
@@ -231,7 +231,7 @@ draft ──submit──▶ pending_review ──approve──▶ active ⇄ pau
 
 ## 7. 字段變更（先記於此，`docs/API.md` 商戶版 / 套餐兩節同步更新）
 
-### 券（`Coupon`，遷移 `0021_dianping_listing`）
+### 券（`Coupon`，遷移 `0023_dianping_listing`）
 
 | 欄位 | 類型 | 說明 |
 |---|---|---|
@@ -300,7 +300,7 @@ draft ──submit──▶ pending_review ──approve──▶ active ⇄ pau
   的結算口徑——全部是 P1-A 的範圍，本片的付費券在 P1-A 合入前建好後
   無法被購買（建好、審批、上架都正常，領券會被攔截）。
 - **合入順序**：P1-A 遷移 `0021_p1a_paid_coupons` 與本片遷移
-  `0021_dianping_listing` 都是 `down_revision = 0020`、都加
+  `0023_dianping_listing` 都是 `down_revision = 0020`、都加
   `coupons.sale_price`（P1-A 還加 `orders.coupon_id` 與
   `ck_coupons_remaining_nonneg`）。兩邊的 `upgrade()` 都是冪等的
   （列 / 約束已存在就跳過），所以**先合入哪一片，另一片都不會在建表時
@@ -310,7 +310,7 @@ draft ──submit──▶ pending_review ──approve──▶ active ⇄ pau
 
 ## 11. 遷移與合入順序
 
-- 本片唯一遷移：`0021_dianping_listing`，`down_revision =
+- 本片唯一遷移：`0023_dianping_listing`，`down_revision =
   0020_m92_legal_consents`（核實時遠端 main 最大遷移號即 `0020`）。
   內容：`coupons.sale_price`、`coupons.per_user_limit`（舊行回填 1）、
   `ck_coupons_remaining_nonneg`（`remaining >= 0`，負值舊行先清零）。

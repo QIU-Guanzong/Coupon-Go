@@ -1,6 +1,7 @@
 """M1: background scheduler — expired refunds / bargain settlement /
-payment-timeout close / cashback sweep must run on their own, not
-only when an admin (or a user opening a page) happens to trigger them.
+payment-timeout close / cashback sweep / coupon-expiry reminders must
+run on their own, not only when an admin (or a user opening a page)
+happens to trigger them.
 
 Design
 ------
@@ -53,7 +54,7 @@ from .models_scheduler import SchedulerLock  # noqa: F401  (register table)
 logger = logging.getLogger(__name__)
 
 JOB_NAMES = ("expired-packages", "bargain-expire", "payment-timeouts",
-             "cashback-sweep", "listing-schedule")
+             "cashback-sweep", "coupon-expiry", "listing-schedule")
 
 # Fixed Postgres advisory-lock keys, one per job (arbitrary but stable;
 # changing them orphans nothing — advisory locks die with the session).
@@ -62,12 +63,15 @@ ADVISORY_LOCK_KEYS = {
     "bargain-expire": 2026111702,
     "payment-timeouts": 2026111703,
     "cashback-sweep": 2026111704,
-    "listing-schedule": 2026111705,
+    # 2026111705 is claimed by TWO unmerged blocks (stats
+    # monthly-settlements AND listing listing-schedule); this job
+    # takes the next free key instead of joining the collision.
+    "coupon-expiry": 2026111706,
+    "listing-schedule": 2026111707,
 }
 
 
-def _now():
-    return datetime.now(timezone.utc).replace(tzinfo=None)
+from .timeutil import utcnow as _now
 
 
 def _owner():
@@ -226,10 +230,16 @@ def run_cashback_sweep(db, batch_size=None):
 
 
 def run_listing_schedule(db):
-    """§3.3: scheduled coupons / packages whose valid_from arrived go
-    live; past valid_to expires; exhausted stock sells out."""
+    """Activate scheduled listings and expire or sell out old listings."""
     from . import listing
     return _run_job(db, "listing-schedule", listing.sweep_listing_schedule)
+
+
+def run_coupon_expiry(db):
+    """Coupons expiring within 3 days -> reminder; already-expired
+    unredeemed items -> expired (GAP §5.6)."""
+    from .routers import coupons as cp
+    return _run_job(db, "coupon-expiry", cp.sweep_coupon_expiry)
 
 
 JOB_RUNNERS = {
@@ -237,6 +247,7 @@ JOB_RUNNERS = {
     "bargain-expire": run_bargain_expire,
     "payment-timeouts": run_payment_timeouts,
     "cashback-sweep": run_cashback_sweep,
+    "coupon-expiry": run_coupon_expiry,
     "listing-schedule": run_listing_schedule,
 }
 
@@ -247,7 +258,7 @@ def run_all_jobs(session_factory=None, batch_size=None):
     factory = session_factory or SessionLocal
     results = {}
     for name in ("expired-packages", "bargain-expire", "payment-timeouts",
-                 "listing-schedule"):
+                 "coupon-expiry", "listing-schedule"):
         db = factory()
         try:
             results[name] = JOB_RUNNERS[name](db)
@@ -295,6 +306,10 @@ def create_scheduler(session_factory=None, interval_seconds=None):
                   trigger=IntervalTrigger(seconds=interval),
                   id="cashback-sweep", max_instances=1, coalesce=True,
                   misfire_grace_time=60)
+    sched.add_job(lambda: _one(run_coupon_expiry),
+                  trigger=IntervalTrigger(seconds=interval),
+                  id="coupon-expiry", max_instances=1, coalesce=True,
+                  misfire_grace_time=60)
     sched.add_job(lambda: _one(run_listing_schedule),
                   trigger=IntervalTrigger(seconds=interval),
                   id="listing-schedule", max_instances=1, coalesce=True,
@@ -312,9 +327,9 @@ def validate_scheduler_config():
         logger.warning(
             "Scheduler disabled: %s. Expired-package refunds, bargain "
             "settlement, payment-timeout close, cashback sweep and "
-            "scheduled-listing activation will NOT run automatically; "
-            "only the admin manual endpoints can backfill them.",
-            status["reason"])
+            "coupon-expiry reminders will "
+            "NOT run automatically; only the admin manual endpoints "
+            "can backfill them.", status["reason"])
     else:
         logger.info("Scheduler config: %s", status["reason"])
     return status
@@ -339,7 +354,7 @@ def main(argv=None):
         prog="app.scheduler",
         description="M1 background jobs: expired refunds, bargain "
                     "settlement, payment-timeout close, cashback sweep, "
-                    "scheduled-listing activation "
+                    "coupon-expiry reminders "
                     "(same logic as the admin manual endpoints).")
     sub = parser.add_subparsers(dest="command", required=True)
     p_once = sub.add_parser(

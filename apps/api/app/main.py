@@ -9,10 +9,12 @@ import os
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import config
 from .database import init_db
+from .errors import ApiError
 from .routers import (admin, admin_v2, auth, bargain, cashback, coupons,
                       home, nearby, notifications, packages, qbot, redemption,
                       reviews, search, uploads, vendor, wallet)
@@ -21,6 +23,15 @@ from .scheduler import start_scheduler, validate_scheduler_config  # noqa: F401 
 from . import models_cashback  # noqa: F401  (Line D: register cashback tables)
 
 app = FastAPI(title="Coupon GO! API", version="0.1.0-dev")
+
+
+@app.exception_handler(ApiError)
+async def api_error_handler(request, exc: ApiError):
+    """Stable error codes (dianping unify): the body is FastAPI's
+    ``{"detail": message}`` plus one field, ``code`` — old clients
+    matching on ``detail`` or status see no change."""
+    return JSONResponse(status_code=exc.status_code,
+                        content={"detail": exc.detail, "code": exc.code})
 
 app.add_middleware(
     CORSMiddleware,

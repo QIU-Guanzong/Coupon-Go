@@ -46,18 +46,17 @@ from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from .. import config, models, schemas_line_b
+from .. import config, models, points, schemas_line_b
 from ..database import get_db
-from ..deps import (add_points, get_current_user, get_optional_user,
+from ..deps import (get_current_user, get_optional_user,
                     points_balance, require_role)
+from ..shared import paginate
 from ..models_line_b import Review, ReviewHelpfulVote, ShopRating
 
 router = APIRouter()
 
 
-def _now():
-    from datetime import datetime, timezone
-    return datetime.now(timezone.utc).replace(tzinfo=None)
+from ..timeutil import utcnow as _now
 
 
 def _helpful_counts(db: Session, review_ids) -> dict:
@@ -172,16 +171,11 @@ def hide_reviews_for_revoked_redemption(db: Session, red) -> dict | None:
     # Hidden and disputed reviews can also have an outstanding reward.
     clawed = 0
     if review is None or review.points_given:
-        award = db.query(models.PointTransaction).filter(
-            models.PointTransaction.user_id == item.user_id,
-            models.PointTransaction.ref_id == item.id,
-            models.PointTransaction.reason == "review",
-            models.PointTransaction.created_at >= red.scanned_at
-        ).order_by(models.PointTransaction.id.desc()).first()
-        if award is not None:
-            clawed = award.delta
-            add_points(db, item.user_id, -clawed, "review_revoke",
-                       ref_id=review.id if review else red.id)
+        clawed = points.clawback_points(
+            db, item.user_id, "review", item.id,
+            revoke_reason="review_revoke",
+            revoke_ref_id=review.id if review else red.id,
+            created_after=red.scanned_at)
     item.reviewed = False
     if review is not None:
         review.status = "hidden"
@@ -256,7 +250,7 @@ def create_review(body: schemas_line_b.ReviewCreateIn,
     db.add(review)
     try:
         if points_given:
-            add_points(db, user.id, config.POINTS_REVIEW, "review", ref_id=item.id)
+            points.award_review_points(db, user.id, item.id)
         db.flush()
     except IntegrityError:
         # M4: the app-layer duplicate check above can lose a race — two
@@ -276,6 +270,7 @@ def create_review(body: schemas_line_b.ReviewCreateIn,
 
 @router.get("/shops/{shop_id}/reviews")
 def list_shop_reviews(shop_id: int, page: int = Query(1, ge=1),
+                      page_size: int = Query(20, ge=1, le=100),
                       has_images: bool = Query(False),
                       sort: str = Query("latest"),
                       db: Session = Depends(get_db),
@@ -300,15 +295,13 @@ def list_shop_reviews(shop_id: int, page: int = Query(1, ge=1),
     all_reviews = q.all()
     if has_images:
         all_reviews = [r for r in all_reviews if r.images_list]
-    per_page = 20
-    total = len(all_reviews)
-    page_items = all_reviews[(page - 1) * per_page: page * per_page]
+    out = paginate(all_reviews, page, page_size)
+    page_items = out["items"]
     ids = [r.id for r in page_items]
     counts = _helpful_counts(db, ids)
     helped = _helped_ids(db, ids, user.id if user else None)
-    return {"shop_id": shop_id, "current_page": page,
-            "total_pages": max(1, (total + per_page - 1) // per_page),
-            "total": total,
+    return {"shop_id": shop_id, "current_page": out["current_page"],
+            "total_pages": out["total_pages"], "total": out["total"],
             "rating_distribution": _rating_distribution(db, shop_id),
             "reviews": [review_out(db, r, counts, helped) for r in page_items]}
 

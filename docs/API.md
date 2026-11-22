@@ -22,15 +22,23 @@ Endpoint 名稱沿用 Coupon GO! 1.2.6 APK 逆向出的原始名稱（含原始�
 | POST | `/password/reset` | OTP + 新密碼重設 |
 | GET | `/get-profile` | 個人資料 |
 | POST | `/update-customer-profile` | 更新資料 |
-| POST | `/delete-account` | 刪除帳戶（填原因，停用帳戶） |
+| POST | `/delete-account` | 停用並匿名化帳戶：變更電郵為隨機佔位、清空姓名電話、作廢密碼和舊 OTP、清除搜索與收藏；未使用券和 QR 作廢、積分清零並保留記帳，詳見 [刪號保留範圍](M97_ACCOUNT_DELETION_SCOPE.md)。待確認／追蹤中返現以 `account_delete` 作廢並保留帳本；可提現返現、處理中提現／商戶申請、未付款／退款中訂單、未用付費券、營運店舖或未結算商戶款項會回帶下一步及 `code` 的 409；管理員須先轉移及解除權限；金融與審計行仍保留。 |
 | GET | `/_dev/otp` | **僅 dev**：讀取最新未用 OTP（手動測試用） |
+
+### 安全基線（階段 0）
+
+- 令牌：HS256 JWT（PyJWT）；舊令牌格式不變，仍可解碼。過期、篡改、`alg=none` 一律拒絕。
+- 密碼：最少 8 位，拒絕常見弱密碼（註冊、重設、驗證時改密碼三處都校驗）。
+- 驗證碼：`secrets` 生成；同一郵箱+用途錯 5 次，該驗證碼作廢並鎖 15 分鐘（期間驗證、重發都回 429）。
+- 限流（按郵箱+IP，Redis 計數，Redis 不可用時走本機計數）：登錄連續失敗 10 次鎖 15 分鐘；`/new-resent-otp`、`/password/forgot` 各 15 分鐘內最多 5 次；超限回 429（`Retry-After`）。
+- 依賴：`apps/api/requirements.lock` 為鎖定版本，Dockerfile 按它安裝。
 
 ## 首頁 / 發現（部分遊客可調）
 
 | 方法 | 路徑 | 說明 |
 |---|---|---|
 | GET | `/home` | 七分區：popular/week/most-grab/recommended/limited/常用/新加入商户 |
-| GET | `/app-config` | [公開顯示規則](M9_APP_CONFIG_API.md)（遊客可調） |
+| GET | `/app-config` | [公開顯示規則](M9_APP_CONFIG_API.md)（遊客可調）；另含 `cashback_enabled`（M10 返現開關）、`points_exchange_cost`（=9）、`open_login`（預設 false，僅作展示） |
 | GET | `/advertisement-banners` | 廣告橫幅（遊客可調） |
 | GET | `/get-classification-coupons` | 分類券（`category_id`、`area` 篩選） |
 | GET | `/get-limited-time-coupons` | 限時搶購 |
@@ -145,7 +153,7 @@ reviewed_by, reviewed_at, created_at}`。
 |---|---|---|
 | GET | `/cashback` | 返現餘額（可提現/待確認/待追蹤）+ 明細（按狀態分組）+ 負向調整（`adjustments`，`adjustment_total` 計入可提現餘額，可為負） |
 | GET | `/cashback/transactions?status=&limit=` | 返現流水（含預計確認時間、90 天解鎖期限） |
-| POST | `/cashback/withdraw` | 申請提現 `{amount, method: fps\|bank, account_name, account_ref?}`；門檻 HK$50，每日上限 HK$1,500，賬戶名須與註冊名一致；未填註冊姓名時拒絕提現 |
+| POST | `/cashback/withdraw` | 申請提現 `{amount, method: fps\|bank, account_name, account_ref?}`；門檻 HK$50，每日上限 HK$1,500，賬戶名須與註冊名一致；未填註冊姓名時拒絕提現；M10：開關關閉時返回 403（新提現被攔，餘額查詢 / 流水 / 後台審核 / void / 申訴不受影響） |
 | GET | `/cashback/withdrawals` | 提現記錄（v1 狀態 `pending`，待人工打款，無真實 FPS 打款集成） |
 | POST | `/cashback/transactions/{id}/void` | 取消/退貨作廢 `{reason: cancelled\|returned}`（僅待確認可作廢） |
 | POST | `/cashback/missing` | Missing Cashback 申訴 `{merchant_id, order_no, spent_at, amount, evidence?, note?}`；消費後 30 天內提交 |
@@ -448,6 +456,27 @@ UUID，不用客戶端檔名，無路徑穿越風險。上傳時已無損剝離 
   向用戶展示。
 - 用戶可見文案統一：網絡問題「網絡不穩定，請重試」；支付失敗
   「支付失敗，請稍後重試」（服務端 `detail` 優先於通用文案）。
+
+### 統一功能（dianping/unify，對照 `docs/DIANPING_UNIFY_API.md`）
+
+- 錯誤包絡在 `{"detail": "<中文文案>"}` 之上只加一個字段 `code`
+  （穩定英文碼，如 `coupon_not_found`、`points_insufficient`），
+  完整對照表見 `app/errors.py` 與 `DIANPING_UNIFY_API.md` §2；
+  老客戶端按 `detail` / 狀態碼匹配不受影響。尚未全量遷移：
+  套餐購買 / 退款與砍價仍用 plain `HTTPException`，文案不變。
+- 分頁查詢參數一律 `page`（默認 1）+ `page_size`（默認 20，
+  1–100）；響應包絡一律
+  `{"current_page", "total_pages", "total", <資源名>}`。
+- 金額一律 HK$，JSON number（非字符串），2 位小數 HALF_UP；
+  套餐 / 價格券的結算口徑仍是 `settlement_basis()`（實付金額），
+  與 `FEATURE_GAP` §3 已定決策一致。
+- 導出：`GET /admin/settlements?format=csv`、
+  `GET /admin/orders?format=csv`、`GET /vendor/redemptions/export`
+  新增 `from` / `to` / `coupon_id` / `revoked` 篩選；
+  `GET /admin/audit-logs` 新增 `admin_id` / `action` / `target_type`
+  篩選。積分兌換的券現在 `source="exchange"`（以前誤記為 `claim`）。
+- 調度器新增 `coupon-expiry` 任務（到期前 3 天提醒、過期自動失效），
+  手動補跑 `POST /admin/coupon-expiry-sweep`（僅 admin）。
 
 ### 枚舉總表
 
@@ -760,7 +789,7 @@ M3 字段變更：`GET /bargain-sessions/{id}`、
 |---|---|---|
 | GET | `/cashback` | 返現餘額（可提現 / 待確認 / 待追蹤）+ 明細 + 門檻 / 每日上限 + 負向調整 |
 | GET | `/cashback/transactions?status=&limit=` | 返現流水（含預計確認時間、90 天解鎖期限） |
-| POST | `/cashback/withdraw` | 申請提現 `{amount, method: fps\|bank, account_name, account_ref?}` |
+| POST | `/cashback/withdraw` | 申請提現 `{amount, method: fps\|bank, account_name, account_ref?}`；M10：開關關閉時返回 403 |
 | GET | `/cashback/withdrawals` | 提現記錄（`failure_reason` 見下） |
 | POST | `/cashback/transactions/{id}/void` | 取消 / 退貨作廢 `{reason: cancelled\|returned}`（僅待確認可作廢） |
 | GET | `/cashback/missing` | 申訴列表（Gap 3 已補） |
@@ -768,6 +797,15 @@ M3 字段變更：`GET /bargain-sessions/{id}`、
 
 `GET /cashback` 響應字段：`withdrawable_balance`（可提現，HK$，
 可為負）/ `pending_balance`（待確認）/ `tracked_balance`（待追蹤）/
+
+### M10 返現總開關（`CASHBACK_ENABLED`，預設 false）
+
+前端 §3.2 已隱藏返現入口；後端預設也不再記返現，避免看不見的
+HK$ 負債累積。關閉時：核銷跳過 `record_spend`（不產生新返現，
+同時也不解鎖同一商戶的舊 pending 返現，重開後恢復）；新提現
+`POST /cashback/withdraw` 返回 403。餘額查詢、流水、提現記錄、
+後台審核、void、missing 申訴保持可用；撤銷核銷仍照常沖回開關
+打開時產生的舊返現（`void_for_revocation` 不受開關影響）。
 `total_earned`（累計返現）/ `adjustment_total`（負向調整合計，
 可為負）/ `min_withdraw_hkd`（提現門檻，默認 50，取接口不寫死）/
 `daily_withdraw_limit_hkd`（每日提現上限，默認 1500，取接口不寫死）/

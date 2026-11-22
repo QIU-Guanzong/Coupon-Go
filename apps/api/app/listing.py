@@ -24,28 +24,22 @@ Refund policy, sale price and stock share one calibre across kinds:
   means expired. Neither is ever silently re-listed.
 """
 import logging
-from datetime import datetime, timezone
 
 from sqlalchemy.orm import Session
 
 from . import models
 from .models_line_b import AdminAuditLog
-from .models_packages import Package
+from .models_packages import Package, REFUND_POLICIES
+from .timeutil import utcnow as _now
 from .package_templates import current_package_coupon
 
 logger = logging.getLogger(__name__)
-
-REFUND_POLICIES = ("anytime", "expiry_only", "non_refundable")
 
 # States a merchant may edit from (see vendor / package edit endpoints).
 EDITABLE_STATES = ("draft", "rejected", "pending_review", "active",
                    "paused", "scheduled")
 # States an edit sends back to review (approved but changed content).
 RE_REVIEW_STATES = ("active", "paused", "scheduled")
-
-
-def _now():
-    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 def audit(db: Session, admin_id: int, action: str, target_type: str,

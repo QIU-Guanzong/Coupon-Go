@@ -1,13 +1,13 @@
 """Mark the current package template while preserving legacy voucher rows.
 
-Revision ID: 0022_listing_template_versions
-Revises: 0021_dianping_listing
+Revision ID: 0024_listing_template_versions
+Revises: 0023_dianping_listing
 """
 from alembic import op
 import sqlalchemy as sa
 
-revision = "0022_listing_template_versions"
-down_revision = "0021_dianping_listing"
+revision = "0024_listing_template_versions"
+down_revision = "0023_dianping_listing"
 branch_labels = None
 depends_on = None
 
