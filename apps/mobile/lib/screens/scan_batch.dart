@@ -30,15 +30,40 @@ class _ScanBatchScreenState extends State<ScanBatchScreen> {
   String? _success;
   String? _pendingKey;
   bool _busy = false;
+  late int _sessionRevision;
+
+  bool _current(int revision) => mounted && widget.api.sessionRevision == revision;
+
+  void _sessionChanged() {
+    if (!mounted || _sessionRevision == widget.api.sessionRevision) return;
+    _sessionRevision = widget.api.sessionRevision;
+    setState(() {
+      _items.clear();
+      _code.clear();
+      _pendingKey = null;
+      _busy = false;
+      _success = null;
+      _error = '登入狀態已變更，請重新預檢。';
+    });
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _sessionRevision = widget.api.sessionRevision;
+    widget.api.addListener(_sessionChanged);
+  }
 
   @override
   void dispose() {
+    widget.api.removeListener(_sessionChanged);
     _code.dispose();
     super.dispose();
   }
 
   Future<void> _add() async {
     final code = _code.text.trim();
+    final revision = widget.api.sessionRevision;
     if (_busy || _pendingKey != null) return;
     if (!RegExp(r'^\d{6}$').hasMatch(code)) {
       setState(() => _error = '請輸入六位兌換碼');
@@ -56,7 +81,7 @@ class _ScanBatchScreenState extends State<ScanBatchScreen> {
     });
     try {
       var result = await widget.api.prepareScan(code);
-      if (!mounted) return;
+      if (!_current(revision)) return;
       int? branchId;
       String? branchName;
       if (result['branch_selection_required'] == true) {
@@ -84,11 +109,11 @@ class _ScanBatchScreenState extends State<ScanBatchScreen> {
                       context, Map<String, dynamic>.from(item as Map))),
           ])),
         );
-        if (!mounted || branch == null) return;
+        if (!_current(revision) || branch == null) return;
         branchId = branch['id'] as int;
         branchName = branch['name'] as String;
         result = await widget.api.prepareScan(code, branchId: branchId);
-        if (!mounted) return;
+        if (!_current(revision)) return;
       }
       if (result['can_redeem'] != true) {
         setState(() => _error = result['reason'] as String? ?? '此券無法核銷');
@@ -104,16 +129,17 @@ class _ScanBatchScreenState extends State<ScanBatchScreen> {
         _code.clear();
       });
     } on ApiException catch (e) {
-      if (mounted) setState(() => _error = e.message);
+      if (_current(revision)) setState(() => _error = e.message);
     } catch (_) {
-      if (mounted) setState(() => _error = '未能確認券資料，請重試');
+      if (_current(revision)) setState(() => _error = '未能確認券資料，請重試');
     } finally {
-      if (mounted) setState(() => _busy = false);
+      if (_current(revision)) setState(() => _busy = false);
     }
   }
 
   Future<void> _submit() async {
     if (_busy || _items.isEmpty) return;
+    final revision = widget.api.sessionRevision;
     if (_pendingKey == null) {
       final ok = await showDialog<bool>(
           context: context,
@@ -128,7 +154,7 @@ class _ScanBatchScreenState extends State<ScanBatchScreen> {
                         onPressed: () => Navigator.pop(context, true),
                         child: const Text('確認核銷'))
                   ]));
-      if (ok != true || !mounted) return;
+      if (ok != true || !_current(revision)) return;
       final random = Random.secure();
       _pendingKey = List.generate(
               16, (_) => random.nextInt(256).toRadixString(16).padLeft(2, '0'))
@@ -144,14 +170,14 @@ class _ScanBatchScreenState extends State<ScanBatchScreen> {
           _items.map((v) => v.token).toList(),
           _items.map((v) => v.branchId).toList(),
           _pendingKey!);
-      if (!mounted) return;
+      if (!_current(revision)) return;
       setState(() {
         _success = '已完成 ${result['total'] ?? _items.length} 張券核銷';
         _items.clear();
         _pendingKey = null;
       });
     } on ApiException catch (e) {
-      if (!mounted) return;
+      if (!_current(revision)) return;
       setState(() {
         if (e.status == 400 || e.status == 422) {
           _pendingKey = null;
@@ -161,9 +187,9 @@ class _ScanBatchScreenState extends State<ScanBatchScreen> {
         }
       });
     } catch (_) {
-      if (mounted) setState(() => _error = '未能確認結果，請用原請求重試。');
+      if (_current(revision)) setState(() => _error = '未能確認結果，請用原請求重試。');
     } finally {
-      if (mounted) setState(() => _busy = false);
+      if (_current(revision)) setState(() => _busy = false);
     }
   }
 

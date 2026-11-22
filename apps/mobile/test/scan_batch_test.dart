@@ -3,6 +3,7 @@ import 'package:coupon_go/api_client.dart';
 import 'package:coupon_go/screens/scan_batch.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class BatchApi extends ApiClient {
   BatchApi() : super(baseUrl: 'https://example.test');
@@ -37,6 +38,7 @@ class BatchApi extends ApiClient {
 }
 
 void main() {
+  setUp(() => SharedPreferences.setMockInitialValues({}));
   testWidgets('批量逐券預檢，含受限分店，超時沿用原批次編號', (tester) async {
     final api = BatchApi();
     await tester.pumpWidget(MaterialApp(home: ScanBatchScreen(api: api)));
@@ -61,4 +63,21 @@ void main() {
     expect(api.keys.first, api.keys.last);
     expect(find.text('已完成 2 張券核銷'), findsOneWidget);
   });
+  testWidgets('確認批量時切換帳號不提交先前的券', (tester) async {
+    final api = BatchApi();
+    await api.saveToken('first', persist: false);
+    await tester.pumpWidget(MaterialApp(home: ScanBatchScreen(api: api)));
+    await tester.enterText(find.byType(TextField), '222222');
+    await tester.tap(find.text('預檢加入'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('確認批量核銷'));
+    await tester.pumpAndSettle();
+    await api.saveToken('second', persist: false);
+    await tester.pump();
+    await tester.tap(find.text('確認核銷'));
+    await tester.pumpAndSettle();
+    expect(api.keys, isEmpty);
+    expect(find.textContaining('登入狀態已變更'), findsOneWidget);
+  });
+
 }
