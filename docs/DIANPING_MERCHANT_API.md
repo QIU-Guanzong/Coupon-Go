@@ -138,7 +138,7 @@ Base URL：`http://localhost:8000`，路径前缀 `/api/v3`。
 重新预检。不受限券无需选择。成功响应回显 `branch_id`；分店不在该店时 reason
 为 `找不到此分店`。
 
-### `POST /new-scan-coupon`（改动：可选 `branch_id`）
+### `POST /new-scan-coupon`（受限券须传 `branch_id`）
 
 ```json
 // 请求
@@ -265,7 +265,7 @@ multipart `files`（与评价图上传同款规则：jpg / jpeg / png / webp / g
 
 - **1.7 代理人体系**：按 `FEATURE_GAP` §5 阶段 2 再做，本阶段不插队。
 - **1.6 电子合约到期/版本更新重签提醒**：P2，未做。
-- **Stripe Connect 开户链接/状态回查**：P1-B 的活，`stripe_account_id` 在此只存字段。
+- **Stripe Connect 正式收款**：开户及状态回查已由 P1-B 提供；正式环境仍须完成实际配置和验证。
 
 ## 迁移
 
@@ -274,6 +274,5 @@ multipart `files`（与评价图上传同款规则：jpg / jpeg / png / webp / g
 - 新表 `coupon_branches`（`coupon_id` + `branch_id` 唯一约束）。
 - `shops` 加 `business_hours` / `gallery` / `announcement` 三列（`Text`，默认值 `""` / `"[]"` / `""`）。
 
-编号说明：`0021` 已被在途的 M9-7 / P1-A / P1-B / P1-C 认领，`0022` 被 P1-D 认领，
-三者均未合入 main；本分支取下一个空号 `0023`。若 M9-7（`0021`）先合入，合入前须把
-本迁移 renumber / rebase 到新的链尾（合入顺序由 Miso 裁决）。
+历史 `0023` 保留原编号与父版本。`0031_dianping_mgmt_bridge` 在现行核销和历史商户
+管理两条迁移路径之后衔接，并为核销流水增加可空 `branch_id`；旧流水保留为空。
