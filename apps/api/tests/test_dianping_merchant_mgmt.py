@@ -407,7 +407,13 @@ def test_batch_requires_branches_atomically_and_replays_same_scope(client):
     wrong = client.post("/api/v3/new-scan-coupon/batch",
                         json=dict(payload, branch_ids=[999999, None]), headers=vendor)
     assert wrong.status_code == 400 and wrong.json()["redeemed_count"] == 0
-    valid = dict(payload, branch_ids=[branch, None])
+    prepared_a = client.post("/api/v3/new-scan-coupon/prepare",
+                             json={"code": first_code, "branch_id": branch}, headers=vendor)
+    prepared_b = client.post("/api/v3/new-scan-coupon/prepare",
+                             json={"code": second_code}, headers=vendor)
+    assert prepared_a.json()["can_redeem"] and prepared_b.json()["can_redeem"]
+    valid = dict(payload, branch_ids=[branch, None],
+                 prepare_tokens=[prepared_a.json()["prepare_token"], prepared_b.json()["prepare_token"]])
     response = client.post("/api/v3/new-scan-coupon/batch", json=valid, headers=vendor)
     assert response.status_code == 200 and response.json()["redeemed_count"] == 2, response.text
     with TestingSession() as db:
