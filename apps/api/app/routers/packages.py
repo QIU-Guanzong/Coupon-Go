@@ -1424,8 +1424,10 @@ async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
       tolerance); missing / wrong / stale signature -> 400.
     - Neither configured: accepted unsigned only when APP_ENV=dev
       (local simulator flow); any other env -> 400 outright.
-    Maps payment_intent.succeeded / payment_intent.payment_failed onto
-    the same apply function as confirm-payment. A replayed event for
+    A failed payment attempt can be retried on the same PaymentIntent, so
+    keep the reservation until it succeeds, is canceled, or times out.
+    Maps payment_intent.succeeded / payment_intent.canceled onto the same
+    apply function as confirm-payment. A replayed event for
     an already-settled order returns 200 + ignored (idempotent; the
     voucher issue path itself is also idempotent)."""
     raw = await request.body()
@@ -1456,6 +1458,8 @@ async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
     if body.type == "payment_intent.succeeded":
         outcome = "succeeded"
     elif body.type == "payment_intent.payment_failed":
+        outcome = "retryable"
+    elif body.type == "payment_intent.canceled":
         outcome = "failed"
     else:
         return {"received": True, "ignored": body.type}
@@ -1480,6 +1484,11 @@ async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
                 "late_payment_refund": {"id": entry.id, "status": entry.status}}
     if not current:
         return {"received": True, "ignored": "payment already settled"}
+    if outcome == "retryable":
+        # Stripe's payment_failed event reports a failed *attempt*, not a
+        # terminal PaymentIntent. The Payment Element can retry that same
+        # intent, so do not release stock or invalidate the payment here.
+        return {"received": True, "order_id": order.id, "outcome": "retryable"}
     if outcome == "succeeded" and (
             Decimal(str(attempt.amount)) != Decimal(str(order.amount)) or
             not late_payments._event_matches(attempt, obj)):

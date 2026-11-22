@@ -1,10 +1,12 @@
 """Web test payment: no test card or provider result grants a voucher by itself."""
 from uuid import uuid4
+from datetime import timedelta
 
 import pytest
 from tests.test_packages import client, _register_and_login, _create_package
 from app import config, models
-from app.models_packages import Order, Payment
+from app.models_packages import LatePaymentRefund, Order, Package, Payment
+from app.timeutil import utcnow
 from tests.test_packages import TestingSession
 
 
@@ -110,3 +112,97 @@ def test_gateway_success_with_wrong_amount_never_issues_voucher(client, stripe_t
     with TestingSession() as db:
         assert db.get(Order, order_id).payment_status == 'pending'
         assert db.query(models.WalletItem).filter_by(order_id=order_id).count() == 0
+
+
+def _stripe_event(client, ref, kind, **fields):
+    return client.post('/api/v3/payments/webhook', json={
+        'type': kind, 'data': {'object': {'id': ref, **fields}}},
+        headers={'Stripe-Signature': 'fixture'})
+
+
+def test_declined_card_can_retry_same_intent_without_releasing_stock(client, stripe_test, monkeypatch):
+    """A decline webhook is an attempt failure, not a terminal intent."""
+    monkeypatch.setattr('app.routers.packages.verify_webhook_signature', lambda *_: True)
+    owner = _register_and_login(client, 'stripe-decline-retry@example.com')
+    pkg = _create_package(client, name='Stripe decline retry', stock=5, price=150)
+    bought = client.post(f"/api/v3/packages/{pkg['id']}/purchase", json={
+        'payment_method': 'card'}, headers=owner).json()
+    oid, pid = bought['order']['id'], bought['payment']['id']
+    with TestingSession() as db:
+        ref = db.get(Payment, pid).gateway_ref
+        assert db.get(Package, pkg['id']).stock_left == 4
+    for _ in range(2):
+        result = _stripe_event(client, ref, 'payment_intent.payment_failed',
+                               status='requires_payment_method', amount=15000, currency='hkd')
+        assert result.status_code == 200 and result.json()['outcome'] == 'retryable'
+    with TestingSession() as db:
+        assert db.get(Order, oid).payment_status == 'pending'
+        assert db.get(Payment, pid).status == 'requires_payment'
+        assert db.get(Package, pkg['id']).stock_left == 4
+        assert db.query(models.WalletItem).filter_by(order_id=oid).count() == 0
+    assert client.get(f'/api/v3/orders/{oid}/stripe-test-payment', headers=owner).status_code == 200
+    for _ in range(2):
+        success = _stripe_event(client, ref, 'payment_intent.succeeded',
+                                amount=15000, amount_received=15000, currency='hkd')
+        assert success.status_code == 200
+    # A delayed or replayed failure must never undo a later success.
+    assert _stripe_event(client, ref, 'payment_intent.payment_failed',
+                         status='requires_payment_method').status_code == 200
+    with TestingSession() as db:
+        assert db.get(Order, oid).payment_status == 'paid'
+        assert db.get(Payment, pid).status == 'succeeded'
+        assert db.get(Package, pkg['id']).stock_left == 4
+        assert db.query(models.WalletItem).filter_by(order_id=oid).count() == 1
+        assert db.query(LatePaymentRefund).filter_by(order_id=oid).count() == 0
+
+
+@pytest.mark.parametrize('ending', ['canceled', 'user_cancel', 'timeout'])
+def test_declined_attempt_releases_stock_once_on_terminal_event(client, stripe_test, monkeypatch, ending):
+    monkeypatch.setattr('app.routers.packages.verify_webhook_signature', lambda *_: True)
+    owner = _register_and_login(client, f'stripe-decline-{ending}@example.com')
+    pkg = _create_package(client, name=f'Stripe decline {ending}', stock=5, price=150)
+    bought = client.post(f"/api/v3/packages/{pkg['id']}/purchase", json={
+        'payment_method': 'card'}, headers=owner).json()
+    oid, pid = bought['order']['id'], bought['payment']['id']
+    with TestingSession() as db:
+        ref = db.get(Payment, pid).gateway_ref
+    assert _stripe_event(client, ref, 'payment_intent.payment_failed',
+                         status='requires_payment_method').status_code == 200
+    if ending == 'timeout':
+        with TestingSession() as db:
+            db.get(Payment, pid).created_at = utcnow() - timedelta(minutes=config.PAYMENT_TIMEOUT_MINUTES + 1)
+            db.commit()
+        kind, expected = 'payment_intent.payment_failed', 'timeout'
+    elif ending == 'canceled':
+        kind, expected = 'payment_intent.canceled', 'failed'
+    else:
+        assert client.post(f'/api/v3/orders/{oid}/cancel', headers=owner).status_code == 200
+        kind, expected = 'payment_intent.payment_failed', 'cancelled'
+    for _ in range(2):
+        assert _stripe_event(client, ref, kind, status=ending).status_code == 200
+    with TestingSession() as db:
+        assert db.get(Order, oid).payment_status == expected
+        assert db.get(Payment, pid).status == expected
+        assert db.get(Package, pkg['id']).stock_left == 5
+        assert db.query(models.WalletItem).filter_by(order_id=oid).count() == 0
+    if ending != 'canceled':
+        # Stripe can report a success after our reservation timed out or the
+        # customer canceled locally. It must follow the existing compensation
+        # path, not resurrect the order or release stock a second time.
+        refunds = []
+        def refund(ref, amount, **kwargs):
+            refunds.append((ref, amount, kwargs['request_key']))
+            return {'gateway_ref': 're_fixture', 'payment_intent': ref,
+                    'status': 'succeeded', 'amount': amount, 'currency': 'HKD'}
+        monkeypatch.setattr('app.late_payments.refund_payment', refund)
+        for _ in range(2):
+            result = _stripe_event(client, ref, 'payment_intent.succeeded',
+                                   amount=15000, amount_received=15000, currency='hkd')
+            assert result.status_code == 200
+            assert result.json()['late_payment_refund']['status'] == 'refunded'
+        assert len(refunds) == 1
+        with TestingSession() as db:
+            assert db.get(Order, oid).payment_status == expected
+            assert db.get(Package, pkg['id']).stock_left == 5
+            assert db.query(models.WalletItem).filter_by(order_id=oid).count() == 0
+            assert db.query(LatePaymentRefund).filter_by(order_id=oid, status='refunded').count() == 1
