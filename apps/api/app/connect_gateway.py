@@ -140,6 +140,8 @@ def _require_test_key() -> str:
     """Return the configured test key, or "" for simulator mode.
     Raises when a live key is configured (never use one here)."""
     key = config.STRIPE_SECRET_KEY
+    if not key and config.APP_ENV != "dev":
+        raise GatewayError("非開發環境未配置 Stripe 測試密鑰")
     if key and not _is_test_key(key):
         raise GatewayError("只接受 Stripe 测试密钥（sk_test_…），拒绝正式密钥")
     return key

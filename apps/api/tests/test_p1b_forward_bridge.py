@@ -260,3 +260,21 @@ def test_downgrade_refuses_to_drop_existing_data(database_url):
         assert connection.execute(text('SELECT settlement_allocated_amount FROM wallet_items WHERE id=1')).scalar_one() == 100
         assert connection.execute(text('SELECT refund_hold_previous_status FROM wallet_items WHERE id=1')).scalar_one() == 3
     engine.dispose()
+
+
+def test_original_0021_retry_fields_survive_forward_upgrade(database_url):
+    """The published 0021 revision already included both retry fields."""
+    _alembic(database_url, 'upgrade', OLD)
+    engine = create_engine(database_url)
+    with engine.begin() as connection:
+        columns = _columns(connection, 'connect_ledger_entries')
+        assert {'retry_count', 'manual_notified'} <= set(columns)
+        _insert_sample(connection)
+        connection.execute(text(
+            'UPDATE connect_ledger_entries SET retry_count=7, manual_notified=true WHERE id=1'))
+    _alembic(database_url, 'upgrade', 'head')
+    with engine.connect() as connection:
+        row = connection.execute(text(
+            'SELECT retry_count, manual_notified FROM connect_ledger_entries WHERE id=1')).one()
+        assert row == (7, True)
+    engine.dispose()

@@ -102,8 +102,7 @@ def start_onboarding(body: OnboardingBody,
     if not connect_configured():
         raise HTTPException(
             status_code=503,
-            detail="Stripe Connect 未配置：请先在部署环境开启 "
-                   "STRIPE_CONNECT_ENABLED")
+            detail="Stripe Connect 尚未配置，請聯絡平台")
     return_url = body.return_url or config.STRIPE_CONNECT_RETURN_URL
     refresh_url = body.refresh_url or config.STRIPE_CONNECT_REFRESH_URL
     if not return_url or not refresh_url:
@@ -155,6 +154,7 @@ def connect_balance(shop_id: int = Query(...),
     balance = merchant_balance(db, shop.id)
     account = get_account(db, shop.id)
     return {"shop_id": shop.id, "currency": connect_service.CURRENCY,
+            "connect_mode": connect_service.connect_mode(),
             "pending": _money(balance["pending"]),
             "available": _money(balance["available"]),
             "paid_out": _money(balance["paid_out"]),
@@ -186,6 +186,26 @@ def create_payout(body: PayoutBody,
     out = request_payout(db, shop, body.amount, body.request_id)
     db.commit()
     return out
+
+
+@router.get("/merchant/connect/payouts/active")
+def active_payouts(shop_id: int = Query(...),
+                   vendor: models.User = Depends(require_role("vendor", "admin")),
+                   db: Session = Depends(get_db)):
+    """Read every unresolved payout for recovery on another device."""
+    shop = _shop_or_404(db, shop_id, vendor)
+    rows = (db.query(ConnectLedgerEntry)
+            .filter(ConnectLedgerEntry.shop_id == shop.id,
+                    ConnectLedgerEntry.kind == "payout",
+                    ConnectLedgerEntry.status.in_(("processing", "payout_unknown", "submitted")))
+            .order_by(ConnectLedgerEntry.id.desc()).all())
+    return {"shop_id": shop.id, "currency": connect_service.CURRENCY,
+            "connect_mode": connect_service.connect_mode(),
+            "payouts": [{"entry_id": row.id, "request_id": row.payout_request_id,
+                         "amount": _money(-row.net_amount), "status": row.status,
+                         "stripe_payout_id": row.stripe_payout_id or None,
+                         "created_at": row.created_at.isoformat() if row.created_at else None}
+                        for row in rows]}
 
 
 @router.post("/admin/connect/payouts/{entry_id}/reconcile")

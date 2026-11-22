@@ -163,6 +163,11 @@ class ApiClient extends ChangeNotifier {
   Future<Map<String, dynamic>> merchantContractPdf(int id) =>
       get('/merchant-applications/$id/contract-pdf');
 
+  Future<Map<String, dynamic>> startApplicationConnect(int id) =>
+      post('/merchant-applications/$id/connect/onboarding', body: {});
+  Future<Map<String, dynamic>> syncApplicationConnect(int id) =>
+      post('/merchant-applications/$id/connect/sync', body: {});
+
   // ---- auth ----
   Future<Map<String, dynamic>> login(String email, String password) async {
     final data = await post('/login', body: {'email': email, 'password': password});
