@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../api_client.dart';
 import '../theme.dart';
+import 'merchant_payout.dart';
 
 String _money(Object? value) =>
     value is num ? 'HK\$${value.toStringAsFixed(2)}' : '—';
@@ -328,6 +329,18 @@ class _MerchantShopDashboardScreenState
                       _error == null &&
                       _dashboard != null &&
                       _entries != null) ...[
+                    Align(
+                        alignment: Alignment.centerLeft,
+                        child: OutlinedButton.icon(
+                            onPressed: () => Navigator.of(context).push(
+                                MaterialPageRoute(
+                                    builder: (_) => MerchantPayoutScreen(
+                                        api: widget.api,
+                                        shopId: widget.shopId,
+                                        shopName: widget.shopName))),
+                            icon: const Icon(
+                                Icons.account_balance_wallet_outlined),
+                            label: const Text('Stripe 測試提款'))),
                     const Text('店舖餘額',
                         style: TextStyle(
                             fontSize: 22, fontWeight: FontWeight.bold)),

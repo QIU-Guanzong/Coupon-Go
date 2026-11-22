@@ -167,6 +167,15 @@ class ApiClient extends ChangeNotifier {
       post('/merchant-applications/$id/connect/onboarding', body: {});
   Future<Map<String, dynamic>> syncApplicationConnect(int id) =>
       post('/merchant-applications/$id/connect/sync', body: {});
+  Future<Map<String, dynamic>> merchantConnectBalance(int shopId) =>
+      get('/merchant/connect/balance', query: {'shop_id': '$shopId'});
+  Future<Map<String, dynamic>> activeMerchantPayouts(int shopId) =>
+      get('/merchant/connect/payouts/active', query: {'shop_id': '$shopId'});
+  Future<Map<String, dynamic>> createMerchantPayout(int shopId, String amount, String requestId) =>
+      post('/merchant/connect/payouts', body: {
+        'shop_id': shopId, 'amount': amount, 'request_id': requestId,
+      });
+
   Future<Map<String, dynamic>> merchantBalance() => get('/merchant/balance');
   Future<Map<String, dynamic>> merchantDashboard(int days) =>
       get('/merchant/dashboard', query: {'days': '$days'});
