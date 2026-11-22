@@ -18,7 +18,7 @@ from sqlalchemy.engine import make_url
 
 API = Path(__file__).resolve().parents[1]
 BRIDGE = '0022_p1b_forward_bridge'
-HEAD = '0030_redemption_batch_bridge'
+HEAD = '0031_dianping_mgmt_bridge'
 OLD = '0021_p1b_stripe_connect'
 LEGAL = '0020_m92_legal_consents'
 

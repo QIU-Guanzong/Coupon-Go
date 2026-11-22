@@ -191,10 +191,35 @@ reviewed_by, reviewed_at, created_at}`。P1-D 新增：`br_number, documents{br,
 | GET | `/get-vendor-usage-data-new` | 總下載/總使用 + 每券數據 |
 | GET | `/get-vendor-record-list` | 商戶核銷記錄 |
 | GET | `/get-company-list` | 商戶的公司/商店列表 |
-| POST | `/assign-branches` | 指派分店 `{coupon_id, branch_ids}` |
+| POST | `/assign-branches` | 指派分店 `{coupon_id, branch_ids}`（dianping §1.2：現已真寫庫，空列表 = 全部分店） |
 | POST | `/update-branch-profile` | 更新分店資料 |
 | POST | `/delete-vandor-image` | 刪除商户圖片 |
 | POST | `/new-update-vendor-profile` | 更新商户資料（提交後待管理員批准） |
+| POST | `/merchant/shops` | 新增門店（dianping §1.2，vendor/admin） |
+| GET | `/merchant/shops/{shop_id}` | 門店詳情 + 分店列表（店主/店員/admin） |
+| GET | `/merchant/shops/{shop_id}/branches` | 分店列表（店主/店員/admin） |
+| POST | `/merchant/shops/{shop_id}/branches` | 新增分店（店主/`manage_coupons` 店員/admin） |
+| PATCH | `/merchant/shops/{shop_id}` | 門店自助維護：營業時間/相冊/公告/聯繫資料（dianping §1.4） |
+| POST | `/uploads/merchant-images` | 商戶圖片上傳（vendor/admin，jpg/png/webp/gif，≤5MB，最多 9 張） |
+| PATCH | `/admin/merchant-applications/{id}` | 修改待審核的入駐申請（dianping §1.6，admin） |
+| PATCH | `/admin/shops/{shop_id}/members/{user_id}` | 改店員角色（dianping §1.3，店主/admin） |
+
+**dianping 商家管理（§1）字段變更**（詳見 `docs/DIANPING_MERCHANT_API.md`）：
+
+- `POST /admin/merchant-applications/{id}/review` 批准時響應新增 `shop`（自動開店，
+  `is_approved=true`）；批准/駁回給申請人寫站内通知。
+- `shop_out` 新增 `is_approved` / `business_hours` / `gallery` / `announcement`。
+- `coupon_out` 新增 `branch_ids` / `branches`（`[]` = 適用全部分店）。
+- `ShopMember.role` 擴展為 `merchant-admin`（舊，全權）/ `manager` / `cashier` /
+  `finance`；成員列表與邀請/改角色響應新增 `permissions` 列表。
+- `POST /new-scan-coupon/prepare` 與 `POST /new-scan-coupon` 支持可選 `branch_id`
+ （分店適用範圍校验）；核销端点現接受有 `redeem` 權限的店員（不只 vendor/admin）。
+- 商户結算類只讀接口（`/merchant/shops/{id}/settlements`、`/merchant/shops/{id}/reconciliation`、
+  `/merchant/shops/{id}/invoices`、`/merchant/settlements`）現要求 `view_settlement`
+  權限（店主/admin/平台 finance-auditor/`merchant-admin`/`finance` 店員；`manager`/`cashier` 為 403）。
+- 新增通知類型：`application_approved` / `application_rejected` / `coupon_approved` /
+  `coupon_rejected` / `settlement_generated` / `settlement_approved` / `settlement_paid` /
+  `review_received`（站内信，`GET /get-notification-list` 可見）。
 
 ## 砍價 2C（分享助力，線 E）
 

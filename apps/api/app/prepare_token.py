@@ -16,6 +16,12 @@ def _sign(payload: str) -> str:
                     hashlib.sha256).hexdigest()
 
 
+def redemption_binding(vendor_id: int, code: str, branch_id: int | None) -> str:
+    """Keep legacy unrestricted tokens valid; bind selected branches explicitly."""
+    binding = f"{vendor_id}:{code}"
+    return binding if branch_id is None else f"{binding}:branch:{branch_id}"
+
+
 def issue_prepare_token(wallet_item_id: int,
                         *, binding: str, ttl_seconds: int = None) -> tuple[str, int]:
     """Return (token, prepared_at_unix)."""

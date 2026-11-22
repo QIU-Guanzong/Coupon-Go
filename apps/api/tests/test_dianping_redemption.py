@@ -455,6 +455,9 @@ def test_batch_replay_returns_duplicates_without_new_redemptions(client):
     assert second.status_code == 200, second.text
     assert second.json()["redeemed_count"] == 0
     assert second.json()["duplicate_count"] == 2
+    upgraded = client.post("/api/v3/new-scan-coupon/batch",
+                           json=dict(body, branch_ids=[None, None]), headers=vh)
+    assert upgraded.status_code == 200 and upgraded.json()["duplicate_count"] == 2
     db = _db()
     batch = db.query(models.RedemptionBatch).filter_by(request_key="dp4-batch-replay-1").one()
     ids = json.loads(batch.redemption_ids)
@@ -618,9 +621,9 @@ def test_batch_accepts_long_key_and_replays_without_duplicate_entries(client):
         assert db.query(models.Redemption).filter_by(wallet_item_id=wid).count() == 1
 
 
-def test_batch_rejects_unimplemented_branch_selection(client):
-    """Until branch support lands, a selection must never be silently ignored."""
+def test_batch_branch_selection_does_not_accept_invalid_code(client):
     vendor = _vendor_headers(client)
     response = client.post('/api/v3/new-scan-coupon/batch',
         json={'codes': ['123456'], 'idempotency_key': 'branch-not-yet', 'branch_ids': [1]}, headers=vendor)
-    assert response.status_code == 422
+    assert response.status_code == 400
+    assert response.json()['redeemed_count'] == 0

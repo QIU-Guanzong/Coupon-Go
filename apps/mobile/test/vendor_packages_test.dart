@@ -17,6 +17,14 @@ class MerchantPackageApi extends ApiClient {
   final List<Map<String, dynamic>> entries = [];
 
   @override
+  Future<Map<String, dynamic>> get(String path, {Map<String, String>? query}) async {
+    if (path == '/merchant/shops') {
+      return {'shops': [{'id': 8, 'name': '灣仔店', 'is_owner': true, 'can_manage_branches': true,
+        'can_manage_members': true, 'can_manage_coupons': true, 'can_view_settlement': true, 'can_redeem': true}]};
+    }
+    throw ApiException(404, '找不到');
+  }
+  @override
   Future<Map<String, dynamic>> usageData() async => {};
   @override
   Future<List<dynamic>> vendorCoupons() async => [];
@@ -84,7 +92,31 @@ Future<void> fillForm(WidgetTester tester) async {
   await tester.pumpAndSettle();
 }
 
+class CashierHomeApi extends MerchantPackageApi {
+  int usageCalls = 0;
+  int couponCalls = 0;
+  @override
+  Future<Map<String, dynamic>> get(String path, {Map<String, String>? query}) async => {
+    'shops': [{'id': 8, 'name': '灣仔店', 'is_owner': false, 'can_manage_branches': false,
+      'can_manage_members': false, 'can_manage_coupons': false, 'can_view_settlement': false, 'can_redeem': true}]
+  };
+  @override
+  Future<Map<String, dynamic>> usageData() async { usageCalls++; return {}; }
+  @override
+  Future<List<dynamic>> vendorCoupons() async { couponCalls++; return []; }
+}
+
 void main() {
+  testWidgets('cashier home does not call or show owner-only functions', (tester) async {
+    final api = CashierHomeApi();
+    await tester.pumpWidget(app(VendorHomeScreen(api: api)));
+    await tester.pumpAndSettle();
+    expect(api.usageCalls, 0);
+    expect(api.couponCalls, 0);
+    expect(find.text('發券'), findsNothing);
+    expect(find.text('套餐管理'), findsNothing);
+    expect(find.text('店舖與分店'), findsOneWidget);
+  });
   testWidgets('merchant navigation opens an honest empty workspace',
       (tester) async {
     final api = MerchantPackageApi();

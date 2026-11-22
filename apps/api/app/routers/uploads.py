@@ -35,6 +35,7 @@ from pathlib import Path
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 
 from .. import config
+from ..database import get_db
 from ..deps import get_current_user, require_role
 
 router = APIRouter()
@@ -178,12 +179,14 @@ def upload_review_images(files: list[UploadFile] = File(...),
 
 @router.post("/uploads/merchant-images", status_code=201)
 def upload_merchant_images(files: list[UploadFile] = File(...),
-                           user=Depends(require_role("vendor", "admin"))):
+                           user=Depends(get_current_user), db=Depends(get_db)):
     """§3.5: merchant listing images (coupon cover / shop photo).
     Same storage, size cap and EXIF stripping as review images; only
     jpg / png / webp. Returns /uploads/merchant-images/... paths to
     pass as Coupon.image / Shop.image. No object storage yet — same
     local-disk placeholder as review images (see module docstring)."""
+    from .vendor import _require_any_coupon_manager
+    _require_any_coupon_manager(db, user)
     if not files:
         raise HTTPException(status_code=400, detail="請選擇圖片")
     if len(files) > MAX_FILES:

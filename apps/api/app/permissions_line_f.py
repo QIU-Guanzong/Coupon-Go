@@ -134,3 +134,79 @@ def role_permissions() -> dict:
             out[role] = sorted(p for p, roles in PERMISSIONS.items()
                                if role in roles)
     return out
+
+
+# ---------- shop staff roles (dianping §1.3) ----------
+# ShopMember.role values and what each may do INSIDE one shop. The shop
+# owner (vendor) and platform admin hold every shop permission; the
+# legacy "merchant-admin" staff role keeps full staff powers so existing
+# memberships do not lose access when the finer roles land.
+# - manager: redeem + manage coupons + view redemption records.
+# - cashier: redeem only (+ view redemption records for handover).
+# - finance: read settlements / invoices only, never redeem.
+SHOP_MEMBER_ROLES = ["merchant-admin", "manager", "cashier", "finance"]
+
+SHOP_ROLE_PERMISSIONS = {
+    "merchant-admin": {"redeem", "manage_coupons", "view_settlement",
+                       "view_redemptions", "manage_members"},
+    "manager": {"redeem", "manage_coupons", "view_redemptions"},
+    "cashier": {"redeem", "view_redemptions"},
+    "finance": {"view_settlement"},
+}
+
+ALL_SHOP_PERMISSIONS = {"redeem", "manage_coupons", "view_settlement",
+                        "view_redemptions", "manage_members"}
+
+
+def shop_member_role(db: Session, user: models.User,
+                     shop: models.Shop):
+    """Active ShopMember.role for this user+shop, or None.
+
+    A pending invite confers nothing until the invitee confirms it."""
+    member = (db.query(ShopMember)
+              .filter(ShopMember.shop_id == shop.id,
+                      ShopMember.user_id == user.id,
+                      ShopMember.status == "active").first())
+    return member.role if member is not None else None
+
+
+def shop_permissions(db: Session, user: models.User,
+                     shop: models.Shop) -> set:
+    """Shop-scoped permission set for one user on one shop."""
+    if user.role == "admin":
+        return set(ALL_SHOP_PERMISSIONS)
+    if shop.vendor_id == user.id:
+        return set(ALL_SHOP_PERMISSIONS)
+    if user.role in ("finance", "auditor"):
+        # Platform read scope (same blanket as can_access_shop): they may
+        # read settlement data for any shop, nothing else shop-scoped.
+        return {"view_settlement"}
+    role = shop_member_role(db, user, shop)
+    if role is None:
+        return set()
+    return set(SHOP_ROLE_PERMISSIONS.get(role, set()))
+
+
+def has_shop_perm(db: Session, user: models.User, shop: models.Shop,
+                  perm: str) -> bool:
+    return perm in shop_permissions(db, user, shop)
+
+
+def can_redeem_shop(db: Session, user: models.User,
+                    shop: models.Shop) -> bool:
+    return has_shop_perm(db, user, shop, "redeem")
+
+
+def can_view_settlement_shop(db: Session, user: models.User,
+                             shop: models.Shop) -> bool:
+    return has_shop_perm(db, user, shop, "view_settlement")
+
+
+def can_manage_coupons_shop(db: Session, user: models.User,
+                            shop: models.Shop) -> bool:
+    return has_shop_perm(db, user, shop, "manage_coupons")
+
+
+def shop_role_permissions_out(role: str) -> list:
+    """Sorted permission list for a ShopMember.role (API output)."""
+    return sorted(SHOP_ROLE_PERMISSIONS.get(role, set()))

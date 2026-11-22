@@ -81,6 +81,8 @@ def test_applicant_creates_account_and_approval_binds_one_shop(client, provider)
     shop = db.get(models.Shop, app.approved_shop_id)
     account = db.query(ConnectAccount).filter_by(shop_id=shop.id).one()
     assert shop.vendor_id == app.user_id
+    assert db.query(models.Shop).filter_by(vendor_id=app.user_id).count() == 1
+    assert approved.json()["shop"]["id"] == shop.id
     assert account.stripe_account_id == row.stripe_account_id
     assert db.get(models.User, app.user_id).role == "vendor"
     assert len(provider[0]) == 1

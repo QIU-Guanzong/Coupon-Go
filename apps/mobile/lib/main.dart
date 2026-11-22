@@ -248,8 +248,9 @@ class HomeShell extends StatefulWidget {
 }
 
 class _HomeShellState extends State<HomeShell> {
-  int _index = 0, _vendorIndex = 0, _roleRequest = 0;
+  int _index = 0, _vendorIndex = 0, _roleRequest = 0, _vendorTabRequest = 0;
   String? _role;
+  bool _canRedeem = false, _canAnalytics = false;
   final _visited = <int>{0};
 
   @override
@@ -261,7 +262,8 @@ class _HomeShellState extends State<HomeShell> {
 
   Future<void> _readRole() async {
     final request = ++_roleRequest;
-    setState(() => _role = null);
+    _vendorTabRequest++;
+    setState(() { _role = null; _canRedeem = false; _canAnalytics = false; _vendorIndex = 0; });
     if (!widget.api.isLoggedIn) return;
     try {
       final role = (await widget.api.get('/me'))['role'];
@@ -287,7 +289,10 @@ class _HomeShellState extends State<HomeShell> {
       widget.api.addListener(_readRole);
       _readRole();
     }
-    if (!widget.vendorMode) _vendorIndex = 0;
+    if (!widget.vendorMode) {
+      _vendorIndex = 0;
+      if (oldWidget.vendorMode) _vendorTabRequest++;
+    }
     if (oldWidget.authed && !widget.authed) {
       _index = 0;
       _visited.clear();
@@ -327,7 +332,7 @@ class _HomeShellState extends State<HomeShell> {
         try {
           final user = await widget.api.get('/me');
           if (!mounted) return;
-          if (!['vendor', 'admin'].contains(user['role']) && !await _authenticate(vendor: true)) return;
+          if (!['vendor', 'admin', 'merchant-admin'].contains(user['role']) && !await _authenticate(vendor: true)) return;
         } catch (_) {
           if (mounted) showCgToast(context, context.tr('未能確認企業帳戶，請重試', 'Could not verify your business account. Please retry.'));
           return;
@@ -335,8 +340,53 @@ class _HomeShellState extends State<HomeShell> {
       } else if (!await _authenticate(vendor: true)) {
         return;
       }
+      final session = widget.api.sessionRevision;
+      try {
+        final values = await Future.wait([widget.api.get('/merchant/shops'), widget.api.get('/me')]);
+        final shops = values[0]['shops'];
+        if (shops is! List) throw const FormatException();
+        if (!mounted || session != widget.api.sessionRevision) return;
+        setState(() {
+          _canRedeem = shops.any((shop) => shop is Map && shop['can_redeem'] == true);
+          _canAnalytics = values[1]['role'] == 'admin' || shops.any((shop) => shop is Map && shop['is_owner'] == true);
+        });
+      } catch (_) {
+        if (mounted && session == widget.api.sessionRevision) {
+          showCgToast(context, '未能確認店舖權限，請重試。');
+        }
+        return;
+      }
     }
     if (mounted) widget.onToggleMode();
+  }
+
+  Future<void> _selectVendorTab(int index) async {
+    final request = ++_vendorTabRequest;
+    if (index == 1 || index == 2) {
+      final session = widget.api.sessionRevision;
+      try {
+        final values = await Future.wait([widget.api.get('/merchant/shops'), widget.api.get('/me')]);
+        final shops = values[0]['shops'];
+        if (shops is! List) throw const FormatException();
+        if (!mounted || session != widget.api.sessionRevision || request != _vendorTabRequest) return;
+        final canRedeem = shops.any((shop) => shop is Map && shop['can_redeem'] == true);
+        final canAnalytics = values[1]['role'] == 'admin' || shops.any((shop) => shop is Map && shop['is_owner'] == true);
+        setState(() { _canRedeem = canRedeem; _canAnalytics = canAnalytics; });
+      } catch (_) {
+        if (mounted && session == widget.api.sessionRevision && request == _vendorTabRequest) showCgToast(context, '未能確認店舖權限，請重試。');
+        return;
+      }
+    }
+    if (!mounted || request != _vendorTabRequest) return;
+    if (index == 1 && !_canRedeem) {
+      showCgToast(context, '你沒有店舖核銷權限。');
+      return;
+    }
+    if (index == 2 && !_canAnalytics) {
+      showCgToast(context, '目前帳戶無法查看此數據。');
+      return;
+    }
+    setState(() => _vendorIndex = index);
   }
 
   Future<void> _inviteFriends() async {
@@ -475,7 +525,7 @@ class _HomeShellState extends State<HomeShell> {
         currentIndex: _vendorIndex,
         type: BottomNavigationBarType.fixed,
         selectedItemColor: CgColors.amber,
-        onTap: (i) => setState(() => _vendorIndex = i),
+        onTap: _selectVendorTab,
         items: [
           BottomNavigationBarItem(icon: const Icon(Icons.home), label: tr('首頁', 'Home')),
           BottomNavigationBarItem(

@@ -29,7 +29,8 @@ from ..connect_service import (
     recoveries, reconcile_payout, request_payout, retry_entry, sync_account,
 )
 from ..database import get_db
-from ..deps import require_role
+from ..deps import get_current_user, require_role
+from ..permissions_line_f import shop_member_role
 from ..models_connect import ConnectAccount, ConnectLedgerEntry
 from ..payments_gateway import GatewayError
 
@@ -64,12 +65,14 @@ def _money(value) -> float:
     return connect_service._money(value)
 
 
-def _shop_or_404(db: Session, shop_id, vendor: models.User) -> models.Shop:
+def _shop_or_404(db: Session, shop_id, vendor: models.User, *, finance=False) -> models.Shop:
     shop = db.query(models.Shop).filter_by(id=shop_id).first()
     if shop is None:
         raise HTTPException(status_code=404, detail="找不到商店")
     if vendor.role != "admin" and shop.vendor_id != vendor.id:
-        raise HTTPException(status_code=403, detail="沒有權限")
+        member_role = shop_member_role(db, vendor, shop) if finance else None
+        if member_role not in ("merchant-admin", "finance"):
+            raise HTTPException(status_code=403, detail="沒有權限")
     return shop
 
 
@@ -140,17 +143,17 @@ def sync_onboarding(body: SyncBody,
 
 @router.get("/merchant/connect/status")
 def connect_status(shop_id: int = Query(...),
-                   vendor: models.User = Depends(require_role("vendor", "admin")),
+                   vendor: models.User = Depends(get_current_user),
                    db: Session = Depends(get_db)):
-    shop = _shop_or_404(db, shop_id, vendor)
+    shop = _shop_or_404(db, shop_id, vendor, finance=True)
     return account_out(db, get_account(db, shop.id), shop.id)
 
 
 @router.get("/merchant/connect/balance")
 def connect_balance(shop_id: int = Query(...),
-                    vendor: models.User = Depends(require_role("vendor", "admin")),
+                    vendor: models.User = Depends(get_current_user),
                     db: Session = Depends(get_db)):
-    shop = _shop_or_404(db, shop_id, vendor)
+    shop = _shop_or_404(db, shop_id, vendor, finance=True)
     balance = merchant_balance(db, shop.id)
     account = get_account(db, shop.id)
     return {"shop_id": shop.id, "currency": connect_service.CURRENCY,
@@ -167,9 +170,9 @@ def connect_balance(shop_id: int = Query(...),
 def connect_ledger(shop_id: int = Query(...),
                    page: int = Query(1, ge=1),
                    page_size: int = Query(20, ge=1, le=100),
-                   vendor: models.User = Depends(require_role("vendor", "admin")),
+                   vendor: models.User = Depends(get_current_user),
                    db: Session = Depends(get_db)):
-    shop = _shop_or_404(db, shop_id, vendor)
+    shop = _shop_or_404(db, shop_id, vendor, finance=True)
     q = (db.query(ConnectLedgerEntry)
          .filter_by(shop_id=shop.id).order_by(ConnectLedgerEntry.id.desc()))
     total = q.count()
@@ -180,9 +183,9 @@ def connect_ledger(shop_id: int = Query(...),
 
 @router.post("/merchant/connect/payouts")
 def create_payout(body: PayoutBody,
-                  vendor: models.User = Depends(require_role("vendor", "admin")),
+                  vendor: models.User = Depends(get_current_user),
                   db: Session = Depends(get_db)):
-    shop = _shop_or_404(db, body.shop_id, vendor)
+    shop = _shop_or_404(db, body.shop_id, vendor, finance=True)
     out = request_payout(db, shop, body.amount, body.request_id)
     db.commit()
     return out
@@ -190,10 +193,10 @@ def create_payout(body: PayoutBody,
 
 @router.get("/merchant/connect/payouts/active")
 def active_payouts(shop_id: int = Query(...),
-                   vendor: models.User = Depends(require_role("vendor", "admin")),
+                   vendor: models.User = Depends(get_current_user),
                    db: Session = Depends(get_db)):
     """Read every unresolved payout for recovery on another device."""
-    shop = _shop_or_404(db, shop_id, vendor)
+    shop = _shop_or_404(db, shop_id, vendor, finance=True)
     rows = (db.query(ConnectLedgerEntry)
             .filter(ConnectLedgerEntry.shop_id == shop.id,
                     ConnectLedgerEntry.kind == "payout",
@@ -238,16 +241,12 @@ def admin_recoveries(
 
 @router.post("/merchant/connect/transfers/{entry_id}/retry")
 def retry_transfer(entry_id: int,
-                   vendor: models.User = Depends(require_role("vendor", "admin")),
+                   vendor: models.User = Depends(get_current_user),
                    db: Session = Depends(get_db)):
     entry = db.query(ConnectLedgerEntry).filter_by(id=entry_id).first()
     if entry is None:
         raise HTTPException(status_code=404, detail="找不到此流水")
-    shop = db.query(models.Shop).filter_by(id=entry.shop_id).first()
-    if shop is None:
-        raise HTTPException(status_code=404, detail="找不到商店")
-    if vendor.role != "admin" and shop.vendor_id != vendor.id:
-        raise HTTPException(status_code=403, detail="沒有權限")
+    _shop_or_404(db, entry.shop_id, vendor, finance=True)
     out = retry_entry(db, entry.id)
     db.commit()
     return out

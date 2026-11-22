@@ -101,6 +101,13 @@ class Shop(Base):
     latitude = Column(Numeric(10, 6), nullable=True)
     longitude = Column(Numeric(10, 6), nullable=True)
     is_approved = Column(Boolean, default=False)    # vendor onboarding approval
+    # Dianping §1.4: merchant self-maintenance. business_hours is a JSON
+    # object (e.g. {"mon_fri": "11:00-22:00"}) or free text; gallery is
+    # a JSON list of image URLs (max 9, same cap as review images);
+    # announcement is the shop notice shown on the shop page.
+    business_hours = Column(Text, default="")
+    gallery = Column(Text, default="[]")
+    announcement = Column(Text, default="")
     created_at = Column(DateTime, default=_now)
 
     vendor = relationship("User", back_populates="shops")
@@ -184,6 +191,26 @@ class Coupon(Base):
     shop = relationship("Shop", back_populates="coupons")
 
 
+class CouponBranch(Base):
+    """Coupon <-> branch applicability (dianping §1.2).
+
+    No rows for a coupon = usable at every branch of its shop (the
+    pre-existing behaviour). A non-empty set restricts the coupon to
+    exactly those branches; redemption enforces it when the scanner
+    passes branch_id.
+    """
+    __tablename__ = "coupon_branches"
+    id = Column(Integer, primary_key=True)
+    coupon_id = Column(Integer, ForeignKey("coupons.id"), nullable=False)
+    branch_id = Column(Integer, ForeignKey("branches.id"), nullable=False)
+    created_at = Column(DateTime, default=_now)
+
+    __table_args__ = (
+        UniqueConstraint("coupon_id", "branch_id",
+                         name="uq_coupon_branch"),
+    )
+
+
 class WalletItem(Base):
     """A coupon claimed into a customer's Q Wallet. status: 1 unused, 2 used, 3 expired."""
     __tablename__ = "wallet_items"
@@ -214,6 +241,8 @@ class Redemption(Base):
     coupon_id = Column(Integer, ForeignKey("coupons.id"), nullable=False)
     shop_id = Column(Integer, ForeignKey("shops.id"), nullable=False)
     scanned_by_vendor_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    # Historical scans predate branch selection and remain NULL.
+    branch_id = Column(Integer, nullable=True)
     scanned_at = Column(DateTime, default=_now)
     # F6: face value snapshot at scan time (Numeric, nullable). The
     # settlement amount for this redemption is frozen here, so a later

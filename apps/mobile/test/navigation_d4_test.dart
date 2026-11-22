@@ -19,6 +19,9 @@ class _NavApi extends ApiClient {
   final String name;
   bool failBargains = false;
   bool hasBargains = false;
+  List<Map<String, dynamic>> shops = [];
+  int shopCalls = 0;
+  Completer<Map<String, dynamic>>? pendingShops;
   int meCalls = 0, cashbackCalls = 0;
   Completer<Map<String, dynamic>>? pendingMe;
 
@@ -31,6 +34,10 @@ class _NavApi extends ApiClient {
     if (path == '/me') {
       meCalls++;
       return pendingMe?.future ?? {'role': role, 'name': name};
+    }
+    if (path == '/merchant/shops') {
+      shopCalls++;
+      return pendingShops?.future ?? {'shops': shops};
     }
     if (path == '/get-home') return {'popular_merchants': []};
     if (path == '/get-limited-time-coupons') {
@@ -99,6 +106,32 @@ Widget _home(_NavApi api, {bool vendorMode = true}) => HomeShell(
     );
 
 void main() {
+  testWidgets('掃碼前刷新店舖權限，已撤銷時不切換頁面', (tester) async {
+    final api = _NavApi(role: 'merchant-admin')
+      ..shops = [{'id': 1, 'can_redeem': true, 'is_owner': false}];
+    await tester.pumpWidget(_app(_home(api)));
+    await tester.pumpAndSettle();
+    final initialCalls = api.shopCalls;
+    api.shops = [{'id': 1, 'can_redeem': false, 'is_owner': false}];
+    await tester.tap(find.text('Scan'));
+    await tester.pumpAndSettle();
+    expect(api.shopCalls, greaterThan(initialCalls));
+    expect(tester.widget<BottomNavigationBar>(find.byType(BottomNavigationBar)).currentIndex, 0);
+    expect(find.text('你沒有店舖核銷權限。'), findsOneWidget);
+  });
+  testWidgets('權限查詢途中改選首頁，不會跳回掃碼', (tester) async {
+    final api = _NavApi(role: 'merchant-admin')
+      ..shops = [{'id': 1, 'can_redeem': true, 'is_owner': false}];
+    await tester.pumpWidget(_app(_home(api)));
+    await tester.pumpAndSettle();
+    api.pendingShops = Completer<Map<String, dynamic>>();
+    await tester.tap(find.text('Scan'));
+    await tester.pump();
+    await tester.tap(find.text('Home'));
+    api.pendingShops!.complete({'shops': api.shops});
+    await tester.pumpAndSettle();
+    expect(tester.widget<BottomNavigationBar>(find.byType(BottomNavigationBar)).currentIndex, 0);
+  });
   test('cashback is hidden by default and can be explicitly enabled', () {
     const hasOverride = bool.hasEnvironment('COUPON_CASHBACK_ENABLED');
     const optedIn = bool.fromEnvironment('COUPON_CASHBACK_ENABLED');

@@ -8,7 +8,7 @@ import pytest
 from sqlalchemy import create_engine, text
 
 API = Path(__file__).resolve().parents[1]
-HEAD = '0030_redemption_batch_bridge'
+HEAD = '0031_dianping_mgmt_bridge'
 
 
 def alembic(url, *args, ok=True):

@@ -24,7 +24,7 @@ def test_redemption_legacy_and_main_upgrade_preserving_records(database_url, pri
             conn.execute(text("UPDATE redemptions SET method='manual',note='legacy note' WHERE id=1"))
     alembic(database_url, 'upgrade', 'head')
     with engine.connect() as conn:
-        assert conn.execute(text('SELECT version_num FROM alembic_version')).scalar_one() == '0030_redemption_batch_bridge'
+        assert conn.execute(text('SELECT version_num FROM alembic_version')).scalar_one() == '0031_dianping_mgmt_bridge'
         amount, rate, method, note = conn.execute(text('SELECT face_value,commission_rate_snapshot,method,note FROM redemptions WHERE id=1')).one()
         assert float(amount) == 19.95 and float(rate) == 0.125
         assert (method, note) == (('manual', 'legacy note') if prior == '0021_dianping_redemption' else ('scan', None))

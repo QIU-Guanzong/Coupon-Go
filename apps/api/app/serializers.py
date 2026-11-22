@@ -1,8 +1,46 @@
 """Shared model -> dict serializers (keeps routers thin)."""
+import json
+
 from sqlalchemy.orm import Session
 
 from . import models
 from .geo import haversine_km
+
+
+def _json_value(text, default):
+    """Parse a JSON text column; return default on empty/bad input."""
+    if not text:
+        return default
+    try:
+        parsed = json.loads(text)
+    except (ValueError, TypeError):
+        return default
+    return parsed
+
+
+def _json_list(text):
+    parsed = _json_value(text, [])
+    return parsed if isinstance(parsed, list) else []
+
+
+def coupon_branch_ids(db: Session, coupon_id: int) -> list:
+    """Branch ids a coupon is restricted to (dianping §1.2).
+
+    Empty = usable at every branch of the coupon's shop."""
+    rows = (db.query(models.CouponBranch)
+            .filter(models.CouponBranch.coupon_id == coupon_id)
+            .order_by(models.CouponBranch.branch_id).all())
+    return [r.branch_id for r in rows]
+
+
+def coupon_branches_out(db: Session, coupon_id: int) -> list:
+    ids = coupon_branch_ids(db, coupon_id)
+    if not ids:
+        return []
+    branches = (db.query(models.Branch)
+                .filter(models.Branch.id.in_(ids))
+                .order_by(models.Branch.id).all())
+    return [{"id": b.id, "branch_id": b.id, "name": b.name} for b in branches]
 
 
 def coupon_out(db: Session, c: models.Coupon, user_id=None,
@@ -62,6 +100,10 @@ def coupon_out(db: Session, c: models.Coupon, user_id=None,
         "additional_terms": c.additional_terms or "",
         "is_coupon_favorite": fav,
         "distance_km": distance_km,
+        # Dianping §1.2: branches this coupon is valid at; [] = all
+        # branches of the shop.
+        "branch_ids": coupon_branch_ids(db, c.id),
+        "branches": coupon_branches_out(db, c.id),
     }
 
 
@@ -96,6 +138,11 @@ def shop_out(db: Session, s: models.Shop, user_id=None):
         "longitude": float(s.longitude) if s.longitude is not None else None,
         "branch_count": branches,
         "is_shop_favorite": fav,
+        "is_approved": bool(s.is_approved),
+        # Dianping §1.4: merchant-maintained shop profile fields.
+        "business_hours": _json_value(s.business_hours, {}),
+        "gallery": _json_list(s.gallery),
+        "announcement": s.announcement or "",
     }
 
 

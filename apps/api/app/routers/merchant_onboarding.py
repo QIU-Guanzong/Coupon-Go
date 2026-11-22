@@ -353,7 +353,15 @@ def sign_contract(application_id: int,
                   request: Request,
                   user: models.User = Depends(get_current_user),
                   db: Session = Depends(get_db)):
-    app = _get_application_or_404(db, application_id)
+    from ..cashback_service import lock_account
+    lock_account(db, user.id)
+    if db.get_bind().dialect.name == "sqlite":
+        db.query(MerchantApplication).filter_by(id=application_id).update(
+            {"id": MerchantApplication.id}, synchronize_session=False)
+    app = (db.query(MerchantApplication).filter_by(id=application_id)
+           .with_for_update().populate_existing().first())
+    if app is None:
+        raise HTTPException(status_code=404, detail="找不到此入駐申請")
     if app.user_id != user.id:
         raise HTTPException(status_code=403, detail="沒有權限")
     if app.status != "pending":

@@ -12,9 +12,7 @@ from .. import merchant_finance as mf
 from .. import models
 from ..database import get_db
 from ..deps import get_current_user
-from ..permissions_line_f import (
-    can_access_shop, get_shop_or_404,
-)
+from ..permissions_line_f import can_view_settlement_shop, get_shop_or_404
 from ..settlement_basis import BASIS_EXPLAINER
 from . import admin_v2
 from .admin_v2 import _settlement_out
@@ -37,7 +35,9 @@ def _page(items, page: int, per_page: int = 20):
 
 
 def _merchant_shop_ids(db: Session, user: models.User) -> set:
-    return admin_v2._merchant_admin_shop_ids(db, user)
+    if user.role == "admin":
+        return {shop.id for shop in db.query(models.Shop.id)}
+    return admin_v2._merchant_settlement_shop_ids(db, user)
 
 
 # ---------- balance (§2.1) ----------
@@ -69,7 +69,7 @@ def shop_balance_endpoint(shop_id: int,
                           user: models.User = Depends(get_current_user),
                           db: Session = Depends(get_db)):
     shop = get_shop_or_404(db, shop_id)
-    if not can_access_shop(db, user, shop):
+    if not can_view_settlement_shop(db, user, shop):
         raise HTTPException(status_code=403, detail="沒有權限查看此商户")
     return mf.shop_balance(db, shop)
 
@@ -80,7 +80,7 @@ def shop_balance_entries(shop_id: int, page: int = Query(1, ge=1),
                          user: models.User = Depends(get_current_user),
                          db: Session = Depends(get_db)):
     shop = get_shop_or_404(db, shop_id)
-    if not can_access_shop(db, user, shop):
+    if not can_view_settlement_shop(db, user, shop):
         raise HTTPException(status_code=403, detail="沒有權限查看此商户")
     out = mf.balance_entries(db, shop, page=page, per_page=page_size)
     return {"shop_id": shop.id, "shop_name": shop.name, **out}
@@ -93,7 +93,7 @@ def shop_dashboard_endpoint(shop_id: int,
                             user: models.User = Depends(get_current_user),
                             db: Session = Depends(get_db)):
     shop = get_shop_or_404(db, shop_id)
-    if not can_access_shop(db, user, shop):
+    if not can_view_settlement_shop(db, user, shop):
         raise HTTPException(status_code=403, detail="沒有權限查看此商户")
     return mf.shop_dashboard(db, shop, days=days)
 
@@ -147,7 +147,7 @@ def merchant_dispute_settlement(settlement_id: int, body: dict,
     if s is None:
         raise HTTPException(status_code=404, detail="找不到此結算單")
     shop = db.get(models.Shop, s.shop_id)
-    if not can_access_shop(db, user, shop):
+    if not can_view_settlement_shop(db, user, shop):
         raise HTTPException(status_code=403, detail="沒有權限查看此結算單")
     if s.status not in ("pending", "approved"):
         raise HTTPException(status_code=400, detail="此狀態的結算單不能提出爭議")

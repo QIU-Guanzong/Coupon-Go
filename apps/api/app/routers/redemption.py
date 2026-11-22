@@ -34,9 +34,11 @@ from .. import config, connect_service, errors, models, points, prepare_token, s
 from ..cashback_service import lock_account, void_for_revocation
 from ..settlement_ledger import lock_shop, reverse_sale
 from ..database import get_db
-from ..deps import require_role
+from ..deps import get_current_user, require_role
+from ..permissions_line_f import SHOP_ROLE_PERMISSIONS, can_redeem_shop, shop_member_role
+from ..serializers import coupon_branch_ids
 from ..shared import audit_log, csv_response, vendor_shop_ids
-from .coupons import _redeem_item, _refresh_expiry, ensure_paid_voucher, ensure_redeemable, presented_item
+from .coupons import _redeem_item, _refresh_expiry, check_redemption_branch, ensure_paid_voucher, ensure_redeemable, presented_item
 from .reviews import hide_reviews_for_revoked_redemption
 
 router = APIRouter()
@@ -47,7 +49,7 @@ REVOKE_WINDOW = timedelta(minutes=config.REVOKE_WINDOW_MINUTES)
 from ..timeutil import utcnow as _now
 
 
-def _check_item(db: Session, item: models.WalletItem, vendor: models.User):
+def _check_item(db: Session, item: models.WalletItem, vendor: models.User, branch_id=None):
     """Shared eligibility check for prepare. Returns (coupon, reason|None)."""
     _refresh_expiry(db, item)
     coupon = db.query(models.Coupon).filter(
@@ -58,8 +60,16 @@ def _check_item(db: Session, item: models.WalletItem, vendor: models.User):
         return coupon, "此優惠券已失效"
     if item.qr_expires_at and item.qr_expires_at < _now():
         return coupon, "QR 碼已過期，請重新出示"
-    if coupon is None or (vendor.role != 'admin' and coupon.shop_id not in vendor_shop_ids(db, vendor)):
+    if coupon is None:
         return coupon, "無效的 QR 碼！此碼屬於其他商店。"
+    shop = db.get(models.Shop, coupon.shop_id)
+    if shop is None or not can_redeem_shop(db, vendor, shop):
+        if shop is not None and shop_member_role(db, vendor, shop) is not None:
+            return coupon, "沒有核銷權限"
+        return coupon, "無效的 QR 碼！此碼屬於其他商店。"
+    reason, _allowed = check_redemption_branch(db, coupon, branch_id)
+    if reason:
+        return coupon, reason
     try:
         ensure_paid_voucher(db, item)
         ensure_redeemable(coupon, purchased_order=item.source == "purchase")
@@ -81,20 +91,34 @@ def _phone_last4(phone):
 
 @router.post("/new-scan-coupon/prepare")
 def prepare_scan(body: dict,
-                 vendor: models.User = Depends(require_role("vendor", "admin")),
+                 vendor: models.User = Depends(get_current_user),
                  db: Session = Depends(get_db)):
     code = (body or {}).get("code", "")
     item = presented_item(db, code)
     if item is None:
         return {"can_redeem": False, "reason": "無效的 QR 碼！",
                 "prepare_token": None, "wallet_item_id": None}
-    coupon, reason = _check_item(db, item, vendor)
+    branch_id = (body or {}).get("branch_id")
+    coupon, reason = _check_item(db, item, vendor, branch_id=branch_id)
+    shop = db.get(models.Shop, coupon.shop_id) if coupon else None
+    allowed = (coupon_branch_ids(db, coupon.id)
+               if shop and can_redeem_shop(db, vendor, shop) else [])
+    branches = (db.query(models.Branch).filter(
+        models.Branch.shop_id == shop.id, models.Branch.id.in_(allowed)
+    ).order_by(models.Branch.id).all() if allowed else [])
+    options = [{"id": b.id, "name": b.name, "address": b.address or ""}
+               for b in branches]
     if reason is not None:
         return {"can_redeem": False, "reason": reason,
                 "prepare_token": None, "wallet_item_id": item.id,
                 "coupon_name": coupon.coupon_name if coupon else "",
-                "shop_id": coupon.shop_id if coupon else None}
-    token, _issued = prepare_token.issue_prepare_token(item.id, binding=f"{vendor.id}:{code}")
+                "shop_id": coupon.shop_id if coupon else None,
+                "branch_selection_required": bool(
+                    allowed and branch_id is None
+                    and reason == "此優惠券限指定分店使用，請先選擇分店"),
+                "allowed_branches": options}
+    token, _issued = prepare_token.issue_prepare_token(
+        item.id, binding=prepare_token.redemption_binding(vendor.id, code, branch_id))
     shop = db.query(models.Shop).filter(
         models.Shop.id == coupon.shop_id).first()
     # Gap 5: customer phone last-4 (User.phone, via the wallet owner)
@@ -111,7 +135,8 @@ def prepare_scan(body: dict,
             "prepare_token": token, "wallet_item_id": item.id,
             "coupon_name": coupon.coupon_name,
             "shop_id": coupon.shop_id,
-            "shop_name": shop.name if shop else "",
+            "shop_name": shop.name if shop else "", "branch_id": branch_id,
+            "branch_selection_required": False, "allowed_branches": options,
             "phone_last4": last4,
             "customer_phone_last4": last4,
             "valid_until": valid_to,
@@ -239,11 +264,22 @@ def force_revoke_redemption(redemption_id: int, body: schemas.ForceRevokeIn,
     return _revoke_redemption(db, redemption_id, admin, force_reason=reason)
 
 
+def _require_redemption_merchant(db, user):
+    if user.role == 'admin' or db.query(models.Shop.id).filter_by(vendor_id=user.id).first():
+        return
+    roles = [role for role, perms in SHOP_ROLE_PERMISSIONS.items() if 'redeem' in perms]
+    if db.query(models.ShopMember.id).filter_by(user_id=user.id, status='active').filter(
+            models.ShopMember.role.in_(roles)).first():
+        return
+    raise HTTPException(403, '沒有核銷權限')
+
+
 @router.get("/merchant/redemptions/lookup")
 def lookup_redemption(phone: str | None = None, code_suffix: str | None = None,
                       order_id: int | None = None,
-                      vendor: models.User = Depends(require_role("vendor", "admin")),
+                      vendor: models.User = Depends(get_current_user),
                       db: Session = Depends(get_db)):
+    _require_redemption_merchant(db, vendor)
     if not phone and not code_suffix and order_id is None:
         raise HTTPException(400, "請提供 phone、code_suffix 或 order_id")
     suffix = ''.join(c for c in (code_suffix or '') if c.isdigit())
@@ -255,7 +291,12 @@ def lookup_redemption(phone: str | None = None, code_suffix: str | None = None,
     query = (db.query(models.WalletItem).join(models.Coupon)
              .filter(models.WalletItem.status == 1))
     if vendor.role != 'admin':
-        query = query.filter(models.Coupon.shop_id.in_(vendor_shop_ids(db, vendor)))
+        shop_ids = set(vendor_shop_ids(db, vendor))
+        shop_ids.update(row.shop_id for row in db.query(models.ShopMember.shop_id).filter(
+            models.ShopMember.user_id == vendor.id, models.ShopMember.status == 'active',
+            models.ShopMember.role.in_([role for role, perms in SHOP_ROLE_PERMISSIONS.items()
+                                       if 'redeem' in perms])))
+        query = query.filter(models.Coupon.shop_id.in_(shop_ids))
     if order_id is not None:
         query = query.filter(models.WalletItem.order_id == order_id)
     if suffix:
@@ -274,9 +315,15 @@ def lookup_redemption(phone: str | None = None, code_suffix: str | None = None,
             continue
         shop = db.get(models.Shop, coupon.shop_id)
         order = db.get(models.Order, item.order_id) if item.order_id else None
+        allowed = coupon_branch_ids(db, coupon.id)
+        branches = (db.query(models.Branch).filter(
+            models.Branch.shop_id == coupon.shop_id,
+            models.Branch.id.in_(allowed)).order_by(models.Branch.id).all() if allowed else [])
         out.append({'wallet_item_id': item.id, 'coupon_id': coupon.id,
                     'coupon_name': coupon.coupon_name, 'shop_id': coupon.shop_id,
                     'shop_name': shop.name if shop else '',
+                    'branch_required': bool(allowed),
+                    'branches': [{'id': b.id, 'name': b.name, 'address': b.address or ''} for b in branches],
                     'customer_phone_last4': _phone_last4(owner.phone if owner else None),
                     'valid_to': coupon.valid_to.isoformat() if coupon.valid_to else None,
                     'order_id': item.order_id, 'package_quantity': (order.quantity or 1) if order else None,
@@ -284,14 +331,15 @@ def lookup_redemption(phone: str | None = None, code_suffix: str | None = None,
     return {'items': out}
 
 
-def _supplementary_replay(db, key, vendor, wallet_id):
+def _supplementary_replay(db, key, vendor, wallet_id, branch_id):
     if not key:
         return None
     red = db.query(models.Redemption).filter_by(idempotency_key=key).first()
     if red is None:
         return None
     if (red.scanned_by_vendor_id != vendor.id or red.wallet_item_id != wallet_id
-            or red.method != 'supplementary' or red.revoked_at is not None):
+            or red.method != 'supplementary' or red.revoked_at is not None
+            or red.branch_id != branch_id):
         raise errors.redemption_replay_mismatch()
     return {'message': '此筆核銷已完成', 'redemption_id': red.id,
             'wallet_item_id': red.wallet_item_id, 'shop_id': red.shop_id,
@@ -301,9 +349,10 @@ def _supplementary_replay(db, key, vendor, wallet_id):
 
 @router.post("/merchant/redemptions/supplementary-scan")
 def supplementary_scan(body: schemas.SupplementaryScanIn,
-                       vendor: models.User = Depends(require_role('vendor', 'admin')),
+                       vendor: models.User = Depends(get_current_user),
                        db: Session = Depends(get_db)):
-    replay = _supplementary_replay(db, body.idempotency_key, vendor, body.wallet_item_id)
+    _require_redemption_merchant(db, vendor)
+    replay = _supplementary_replay(db, body.idempotency_key, vendor, body.wallet_item_id, body.branch_id)
     if replay:
         return replay
     candidate = db.query(models.WalletItem.user_id, models.WalletItem.order_id).filter_by(id=body.wallet_item_id).first()
@@ -317,11 +366,11 @@ def supplementary_scan(body: schemas.SupplementaryScanIn,
             .with_for_update().populate_existing().first())
     if item is None or item.user_id != candidate.user_id or item.order_id != candidate.order_id:
         raise HTTPException(409, '券資料需要核對')
-    replay = _supplementary_replay(db, body.idempotency_key, vendor, body.wallet_item_id)
+    replay = _supplementary_replay(db, body.idempotency_key, vendor, body.wallet_item_id, body.branch_id)
     if replay:
         return replay
     red = _redeem_item(db, item, vendor, None, idempotency_key=body.idempotency_key,
-                       method='supplementary', note=body.note, commit=False)
+                       method='supplementary', note=body.note, branch_id=body.branch_id, commit=False)
     audit_log(db, vendor.id, 'redemption.supplementary_scan', 'redemption', red.id,
               f'wallet_item_id={item.id} | reason={(body.reason or "顧客離店後補核銷").strip()}')
     db.commit()
@@ -333,7 +382,12 @@ def supplementary_scan(body: schemas.SupplementaryScanIn,
 
 
 def _batch_fingerprint(body):
-    value = json.dumps({'codes': body.codes, 'note': body.note}, ensure_ascii=False,
+    fields = {'codes': body.codes, 'note': body.note}
+    # Keep the existing fingerprint for old requests and an explicit all-null
+    # selection: both mean no branch was supplied for any coupon.
+    if body.branch_ids is not None and any(branch_id is not None for branch_id in body.branch_ids):
+        fields['branch_ids'] = body.branch_ids
+    value = json.dumps(fields, ensure_ascii=False,
                        separators=(',', ':'), sort_keys=True).encode()
     return hmac.new(config.SECRET_KEY.encode(), value, hashlib.sha256).hexdigest()
 
@@ -360,10 +414,13 @@ def _batch_replay(db, batch, fingerprint, codes):
 
 @router.post('/new-scan-coupon/batch')
 def batch_scan(body: schemas.ScanBatchIn,
-               vendor: models.User = Depends(require_role('vendor', 'admin')),
+               vendor: models.User = Depends(get_current_user),
                db: Session = Depends(get_db)):
+    _require_redemption_merchant(db, vendor)
     if body.prepare_tokens is not None and len(body.prepare_tokens) != len(body.codes):
         raise HTTPException(422, 'prepare_tokens 須與 codes 一一對應')
+    if body.branch_ids is not None and len(body.branch_ids) != len(body.codes):
+        raise HTTPException(422, 'branch_ids 須與 codes 一一對應')
     if len(set(body.codes)) != len(body.codes):
         raise HTTPException(422, '同一批次不能重複掃描相同碼')
     fingerprint = _batch_fingerprint(body)
@@ -403,19 +460,40 @@ def batch_scan(body: schemas.ScanBatchIn,
         raise HTTPException(409, '券資料需要核對')
     for shop_id in sorted({items[item_id].coupon.shop_id for item_id in ids}):
         lock_shop(db, shop_id)
+    branch_ids = body.branch_ids if body.branch_ids is not None else [None] * len(ids)
+    branch_errors = []
+    for code, item_id, branch_id in zip(body.codes, ids, branch_ids):
+        item = items[item_id]
+        shop = db.get(models.Shop, item.coupon.shop_id)
+        if shop is None or not can_redeem_shop(db, vendor, shop):
+            db.rollback()
+            raise errors.qr_wrong_shop()
+        reason, allowed = check_redemption_branch(db, item.coupon, branch_id)
+        options = (db.query(models.Branch).filter(models.Branch.shop_id == shop.id,
+                   models.Branch.id.in_(allowed)).order_by(models.Branch.id).all() if allowed else [])
+        branch_errors.append({'code': code, 'status': 'error' if reason else 'ok',
+                              'wallet_item_id': item.id, 'reason': reason or '',
+                              'branch_selection_required': bool(allowed and branch_id is None),
+                              'allowed_branches': [{'id': b.id, 'name': b.name, 'address': b.address or ''} for b in options]})
+    if any(result['status'] == 'error' for result in branch_errors):
+        db.rollback()
+        return JSONResponse(status_code=400, content={'total': len(ids), 'redeemed_count': 0,
+                                                      'duplicate_count': 0, 'results': branch_errors})
     results = []
     try:
         for index, (code, item_id) in enumerate(zip(body.codes, ids)):
             item = items[item_id]
             prepared_at = None
             if body.prepare_tokens is not None:
-                issued = prepare_token.verify_prepare_token(body.prepare_tokens[index], item.id,
-                                                            binding=f'{vendor.id}:{code}')
+                issued = prepare_token.verify_prepare_token(
+                    body.prepare_tokens[index], item.id,
+                    binding=prepare_token.redemption_binding(vendor.id, code, branch_ids[index]))
                 if issued is None:
                     raise HTTPException(400, '預核銷已失效，請重新預核銷')
                 prepared_at = datetime.fromtimestamp(issued, tz=timezone.utc).replace(tzinfo=None)
             red = _redeem_item(db, item, vendor, code, idempotency_key=f'batch:{batch.id}:{index}',
-                               prepared_at=prepared_at, method='batch', note=body.note, commit=False)
+                               prepared_at=prepared_at, method='batch', note=body.note,
+                               branch_id=branch_ids[index], commit=False)
             results.append({'code': code, 'status': 'redeemed', 'wallet_item_id': item.id,
                             'redemption_id': red.id, 'coupon_name': item.coupon.coupon_name, 'duplicate': False})
         batch.redemption_ids = json.dumps([item['redemption_id'] for item in results])
@@ -435,8 +513,7 @@ def export_redemptions(format: str = Query("json", pattern="^(json|csv)$"),
                        coupon_id: int | None = Query(None),
                        revoked: bool | None = Query(None),
                        method: str | None = Query(None, pattern='^(scan|manual|supplementary|batch)$'),
-                       vendor: models.User = Depends(
-                           require_role("vendor", "admin")),
+                       vendor: models.User = Depends(get_current_user),
                        db: Session = Depends(get_db)):
     """Redemption export (GAP §4.5 filters, §5.9 shared CSV writer).
 
@@ -454,7 +531,14 @@ def export_redemptions(format: str = Query("json", pattern="^(json|csv)$"),
                    if to else None)
     except ValueError:
         raise errors.bad_request("日期格式不正確，請用 YYYY-MM-DD")
-    shop_ids = None if vendor.role == "admin" else vendor_shop_ids(db, vendor)
+    if vendor.role == "admin":
+        shop_ids = None
+    else:
+        shop_ids = vendor_shop_ids(db, vendor)
+        for member in db.query(models.ShopMember).filter_by(user_id=vendor.id, status="active"):
+            if "view_redemptions" in SHOP_ROLE_PERMISSIONS.get(member.role, set()):
+                shop_ids.append(member.shop_id)
+        shop_ids = sorted(set(shop_ids))
     q = db.query(models.Redemption)
     if shop_ids is not None:
         q = q.filter(models.Redemption.shop_id.in_(shop_ids)) if shop_ids else q.filter(False)

@@ -249,6 +249,7 @@ class ForceRevokeIn(BaseModel):
 
 class SupplementaryScanIn(BaseModel):
     wallet_item_id: int
+    branch_id: Optional[int] = None
     idempotency_key: Optional[str] = Field(default=None, min_length=1, max_length=80)
     reason: Optional[str] = Field(default=None, max_length=500)
     note: Optional[str] = Field(default=None, max_length=500)
@@ -258,6 +259,7 @@ class ScanBatchIn(BaseModel):
     model_config = {"extra": "forbid"}
     codes: List[str] = Field(min_length=1, max_length=20)
     prepare_tokens: Optional[List[str]] = None
+    branch_ids: Optional[List[Optional[int]]] = None
     idempotency_key: str = Field(min_length=1, max_length=80)
     note: Optional[str] = Field(default=None, max_length=500)
 
@@ -311,6 +313,10 @@ class ScanIn(BaseModel):
     # redemption) and optional prepare token from /new-scan-coupon/prepare.
     idempotency_key: Optional[str] = None
     prepare_token: Optional[str] = None
+    # Dianping §1.2: branch the customer is redeeming at. When the
+    # coupon is restricted to specific branches, the scan is rejected
+    # unless branch_id is one of them. Unrestricted coupons may omit it.
+    branch_id: Optional[int] = None
 
 
 class PrepareIn(BaseModel):

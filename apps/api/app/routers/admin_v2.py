@@ -50,9 +50,12 @@ from ..models_line_f import SettlementReversal, SettlementTransfer
 from ..settlement_basis import BASIS_EXPLAINER, settlement_basis, settlement_basis_note
 from ..shared import (audit_log as _log, csv_response, money as _money,
                       paginate, vendor_shop_ids)
+from ..notify import notify
 from ..permissions_line_f import (
-    ALL_ROLES, can_access_shop, can_request_invoice_for_shop,
+    ALL_ROLES, SHOP_MEMBER_ROLES, SHOP_ROLE_PERMISSIONS,
+    can_access_shop, can_request_invoice_for_shop, can_view_settlement_shop,
     get_shop_or_404, has_perm, require_perm, role_permissions,
+    shop_role_permissions_out,
 )
 from .packages import _lock_order, _refund_order_checked
 from .reviews import recompute_rating, review_out
@@ -241,6 +244,21 @@ def _merchant_admin_shop_ids(db: Session, user: models.User) -> set:
     return ids
 
 
+def _merchant_settlement_shop_ids(db: Session, user: models.User) -> set:
+    """Shops whose SETTLEMENTS a user may read (dianping §1.3): shops
+    they own, plus member shops where their shop role grants
+    view_settlement (legacy merchant-admin / finance-role member).
+    Cashier / manager members are excluded — that is the point."""
+    ids = {s.id for s in db.query(models.Shop).filter(
+        models.Shop.vendor_id == user.id).all()}
+    for m in db.query(ShopMember).filter(
+            ShopMember.user_id == user.id,
+            ShopMember.status == "active").all():
+        if "view_settlement" in SHOP_ROLE_PERMISSIONS.get(m.role, set()):
+            ids.add(m.shop_id)
+    return ids
+
+
 @router.get("/admin/orders")
 def list_admin_orders(status: str = Query(None),
                       page: int = Query(1, ge=1),
@@ -385,6 +403,10 @@ def generate_settlement(body: schemas_line_f.SettlementGenerateIn,
     shop = get_shop_or_404(db, body.shop_id)
     settlement, items = mf.generate_settlement_for_shop(
         db, shop, body.period, actor_id=user.id, commission_rate=body.commission_rate)
+    notify(db, shop.vendor_id, "結算單已生成",
+           f"「{shop.name}」{body.period} 結算單已生成，淨額 ${_money(settlement.net_amount)}。",
+           "settlement_generated", target_shop_id=shop.id)
+    db.commit()
     out = _settlement_out(db, settlement)
     out["basis_explainer"] = BASIS_EXPLAINER
     out["items"] = []
@@ -437,7 +459,7 @@ def get_settlement(settlement_id: int,
                    user: models.User = Depends(get_current_user),
                    db: Session = Depends(get_db)):
     s = db.query(Settlement).filter(Settlement.id == settlement_id).first()
-    if s is not None and not can_access_shop(db, user, db.get(models.Shop, s.shop_id)):
+    if s is not None and not can_view_settlement_shop(db, user, db.get(models.Shop, s.shop_id)):
         raise HTTPException(403, "沒有權限查看此結算單")
     if s is None:
         raise HTTPException(status_code=404, detail="找不到此結算單")
@@ -487,6 +509,13 @@ def approve_settlement(settlement_id: int,
     _log(db, user.id, "settlement.approve", "settlement", s.id,
          f"period={s.period}; net={s.net_amount}")
     db.commit()
+    # §1.5: tell the shop owner the statement was approved.
+    _shop = db.query(models.Shop).filter(models.Shop.id == s.shop_id).first()
+    if _shop is not None:
+        notify(db, _shop.vendor_id, "結算單已確認",
+               f"「{_shop.name}」{s.period} 結算單已確認，淨額 ${_money(s.net_amount)}。",
+               "settlement_approved", target_shop_id=_shop.id)
+        db.commit()
     return {"message": "結算單已確認", "settlement": _settlement_out(db, s)}
 
 
@@ -592,6 +621,13 @@ def pay_settlement(settlement_id: int,
     _log(db, user.id, "settlement.pay", "settlement", s.id,
          f"period={s.period}; net={s.net_amount}")
     db.commit()
+    # §1.5: tell the shop owner the money was paid.
+    _shop = db.query(models.Shop).filter(models.Shop.id == s.shop_id).first()
+    if _shop is not None:
+        notify(db, _shop.vendor_id, "結算單已打款",
+               f"「{_shop.name}」{s.period} 結算單已打款，淨額 ${_money(s.net_amount)}。",
+               "settlement_paid", target_shop_id=_shop.id)
+        db.commit()
     return {"message": "結算單已付款", "settlement": _settlement_out(db, s)}
 
 
@@ -630,7 +666,9 @@ def record_balance_transfer(settlement_id: int, body: schemas_line_f.SettlementT
 @router.get("/merchant/settlements")
 def own_statements(page: int = Query(1, ge=1), format: str = Query("json", pattern="^(json|csv)$"), user: models.User = Depends(get_current_user),
                    db: Session = Depends(get_db)):
-    shops = _merchant_admin_shop_ids(db, user)
+    # §1.3: only settlement-visible shops (owner / finance-role member /
+    # legacy merchant-admin) — cashier / manager members see nothing here.
+    shops = _merchant_settlement_shop_ids(db, user)
     rows = db.query(Settlement).filter(Settlement.shop_id.in_(shops)).order_by(Settlement.id.desc())
     if format == "csv":
         return mf.settlements_csv([_settlement_out(db, s) for s in rows.all()])
@@ -644,7 +682,9 @@ def merchant_settlements(shop_id: int, page: int = Query(1, ge=1),
                          user: models.User = Depends(get_current_user),
                          db: Session = Depends(get_db)):
     shop = get_shop_or_404(db, shop_id)
-    if not can_access_shop(db, user, shop):
+    # §1.3: settlement money is visible only to owner / admin / platform
+    # finance-auditor / view_settlement members — never cashier/manager.
+    if not can_view_settlement_shop(db, user, shop):
         raise HTTPException(status_code=403, detail="沒有權限查看此商户")
     q = (db.query(Settlement).filter(Settlement.shop_id == shop.id)
          .order_by(Settlement.period.desc(), Settlement.id.desc()))
@@ -904,7 +944,7 @@ def merchant_reconciliation(shop_id: int, page: int = Query(1, ge=1),
                             user: models.User = Depends(get_current_user),
                             db: Session = Depends(get_db)):
     shop = get_shop_or_404(db, shop_id)
-    if not can_access_shop(db, user, shop):
+    if not can_view_settlement_shop(db, user, shop):
         raise HTTPException(status_code=403, detail="沒有權限查看此商户")
     q = (db.query(ReconciliationReport)
          .filter(ReconciliationReport.shop_id == shop.id)
@@ -1100,7 +1140,7 @@ def merchant_invoices(shop_id: int, page: int = Query(1, ge=1),
                       user: models.User = Depends(get_current_user),
                       db: Session = Depends(get_db)):
     shop = get_shop_or_404(db, shop_id)
-    if not can_access_shop(db, user, shop):
+    if not can_view_settlement_shop(db, user, shop):
         raise HTTPException(status_code=403, detail="沒有權限查看此商户")
     q = (db.query(Invoice).filter(Invoice.shop_id == shop.id)
          .order_by(Invoice.created_at.desc(), Invoice.id.desc()))
@@ -1428,6 +1468,8 @@ def list_shop_members(shop_id: int,
                     "email": u.email if u else "",
                     "name": u.name if u else "",
                     "role": m.role, "status": m.status,
+                    # §1.3: what this member may actually do in this shop.
+                    "permissions": shop_role_permissions_out(m.role),
                     "invited_by": m.invited_by,
                     "invited_at": m.invited_at,
                     "created_at": m.created_at})
@@ -1441,8 +1483,13 @@ def add_shop_member(shop_id: int, body: schemas_line_f.ShopMemberAddIn,
     shop = get_shop_or_404(db, shop_id)
     if user.role != "admin" and shop.vendor_id != user.id:
         raise HTTPException(status_code=403, detail="只有管理員或店主可以加店員")
-    target = db.query(models.User).filter(
-        models.User.id == body.user_id).first()
+    if body.user_id is not None:
+        target = db.query(models.User).filter(models.User.id == body.user_id).first()
+    elif body.email and body.email.strip():
+        target = db.query(models.User).filter(
+            func.lower(models.User.email) == body.email.strip().lower()).first()
+    else:
+        raise HTTPException(status_code=400, detail="請輸入店員的註冊電郵")
     if target is None:
         raise HTTPException(status_code=404, detail="找不到此用戶")
     # F8: only a customer or an existing merchant-admin may be invited.
@@ -1457,26 +1504,49 @@ def add_shop_member(shop_id: int, body: schemas_line_f.ShopMemberAddIn,
                         ShopMember.user_id == target.id).first())
     if existing is not None:
         raise HTTPException(status_code=400, detail="此用戶已是本店店員")
+    # §1.3: the invite carries a shop role (cashier / manager / finance
+    # / legacy merchant-admin). Unknown roles are rejected here, not at
+    # confirm time.
+    role = (body.role or "merchant-admin").strip()
+    if role not in SHOP_MEMBER_ROLES:
+        raise HTTPException(status_code=400,
+                            detail=f"未知店員角色：{role}")
     # F8: invite only — status=pending, NO immediate promotion. The
     # invitee confirms via POST .../members/{member_id}/confirm, and
     # only then (if they are a customer) become merchant-admin.
     member = ShopMember(shop_id=shop.id, user_id=target.id,
-                        role="merchant-admin", added_by=user.id,
+                        role=role, added_by=user.id,
                         status="pending", invited_by=user.id,
                         invited_at=_now())
     db.add(member)
     db.flush()
+    notify(db, target.id, "店員邀請", f"「{shop.name}」邀請你加入店舖，請查看邀請並確認。",
+           "shop_member_invitation", target_shop_id=shop.id)
     _log(db, user.id, "shop.member.invite", "shop_member", member.id,
-         f"shop_id={shop.id}; user_id={target.id}")
+         f"shop_id={shop.id}; user_id={target.id}; role={role}")
     db.commit()
     db.refresh(member)
     return {"message": "邀請已發送，待對方確認", "member": {
         "id": member.id, "shop_id": member.shop_id,
         "user_id": member.user_id, "email": target.email,
         "name": target.name or "", "role": member.role,
-        "status": member.status, "invited_by": member.invited_by,
+        "status": member.status,
+        "permissions": shop_role_permissions_out(member.role),
+        "invited_by": member.invited_by,
         "invited_at": member.invited_at,
         "created_at": member.created_at}}
+
+
+@router.get("/merchant/shop-invitations")
+def my_shop_invitations(user: models.User = Depends(get_current_user),
+                        db: Session = Depends(get_db)):
+    rows = (db.query(ShopMember, models.Shop).join(models.Shop, models.Shop.id == ShopMember.shop_id)
+            .filter(ShopMember.user_id == user.id, ShopMember.status == "pending")
+            .order_by(ShopMember.id.desc()).all())
+    return {"invitations": [{"id": member.id, "shop_id": shop.id,
+                            "shop_name": shop.name, "role": member.role,
+                            "permissions": shop_role_permissions_out(member.role)}
+                           for member, shop in rows]}
 
 
 @router.post("/admin/shops/{shop_id}/members/{member_id}/confirm")
@@ -1512,7 +1582,50 @@ def confirm_shop_member(shop_id: int, member_id: int,
         "user_id": member.user_id,
         "email": target.email if target else "",
         "name": target.name if target else "", "role": member.role,
-        "status": member.status, "invited_by": member.invited_by,
+        "status": member.status,
+        "permissions": shop_role_permissions_out(member.role),
+        "invited_by": member.invited_by,
+        "invited_at": member.invited_at,
+        "created_at": member.created_at}}
+
+
+@router.patch("/admin/shops/{shop_id}/members/{member_user_id}")
+def update_shop_member_role(shop_id: int, member_user_id: int,
+                            body: schemas_line_f.ShopMemberRoleIn,
+                            user: models.User = Depends(get_current_user),
+                            db: Session = Depends(get_db)):
+    """§1.3: owner / admin changes a member's shop role (e.g. cashier ->
+    manager). The platform role (merchant-admin) is untouched; only the
+    per-shop permission set changes, effective immediately."""
+    shop = get_shop_or_404(db, shop_id)
+    if user.role != "admin" and shop.vendor_id != user.id:
+        raise HTTPException(status_code=403, detail="只有管理員或店主可以改店員角色")
+    role = (body.role or "").strip()
+    if role not in SHOP_MEMBER_ROLES:
+        raise HTTPException(status_code=400,
+                            detail=f"未知店員角色：{role}")
+    member = (db.query(ShopMember)
+              .filter(ShopMember.shop_id == shop.id,
+                      ShopMember.user_id == member_user_id).first())
+    if member is None:
+        raise HTTPException(status_code=404, detail="找不到此店員")
+    old_role = member.role
+    member.role = role
+    _log(db, user.id, "shop.member.role.change", "shop_member", member.id,
+         f"shop_id={shop.id}; user_id={member_user_id}; "
+         f"{old_role} -> {role}")
+    db.commit()
+    db.refresh(member)
+    target = db.query(models.User).filter(
+        models.User.id == member_user_id).first()
+    return {"message": "店員角色已更新", "member": {
+        "id": member.id, "shop_id": member.shop_id,
+        "user_id": member.user_id,
+        "email": target.email if target else "",
+        "name": target.name if target else "", "role": member.role,
+        "status": member.status,
+        "permissions": shop_role_permissions_out(member.role),
+        "invited_by": member.invited_by,
         "invited_at": member.invited_at,
         "created_at": member.created_at}}
 
