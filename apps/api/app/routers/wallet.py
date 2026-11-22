@@ -133,7 +133,7 @@ def exchange_points(coupon_id: int, user: models.User = Depends(get_current_user
     if coupon is None or not coupon.is_points_exchange:
         raise errors.points_coupon_not_found()
     if coupon.sale_price is not None and coupon.sale_price > 0:
-        raise HTTPException(status_code=400, detail="付費券請購買，不可用積分兌換")
+        raise errors.bad_request("付費券請購買，不可用積分兌換")
     if points_balance(db, user.id) < config.POINTS_EXCHANGE_COST:
         raise errors.points_insufficient()
     existing = db.query(models.WalletItem).filter(
