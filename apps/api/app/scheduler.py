@@ -278,12 +278,17 @@ def run_all_jobs(session_factory=None, batch_size=None):
     factory = session_factory or SessionLocal
     results = {}
     for name in ("expired-packages", "bargain-expire", "payment-timeouts",
-                 "coupon-expiry", "late-payment-refunds", "listing-schedule", "points-expire", "connect-transfers"):
+                 "coupon-expiry", "late-payment-refunds", "listing-schedule", "points-expire"):
         db = factory()
         try:
             results[name] = JOB_RUNNERS[name](db)
         finally:
             db.close()
+    db = factory()
+    try:
+        results["connect-transfers"] = run_connect_transfers(db, batch_size=batch_size)
+    finally:
+        db.close()
     db = factory()
     try:
         results["cashback-sweep"] = run_cashback_sweep(
@@ -395,8 +400,8 @@ def main(argv=None):
     p_once.add_argument("--job", choices=list(JOB_NAMES) + ["all"],
                         default="all")
     p_once.add_argument("--batch-size", type=int, default=None,
-                        help="Cashback sweep users per batch (default "
-                             "SCHEDULER_CASHBACK_BATCH_SIZE)")
+                        help="Cashback users / Connect transfers per batch (defaults "
+                             "SCHEDULER_CASHBACK_BATCH_SIZE / SCHEDULER_CONNECT_BATCH_SIZE)")
     sub.add_parser("run", help="Start the foreground scheduler (Ctrl-C quits)")
     sub.add_parser("status", help="Print the resolved scheduler config")
     args = parser.parse_args(argv)
@@ -412,8 +417,8 @@ def main(argv=None):
         else:
             db = SessionLocal()
             try:
-                if args.job == "cashback-sweep":
-                    results = {args.job: run_cashback_sweep(
+                if args.job in ("cashback-sweep", "connect-transfers"):
+                    results = {args.job: JOB_RUNNERS[args.job](
                         db, batch_size=args.batch_size)}
                 else:
                     results = {args.job: JOB_RUNNERS[args.job](db)}

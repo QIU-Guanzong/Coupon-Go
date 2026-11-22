@@ -12,3 +12,26 @@
 每张已付款券以其冻结的实付分摊金额生成核销流水，按核销时记录的佣金率计算；结算单、返现和积分沿用同一分摊依据。核销事务只记录待处理转账，`connect-transfers` 定时任务在事务完成后发送。提款结果不明时保留待处理余额，不重复发送；需通过供应商记录核对后更新。撤销或退款采用持久冲回记录；结果不明时停止自动重发。
 
 当前固定的 Accounts v2 版本为 `2026-11-18.preview`，可用 `STRIPE_V2_VERSION` 配置。2026-11-22 核对时，Stripe 的[创建账户接口参考](https://docs.stripe.com/api/v2/core/accounts/create)示例使用 `2026-11-18.endive`，而 [Connect Accounts v2 指南](https://docs.stripe.com/connect/accounts-v2)示例仍使用 `2026-11-18.preview`。两个示例存在差异；切换版本之前需要用测试账户验证完整开户与结算行为。
+
+## 接口与运维状态
+
+接口均位于 `/api/v3`，使用现有登录凭证。申请人的开户入口为上述
+`/merchant-applications/{id}/connect/onboarding` 与 `/connect/sync`；
+已有店铺可使用 `/merchant/connect/onboarding`、`/merchant/connect/sync`，
+请求含 `shop_id`，开户链接还需要返回和刷新地址（请求或服务端配置）。
+商户可按店调用 `/merchant/connect/status`、`/merchant/connect/balance`、
+`/merchant/connect/ledger`；余额和流水均以 Connect 记录为准。
+
+`POST /merchant/connect/payouts` 要求 `shop_id`、正数 `amount`（最多两位小数）
+和 16–64 位稳定 `request_id`，重试同一操作必须复用该编号。已提交或结果
+不明的提款继续占用余额；`POST /admin/connect/payouts/{entry_id}/reconcile`
+由后台提供供应商记录编号以核对。`GET /admin/connect/recoveries` 列出
+负余额、待核对转账、待处理冲回和未完成提款。结果不明的转账与冲回
+不会自动重复发送；当前尚无供应商核对确认接口，必须人工核对，不能
+将其当作已自动闭环。`POST /merchant/connect/transfers/{entry_id}/retry`
+仅适用于允许重试的状态，不会重发结果不明的转账。
+
+调度器 `connect-transfers` 可使用配置的批次大小或 `run-once --batch-size`
+执行；调度器关闭时会在状态原因中说明商户转账不会自动处理。原始
+PR 中较早的接口说明及测试证据保留于 Git 历史和 `docs/evidence/`，
+其中旧提款调用形式及未知结果处理已由本节和当前实现替代。

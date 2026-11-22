@@ -763,7 +763,8 @@ def recoveries(db: Session) -> dict:
                 "note": entry.note or ""}
 
     needs_manual = (db.query(ConnectLedgerEntry)
-                    .filter_by(kind="transfer", status="needs_manual")
+                    .filter(ConnectLedgerEntry.kind == "transfer",
+                            ConnectLedgerEntry.status.in_(("needs_manual", "transfer_unknown", "transferring")))
                     .order_by(ConnectLedgerEntry.id).all())
     pending_reversals = (db.query(ConnectLedgerEntry)
                          .filter_by(pending_reversal=True)

@@ -1,0 +1,113 @@
+# P1-B Postgres evidence run (Accounts v2, 2026-11-21, system Postgres 16)
+# BACKEND: postgres
+# Migration: explicit revisions (0020 + 0021 are both heads until renumber)
+# Commands:
+#   alembic heads; alembic upgrade 0021_p1b_stripe_connect on coupon_go_test_p1b_mig
+#   (mig DB already at 0021 from the first run, so the upgrade is a no-op;
+#   the real cycle evidence is the downgrade + upgrade below)
+#   alembic downgrade 0019_invoice_credits + upgrade 0021_p1b_stripe_connect
+#   pytest tests/test_p1b_stripe_connect.py tests/test_fix3_row_locks.py tests/test_f3_settlement_locks.py tests/test_m3_bargain_closeout.py
+
+=== alembic heads ===
+0020_m92_legal_consents (head)
+0021_p1b_stripe_connect (head)
+
+=== alembic upgrade 0021_p1b_stripe_connect (fresh mig DB) ===
+INFO  [alembic.runtime.migration] Context impl PostgresqlImpl.
+INFO  [alembic.runtime.migration] Will assume transactional DDL.
+
+=== alembic downgrade 0019_invoice_credits ===
+INFO  [alembic.runtime.migration] Context impl PostgresqlImpl.
+INFO  [alembic.runtime.migration] Will assume transactional DDL.
+INFO  [alembic.runtime.migration] Running downgrade 0021_p1b_stripe_connect -> 0019_invoice_credits, P1-B: Stripe Connect (Accounts v2) accounts + merchant balance ledger.
+
+=== alembic upgrade 0021_p1b_stripe_connect (again) ===
+INFO  [alembic.runtime.migration] Context impl PostgresqlImpl.
+INFO  [alembic.runtime.migration] Will assume transactional DDL.
+INFO  [alembic.runtime.migration] Running upgrade 0019_invoice_credits -> 0021_p1b_stripe_connect, P1-B: Stripe Connect (Accounts v2) accounts + merchant balance ledger.
+
+=== pytest on real Postgres ===
+....................................................                     [100%]
+=============================== warnings summary ===============================
+../../.venv/lib/python3.12/site-packages/fastapi/testclient.py:1
+  /home/hatch/workspace/coupon-go-p1b/.venv/lib/python3.12/site-packages/fastapi/testclient.py:1: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.
+    from starlette.testclient import TestClient as TestClient  # noqa
+
+app/schemas_line_b.py:29
+  /home/hatch/workspace/coupon-go-p1b/apps/api/app/schemas_line_b.py:29: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.14/migration/
+    class ReviewOut(BaseModel):
+
+app/schemas_line_b.py:93
+  /home/hatch/workspace/coupon-go-p1b/apps/api/app/schemas_line_b.py:93: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.14/migration/
+    class MerchantApplicationOut(BaseModel):
+
+app/schemas_line_b.py:120
+  /home/hatch/workspace/coupon-go-p1b/apps/api/app/schemas_line_b.py:120: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.14/migration/
+    class AdminAuditLogOut(BaseModel):
+
+app/schemas_packages.py:46
+  /home/hatch/workspace/coupon-go-p1b/apps/api/app/schemas_packages.py:46: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.14/migration/
+    class PackageOut(BaseModel):
+
+app/schemas_packages.py:91
+  /home/hatch/workspace/coupon-go-p1b/apps/api/app/schemas_packages.py:91: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.14/migration/
+    class PaymentOut(BaseModel):
+
+app/schemas_packages.py:107
+  /home/hatch/workspace/coupon-go-p1b/apps/api/app/schemas_packages.py:107: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.14/migration/
+    class OrderOut(BaseModel):
+
+app/schemas_packages.py:166
+  /home/hatch/workspace/coupon-go-p1b/apps/api/app/schemas_packages.py:166: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.14/migration/
+    class RefundOut(BaseModel):
+
+app/schemas.py:63
+  /home/hatch/workspace/coupon-go-p1b/apps/api/app/schemas.py:63: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.14/migration/
+    class UserOut(BaseModel):
+
+app/schemas.py:87
+  /home/hatch/workspace/coupon-go-p1b/apps/api/app/schemas.py:87: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.14/migration/
+    class CouponOut(BaseModel):
+
+app/schemas.py:118
+  /home/hatch/workspace/coupon-go-p1b/apps/api/app/schemas.py:118: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.14/migration/
+    class ShopOut(BaseModel):
+
+app/schemas.py:138
+  /home/hatch/workspace/coupon-go-p1b/apps/api/app/schemas.py:138: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.14/migration/
+    class BranchOut(BaseModel):
+
+app/schemas.py:233
+  /home/hatch/workspace/coupon-go-p1b/apps/api/app/schemas.py:233: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.14/migration/
+    class NotificationOut(BaseModel):
+
+app/main.py:53
+  /home/hatch/workspace/coupon-go-p1b/apps/api/app/main.py:53: DeprecationWarning: 
+          on_event is deprecated, use lifespan event handlers instead.
+  
+          Read more about it in the
+          [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+          
+    @app.on_event("startup")
+
+../../.venv/lib/python3.12/site-packages/fastapi/applications.py:5039
+../../.venv/lib/python3.12/site-packages/fastapi/applications.py:5039
+  /home/hatch/workspace/coupon-go-p1b/.venv/lib/python3.12/site-packages/fastapi/applications.py:5039: DeprecationWarning: 
+          on_event is deprecated, use lifespan event handlers instead.
+  
+          Read more about it in the
+          [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+          
+    return self.router.on_event(event_type)  # ty: ignore[deprecated]
+
+app/main.py:76
+  /home/hatch/workspace/coupon-go-p1b/apps/api/app/main.py:76: DeprecationWarning: 
+          on_event is deprecated, use lifespan event handlers instead.
+  
+          Read more about it in the
+          [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+          
+    @app.on_event("shutdown")
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+52 passed, 17 warnings in 469.60s (0:07:49)

@@ -396,6 +396,22 @@ def test_sweep_unknown_transfer_is_not_sent_again(client, monkeypatch):
     monkeypatch.setattr(connect_gateway, "create_transfer", uncertain)
     assert _sweep()["transferred"] == 0
     assert _entry(entry_id)["status"] == "transfer_unknown"
+    ah = _admin_headers(client)
+    recoveries = client.get("/api/v3/admin/connect/recoveries", headers=ah)
+    assert recoveries.status_code == 200
+    assert any(row["id"] == entry_id and row["status"] == "transfer_unknown"
+               for row in recoveries.json()["needs_manual_transfers"])
+    with _db() as db:
+        entry = db.get(ConnectLedgerEntry, entry_id)
+        entry.status = "transferring"
+        db.commit()
+    recoveries = client.get("/api/v3/admin/connect/recoveries", headers=ah)
+    assert any(row["id"] == entry_id and row["status"] == "transferring"
+               for row in recoveries.json()["needs_manual_transfers"])
+    with _db() as db:
+        entry = db.get(ConnectLedgerEntry, entry_id)
+        entry.status = "transfer_unknown"
+        db.commit()
     for _ in range(5):
         _sweep()
     assert keys == [f"transfer-{entry_id}"]
