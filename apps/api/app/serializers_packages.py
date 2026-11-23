@@ -351,6 +351,6 @@ def refund_out(r: Refund) -> dict:
         "amount": float(r.amount or 0),
         "status": r.status,
         "gateway_ref": "" if (r.gateway_ref or "").startswith("request-") else r.gateway_ref or "",
-        "expected_arrival": "原路返回，預計 1–3 個工作日到賬" if r.status == "refunded" else "",
+        "expected_arrival": "如涉及實際付款，退款將退回原付款方式；到賬時間視支付機構而定" if r.status == "refunded" else "",
         "created_at": r.created_at,
     }

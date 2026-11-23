@@ -1,7 +1,10 @@
 import 'package:flutter/material.dart';
 
 import '../api_client.dart';
+import '../language.dart';
 import '../theme.dart';
+
+const _trialMode = bool.fromEnvironment('PUBLIC_TRIAL');
 
 /// Stores and branches the current merchant can actually access.
 class MerchantBranchesScreen extends StatefulWidget {
@@ -148,49 +151,63 @@ class _MerchantBranchesScreenState extends State<MerchantBranchesScreen> {
     final session = _session;
     if (shopId == null ||
         _shop?['can_manage_branches'] != true ||
+        _trialMode ||
         _busy ||
         _requiresRefresh) {
       return;
     }
-    final values = await showDialog<Map<String, String>>(
-      context: context,
-      builder: (_) => _BranchEditor(branch: branch),
-    );
-    if (!mounted ||
-        session != _session ||
-        shopId != _shopId ||
-        values == null ||
-        _busy) {
-      return;
-    }
-    setState(() {
-      _busy = true;
-      _error = null;
-    });
-    try {
-      if (branch == null) {
-        await widget.api.post('/merchant/shops/$shopId/branches', body: values);
-      } else {
-        await widget.api.post(
-          '/update-branch-profile',
-          query: {'branch_id': '${branch['id']}', ...values},
-        );
-      }
-      if (!mounted || session != _session || shopId != _shopId) return;
-      setState(() => _requiresRefresh = true);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(branch == null ? '分店已建立' : '分店資料已更新')),
+    Map<String, String>? draft;
+    String? editorError;
+    while (session == _session && shopId == _shopId) {
+      if (!mounted) return;
+      final values = await showDialog<Map<String, String>>(
+        context: context,
+        builder: (_) => _BranchEditor(
+            branch: branch, draft: draft, error: editorError),
       );
-      await _loadBranches(shopId);
-    } catch (error) {
-      if (mounted && session == _session && shopId == _shopId) {
-        setState(() {
-          _requiresRefresh = true;
-          _error = '${_message(error)} 如結果未確認，請先重新載入核對。';
-        });
+      if (!mounted || session != _session || shopId != _shopId ||
+          values == null || _busy) {
+        return;
       }
-    } finally {
-      if (mounted && session == _session) setState(() => _busy = false);
+      setState(() {
+        _busy = true;
+        _error = null;
+      });
+      try {
+        if (branch == null) {
+          await widget.api.post('/merchant/shops/$shopId/branches', body: values);
+        } else {
+          await widget.api.post(
+            '/update-branch-profile',
+            query: {'branch_id': '${branch['id']}', ...values},
+          );
+        }
+        if (!mounted || session != _session || shopId != _shopId) return;
+        setState(() => _requiresRefresh = true);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(branch == null ? '分店已建立' : '分店資料已更新')),
+        );
+        await _loadBranches(shopId);
+        return;
+      } catch (error) {
+        if (mounted && session == _session && shopId == _shopId) {
+          // A validation or authorization response explicitly rejects the
+          // operation. Keep the draft so it can be corrected or copied.
+          if (error is ApiException &&
+              (error.status == 400 || error.status == 403 || error.status == 422)) {
+            draft = values;
+            editorError = error.message;
+            continue;
+          }
+          setState(() {
+            _requiresRefresh = true;
+            _error = '${_message(error)} 如結果未確認，請先重新載入核對。';
+          });
+        }
+        return;
+      } finally {
+        if (mounted && session == _session) setState(() => _busy = false);
+      }
     }
   }
 
@@ -210,6 +227,11 @@ class _MerchantBranchesScreenState extends State<MerchantBranchesScreen> {
                 padding: const EdgeInsets.all(20),
                 children: [
                   const Text('選擇店舖，查看或更新其分店資料。'),
+                  if (_trialMode) ...[
+                    const SizedBox(height: 12),
+                    Text(context.tr('體驗版可查看分店，暫不支援新增或修改。',
+                        'You can view branches in the trial. Adding and editing are unavailable.')),
+                  ],
                   if (_shops.isNotEmpty) ...[
                     const SizedBox(height: 16),
                     DropdownButtonFormField<int>(
@@ -270,7 +292,7 @@ class _MerchantBranchesScreenState extends State<MerchantBranchesScreen> {
                         ),
                         if (_shop?['can_manage_branches'] == true)
                           FilledButton.icon(
-                            onPressed: _busy || _requiresRefresh
+                            onPressed: _busy || _requiresRefresh || _trialMode
                                 ? null
                                 : () => _edit(),
                             icon: const Icon(Icons.add),
@@ -297,7 +319,7 @@ class _MerchantBranchesScreenState extends State<MerchantBranchesScreen> {
                         ),
                         trailing: _shop?['can_manage_branches'] == true
                             ? TextButton(
-                                onPressed: _busy || _requiresRefresh
+                                onPressed: _busy || _requiresRefresh || _trialMode
                                     ? null
                                     : () => _edit(branch),
                                 child: const Text('編輯'),
@@ -332,8 +354,10 @@ class _MerchantBranchesScreenState extends State<MerchantBranchesScreen> {
 }
 
 class _BranchEditor extends StatefulWidget {
-  const _BranchEditor({this.branch});
+  const _BranchEditor({this.branch, this.draft, this.error});
   final Map<String, dynamic>? branch;
+  final Map<String, String>? draft;
+  final String? error;
   @override
   State<_BranchEditor> createState() => _BranchEditorState();
 }
@@ -345,13 +369,13 @@ class _BranchEditorState extends State<_BranchEditor> {
   void initState() {
     super.initState();
     _name = TextEditingController(
-      text: widget.branch?['name'] as String? ?? '',
+      text: widget.draft?['name'] ?? widget.branch?['name'] as String? ?? '',
     );
     _address = TextEditingController(
-      text: widget.branch?['address'] as String? ?? '',
+      text: widget.draft?['address'] ?? widget.branch?['address'] as String? ?? '',
     );
     _phone = TextEditingController(
-      text: widget.branch?['phone'] as String? ?? '',
+      text: widget.draft?['phone'] ?? widget.branch?['phone'] as String? ?? '',
     );
   }
 
@@ -372,6 +396,10 @@ class _BranchEditorState extends State<_BranchEditor> {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
+                if (widget.error != null) ...[
+                  Text(widget.error!, style: TextStyle(color: Theme.of(context).colorScheme.error)),
+                  const SizedBox(height: 12),
+                ],
                 TextFormField(
                   controller: _name,
                   decoration: const InputDecoration(labelText: '分店名稱（必填）'),

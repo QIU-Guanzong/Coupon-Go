@@ -1,8 +1,11 @@
 import 'package:coupon_go/api_client.dart';
 import 'package:coupon_go/screens/merchant_staff.dart';
 import 'package:coupon_go/screens/guest_auth.dart';
+import 'package:coupon_go/feature_flags.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+
+const _trialMode = bool.fromEnvironment('PUBLIC_TRIAL');
 
 class StaffApi extends ApiClient {
   int revision = 0;
@@ -93,7 +96,7 @@ void main() {
     await tester.tap(find.text('登錄').last);
     await tester.pumpAndSettle();
     expect(authed, isTrue);
-  });
+  }, skip: _trialMode || publicPreview); // These modes do not offer account login.
   testWidgets('店主使用電郵與角色發送邀請', (tester) async {
     final api = StaffApi();
     await tester.pumpWidget(
@@ -106,7 +109,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(api.calls.single['email'], 'staff@example.com');
     expect(api.calls.single['role'], 'cashier');
-  });
+  }, skip: _trialMode); // Trial does not send invitations.
 
   testWidgets('邀請人可查看並確認加入', (tester) async {
     final api = StaffApi();
@@ -139,7 +142,7 @@ void main() {
     await tester.tap(find.text('移除'));
     await tester.pumpAndSettle();
     expect(api.calls.last['path'], '/admin/shops/1/members/9');
-  });
+  }, skip: _trialMode); // Trial cannot modify staff roles or membership.
 
   testWidgets('確認前切換帳號不送出舊邀請', (tester) async {
     final api = StaffApi();

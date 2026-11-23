@@ -2,7 +2,7 @@
 (refund_payment, same calibre as package refunds).
 
 * A refund record carries status pending/succeeded/failed + gateway_ref.
-* The user-facing note is "退款将在 1–3 个工作日原路退回" — no dev
+* The user-facing note is "模擬退款，不涉及真實資金" — no dev
   wording ("开发版未接支付网关，仅记账" must not appear).
 * A failed gateway refund stays failed (retryable) and can be retried
   on the SAME refund row via POST /bargain/refunds/{id}/retry.
@@ -114,7 +114,7 @@ def test_timeout_refund_calls_gateway_and_records_ref(client):
     assert refund["reason"] == "bargain_failed"
     assert refund["status"] == "succeeded"
     assert refund["gateway_ref"].startswith("re_test_")
-    assert refund["note"] == "退款将在 1–3 个工作日原路退回"
+    assert refund["note"] == "模擬退款，不涉及真實資金"
     assert "开发" not in refund["note"] and "网关" not in refund["note"]
 
 
@@ -184,4 +184,4 @@ def test_price_cut_refund_has_gateway_ref(client):
     assert refund["reason"] == "price_cut"
     assert refund["status"] == "succeeded"
     assert refund["gateway_ref"].startswith("re_test_")
-    assert refund["note"] == "退款将在 1–3 个工作日原路退回"
+    assert refund["note"] == "模擬退款，不涉及真實資金"

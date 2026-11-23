@@ -310,6 +310,44 @@ class _HomeShellState extends State<HomeShell> {
   String? _role;
   bool _canRedeem = false, _canAnalytics = false;
   final _visited = <int>{0};
+  LocalHistoryEntry? _tabHistory;
+
+  void _clearTabHistory() {
+    final entry = _tabHistory;
+    _tabHistory = null;
+    entry?.remove();
+  }
+
+  void _syncTabHistory() {
+    if (!mounted) return;
+    final activeTab = widget.vendorMode ? _vendorIndex : _index;
+    if (activeTab == 0) {
+      _clearTabHistory();
+      return;
+    }
+    if (_tabHistory != null) return;
+    final route = ModalRoute.of(context);
+    if (route == null) return;
+    late final LocalHistoryEntry entry;
+    entry = LocalHistoryEntry(
+      impliesAppBarDismissal: false,
+      onRemove: () {
+        if (!identical(_tabHistory, entry)) return;
+        _tabHistory = null;
+        _vendorTabRequest++;
+        if (!mounted) return;
+        setState(() {
+          if (widget.vendorMode) {
+            _vendorIndex = 0;
+          } else {
+            _index = 0;
+          }
+        });
+      },
+    );
+    _tabHistory = entry;
+    route.addLocalHistoryEntry(entry);
+  }
 
   @override
   void initState() {
@@ -321,6 +359,7 @@ class _HomeShellState extends State<HomeShell> {
   Future<void> _readRole() async {
     final request = ++_roleRequest;
     _vendorTabRequest++;
+    if (widget.vendorMode && _vendorIndex != 0) _clearTabHistory();
     setState(() { _role = null; _canRedeem = false; _canAnalytics = false; _vendorIndex = 0; });
     if (!widget.api.isLoggedIn) return;
     try {
@@ -335,6 +374,7 @@ class _HomeShellState extends State<HomeShell> {
 
   @override
   void dispose() {
+    _clearTabHistory();
     widget.api.removeListener(_readRole);
     super.dispose();
   }
@@ -355,6 +395,10 @@ class _HomeShellState extends State<HomeShell> {
       _index = 0;
       _visited.clear();
       _visited.add(0);
+    }
+    if (oldWidget.vendorMode != widget.vendorMode ||
+        (oldWidget.authed && !widget.authed)) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _syncTabHistory());
     }
   }
 
@@ -445,6 +489,7 @@ class _HomeShellState extends State<HomeShell> {
       return;
     }
     setState(() => _vendorIndex = index);
+    _syncTabHistory();
   }
 
   Future<void> _inviteFriends() async {
@@ -549,7 +594,10 @@ class _HomeShellState extends State<HomeShell> {
             _openDiscovery();
             return;
           }
-          if (mounted) setState(() { _visited.add(i); _index = i; });
+          if (mounted) {
+            setState(() { _visited.add(i); _index = i; });
+            _syncTabHistory();
+          }
         },
         items: [
           BottomNavigationBarItem(icon: Image.asset('assets/images/ic_home.png',height: 24, width: 24), label: context.tr('主頁', 'Home')),

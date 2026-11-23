@@ -7,6 +7,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+const _trialMode = bool.fromEnvironment('PUBLIC_TRIAL');
+
 class MerchantPackageApi extends ApiClient {
   MerchantPackageApi({this.nextStatus = 'active', this.noShop = false});
   final String nextStatus;
@@ -153,7 +155,7 @@ void main() {
       ]);
       expect(find.text(status == 'active' ? '上架中' : '待審核'), findsOneWidget);
       expect(tester.takeException(), isNull);
-    });
+    }, skip: _trialMode); // Trial does not create packages.
   }
 
   testWidgets('uncertain create cannot be blindly repeated', (tester) async {
@@ -175,7 +177,7 @@ void main() {
     await tester.tap(find.text('返回並重新載入'));
     await tester.pumpAndSettle();
     expect(find.text('尚未建立套餐'), findsOneWidget);
-  });
+  }, skip: _trialMode); // Creation is unavailable in the trial.
 
   testWidgets('account with no store cannot create', (tester) async {
     await tester.pumpWidget(
@@ -235,7 +237,7 @@ void main() {
     expect(api.lastBody?.containsKey('items'), isFalse);
     expect(api.lastBody?.containsKey('usage_rules'), isFalse);
     expect(find.text('更新套餐'), findsOneWidget);
-  });
+  }, skip: _trialMode); // Trial does not edit packages.
 
   testWidgets('pause uses server status and draft is protected on back',
       (tester) async {
@@ -270,7 +272,7 @@ void main() {
     await tester.tap(find.text('放棄'));
     await tester.pumpAndSettle();
     expect(find.text('我的套餐'), findsOneWidget);
-  });
+  }, skip: _trialMode); // Trial does not pause or create packages.
 
   testWidgets('merchant selects the correct store', (tester) async {
     final api = MerchantPackageApi();
@@ -286,7 +288,7 @@ void main() {
     await tester.tap(find.text('儲存套餐'));
     await tester.pumpAndSettle();
     expect(api.lastBody?['shop_id'], 12);
-  });
+  }, skip: _trialMode); // Store selection is part of real package creation.
 
   testWidgets('keyboard opens creation with reduced motion', (tester) async {
     final api = MerchantPackageApi();
@@ -308,5 +310,5 @@ void main() {
     await tester.sendKeyEvent(LogicalKeyboardKey.enter);
     await tester.pumpAndSettle();
     expect(find.text('套餐內容'), findsOneWidget);
-  });
+  }, skip: _trialMode); // The creation control is disabled in the trial.
 }

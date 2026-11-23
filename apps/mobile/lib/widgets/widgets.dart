@@ -97,28 +97,31 @@ class CouponCard extends StatelessWidget {
             ),
             Padding(
               padding: const EdgeInsets.fromLTRB(10, 6, 10, 10),
-              child: Row(
+              child: Wrap(
+                alignment: WrapAlignment.spaceBetween,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                spacing: 6,
+                runSpacing: 4,
                 children: [
                   Text(
-                    coupon.amountText,
+                    context.tr(coupon.amountText, coupon.amountTextEnglish),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
                     style: const TextStyle(
                       color: CgColors.primary,
                       fontWeight: FontWeight.bold,
                       fontSize: 16,
                     ),
                   ),
-                  if (coupon.regularPrice != null) ...[
-                    const SizedBox(width: 6),
+                  if (coupon.regularPrice != null)
                     Text(
-                      '\$${coupon.regularPrice!.toStringAsFixed(0)}',
+                      formatHkd(coupon.regularPrice!),
                       style: const TextStyle(
                         color: CgColors.textSecondary,
                         fontSize: 12,
                         decoration: TextDecoration.lineThrough,
                       ),
                     ),
-                  ],
-                  const Spacer(),
                   Container(
                     padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
                     decoration: BoxDecoration(

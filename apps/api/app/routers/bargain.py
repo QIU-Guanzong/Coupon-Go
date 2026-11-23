@@ -80,9 +80,9 @@ CUT_RATES = [Decimal("0.30"), Decimal("0.25"), Decimal("0.20"),
              Decimal("0.15"), Decimal("0.10")]  # then 0.05
 NEW_USER_BONUS = Decimal("0.10")
 MIN_CUT = Decimal("1.00")
-REFUND_NOTE = "退款将在 1–3 个工作日原路退回"
+REFUND_NOTE = "模擬退款，不涉及真實資金"
 PACKAGE_TERMS = ("砍价成团套餐券；未核销可退款，过期自动退款；已核销不可退。"
-                 "退款原路返回，1–3 个工作日。")
+                 "預付及退款均為模擬，不涉及真實資金。")
 
 
 from ..timeutil import utcnow as _now
@@ -290,7 +290,7 @@ def _attempt_gateway_refund(db: Session, refund: BargainRefund) -> BargainRefund
             "see routers/bargain.py): %s",
             refund.session_id, refund.id, refund.amount, exc)
         refund.status = "failed"
-        refund.note = "退款處理中，請稍後查看或聯繫客服"
+        refund.note = "模擬退款未成功，請稍後重試；不涉及真實資金"
         db.flush()
         return refund
     refund.status = "succeeded"
@@ -623,7 +623,7 @@ def retry_refund(refund_id: int,
     refund = _attempt_gateway_refund(db, refund)
     db.commit()
     db.refresh(refund)
-    return {"message": "退款成功，款項原路返回，預計 1–3 個工作日到賬"
+    return {"message": "模擬退款已完成，不涉及真實資金"
             if refund.status == "succeeded" else "退款仍未成功，請稍後再試",
             "refund": _refund_out(refund)}
 

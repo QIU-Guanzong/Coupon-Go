@@ -110,7 +110,8 @@ class _QBotScreenState extends State<QBotScreen> {
       _failed = false;
       _rateLimited = false;
       _invalidInput = false;
-      if (!retry) _ctrl.clear();
+      // A suggested question should not erase a different draft in the composer.
+      if (!retry && _ctrl.text.trim() == q) _ctrl.clear();
     });
     _scrollDown();
     try {
@@ -350,10 +351,16 @@ class _QBotScreenState extends State<QBotScreen> {
                       decoration: InputDecoration(
                           hintText: t('問 Q仔…', 'Ask Q仔…'), counterText: ''),
                       onSubmitted: _ask)),
-              IconButton(
-                  tooltip: t('送出', 'Send'),
-                  onPressed: _sending ? null : () => _ask(_ctrl.text),
-                  icon: const Icon(Icons.send, color: CgColors.primary)),
+              ValueListenableBuilder<TextEditingValue>(
+                  valueListenable: _ctrl,
+                  builder: (context, value, _) => IconButton(
+                      key: const ValueKey('qbot-send'),
+                      tooltip: t('送出', 'Send'),
+                      color: CgColors.primary,
+                      onPressed: _sending || value.text.trim().isEmpty
+                          ? null
+                          : () => _ask(value.text),
+                      icon: const Icon(Icons.send))),
             ])),
       ])),
     );

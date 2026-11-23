@@ -173,7 +173,7 @@ class _BargainListScreenState extends State<BargainListScreen> {
                                       style: TextStyle(color: Colors.grey)),
                                   SizedBox(height: 4),
                                   Text(
-                                      '發起即鎖定 1 份庫存；未成團 / 超時全額原路退款（1–3 個工作日）；成團後退回砍價差價。',
+                                      '發起即鎖定 1 份庫存；預付及退款均為模擬，不涉及真實資金。',
                                       style: TextStyle(
                                           color: Colors.grey, fontSize: 12)),
                                 ],
@@ -435,7 +435,7 @@ class _BargainCampaignScreenState extends State<BargainCampaignScreen> {
           Text('已有 ${c.helperCount} 人在砍 · ${c.helperLimit} 人成團',
               style: const TextStyle(color: CgColors.textSecondary)),
           const SizedBox(height: 24),
-          Text('先付 ${formatHkd(c.originalPrice)}，砍價差額自動退回',
+          Text('模擬預付 ${formatHkd(c.originalPrice)}，砍價差額按狀態處理',
               textAlign: TextAlign.center,
               style: const TextStyle(fontWeight: FontWeight.bold)),
           const SizedBox(height: 8),
@@ -461,7 +461,7 @@ class _BargainCampaignScreenState extends State<BargainCampaignScreen> {
             ),
           ),
           const SizedBox(height: 8),
-          const Text('未成團 / 超時全額原路退款（1–3 個工作日）。',
+          const Text('預付及退款均為模擬，不涉及真實資金。',
               textAlign: TextAlign.center,
               style: TextStyle(color: CgColors.textSecondary, fontSize: 12)),
         ],
@@ -647,8 +647,8 @@ class _BargainDetailScreenState extends State<BargainDetailScreen> {
       builder: (ctx) => AlertDialog(
         title: Text(context.tr('現在購買', 'Buy now')),
         content: Text(context.tr(
-            '以當前價 ${formatHkd(s.currentPrice)} 結算。\n差價 ${formatHkd(refund)} 將原路退回，預計 1–3 個工作日到帳。',
-            'Pay ${formatHkd(s.currentPrice)} now. The ${formatHkd(refund)} difference will be returned to your original payment method in 1–3 business days.',
+            '以當前價 ${formatHkd(s.currentPrice)} 模擬結算。\n差價 ${formatHkd(refund)} 將模擬退款，不涉及真實資金。',
+            'Simulate checkout at ${formatHkd(s.currentPrice)}. The ${formatHkd(refund)} refund is simulated; no real money is involved.',
         )),
         actions: [
           TextButton(
@@ -820,9 +820,8 @@ class _BargainDetailScreenState extends State<BargainDetailScreen> {
                 title: '已購買，套餐券在錢包',
                 lines: [
                   if (s.refunds.isNotEmpty)
-                    ...s.refunds.map((r) => '${r.reasonText} ${formatHkd(r.amount)}'),
-                  context.tr('預計到帳：1–3 個工作日原路退回',
-                      'Expected in 1–3 business days via your original payment method'),
+                    ...s.refunds.map((r) => '${r.reasonText} ${formatHkd(r.amount)} · ${r.statusText}'),
+                  '模擬退款不涉及真實資金。',
                 ],
               ),
             ],
@@ -830,9 +829,11 @@ class _BargainDetailScreenState extends State<BargainDetailScreen> {
               const SizedBox(height: 16),
               _TerminalCard(
                 icon: Icons.info_outline,
-                title: '砍價已結束，已全額退款 ${formatHkd(s.refundTotal)}',
-                lines: [context.tr('預計到帳：1–3 個工作日原路退回',
-                    'Expected in 1–3 business days via your original payment method')],
+                title: '砍價已結束',
+                lines: [
+                  ...s.refunds.map((r) => '${r.reasonText} ${formatHkd(r.amount)} · ${r.statusText}'),
+                  '模擬退款不涉及真實資金。',
+                ],
               ),
               const SizedBox(height: 16),
               SizedBox(
@@ -1038,8 +1039,8 @@ class BargainResultScreen extends StatelessWidget {
                 child: ListTile(
                   leading:
                       const Icon(Icons.replay, color: CgColors.primary),
-                  title: Text('已退差價 ${formatHkd(refundAmount)}'),
-                  subtitle: const Text('原路返回，1–3 個工作日。'),
+                  title: Text('差價 ${formatHkd(refundAmount)} · ${BargainRefund.fromJson(refund!).statusText}'),
+                  subtitle: const Text('模擬退款不涉及真實資金。'),
                 ),
               ),
             const Spacer(),

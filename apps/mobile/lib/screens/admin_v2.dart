@@ -629,11 +629,12 @@ class _OrdersAdminScreenState extends State<OrdersAdminScreen> {
               _timelineRow('退款原因', o.latestRefundReason),
             _timelineRow('下單時間', _timeText(o.createdAt)),
             _timelineRow('支付時間', _timeText(o.paidAt)),
-            if (o.refundStatus == 'refunded' && !o.demoPayment)
-              const Padding(
-                padding: EdgeInsets.only(top: 8),
-                child: Text('預計 1–3 個工作日原路退回',
-                    style: TextStyle(color: CgColors.textSecondary)),
+            if (o.refundStatus == 'refunded')
+              Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: Text(o.demoPayment ? '模擬退款不涉及真實資金。'
+                    : '退款已發起，實際到賬時間視支付機構而定。',
+                    style: const TextStyle(color: CgColors.textSecondary)),
               ),
             const SizedBox(height: 12),
             const Text('支付 / 退款時間線',

@@ -94,6 +94,7 @@ Future<void> _ask(WidgetTester tester, _BotApi api) async {
       language: AppLanguage()..english = true,
       child: MaterialApp(home: QBotScreen(api: api))));
   await tester.enterText(find.byType(TextField), 'What can I browse?');
+  await tester.pump();
   await tester.tap(find.byTooltip('Send'));
   await tester.pumpAndSettle();
   await tester.tap(find.text('Agree and send'));
@@ -228,6 +229,7 @@ void main() {
       expect(find.text('The shops and offers below are sample data for browsing only.'), findsOneWidget);
     }
     await tester.enterText(find.byType(TextField), 'What can I browse?');
+    await tester.pump();
     await tester.tap(find.byTooltip('Send'));
     await tester.pumpAndSettle();
     expect(api.posts, isEmpty);

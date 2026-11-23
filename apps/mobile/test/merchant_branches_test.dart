@@ -3,9 +3,12 @@ import 'package:coupon_go/screens/merchant_branches.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+const _trialMode = bool.fromEnvironment('PUBLIC_TRIAL');
+
 class BranchApi extends ApiClient {
   bool canManage = true;
   bool failSave = false;
+  int failureStatus = 409;
   int revision = 0;
   final calls = <Map<String, dynamic>>[];
   final branches = <Map<String, dynamic>>[
@@ -46,7 +49,7 @@ class BranchApi extends ApiClient {
     Map<String, String>? query,
   }) async {
     calls.add({'path': path, 'body': body, 'query': query});
-    if (failSave) throw ApiException(409, '無法儲存');
+    if (failSave) throw ApiException(failureStatus, '無法儲存');
     if (body != null) branches.add({'id': 12, ...body});
     if (query != null) branches[0] = {'id': 11, ...query};
     return {'message': '完成'};
@@ -72,7 +75,7 @@ void main() {
     expect(api.calls.single['body']['name'], '灣仔店');
     expect(find.text('灣仔店'), findsOneWidget);
     expect(find.text('分店已建立'), findsOneWidget);
-  });
+  }, skip: _trialMode); // Trial exposes branch details as read-only.
 
   testWidgets('修改資料發往真實接口，失敗時保留伺服器內容', (tester) async {
     final api = BranchApi()..failSave = true;
@@ -101,7 +104,7 @@ void main() {
             .widget<TextButton>(find.widgetWithText(TextButton, '編輯'))
             .onPressed,
         isNotNull);
-  });
+  }, skip: _trialMode); // Trial does not submit branch changes.
 
   testWidgets('店主從選中的店舖打開員工頁', (tester) async {
     final api = BranchApi();
@@ -146,5 +149,26 @@ void main() {
     await tester.tap(find.text('儲存'));
     await tester.pumpAndSettle();
     expect(api.calls, isEmpty);
-  });
+  }, skip: _trialMode); // Trial does not open the branch editor.
+
+  testWidgets('明確拒絕時保留輸入並允許修正重試', (tester) async {
+    final api = BranchApi()..failSave = true..failureStatus = 403;
+    await tester.pumpWidget(MaterialApp(home: MerchantBranchesScreen(api: api)));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('新增分店'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextFormField).first, '灣仔草稿');
+    await tester.enterText(find.byType(TextFormField).at(1), '測試街');
+    await tester.tap(find.text('儲存'));
+    await tester.pumpAndSettle();
+    expect(find.text('無法儲存'), findsOneWidget);
+    expect(find.text('灣仔草稿'), findsOneWidget);
+    expect(find.text('測試街'), findsOneWidget);
+    api.failSave = false;
+    await tester.tap(find.text('儲存'));
+    await tester.pumpAndSettle();
+    expect(api.calls.length, 2);
+    expect(find.text('灣仔草稿'), findsOneWidget);
+    expect(find.text('分店已建立'), findsOneWidget);
+  }, skip: _trialMode); // Retry belongs to the normal editing flow.
 }

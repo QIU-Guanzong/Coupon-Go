@@ -75,6 +75,7 @@ void main() {
     final api = await open(tester, english: true);
     expect(find.text('How do I use a coupon?'), findsOneWidget);
     await tester.enterText(find.byType(TextField), 'Any offers?');
+    await tester.pump();
     await tester.tap(find.byTooltip('Send'));
     await tester.pumpAndSettle();
     expect(api.sent, isEmpty);
@@ -88,6 +89,7 @@ void main() {
     final api = await open(tester);
     api.nextError = 429;
     await tester.enterText(find.byType(TextField), '找咖啡券');
+    await tester.pump();
     await tester.tap(find.byTooltip('送出'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('同意並送出'));
@@ -105,6 +107,7 @@ void main() {
     final api = await open(tester);
     api.nextError = 422;
     await tester.enterText(find.byType(TextField), '找咖啡券');
+    await tester.pump();
     await tester.tap(find.byTooltip('送出'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('同意並送出'));
@@ -113,6 +116,7 @@ void main() {
     expect(find.text('重試'), findsNothing);
     expect(tester.widget<TextField>(find.byType(TextField)).controller!.text, '找咖啡券');
     await tester.enterText(find.byType(TextField), '咖啡優惠');
+    await tester.pump();
     await tester.tap(find.byTooltip('送出'));
     await tester.pumpAndSettle();
     expect(api.sent.last['history'], isEmpty);
@@ -133,6 +137,7 @@ void main() {
     final api = await open(tester);
     api.answer = '- **商戶**：咖啡店';
     await tester.enterText(find.byType(TextField), '推薦');
+    await tester.pump();
     await tester.tap(find.byTooltip('送出'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('同意並送出'));
@@ -144,6 +149,7 @@ void main() {
     final semanticData = tester.getSemantics(answerFinder).getSemanticsData();
     expect('${semanticData.label}${semanticData.value}', contains('商戶'));
     await tester.enterText(find.byType(TextField), '更多');
+    await tester.pump();
     await tester.tap(find.byTooltip('送出'));
     await tester.pumpAndSettle();
     expect(api.sent.last['history'], [
