@@ -70,6 +70,7 @@ void main() {
         language: AppLanguage(),
         child: MaterialApp(home: QBotScreen(api: api))));
     await tester.enterText(find.byType(TextField), '找咖啡券');
+    await tester.pump();
     await tester.tap(find.byTooltip('送出'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('同意並送出'));
