@@ -207,9 +207,13 @@ class _HomeScreenState extends State<HomeScreen> {
                   const SizedBox(width: 8),
                 ],
                 const Flexible(
-                  child: Text('COUPON GO!',
-                      maxLines: 1, overflow: TextOverflow.ellipsis,
-                      style: TextStyle(fontWeight: FontWeight.bold)),
+                  child: FittedBox(
+                    fit: BoxFit.scaleDown,
+                    alignment: Alignment.centerLeft,
+                    child: Text('COUPON GO!',
+                        maxLines: 1,
+                        style: TextStyle(fontWeight: FontWeight.bold)),
+                  ),
                 ),
               ],
             ),
