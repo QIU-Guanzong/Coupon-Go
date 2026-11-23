@@ -13,12 +13,16 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     env:
-      DATABASE_URL: sqlite:///${{ runner.temp }}/coupon-go-manual-test.sqlite
-      UPLOAD_DIR: ${{ runner.temp }}/coupon-go-uploads
-      MERCHANT_FILE_DIR: ${{ runner.temp }}/coupon-go-merchant-files
       FIX3_FORCE_SQLITE: '1'
     steps:
       - uses: actions/checkout@v4
+      - name: Set isolated temporary paths
+        env:
+          TEST_TEMP: ${{ runner.temp }}
+        run: |
+          echo "DATABASE_URL=sqlite:///${TEST_TEMP}/coupon-go-manual-test.sqlite" >> "$GITHUB_ENV"
+          echo "UPLOAD_DIR=${TEST_TEMP}/coupon-go-uploads" >> "$GITHUB_ENV"
+          echo "MERCHANT_FILE_DIR=${TEST_TEMP}/coupon-go-merchant-files" >> "$GITHUB_ENV"
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
