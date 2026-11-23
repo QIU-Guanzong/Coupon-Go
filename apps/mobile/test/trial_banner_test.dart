@@ -31,8 +31,49 @@ class FakeTrialApi extends ApiClient {
   }
 }
 
+Future<void> openTrialSelector(WidgetTester tester) async {
+  final controller = tester.state<TrialBannerState>(find.byType(TrialBanner));
+  unawaited(controller.open(tester.element(find.byType(Scaffold).first)));
+  await tester.pumpAndSettle();
+}
+
 void main() {
-  testWidgets('trial label remains visible and role switch handles errors', (tester) async {
+  testWidgets('identity dialog can be cancelled without changing the session', (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    final api = FakeTrialApi();
+    final roles = <String>[];
+    await tester.pumpWidget(MaterialApp(home: Scaffold(body: TrialBanner(
+      api: api, onRoleChanging: () async {}, onRoleChangeFailed: () {},
+      onRoleChanged: roles.add,
+    ))));
+    await openTrialSelector(tester);
+    expect(find.textContaining('付款為模擬'), findsOneWidget);
+    await tester.tap(find.text('取消'));
+    await tester.pumpAndSettle();
+    expect(api.roles, isEmpty);
+    expect(roles, isEmpty);
+  });
+
+  testWidgets('failed route transition restores the previous identity', (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    final api = FakeTrialApi();
+    await api.saveToken('old-admin');
+    var restored = false;
+    await tester.pumpWidget(MaterialApp(home: Scaffold(body: TrialBanner(
+      api: api,
+      onRoleChanging: () async => throw StateError('transition failed'),
+      onRoleChangeFailed: () => restored = true,
+      onRoleChanged: (_) => fail('should not activate a new role'),
+    ))));
+    await openTrialSelector(tester);
+    await tester.tap(find.text('示例商戶'));
+    await tester.pumpAndSettle();
+    expect(restored, isTrue);
+    expect(api.paymentAccessToken, 'old-admin');
+    expect(find.text('切換失敗，請重試'), findsOneWidget);
+  });
+
+  testWidgets('role switch handles errors without a top banner', (tester) async {
     SharedPreferences.setMockInitialValues({});
     final semantics = tester.ensureSemantics();
     final api = FakeTrialApi();
@@ -44,18 +85,15 @@ void main() {
       ]),
       home: const Scaffold(),
     ));
-    expect(find.text('示例數據・模擬付款｜資料會重置'), findsOneWidget);
-    expect(find.bySemanticsLabel('切換身份 ▾'), findsOneWidget);
-    await tester.tap(find.text('切換身份 ▾'));
-    await tester.pumpAndSettle();
+    expect(find.text('示例數據・模擬付款｜資料會重置'), findsNothing);
+    await openTrialSelector(tester);
     await tester.tap(find.text('示例顧客'));
     await tester.pumpAndSettle();
     expect(api.roles, ['customer']);
     expect(selected, ['customer']);
     expect(api.isLoggedIn, isTrue);
     api.fail = true;
-    await tester.tap(find.text('切換身份 ▾'));
-    await tester.pumpAndSettle();
+    await openTrialSelector(tester);
     await tester.tap(find.text('示例商戶'));
     await tester.pumpAndSettle();
     expect(find.text('切換失敗，請重試'), findsOneWidget);
@@ -76,8 +114,7 @@ void main() {
       onRoleChangeFailed: () => events.add('failed'),
       onRoleChanged: (role) => events.add('show:$role'),
     ))));
-    await tester.tap(find.text('切換身份 ▾'));
-    await tester.pumpAndSettle();
+    await openTrialSelector(tester);
     await tester.tap(find.text('示例商戶'));
     await tester.pump();
     await tester.pump();
@@ -110,8 +147,7 @@ void main() {
       ]));
     })));
     expect(api.overviewTokens, ['old-admin']);
-    await tester.tap(find.text('切換身份 ▾'));
-    await tester.pumpAndSettle();
+    await openTrialSelector(tester);
     await tester.tap(find.text('示例商戶'));
     await tester.pumpAndSettle();
     expect(find.text('old admin overview'), findsNothing);
@@ -130,8 +166,7 @@ void main() {
       api: api, onRoleChanging: () async { removed = true; },
       onRoleChangeFailed: () {}, onRoleChanged: (_) {},
     ))));
-    await tester.tap(find.text('切換身份 ▾'));
-    await tester.pumpAndSettle();
+    await openTrialSelector(tester);
     await tester.tap(find.text('示例商戶'));
     await tester.pumpAndSettle();
     expect(removed, isFalse);
@@ -150,8 +185,7 @@ void main() {
       ]),
       home: const Scaffold(),
     ));
-    await tester.tap(find.text('切換身份 ▾'));
-    await tester.pumpAndSettle();
+    await openTrialSelector(tester);
     expect(find.text('示例商戶'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });

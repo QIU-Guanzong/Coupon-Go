@@ -2,28 +2,27 @@ import 'package:flutter/material.dart';
 
 import '../api_client.dart';
 
-/// Visible on every route in the isolated public trial. The backend creates a
-/// separate synthetic dataset for each browser and never contacts Stripe.
+/// Persistent controller for switching identities in the isolated trial.
+/// It stays outside the navigator while the old route tree is disposed.
 class TrialBanner extends StatefulWidget {
   const TrialBanner({super.key, required this.api, required this.onRoleChanged,
-    required this.onRoleChanging, required this.onRoleChangeFailed});
+    required this.onRoleChanging, required this.onRoleChangeFailed, this.messengerKey});
   final ApiClient api;
   final ValueChanged<String> onRoleChanged;
   final Future<void> Function() onRoleChanging;
   final VoidCallback onRoleChangeFailed;
+  final GlobalKey<ScaffoldMessengerState>? messengerKey;
 
   @override
-  State<TrialBanner> createState() => _TrialBannerState();
+  State<TrialBanner> createState() => TrialBannerState();
 }
 
-class _TrialBannerState extends State<TrialBanner> {
+class TrialBannerState extends State<TrialBanner> {
   bool _busy = false;
-  bool _open = false;
-  String? _error;
 
   Future<void> _select(String role) async {
     if (_busy) return;
-    setState(() { _busy = true; _open = false; _error = null; });
+    setState(() => _busy = true);
     final previousToken = widget.api.paymentAccessToken;
     var staged = false;
     var changing = false;
@@ -55,47 +54,45 @@ class _TrialBannerState extends State<TrialBanner> {
       }
       if (mounted) {
         if (changing) widget.onRoleChangeFailed();
-        setState(() => _error = '切換失敗，請重試');
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted) return;
+          final messenger = widget.messengerKey?.currentState ??
+              ScaffoldMessenger.maybeOf(context);
+          messenger?.showSnackBar(const SnackBar(content: Text('切換失敗，請重試')));
+        });
       }
     } finally {
       if (mounted) setState(() => _busy = false);
     }
   }
 
-  @override
-  Widget build(BuildContext context) {
-    return Material(
-      color: const Color(0xFFFFF1D6),
-      child: SafeArea(
-        bottom: false,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-          child: Column(mainAxisSize: MainAxisSize.min, children: [
-            Row(children: [
-              const Expanded(child: Text('示例數據・模擬付款｜資料會重置',
-                  style: TextStyle(color: Color(0xFF493306), fontSize: 12))),
-              TextButton(
-                onPressed: _busy ? null : () => setState(() => _open = !_open),
-                child: Text(_busy ? '切換中…' : '切換身份 ▾',
-                    style: const TextStyle(color: Color(0xFF493306),
-                        fontSize: 12, fontWeight: FontWeight.w700)),
-              ),
-            ]),
-            if (_open) Wrap(spacing: 4, children: [
-              for (final item in const [
-                ('guest', '訪客瀏覽'), ('customer', '示例顧客'),
-                ('vendor', '示例商戶'), ('admin', '示例後台'),
-              ])
-                TextButton(onPressed: () => _select(item.$1), child: Text(item.$2)),
-            ]),
-            if (_open) const Align(alignment: Alignment.centerLeft,
-                child: Text('每個瀏覽器使用獨立示例資料；閒置四小時或服務重啟後重置。請勿輸入真實個人資料。',
-                    style: TextStyle(color: Color(0xFF493306), fontSize: 12))),
-            if (_error != null) Align(alignment: Alignment.centerLeft,
-                child: Text(_error!, style: const TextStyle(color: Colors.red))),
-          ]),
-        ),
+  Future<void> open(BuildContext context) async {
+    if (_busy) return;
+    final role = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('切換身份'),
+        content: SingleChildScrollView(child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('每個瀏覽器使用獨立示例資料，付款為模擬，不涉及真實資金。閒置四小時或服務重啟後資料會重置。請勿輸入真實個人資料。'),
+            const SizedBox(height: 12),
+            for (final item in const [
+              ('guest', '訪客瀏覽'), ('customer', '示例顧客'),
+              ('vendor', '示例商戶'), ('admin', '示例後台'),
+            ])
+              ListTile(title: Text(item.$2),
+                onTap: () => Navigator.of(dialogContext).pop(item.$1)),
+          ],
+        )),
+        actions: [TextButton(onPressed: () => Navigator.of(dialogContext).pop(),
+          child: const Text('取消'))],
       ),
     );
+    if (role != null && mounted) await _select(role);
   }
+
+  @override
+  Widget build(BuildContext context) => const SizedBox.shrink();
 }
