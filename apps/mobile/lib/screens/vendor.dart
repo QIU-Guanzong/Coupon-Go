@@ -433,7 +433,10 @@ class _IssueCouponScreenState extends State<IssueCouponScreen> {
         foregroundColor: CgColors.textPrimary,
         title: const Text('發券'),
       ),
-      body: ListView(
+      body: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 720),
+          child: ListView(
         padding: const EdgeInsets.all(16),
         children: [
           if (_trialMode) ...[
@@ -581,6 +584,8 @@ class _IssueCouponScreenState extends State<IssueCouponScreen> {
                 style: const TextStyle(color: CgColors.textPrimary)),
           ),
         ],
+      ),
+        ),
       ),
     ));
   }
