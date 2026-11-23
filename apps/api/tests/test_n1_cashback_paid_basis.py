@@ -159,7 +159,24 @@ def _attach_order_to_wallet_item(wallet_item_id, order_id):
         item = db.query(models.WalletItem).filter(
             models.WalletItem.id == wallet_item_id).first()
         assert item is not None
-        item.order_id = order_id
+        order = db.get(models.Order, order_id)
+        coupon = db.get(models.Coupon, item.coupon_id)
+        assert order is not None and coupon is not None
+        # Model a valid package purchase: the order and voucher must refer
+        # to the same package under the current paid-voucher checks. The
+        # fixture keeps amount and paid_amount distinct to test the basis.
+        package = models.Package(
+            shop_id=coupon.shop_id, name="N1 套餐", items="[]", person_count=2,
+            original_price=order.amount, package_price=order.paid_amount,
+            valid_from=coupon.valid_from, valid_to=coupon.valid_to,
+            stock_total=1, stock_left=0, status="active")
+        db.add(package)
+        db.flush()
+        coupon.kind = "package"
+        coupon.package_id = package.id
+        order.package_id = package.id
+        order.package_coupon_id = coupon.id
+        item.order_id = order.id
         item.source = "purchase"
         db.commit()
     finally:
