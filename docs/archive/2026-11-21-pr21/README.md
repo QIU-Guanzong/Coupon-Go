@@ -16,4 +16,4 @@
 
 ## 手動功能測試
 
-需要時可在 GitHub Actions 手動執行 `Manual functional tests`。它使用已鎖定依賴及測試資料，選擇性檢查 API 結算、商戶合約字體、模擬付款、公開預覽、互動試用和 Flutter 三種模式；不會因推送或 PR 自動執行，也不建立合併門檻。這是定向回歸而非全量測試：SQLite 不驗證 PostgreSQL 行鎖，模擬交易不代表真實 Stripe 付款。其他測試應按變更範圍另行運行。
+需要時可在 GitHub Actions 手動執行 `Manual functional tests`。它使用已鎖定依賴及測試資料，選擇性檢查 API 結算、商戶合約字體、模擬付款、公開預覽、互動試用和 Flutter 普通、只讀、互動試用與雙標記四種模式；不會因推送或 PR 自動執行，也不建立合併門檻。這是定向回歸而非全量測試：SQLite 不驗證 PostgreSQL 行鎖，模擬交易不代表真實 Stripe 付款。其他測試應按變更範圍另行運行。
