@@ -215,7 +215,7 @@ class RefundOut(BaseModel):
     amount: float
     status: str
     gateway_ref: str = ""
-    expected_arrival: str = "原路返回，預計 1–3 個工作日到賬"
+    expected_arrival: str = ""
     created_at: datetime
 
     class Config:

@@ -487,6 +487,13 @@ class BargainRefund {
   final String status;
   final String note;
 
+  String get statusText => switch (status) {
+        'succeeded' => '模擬退款已完成',
+        'pending' => '模擬退款處理中',
+        'failed' => '模擬退款未成功',
+        _ => '模擬退款狀態待確認',
+      };
+
   String get reasonText {
     switch (reason) {
       case 'bargain_failed':
@@ -588,9 +595,9 @@ class BargainSession {
       case 'success':
         return '已成團';
       case 'failed':
-        return '未成團，已退款';
+        return '未成團';
       case 'expired':
-        return '已過期，已退款';
+        return '已過期';
       default:
         return '砍價進行中';
     }

@@ -25,6 +25,19 @@ import 'reviews_admin.dart';
 /// 返回为准，客户端不自己算钱。
 ///
 /// 未登录可浏览套餐详情（只读）；点「立即抢购」时先登录，登录后回原界面。
+String _displayRefundRule(Package package) {
+  if (!const bool.fromEnvironment('PUBLIC_TRIAL') || package.isNonRefundable) {
+    return package.refundRuleText;
+  }
+  if (package.refundPolicy == 'anytime') {
+    return '未使用可申請模擬退款；體驗版不執行過期自動退款';
+  }
+  if (package.refundPolicy == 'expiry_only') {
+    return '僅限過期退款；體驗版不執行過期自動退款';
+  }
+  return '體驗版不執行過期自動退款；具體限制以商品規則為準';
+}
+
 Future<bool> requirePackageLogin(BuildContext context, ApiClient api) async {
   if (api.isLoggedIn) return true;
   final result = await Navigator.of(context).push<bool>(
@@ -380,7 +393,7 @@ class _PackageDetailScreenState extends State<PackageDetailScreen> {
                   : const Color(0xFFFFF3CD),
               borderRadius: BorderRadius.circular(8),
             ),
-            child: Text('退款規則：${p.refundRuleText}',
+            child: Text('退款規則：${_displayRefundRule(p)}',
                 style: const TextStyle(fontWeight: FontWeight.bold)),
           ),
           const SizedBox(height: 16),
@@ -876,7 +889,8 @@ class _PackageCheckoutScreenState extends State<PackageCheckoutScreen> {
               ),
               TextButton(
                 onPressed: () => Navigator.of(context).push(MaterialPageRoute(
-                    builder: (_) => PackageTermsScreen(package: p))),
+                    builder: (_) => PackageTermsScreen(
+                        package: p, demoPayment: _paymentMode == 'demo'))),
                 child: Text(context.tr('查看購買須知', 'View purchase terms')),
               ),
             ],
@@ -903,9 +917,10 @@ class _PackageCheckoutScreenState extends State<PackageCheckoutScreen> {
 
 /// 购买须知页：内含退款规则（不可退套餐醒目提示）与使用规则。
 class PackageTermsScreen extends StatelessWidget {
-  const PackageTermsScreen({super.key, required this.package});
+  const PackageTermsScreen({super.key, required this.package, this.demoPayment = false});
 
   final Package package;
+  final bool demoPayment;
 
   @override
   Widget build(BuildContext context) {
@@ -923,13 +938,15 @@ class PackageTermsScreen extends StatelessWidget {
                   : const Color(0xFFFFF3CD),
               borderRadius: BorderRadius.circular(8),
             ),
-            child: Text('退款規則：${p.refundRuleText}',
+            child: Text('退款規則：${_displayRefundRule(p)}',
                 style: const TextStyle(fontWeight: FontWeight.bold)),
           ),
           if (!p.isNonRefundable)
-            const Padding(
-              padding: EdgeInsets.only(top: 8),
-              child: Text('退款將在 1–3 個工作日原路退回。'),
+            Padding(
+              padding: const EdgeInsets.only(top: 8),
+              child: Text(demoPayment
+                  ? '模擬退款不涉及真實資金。'
+                  : '如涉及實際付款，退款將退回原付款方式；到賬時間視支付機構而定。'),
             ),
           const SizedBox(height: 16),
           const Text('使用規則', style: TextStyle(fontWeight: FontWeight.bold)),
@@ -1350,7 +1367,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> with WalletUpdate
         body: _ErrorView(onRetry: _load),
       );
     }
-    final showRefundEta = o.refundStatus == 'refunded' && !o.demoPayment;
+    final showRefundEta = o.refundStatus == 'refunded';
     return Scaffold(
       appBar: AppBar(title: const Text('訂單詳情')),
       body: ListView(
@@ -1391,10 +1408,12 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> with WalletUpdate
           if (o.refundAmount > 0)
             _DetailRow(label: '退款金額', value: formatHkd(o.refundAmount)),
           if (showRefundEta)
-            const Padding(
-              padding: EdgeInsets.only(top: 12),
-              child: Text('預計到賬：1–3 個工作日原路退回',
-                  style: TextStyle(color: CgColors.textSecondary)),
+            Padding(
+              padding: const EdgeInsets.only(top: 12),
+              child: Text(o.demoPayment
+                  ? '模擬退款不涉及真實資金。'
+                  : '退款已發起，實際到賬時間視支付機構而定。',
+                  style: const TextStyle(color: CgColors.textSecondary)),
             ),
           if (o.canRefund) ...[
             const SizedBox(height: 24),

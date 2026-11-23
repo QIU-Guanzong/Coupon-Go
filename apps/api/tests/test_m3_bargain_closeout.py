@@ -360,7 +360,7 @@ def test_m3_success_then_expired_full_refund_reason_expired(client):
     assert refund["amount"] == 200.0, refund
     assert refund["status"] == "succeeded", refund
     assert refund["gateway_ref"].startswith("re_test_"), refund
-    assert refund["note"] == "退款将在 1–3 个工作日原路退回", refund
+    assert refund["note"] == "模擬退款，不涉及真實資金", refund
 
 
 def test_m3_expire_sweep_twice_refunds_once(client):
