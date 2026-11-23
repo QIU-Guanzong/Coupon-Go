@@ -3,6 +3,8 @@ import 'package:coupon_go/screens/merchant_branches.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+const _trialMode = bool.fromEnvironment('PUBLIC_TRIAL');
+
 class BranchApi extends ApiClient {
   bool canManage = true;
   bool failSave = false;
@@ -73,7 +75,7 @@ void main() {
     expect(api.calls.single['body']['name'], '灣仔店');
     expect(find.text('灣仔店'), findsOneWidget);
     expect(find.text('分店已建立'), findsOneWidget);
-  });
+  }, skip: _trialMode); // Trial exposes branch details as read-only.
 
   testWidgets('修改資料發往真實接口，失敗時保留伺服器內容', (tester) async {
     final api = BranchApi()..failSave = true;
@@ -102,7 +104,7 @@ void main() {
             .widget<TextButton>(find.widgetWithText(TextButton, '編輯'))
             .onPressed,
         isNotNull);
-  });
+  }, skip: _trialMode); // Trial does not submit branch changes.
 
   testWidgets('店主從選中的店舖打開員工頁', (tester) async {
     final api = BranchApi();
@@ -147,7 +149,7 @@ void main() {
     await tester.tap(find.text('儲存'));
     await tester.pumpAndSettle();
     expect(api.calls, isEmpty);
-  });
+  }, skip: _trialMode); // Trial does not open the branch editor.
 
   testWidgets('明確拒絕時保留輸入並允許修正重試', (tester) async {
     final api = BranchApi()..failSave = true..failureStatus = 403;
@@ -168,5 +170,5 @@ void main() {
     expect(api.calls.length, 2);
     expect(find.text('灣仔草稿'), findsOneWidget);
     expect(find.text('分店已建立'), findsOneWidget);
-  });
+  }, skip: _trialMode); // Retry belongs to the normal editing flow.
 }
