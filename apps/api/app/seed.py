@@ -201,7 +201,7 @@ def seed(db: Session) -> dict:
                 "shop": shops[0], "name": "櫻花壽司雙人套餐",
                 "items": [{"name": "特選壽司盛合（12 件）", "qty": 1},
                           {"name": "三文魚刺身（6 片）", "qty": 1},
-                          {"name": "味噌湯 x2", "qty": 2}],
+                          {"name": "味噌湯", "qty": 2}],
                 "person_count": 2, "original_price": 428, "package_price": 298,
                 "days": 30, "stock": 50, "refund_policy": "anytime",
                 "rules": {"weekday_only": False, "holiday": True,
