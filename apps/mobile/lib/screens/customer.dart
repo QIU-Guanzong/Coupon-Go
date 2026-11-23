@@ -788,7 +788,7 @@ class _NearbyCouponRow extends StatelessWidget {
                     ),
                     const SizedBox(height: 4),
                     Text(
-                      coupon.amountText,
+                      context.tr(coupon.amountText, coupon.amountTextEnglish),
                       style: const TextStyle(
                           color: CgColors.primary,
                           fontWeight: FontWeight.bold,
@@ -955,15 +955,7 @@ class _CouponDetailScreenState extends State<CouponDetailScreen> {
     final validDate = c.validTo;
     final validText = validDate?.toLocal().toString().split(' ').first;
     final remaining = _remaining ?? c.remaining;
-    final amount = c.type == 'Cash' && c.cashAmount != null
-        ? context.tr('減 \$${c.cashAmount!.toStringAsFixed(0)}',
-            'HK\$${c.cashAmount!.toStringAsFixed(0)} off')
-        : c.type == 'Discount' && c.percentage != null
-            ? context.tr('${(c.percentage! / 10).toStringAsFixed(c.percentage! % 10 == 0 ? 0 : 1)} 折',
-                '${c.percentage!.toStringAsFixed(c.percentage! % 1 == 0 ? 0 : 1)}% of regular price')
-            : c.type == 'Gift'
-                ? context.tr(c.amountText, 'Free ${c.gift}')
-                : c.amountText;
+    final amount = context.tr(c.amountText, c.amountTextEnglish);
     if (c.packageId != null) {
       return PackageDetailScreen(api: widget.api, packageId: c.packageId!);
     }
@@ -998,7 +990,7 @@ class _CouponDetailScreenState extends State<CouponDetailScreen> {
                       fontSize: 26,
                       fontWeight: FontWeight.bold)),
               if (c.regularPrice != null)
-                Text('\$${c.regularPrice!.toStringAsFixed(0)}',
+                Text(formatHkd(c.regularPrice!),
                     style: const TextStyle(
                         decoration: TextDecoration.lineThrough,
                         color: CgColors.textSecondary)),
@@ -1015,8 +1007,8 @@ class _CouponDetailScreenState extends State<CouponDetailScreen> {
             Text(context.tr('有效日期：至 $validText', 'Valid until $validText')),
           Text(context.tr('剩餘數量：$remaining / ${c.total}', 'Remaining: $remaining / ${c.total}')),
           if (c.minSpend > 0) Text(context.tr(
-              '於本店惠顧滿 \$${c.minSpend.toStringAsFixed(0)}',
-              'Minimum spend HK\$${c.minSpend.toStringAsFixed(0)}')),
+              '於本店惠顧滿 ${formatHkd(c.minSpend)}',
+              'Minimum spend ${formatHkd(c.minSpend)}')),
           if (c.terms.trim().isNotEmpty) ...[
             const SizedBox(height: 16),
             Text(context.tr('條款和條件', 'Terms and conditions'),
@@ -1230,7 +1222,7 @@ class _ShopDetailScreenState extends State<ShopDetailScreen> {
               ...coupons.map((c) => ListTile(
                     leading: const Icon(Icons.local_offer, color: CgColors.primary),
                     title: Text(c.name),
-                    subtitle: Text(c.amountText),
+                    subtitle: Text(context.tr(c.amountText, c.amountTextEnglish)),
                     trailing: const Icon(Icons.chevron_right),
                     onTap: () => widget.onOpenCoupon(c),
                   )),

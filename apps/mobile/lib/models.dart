@@ -1,3 +1,5 @@
+import 'theme.dart' show formatHkd;
+
 /// Data models matching the FastAPI /api/v3 responses.
 class Coupon {
   Coupon.fromJson(Map<String, dynamic> j)
@@ -62,20 +64,35 @@ class Coupon {
   }
 
   String get amountText {
-    if (type == 'Cash' && cashAmount != null) return '減 \$${cashAmount!.toStringAsFixed(0)}';
+    if (type == 'Cash' && cashAmount != null) return '減 ${formatHkd(cashAmount!)}';
     if (type == 'Discount' && percentage != null) {
-      return '${percentage!.toStringAsFixed(percentage! % 1 == 0 ? 0 : 1)} 折';
+      // The API stores the percentage of the original price (85 means 85%).
+      // It has two decimal places, so dividing by ten can require three.
+      return '${_withoutTrailingZeros((percentage! / 10).toStringAsFixed(3))} 折';
     }
     if (type == 'Gift') return '送$gift';
     if (type == 'Price' && discountPrice != null) {
-      return '\$${discountPrice!.toStringAsFixed(0)}';
+      return formatHkd(discountPrice!);
     }
+    return name;
+  }
+
+  String get amountTextEnglish {
+    if (type == 'Cash' && cashAmount != null) return '${formatHkd(cashAmount!)} off';
+    if (type == 'Discount' && percentage != null) {
+      return '${_withoutTrailingZeros(percentage!.toStringAsFixed(2))}% of regular price';
+    }
+    if (type == 'Gift') return 'Free $gift';
+    if (type == 'Price' && discountPrice != null) return formatHkd(discountPrice!);
     return name;
   }
 
   int get daysLeft =>
       validTo == null ? 0 : validTo!.difference(DateTime.now()).inDays;
 }
+
+String _withoutTrailingZeros(String value) =>
+    value.contains('.') ? value.replaceFirst(RegExp(r'0+$'), '').replaceFirst(RegExp(r'\.$'), '') : value;
 
 class Shop {
   Shop.fromJson(Map<String, dynamic> j)

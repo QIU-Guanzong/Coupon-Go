@@ -160,29 +160,44 @@ class CouponResults extends StatelessWidget {
           return Center(
               child: Text(context.tr('找不到優惠券！', 'Coupon Not Found!')));
         }
-        return GridView.builder(
+        Widget card(int index) {
+          final coupon = Coupon.fromJson(rows[index]);
+          return FavoriteControl(
+            key: ValueKey(coupon.id),
+            api: api,
+            id: coupon.id,
+            initial: coupon.isFavorite,
+            builder: (favorite, onFavorite) => CouponCard(
+              coupon: coupon,
+              isFavorite: favorite,
+              onFavorite: onFavorite,
+              onTap: () => onOpenCoupon(coupon),
+            ),
+          );
+        }
+        // Each row grows to fit its contents, including long translated copy
+        // and larger system text. Rows are built lazily as the user scrolls.
+        return LayoutBuilder(builder: (context, constraints) {
+          final columns = ((constraints.maxWidth - 16) / 230).floor().clamp(2, 5);
+          return ListView.builder(
             padding: const EdgeInsets.all(12),
-            itemCount: rows.length,
-            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                crossAxisCount: 2,
-                childAspectRatio: .78,
-                mainAxisSpacing: 8,
-                crossAxisSpacing: 8),
-            itemBuilder: (c, i) {
-              final coupon = Coupon.fromJson(rows[i]);
-              return FavoriteControl(
-                key: ValueKey(coupon.id),
-                api: api,
-                id: coupon.id,
-                initial: coupon.isFavorite,
-                builder: (favorite, onFavorite) => CouponCard(
-                  coupon: coupon,
-                  isFavorite: favorite,
-                  onFavorite: onFavorite,
-                  onTap: () => onOpenCoupon(coupon),
+            itemCount: (rows.length + columns - 1) ~/ columns,
+            itemBuilder: (context, row) {
+              final first = row * columns;
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: IntrinsicHeight(
+                  child: Row(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+                    for (var i = 0; i < columns; i++) ...[
+                      if (i > 0) const SizedBox(width: 8),
+                      Expanded(child: first + i < rows.length ? card(first + i) : const SizedBox()),
+                    ],
+                  ]),
                 ),
               );
-            });
+            },
+          );
+        });
       });
 }
 
