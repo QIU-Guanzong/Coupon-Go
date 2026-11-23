@@ -479,7 +479,9 @@ class _IssueCouponScreenState extends State<IssueCouponScreen> {
             TextField(
                 controller: _percentage,
                 keyboardType: TextInputType.number,
-                decoration: const InputDecoration(labelText: '折扣（例: 85）')),
+                decoration: InputDecoration(labelText: context.tr(
+                    '付款百分比（85 即 8.5 折）',
+                    'Percent of regular price (85 = 15% off)'))),
           if (_type == 'Cash')
             TextField(
                 controller: _cash,
