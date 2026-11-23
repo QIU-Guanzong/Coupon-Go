@@ -12,6 +12,11 @@ jobs:
     name: API and guest gateways
     runs-on: ubuntu-latest
     timeout-minutes: 25
+    env:
+      DATABASE_URL: sqlite:///${{ runner.temp }}/coupon-go-manual-test.sqlite
+      UPLOAD_DIR: ${{ runner.temp }}/coupon-go-uploads
+      MERCHANT_FILE_DIR: ${{ runner.temp }}/coupon-go-merchant-files
+      FIX3_FORCE_SQLITE: '1'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -25,20 +30,17 @@ jobs:
         run: sudo apt-get update -qq && sudo apt-get install -y -qq fonts-wqy-zenhei
       - name: API reconciliation and isolation tests (SQLite)
         working-directory: apps/api
-        env:
-          DATABASE_URL: sqlite:///${{ runner.temp }}/coupon-go-manual-test.sqlite
-          FIX3_FORCE_SQLITE: '1'
         run: >-
           python -m pytest -q -p no:cacheprovider
           tests/test_db_isolation.py
           tests/test_dianping_unify.py
           tests/test_fix3_row_locks.py
+          tests/test_line_f.py
+          tests/test_n1_cashback_paid_basis.py
           tests/test_settlement_paid_refund_e2e.py
           tests/test_audit_multi_voucher_settlement.py
       - name: Merchant contract font regression
         working-directory: apps/api
-        env:
-          DATABASE_URL: sqlite:///${{ runner.temp }}/coupon-go-manual-test.sqlite
         run: >-
           python -m pytest -q -p no:cacheprovider
           tests/test_dianping_merchant_mgmt.py::test_approve_application_creates_shop_and_notifies
@@ -47,8 +49,6 @@ jobs:
           tests/test_dianping_merchant_mgmt.py::test_signed_contract_keeps_application_shop_name
       - name: Stripe test-mode payment regressions (simulated)
         working-directory: apps/api
-        env:
-          DATABASE_URL: sqlite:///${{ runner.temp }}/coupon-go-manual-test.sqlite
         run: python -m pytest -q -p no:cacheprovider tests/test_stripe_web_checkout.py
       - name: Read-only public preview tests
         run: python infra/public-preview/test_public_api.py
@@ -76,10 +76,10 @@ jobs:
       - name: Analyze
         run: flutter analyze --no-pub
       - name: Normal mode selected tests
-        run: flutter test --no-pub test/public_preview_identity_test.dart test/guest_journeys_test.dart test/preview_copy_test.dart test/qbot_offers_test.dart test/subpages_d5_test.dart test/app_config_integration_test.dart test/scan_branch_choice_test.dart test/package_payment_test.dart test/vendor_stale_requests_test.dart
+        run: flutter test --no-pub test/public_preview_identity_test.dart test/trial_banner_test.dart test/bargain_trial_test.dart test/guest_journeys_test.dart test/preview_copy_test.dart test/qbot_offers_test.dart test/subpages_d5_test.dart test/app_config_integration_test.dart test/scan_branch_choice_test.dart test/package_payment_test.dart test/vendor_stale_requests_test.dart
       - name: Read-only preview mode selected tests
-        run: flutter test --no-pub --dart-define=PUBLIC_DEMO=true test/public_preview_identity_test.dart test/guest_journeys_test.dart test/preview_copy_test.dart test/qbot_offers_test.dart test/subpages_d5_test.dart test/app_config_integration_test.dart test/scan_branch_choice_test.dart test/package_payment_test.dart test/vendor_stale_requests_test.dart
+        run: flutter test --no-pub --dart-define=PUBLIC_DEMO=true test/public_preview_identity_test.dart test/trial_banner_test.dart test/bargain_trial_test.dart test/guest_journeys_test.dart test/preview_copy_test.dart test/qbot_offers_test.dart test/subpages_d5_test.dart test/app_config_integration_test.dart test/scan_branch_choice_test.dart test/package_payment_test.dart test/vendor_stale_requests_test.dart
       - name: Interactive trial mode selected tests
-        run: flutter test --no-pub --dart-define=PUBLIC_TRIAL=true test/public_preview_identity_test.dart test/guest_journeys_test.dart test/preview_copy_test.dart test/qbot_offers_test.dart test/subpages_d5_test.dart test/app_config_integration_test.dart test/scan_branch_choice_test.dart test/package_payment_test.dart test/vendor_stale_requests_test.dart
+        run: flutter test --no-pub --dart-define=PUBLIC_TRIAL=true test/public_preview_identity_test.dart test/trial_banner_test.dart test/bargain_trial_test.dart test/guest_journeys_test.dart test/preview_copy_test.dart test/qbot_offers_test.dart test/subpages_d5_test.dart test/app_config_integration_test.dart test/scan_branch_choice_test.dart test/package_payment_test.dart test/vendor_stale_requests_test.dart
       - name: Combined flags selected tests
-        run: flutter test --no-pub --dart-define=PUBLIC_DEMO=true --dart-define=PUBLIC_TRIAL=true test/public_preview_identity_test.dart test/guest_journeys_test.dart test/preview_copy_test.dart test/qbot_offers_test.dart test/subpages_d5_test.dart test/app_config_integration_test.dart test/scan_branch_choice_test.dart test/package_payment_test.dart test/vendor_stale_requests_test.dart
+        run: flutter test --no-pub --dart-define=PUBLIC_DEMO=true --dart-define=PUBLIC_TRIAL=true test/public_preview_identity_test.dart test/trial_banner_test.dart test/bargain_trial_test.dart test/guest_journeys_test.dart test/preview_copy_test.dart test/qbot_offers_test.dart test/subpages_d5_test.dart test/app_config_integration_test.dart test/scan_branch_choice_test.dart test/package_payment_test.dart test/vendor_stale_requests_test.dart
