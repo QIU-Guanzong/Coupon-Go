@@ -25,10 +25,11 @@ const _trialMode = bool.fromEnvironment('PUBLIC_TRIAL');
 /// Vendor home: gold theme, usage summary, issue-coupon entry.
 class VendorHomeScreen extends StatefulWidget {
   const VendorHomeScreen(
-      {super.key, required this.api, this.showAdmin = false});
+      {super.key, required this.api, this.showAdmin = false, this.onOpenMenu});
 
   final ApiClient api;
   final bool showAdmin;
+  final VoidCallback? onOpenMenu;
 
   @override
   State<VendorHomeScreen> createState() => _VendorHomeScreenState();
@@ -96,6 +97,11 @@ class _VendorHomeScreenState extends State<VendorHomeScreen> {
       appBar: AppBar(
         backgroundColor: CgColors.vendorGold,
         foregroundColor: CgColors.textPrimary,
+        leading: widget.onOpenMenu == null ? null : IconButton(
+          icon: const Icon(Icons.menu),
+          tooltip: MaterialLocalizations.of(context).openAppDrawerTooltip,
+          onPressed: widget.onOpenMenu,
+        ),
         title: const Text('企業版'),
       ),
       body: RefreshIndicator(

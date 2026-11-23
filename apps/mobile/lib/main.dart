@@ -318,6 +318,7 @@ class _HomeShellState extends State<HomeShell> {
   bool _canRedeem = false, _canAnalytics = false;
   final _visited = <int>{0};
   LocalHistoryEntry? _tabHistory;
+  final _vendorScaffoldKey = GlobalKey<ScaffoldState>();
 
   void _clearTabHistory() {
     final entry = _tabHistory;
@@ -627,12 +628,14 @@ class _HomeShellState extends State<HomeShell> {
   Widget _vendorShell() {
     String tr(String zh, String en) => context.tr(zh, en);
     return Scaffold(
+      key: _vendorScaffoldKey,
       drawer: _drawer(),
       body: switch (_vendorIndex) {
         1 => ScanScreen(api: widget.api),
         2 => UsageScreen(api: widget.api),
         3 => VendorAccountScreen(api: widget.api),
-        _ => VendorHomeScreen(api: widget.api, showAdmin: _role == 'admin'),
+        _ => VendorHomeScreen(api: widget.api, showAdmin: _role == 'admin',
+            onOpenMenu: () => _vendorScaffoldKey.currentState?.openDrawer()),
       },
       bottomNavigationBar: BottomNavigationBar(
         currentIndex: _vendorIndex,
