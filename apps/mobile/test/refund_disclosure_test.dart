@@ -52,4 +52,22 @@ void main() {
     await tester.pumpWidget(const SizedBox.shrink());
     language.dispose();
   });
+
+  testWidgets('trial terms remain simulated before payment options load', (tester) async {
+    final language = AppLanguage();
+    await tester.pumpWidget(LanguageScope(
+      language: language,
+      child: MaterialApp(home: PackageTermsScreen(
+        package: Package.fromJson({'id': 1, 'refund_policy': 'anytime'}),
+      )),
+    ));
+    if (const bool.fromEnvironment('PUBLIC_TRIAL')) {
+      expect(find.text('模擬退款不涉及真實資金。'), findsOneWidget);
+      expect(find.textContaining('如涉及實際付款'), findsNothing);
+    } else {
+      expect(find.textContaining('如涉及實際付款'), findsOneWidget);
+    }
+    await tester.pumpWidget(const SizedBox.shrink());
+    language.dispose();
+  });
 }

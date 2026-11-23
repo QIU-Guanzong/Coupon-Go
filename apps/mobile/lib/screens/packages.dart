@@ -944,7 +944,7 @@ class PackageTermsScreen extends StatelessWidget {
           if (!p.isNonRefundable)
             Padding(
               padding: const EdgeInsets.only(top: 8),
-              child: Text(demoPayment
+              child: Text(demoPayment || const bool.fromEnvironment('PUBLIC_TRIAL')
                   ? '模擬退款不涉及真實資金。'
                   : '如涉及實際付款，退款將退回原付款方式；到賬時間視支付機構而定。'),
             ),
