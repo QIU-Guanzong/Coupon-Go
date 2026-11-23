@@ -381,7 +381,8 @@ def test_redemption_export_csv_keeps_columns(client):
     assert "text/csv" in r.headers["content-type"]
     lines = r.text.splitlines()
     assert lines[0] == ("redemption_id,wallet_item_id,coupon_name,shop_name,"
-                        "scanned_at,revoked,revoked_at,idempotency_key")
+                        "scanned_at,method,scanned_by_name,revoked,revoked_at,"
+                        "idempotency_key")
     assert "unify-csv-1" in r.text
 
 

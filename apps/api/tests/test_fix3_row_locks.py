@@ -312,16 +312,30 @@ def _buy_paid(client, headers, package_id):
     return order_id
 
 
-def _approved_settlement(client, email, coupon_id, shop_id, rate=0.10):
-    """Redeem one cash coupon and generate + approve its settlement.
-    Returns the settlement dict."""
-    _redeem(client, email, coupon_id)
+def _approved_settlement(client, email, coupon_id, shop_id, rate=0.10,
+                         legacy_manual=False):
+    """Redeem a priced coupon and generate + approve its settlement.
+
+    Manual payout tests model historical redemptions created before Connect:
+    those records have no Connect transfer entry or connected account.
+    """
+    _, _, red_id = _redeem(client, email, coupon_id)
+    if legacy_manual:
+        from app.models_connect import ConnectAccount, ConnectLedgerEntry
+        with TestingSession() as db:
+            assert db.query(ConnectAccount).filter_by(shop_id=shop_id).count() == 0
+            deleted = db.query(ConnectLedgerEntry).filter_by(
+                redemption_id=red_id, kind="transfer").delete()
+            assert deleted == 1
+            db.commit()
     fh = _finance_headers(client)
     r = client.post("/api/v3/admin/settlements/generate", json={
         "shop_id": shop_id, "period": PERIOD, "commission_rate": rate},
         headers=fh)
     assert r.status_code == 201, r.text
     s = r.json()["settlement"]
+    if legacy_manual:
+        assert s["payment_mode"] == "legacy_manual", s
     r = client.post(f"/api/v3/admin/settlements/{s['id']}/approve",
                     headers=fh)
     assert r.status_code == 200, r.text
@@ -539,7 +553,7 @@ def test_concurrent_bargain_start_last_unit_only_one_succeeds__row_lock(
 def test_concurrent_pay_settlement_only_one_succeeds__row_lock(
         client, monkeypatch):
     import app.routers.admin_v2 as admin_router
-    s = _approved_settlement(client, "fix3-pay@example.com", 2, 1)
+    s = _approved_settlement(client, "fix3-pay@example.com", 2, 1, legacy_manual=True)
     fh = _finance_headers(client)
     # _log() runs after the status flip, before the commit.
     monkeypatch.setattr(admin_router, "_log",
@@ -560,7 +574,7 @@ def test_concurrent_pay_settlement_only_one_succeeds__row_lock(
 
 
 def test_double_pay_settlement_sequential_rejected(client):
-    s = _approved_settlement(client, "fix3-pay-seq@example.com", 8, 4)
+    s = _approved_settlement(client, "fix3-pay-seq@example.com", 8, 4, legacy_manual=True)
     fh = _finance_headers(client)
     r = client.post(f"/api/v3/admin/settlements/{s['id']}/pay", headers=fh)
     assert r.status_code == 200, r.text

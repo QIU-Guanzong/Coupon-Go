@@ -137,10 +137,19 @@ def _generate(client, headers, shop_id, rate=0.10):
 
 # ---------- settlements ----------
 def test_settlement_generate_approve_pay_chain(client):
+    from app.models_connect import ConnectAccount, ConnectLedgerEntry
     shop_id, face = PRICED[2]
-    _redeem(client, "f-settle@example.com", 2)
+    _, _, red_id = _redeem(client, "f-settle@example.com", 2)
+    # A manually paid settlement models historical redemptions created
+    # before Connect; a Connect-backed one must not be paid again here.
+    with TestingSession() as db:
+        assert db.query(ConnectAccount).filter_by(shop_id=shop_id).count() == 0
+        assert db.query(ConnectLedgerEntry).filter_by(
+            redemption_id=red_id, kind="transfer").delete() == 1
+        db.commit()
     fh = _finance_headers(client)
     s = _generate(client, fh, shop_id)
+    assert s["payment_mode"] == "legacy_manual"
     assert s["status"] == "pending"
     assert s["redemption_count"] == 1
     assert s["gross_amount"] == face
