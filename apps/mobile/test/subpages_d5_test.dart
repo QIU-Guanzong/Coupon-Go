@@ -1,3 +1,4 @@
+import 'package:coupon_go/feature_flags.dart';
 import 'package:coupon_go/api_client.dart';
 import 'package:coupon_go/language.dart';
 import 'package:coupon_go/models.dart';
@@ -57,7 +58,7 @@ void main() {
     await tester.scrollUntilVisible(find.text('Address not listed'), 100);
     await tester.tap(find.text('Address not listed'));
     await tester.pumpAndSettle();
-    if (const bool.fromEnvironment('PUBLIC_DEMO')) {
+    if (publicPreview) {
       expect(uris, isEmpty);
     } else {
       expect(uris, hasLength(2));

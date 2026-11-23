@@ -162,5 +162,5 @@ void main() {
       child: MaterialApp(home: QBotScreen(api: FakeTrialApi()))));
     expect(find.textContaining('Q仔使用只讀示例'), findsOneWidget);
     language.dispose();
-  });
+  }, skip: !const bool.fromEnvironment('PUBLIC_TRIAL'));
 }

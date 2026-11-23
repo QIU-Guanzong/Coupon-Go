@@ -1,3 +1,4 @@
+import 'package:coupon_go/feature_flags.dart';
 import 'dart:async';
 
 import 'package:coupon_go/api_client.dart';
@@ -143,7 +144,7 @@ void main() {
         coupon: Coupon.fromJson({'id': 7, 'name': 'Example coupon'}),
       )));
       await tester.pumpAndSettle();
-      if (const bool.fromEnvironment('PUBLIC_DEMO')) {
+      if (publicPreview) {
         final button = find.widgetWithText(ElevatedButton, 'Browse only');
         expect(button, findsOneWidget);
         expect(tester.widget<ElevatedButton>(button).onPressed, isNull);

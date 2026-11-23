@@ -1,3 +1,4 @@
+import 'package:coupon_go/feature_flags.dart';
 import 'dart:async';
 
 import 'package:coupon_go/api_client.dart';
@@ -192,7 +193,7 @@ void main() {
       tester.state<NavigatorState>(find.byType(Navigator)).pop();
       await tester.pumpAndSettle();
     }
-  }, skip: !const bool.fromEnvironment('PUBLIC_DEMO'));
+  }, skip: !publicPreview);
 
   testWidgets('guest home opens Q仔 and reads an offer without a login wall',
       (tester) async {
@@ -217,13 +218,13 @@ void main() {
     ));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
-    if (const bool.fromEnvironment('PUBLIC_DEMO')) {
+    if (publicPreview) {
       expect(find.text('The shops and offers below are sample data for browsing only.'), findsOneWidget);
     }
     await tester.tap(find.text('Q仔'));
     await tester.pumpAndSettle();
     expect(find.byType(QBotScreen), findsOneWidget);
-    if (const bool.fromEnvironment('PUBLIC_DEMO')) {
+    if (publicPreview) {
       expect(find.text('The shops and offers below are sample data for browsing only.'), findsOneWidget);
     }
     await tester.enterText(find.byType(TextField), 'What can I browse?');

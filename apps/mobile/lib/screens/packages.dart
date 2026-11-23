@@ -5,6 +5,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../api_client.dart';
+import '../feature_flags.dart';
 import '../language.dart';
 import '../models.dart';
 import '../stripe_test_bridge.dart';
@@ -202,7 +203,7 @@ class _PackageDetailScreenState extends State<PackageDetailScreen> {
   }
 
   Future<void> _openMap(Map<String, dynamic> branch) async {
-    if (const bool.fromEnvironment('PUBLIC_DEMO')) {
+    if (publicPreview) {
       showCgToast(context, context.tr('此商戶未提供導航資料。',
           'Directions are unavailable for this shop.'));
       return;
@@ -553,8 +554,8 @@ class _PackageDetailScreenState extends State<PackageDetailScreen> {
                 child: SizedBox(
                   height: 48,
                   child: ElevatedButton(
-                    onPressed: const bool.fromEnvironment('PUBLIC_DEMO') || soldOut ? null : _buy,
-                    child: Text(const bool.fromEnvironment('PUBLIC_DEMO')
+                    onPressed: publicPreview || soldOut ? null : _buy,
+                    child: Text(publicPreview
                         ? context.tr('只供瀏覽', 'Browse only')
                         : soldOut ? context.tr('已售罄', 'Sold out') : context.tr('立即搶購', 'Buy now')),
                   ),
@@ -1092,7 +1093,7 @@ class _OrdersScreenState extends State<OrdersScreen> with WalletUpdates<OrdersSc
 
   String _emptyMessage(int tab) {
     if (widget.guest) {
-      return const bool.fromEnvironment('PUBLIC_DEMO')
+      return publicPreview
           ? context.tr('暫時沒有個人訂單。', 'No personal orders yet.')
           : context.tr('登入後可查看你的訂單。', 'Sign in to view your orders.');
     }

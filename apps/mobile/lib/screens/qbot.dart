@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../api_client.dart';
+import '../feature_flags.dart';
 import '../language.dart';
 import '../models.dart';
 import '../qbot_offers.dart';
@@ -260,7 +261,7 @@ class _QBotScreenState extends State<QBotScreen> {
                   t('由 DeepSeek AI 回答，內容可能有誤，請以優惠詳情為準。請勿輸入個人資料或兌換碼。',
                       'Answered by DeepSeek AI. Answers may be inaccurate; check offer details. Do not enter personal information or redemption codes.'),
                   style: Theme.of(context).textTheme.bodySmall),
-              if (const bool.fromEnvironment('PUBLIC_DEMO'))
+              if (publicPreview)
                 Text(t('以下商戶及優惠為範例資料，僅供瀏覽。',
                     'The shops and offers below are sample data for browsing only.'),
                     style: Theme.of(context).textTheme.bodySmall),

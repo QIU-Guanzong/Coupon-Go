@@ -1,3 +1,4 @@
+import 'package:coupon_go/feature_flags.dart';
 import 'package:coupon_go/api_client.dart';
 import 'package:coupon_go/language.dart';
 import 'package:coupon_go/models.dart';
@@ -17,11 +18,11 @@ void main() {
       child: MaterialApp(home: BargainCampaignScreen(api: api, campaign: campaign))));
     const trial = bool.fromEnvironment('PUBLIC_TRIAL');
     final action = find.widgetWithText(ElevatedButton,
-      trial ? '體驗版暫不支援發起' : '立即發起砍價');
+      publicPreview ? '只供瀏覽' : trial ? '體驗版暫不支援發起' : '立即發起砍價');
     await tester.scrollUntilVisible(action, 300);
     await tester.pumpAndSettle();
     expect(action, findsOneWidget);
-    expect(tester.widget<ElevatedButton>(action).onPressed == null, trial);
+    expect(tester.widget<ElevatedButton>(action).onPressed == null, trial || publicPreview);
     await tester.pumpWidget(const SizedBox.shrink());
     language.dispose();
     api.dispose();

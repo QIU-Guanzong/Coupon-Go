@@ -4,3 +4,8 @@ const cashbackEnabled = bool.fromEnvironment(
   'COUPON_CASHBACK_ENABLED',
   defaultValue: false,
 );
+
+/// A browse-only preview must not override the interactive trial when both
+/// build flags are present.
+const publicPreview = bool.fromEnvironment('PUBLIC_DEMO') &&
+    !bool.fromEnvironment('PUBLIC_TRIAL');

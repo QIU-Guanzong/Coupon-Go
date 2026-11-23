@@ -18,6 +18,7 @@ import 'screens/admin_v2.dart';
 import 'screens/bargain.dart';
 import 'screens/cashback.dart';
 import 'screens/customer.dart';
+import 'screens/guest_auth.dart' show PreviewWelcomeScreen;
 import 'screens/nearby.dart';
 import 'screens/packages.dart';
 import 'screens/reviews_admin.dart';
@@ -64,7 +65,7 @@ class _CouponGoAppState extends State<CouponGoApp> {
         final session = await _api.post('/trial/session');
         if (session['reset'] == true) await _api.clearToken();
       }
-      await Future.wait([_api.loadToken(), _language.load()]);
+      await Future.wait([if (!publicPreview) _api.loadToken(), _language.load()]);
       unawaited(_api.appConfig.load());
       if (mounted) setState(() { _ready = true; _authed = _api.isLoggedIn; });
     } catch (_) {
@@ -145,6 +146,12 @@ class _CouponGoAppState extends State<CouponGoApp> {
                   setState(() => _vendorMode = !_vendorMode),
             ),
       onGenerateRoute: (settings) {
+        final route = settings.name ?? '';
+        if (publicPreview && (route == '/admin' || route.startsWith('/admin/') ||
+            route == '/vendor' || route.startsWith('/vendor/'))) {
+          return MaterialPageRoute(settings: settings,
+              builder: (_) => const PreviewWelcomeScreen());
+        }
         switch (settings.name) {
           case '/notifications':
             return MaterialPageRoute(
@@ -613,7 +620,7 @@ class _HomeShellState extends State<HomeShell> {
           ),
           ListTile(
             leading: const Icon(Icons.person, color: CgColors.primary),
-            title: Text(widget.api.isLoggedIn ? context.tr('我的帳戶','Account') : context.tr('登錄','Login')),
+            title: Text(publicPreview ? context.tr('訪客瀏覽', 'Guest browsing') : widget.api.isLoggedIn ? context.tr('我的帳戶','Account') : context.tr('登錄','Login')),
             onTap: () {
               Navigator.of(context).pop();
               if (!widget.api.isLoggedIn) {
@@ -697,7 +704,7 @@ class _HomeShellState extends State<HomeShell> {
             ),
           ListTile(leading: const Icon(Icons.chat_outlined), title: const Text('Q仔'),
             onTap: () { Navigator.of(context).pop(); Navigator.of(context).pushNamed('/qbot'); }),
-          if (kIsWeb && const bool.fromEnvironment('PUBLIC_DEMO'))
+          if (kIsWeb && publicPreview)
             ListTile(
               leading: const Icon(Icons.android, color: CgColors.primary),
               title: Text(context.tr('下載 Android 版', 'Download Android app')),
@@ -831,7 +838,7 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
               const SkeletonBox(height: 72),
             Text(context.tr('收藏優惠券', 'Saved coupons'), style: const TextStyle(fontWeight: FontWeight.bold)),
             if (!_loading && !_hasError && _coupons.isEmpty) Text(widget.guest
-                ? (const bool.fromEnvironment('PUBLIC_DEMO')
+                ? (publicPreview
                     ? context.tr('暫時沒有收藏的優惠券。', 'No saved coupons yet.')
                     : context.tr('登入後可查看收藏的優惠券。', 'Sign in to view saved coupons.'))
                 : context.tr('暫時沒有收藏的優惠券。', 'No saved coupons yet.')),
@@ -851,7 +858,7 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
             const SizedBox(height: 16),
             Text(context.tr('收藏商店', 'Saved stores'), style: const TextStyle(fontWeight: FontWeight.bold)),
             if (!_loading && !_hasError && _shops.isEmpty) Text(widget.guest
-                ? (const bool.fromEnvironment('PUBLIC_DEMO')
+                ? (publicPreview
                     ? context.tr('暫時沒有收藏的商店。', 'No saved stores yet.')
                     : context.tr('登入後可查看收藏的商店。', 'Sign in to view saved shops.'))
                 : context.tr('暫時沒有收藏的商店。', 'No saved stores yet.')),

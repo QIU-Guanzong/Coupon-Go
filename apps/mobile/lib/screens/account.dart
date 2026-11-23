@@ -290,7 +290,7 @@ class _WalletScreenState extends State<WalletScreen>
                                       ),
                                       const SizedBox(height: 12),
                                       Text(widget.guest
-                                          ? (const bool.fromEnvironment('PUBLIC_DEMO')
+                                          ? (publicPreview
                                               ? context.tr('暫時沒有個人優惠券，可以先逛逛套餐。', 'No personal coupons yet. Browse packages for offers.')
                                               : context.tr('登入後可在這裏查看已領取的優惠券。', 'Sign in to view your coupons.'))
                                           : context.tr('暫時沒有優惠券，去看看套餐吧！', 'No coupons yet. Browse packages for more offers.')),
@@ -816,7 +816,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                           color: CgColors.textSecondary)),
                   const SizedBox(height: 12),
                   Text(widget.guest
-                      ? (const bool.fromEnvironment('PUBLIC_DEMO')
+                      ? (publicPreview
                           ? context.tr('暫時沒有個人通知。', 'No personal notifications yet.')
                           : context.tr('登入後可查看你的通知。', 'Sign in to view your notifications.'))
                       : context.tr('沒有新通知。', 'No new notifications.')),

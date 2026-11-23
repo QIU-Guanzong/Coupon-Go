@@ -1,3 +1,4 @@
+import 'package:coupon_go/feature_flags.dart';
 import 'package:coupon_go/api_client.dart';
 import 'package:coupon_go/language.dart';
 import 'package:coupon_go/main.dart';
@@ -75,24 +76,24 @@ void main() {
     await tester.pump(const Duration(milliseconds: 400));
     expect(tester.widget<BottomNavigationBar>(find.byType(BottomNavigationBar)).items.length, 5);
     expect(find.text('以下商戶及優惠為範例資料，僅供瀏覽。'),
-        const bool.fromEnvironment('PUBLIC_DEMO') ? findsOneWidget : findsNothing);
+        publicPreview ? findsOneWidget : findsNothing);
 
     await tester.tap(find.text('收藏'));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
-    expect(find.text(const bool.fromEnvironment('PUBLIC_DEMO') ? '暫時沒有收藏的優惠券。' : '登入後可查看收藏的優惠券。'), findsOneWidget);
-    expect(find.text(const bool.fromEnvironment('PUBLIC_DEMO') ? '暫時沒有收藏的商店。' : '登入後可查看收藏的商店。'), findsOneWidget);
+    expect(find.text(publicPreview ? '暫時沒有收藏的優惠券。' : '登入後可查看收藏的優惠券。'), findsOneWidget);
+    expect(find.text(publicPreview ? '暫時沒有收藏的商店。' : '登入後可查看收藏的商店。'), findsOneWidget);
     expect(tester.widget<BottomNavigationBar>(find.byType(BottomNavigationBar)).currentIndex, 1);
 
     await tester.tap(find.text('Q Wallet'));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
-    expect(find.text(const bool.fromEnvironment('PUBLIC_DEMO') ? '暫時沒有個人優惠券，可以先逛逛套餐。' : '登入後可在這裏查看已領取的優惠券。'), findsOneWidget);
+    expect(find.text(publicPreview ? '暫時沒有個人優惠券，可以先逛逛套餐。' : '登入後可在這裏查看已領取的優惠券。'), findsOneWidget);
     expect(tester.widget<BottomNavigationBar>(find.byType(BottomNavigationBar)).currentIndex, 4);
     await tester.tap(find.text('已失效'));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
-    expect(find.text(const bool.fromEnvironment('PUBLIC_DEMO') ? '暫時沒有個人優惠券，可以先逛逛套餐。' : '登入後可在這裏查看已領取的優惠券。'), findsOneWidget);
+    expect(find.text(publicPreview ? '暫時沒有個人優惠券，可以先逛逛套餐。' : '登入後可在這裏查看已領取的優惠券。'), findsOneWidget);
     expect(api.calls, isNot(contains('/favorite-coupon-list')));
     expect(api.calls, isNot(contains('/get-favorite-coupons-list')));
     expect(api.calls, isNot(contains('/wallet/revision')));
@@ -103,7 +104,7 @@ void main() {
     await tester.tap(find.byTooltip('通知'));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
-    expect(find.text(const bool.fromEnvironment('PUBLIC_DEMO') ? '暫時沒有個人通知。' : '登入後可查看你的通知。'), findsOneWidget);
+    expect(find.text(publicPreview ? '暫時沒有個人通知。' : '登入後可查看你的通知。'), findsOneWidget);
     await tester.pageBack();
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
@@ -114,7 +115,7 @@ void main() {
     await tester.tap(find.text('我的訂單'));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
-    expect(find.text(const bool.fromEnvironment('PUBLIC_DEMO') ? '暫時沒有個人訂單。' : '登入後可查看你的訂單。'), findsOneWidget);
+    expect(find.text(publicPreview ? '暫時沒有個人訂單。' : '登入後可查看你的訂單。'), findsOneWidget);
     await tester.pageBack();
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
