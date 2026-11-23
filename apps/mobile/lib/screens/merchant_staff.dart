@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
 
 import '../api_client.dart';
+import '../language.dart';
+
+const _trialMode = bool.fromEnvironment('PUBLIC_TRIAL');
 
 const _roles = <String, String>{
   'cashier': '收銀員',
@@ -239,9 +242,14 @@ class _MerchantStaffScreenState extends State<MerchantStaffScreen> {
                         padding: const EdgeInsets.all(16),
                         children: [
                           const Text('邀請已註冊的用戶，並按職責設定店舖權限。'),
+                          if (_trialMode) ...[
+                            const SizedBox(height: 12),
+                            Text(context.tr('體驗版可查看店員，暫不支援邀請或修改角色。',
+                                'You can view staff in the trial. Invitations and role changes are unavailable.')),
+                          ],
                           const SizedBox(height: 12),
                           FilledButton.icon(
-                              onPressed: _busy ? null : _invite,
+                              onPressed: _busy || _trialMode ? null : _invite,
                               icon: const Icon(Icons.person_add_alt),
                               label: const Text('邀請店員')),
                           const SizedBox(height: 12),
@@ -260,7 +268,7 @@ class _MerchantStaffScreenState extends State<MerchantStaffScreen> {
                                   '${member['email'] ?? ''}\n${_roles[member['role']] ?? member['role']} · ${member['status'] == 'active' ? '已加入' : '待確認'}'),
                               isThreeLine: true,
                               trailing: PopupMenuButton<String>(
-                                  enabled: !_busy,
+                                  enabled: !_busy && !_trialMode,
                                   onSelected: (action) {
                                     if (action == 'role') _changeRole(member);
                                     if (action == 'remove') _remove(member);

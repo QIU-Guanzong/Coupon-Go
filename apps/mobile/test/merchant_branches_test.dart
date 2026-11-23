@@ -6,6 +6,7 @@ import 'package:flutter_test/flutter_test.dart';
 class BranchApi extends ApiClient {
   bool canManage = true;
   bool failSave = false;
+  int failureStatus = 409;
   int revision = 0;
   final calls = <Map<String, dynamic>>[];
   final branches = <Map<String, dynamic>>[
@@ -46,7 +47,7 @@ class BranchApi extends ApiClient {
     Map<String, String>? query,
   }) async {
     calls.add({'path': path, 'body': body, 'query': query});
-    if (failSave) throw ApiException(409, '無法儲存');
+    if (failSave) throw ApiException(failureStatus, '無法儲存');
     if (body != null) branches.add({'id': 12, ...body});
     if (query != null) branches[0] = {'id': 11, ...query};
     return {'message': '完成'};
@@ -146,5 +147,26 @@ void main() {
     await tester.tap(find.text('儲存'));
     await tester.pumpAndSettle();
     expect(api.calls, isEmpty);
+  });
+
+  testWidgets('明確拒絕時保留輸入並允許修正重試', (tester) async {
+    final api = BranchApi()..failSave = true..failureStatus = 403;
+    await tester.pumpWidget(MaterialApp(home: MerchantBranchesScreen(api: api)));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('新增分店'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextFormField).first, '灣仔草稿');
+    await tester.enterText(find.byType(TextFormField).at(1), '測試街');
+    await tester.tap(find.text('儲存'));
+    await tester.pumpAndSettle();
+    expect(find.text('無法儲存'), findsOneWidget);
+    expect(find.text('灣仔草稿'), findsOneWidget);
+    expect(find.text('測試街'), findsOneWidget);
+    api.failSave = false;
+    await tester.tap(find.text('儲存'));
+    await tester.pumpAndSettle();
+    expect(api.calls.length, 2);
+    expect(find.text('灣仔草稿'), findsOneWidget);
+    expect(find.text('分店已建立'), findsOneWidget);
   });
 }

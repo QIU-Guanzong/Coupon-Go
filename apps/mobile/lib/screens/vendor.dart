@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:math';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
@@ -18,6 +19,8 @@ import 'merchant_dashboard.dart';
 import 'scan_batch.dart';
 import 'merchant_branches.dart';
 import 'merchant_staff.dart';
+
+const _trialMode = bool.fromEnvironment('PUBLIC_TRIAL');
 
 /// Vendor home: gold theme, usage summary, issue-coupon entry.
 class VendorHomeScreen extends StatefulWidget {
@@ -183,6 +186,9 @@ class _VendorHomeScreenState extends State<VendorHomeScreen> {
                     Navigator.of(context).pushNamed('/vendor/settlements'),
                 child: const Text('商家結算單')),
             if (_allows('can_manage_coupons')) const Text('我的優惠券', style: TextStyle(fontWeight: FontWeight.bold)),
+            if (_allows('can_manage_coupons') && _trialMode)
+              Text(context.tr('體驗版暫不支援修改優惠券的適用分店。',
+                  'Changing coupon branches is unavailable in the trial.')),
             ..._coupons.map((c) => Card(
                   margin: const EdgeInsets.only(top: 8),
                   child: ListTile(
@@ -193,7 +199,7 @@ class _VendorHomeScreenState extends State<VendorHomeScreen> {
                         Text('剩餘 ${c.remaining} · 已核銷 ${c.usedCount ?? '—'}'),
                     trailing: IconButton(
                       tooltip: '編輯適用分店', icon: const Icon(Icons.storefront_outlined),
-                      onPressed: () => Navigator.of(context).push(MaterialPageRoute(
+                      onPressed: _trialMode ? null : () => Navigator.of(context).push(MaterialPageRoute(
                         builder: (_) => CouponBranchEditScreen(api: widget.api, couponId: c.id,
                           shopId: c.shopId, couponName: c.name))),
                     ),
@@ -323,6 +329,7 @@ class _IssueCouponScreenState extends State<IssueCouponScreen> {
   String? _shopsError;
   bool _submitting = false;
   bool _createUncertain = false;
+  bool _dirty = false;
   late int _session;
   DateTime _validTo = DateTime.now().add(const Duration(days: 30));
 
@@ -331,7 +338,31 @@ class _IssueCouponScreenState extends State<IssueCouponScreen> {
     super.initState();
     _session = widget.api.sessionRevision;
     widget.api.addListener(_sessionChanged);
+    for (final controller in [_name, _percentage, _cash, _total, _minSpend, _terms]) {
+      controller.addListener(_markDirty);
+    }
     _loadShops();
+  }
+
+  void _markDirty() {
+    if (mounted && !_dirty) setState(() => _dirty = true);
+  }
+
+  Future<bool> _canLeave() async {
+    if (_submitting) return false;
+    if (!_dirty) return true;
+    return await showDialog<bool>(
+          context: context,
+          builder: (dialogContext) => AlertDialog(
+            title: Text(context.tr('放棄尚未儲存的內容？', 'Discard unsaved changes?')),
+            actions: [
+              TextButton(onPressed: () => Navigator.pop(dialogContext, false),
+                  child: Text(context.tr('繼續編輯', 'Keep editing'))),
+              TextButton(onPressed: () => Navigator.pop(dialogContext, true),
+                  child: Text(context.tr('放棄', 'Discard'))),
+            ],
+          ),
+        ) ?? false;
   }
 
   void _sessionChanged() {
@@ -389,7 +420,14 @@ class _IssueCouponScreenState extends State<IssueCouponScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
+    return PopScope(
+      canPop: !_dirty && !_submitting,
+      onPopInvokedWithResult: (didPop, _) async {
+        if (!didPop && await _canLeave() && context.mounted) {
+          Navigator.of(context).pop();
+        }
+      },
+      child: Scaffold(
       appBar: AppBar(
         backgroundColor: CgColors.vendorGold,
         foregroundColor: CgColors.textPrimary,
@@ -398,13 +436,21 @@ class _IssueCouponScreenState extends State<IssueCouponScreen> {
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
+          if (_trialMode) ...[
+            Text(context.tr('體驗版可填寫內容，暫不支援提交優惠券。',
+                'You can fill in coupon details in the trial, but submission is unavailable.')),
+            const SizedBox(height: 12),
+          ],
           if (_shopsError != null) ...[Text(_shopsError!), TextButton(onPressed: _loadShops, child: const Text('重試'))],
           if (_shops == null && _shopsError == null) const LinearProgressIndicator(),
           if (_shops != null && _shops!.isEmpty) const Text('此帳戶尚未有可管理的商店。'),
           if (_shops != null && _shops!.isNotEmpty) DropdownButtonFormField<int>(
             initialValue: _shopId, decoration: const InputDecoration(labelText: '商店'),
             items: _shops!.map((shop) => DropdownMenuItem<int>(value: shop['id'] as int, child: Text(shop['name'] as String))).toList(),
-            onChanged: (id) => setState(() { _shopId = id; _branchIds = null; }),
+            onChanged: (id) => setState(() {
+              if (id != _shopId) _dirty = true;
+              _shopId = id; _branchIds = null;
+            }),
           ),
           const SizedBox(height: 12),
           TextField(
@@ -419,7 +465,11 @@ class _IssueCouponScreenState extends State<IssueCouponScreen> {
               DropdownMenuItem(value: 'Discount', child: Text('折扣優惠券')),
               DropdownMenuItem(value: 'Gift', child: Text('贈品優惠券')),
             ],
-            onChanged: (v) => setState(() => _type = v ?? 'Discount'),
+            onChanged: (v) => setState(() {
+              final next = v ?? 'Discount';
+              if (next != _type) _dirty = true;
+              _type = next;
+            }),
           ),
           const SizedBox(height: 12),
           if (_type == 'Discount')
@@ -449,7 +499,10 @@ class _IssueCouponScreenState extends State<IssueCouponScreen> {
           const SizedBox(height: 20),
           if (_shopId != null) BranchScopePicker(
             key: ValueKey(_shopId), api: widget.api, shopId: _shopId!, initial: const [],
-            onChanged: (ids) => setState(() => _branchIds = ids),
+            onChanged: (ids) => setState(() {
+              if (_branchIds != null && !listEquals(_branchIds, ids)) _dirty = true;
+              _branchIds = ids;
+            }),
           ),
           const SizedBox(height: 12),
           ListTile(
@@ -463,7 +516,7 @@ class _IssueCouponScreenState extends State<IssueCouponScreen> {
                 firstDate: DateTime.now(),
                 lastDate: DateTime.now().add(const Duration(days: 365)),
               );
-              if (picked != null) setState(() => _validTo = picked);
+              if (picked != null) setState(() { _validTo = picked; _dirty = true; });
             },
           ),
           const SizedBox(height: 16),
@@ -474,7 +527,7 @@ class _IssueCouponScreenState extends State<IssueCouponScreen> {
           ElevatedButton(
             style:
                 ElevatedButton.styleFrom(backgroundColor: CgColors.vendorGold),
-            onPressed: _shopId == null || _branchIds == null || _submitting || _createUncertain ? null : () async {
+            onPressed: _trialMode || _shopId == null || _branchIds == null || _submitting || _createUncertain ? null : () async {
               final session = _session;
               final draft = _body();
               final scope = _branchIds!.isEmpty ? '所有分店' : '指定 ${_branchIds!.length} 間分店';
@@ -529,7 +582,7 @@ class _IssueCouponScreenState extends State<IssueCouponScreen> {
           ),
         ],
       ),
-    );
+    ));
   }
 }
 
