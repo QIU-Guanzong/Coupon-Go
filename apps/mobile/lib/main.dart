@@ -50,6 +50,8 @@ class _CouponGoAppState extends State<CouponGoApp> {
   String? _trialError;
   bool _changingTrialRole = false;
   final _navigatorKey = GlobalKey<NavigatorState>();
+  final _messengerKey = GlobalKey<ScaffoldMessengerState>();
+  final _trialRoleKey = GlobalKey<TrialBannerState>();
 
   @override
   void initState() {
@@ -129,10 +131,11 @@ class _CouponGoAppState extends State<CouponGoApp> {
       localizationsDelegates: GlobalMaterialLocalizations.delegates,
       title: 'Coupon GO!',
       navigatorKey: _navigatorKey,
+      scaffoldMessengerKey: _messengerKey,
       builder: (context, child) => const bool.fromEnvironment('PUBLIC_TRIAL')
           ? Column(verticalDirection: VerticalDirection.up, children: [
               Expanded(child: _changingTrialRole ? const SizedBox.shrink() : (child ?? const SizedBox.shrink())),
-              TrialBanner(api: _api, onRoleChanging: _trialRoleChanging,
+              TrialBanner(key: _trialRoleKey, api: _api, messengerKey: _messengerKey, onRoleChanging: _trialRoleChanging,
                   onRoleChangeFailed: _trialRoleChangeFailed, onRoleChanged: _trialRoleChanged)])
           : (child ?? const SizedBox.shrink()),
       theme: CgTheme.light(),
@@ -140,6 +143,8 @@ class _CouponGoAppState extends State<CouponGoApp> {
               api: _api,
               authed: _authed,
               vendorMode: _vendorMode,
+              onTrialRoleSwitch: const bool.fromEnvironment('PUBLIC_TRIAL')
+                  ? (context) => _trialRoleKey.currentState?.open(context) : null,
               onAuthed: () => setState(() => _authed = true),
               onLogout: () => setState(() { _authed = false; _vendorMode = false; }),
               onToggleMode: () =>
@@ -292,6 +297,7 @@ class HomeShell extends StatefulWidget {
     required this.onAuthed,
     required this.onLogout,
     required this.onToggleMode,
+    this.onTrialRoleSwitch,
   });
 
   final ApiClient api;
@@ -300,6 +306,7 @@ class HomeShell extends StatefulWidget {
   final VoidCallback onAuthed;
   final VoidCallback onLogout;
   final VoidCallback onToggleMode;
+  final ValueChanged<BuildContext>? onTrialRoleSwitch;
 
   @override
   State<HomeShell> createState() => _HomeShellState();
@@ -311,6 +318,7 @@ class _HomeShellState extends State<HomeShell> {
   bool _canRedeem = false, _canAnalytics = false;
   final _visited = <int>{0};
   LocalHistoryEntry? _tabHistory;
+  final _vendorScaffoldKey = GlobalKey<ScaffoldState>();
 
   void _clearTabHistory() {
     final entry = _tabHistory;
@@ -620,12 +628,14 @@ class _HomeShellState extends State<HomeShell> {
   Widget _vendorShell() {
     String tr(String zh, String en) => context.tr(zh, en);
     return Scaffold(
+      key: _vendorScaffoldKey,
       drawer: _drawer(),
       body: switch (_vendorIndex) {
         1 => ScanScreen(api: widget.api),
         2 => UsageScreen(api: widget.api),
         3 => VendorAccountScreen(api: widget.api),
-        _ => VendorHomeScreen(api: widget.api, showAdmin: _role == 'admin'),
+        _ => VendorHomeScreen(api: widget.api, showAdmin: _role == 'admin',
+            onOpenMenu: () => _vendorScaffoldKey.currentState?.openDrawer()),
       },
       bottomNavigationBar: BottomNavigationBar(
         currentIndex: _vendorIndex,
@@ -666,6 +676,15 @@ class _HomeShellState extends State<HomeShell> {
               ],
             ),
           ),
+          if (widget.onTrialRoleSwitch != null)
+            ListTile(
+              leading: const Icon(Icons.switch_account, color: CgColors.primary),
+              title: Text(context.tr('切換身份', 'Switch identity')),
+              onTap: () {
+                Navigator.of(context).pop();
+                widget.onTrialRoleSwitch?.call(context);
+              },
+            ),
           ListTile(
             leading: const Icon(Icons.person, color: CgColors.primary),
             title: Text(publicPreview ? context.tr('訪客瀏覽', 'Guest browsing') : widget.api.isLoggedIn ? context.tr('我的帳戶','Account') : context.tr('登錄','Login')),

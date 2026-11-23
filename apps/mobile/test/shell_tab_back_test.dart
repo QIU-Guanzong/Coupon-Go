@@ -27,12 +27,14 @@ class FakeApi extends ApiClient {
   Future<List<dynamic>> vendorCoupons() async => [];
 }
 
-Future<void> showShell(WidgetTester tester, FakeApi api, {bool vendor = false}) async {
+Future<void> showShell(WidgetTester tester, FakeApi api, {bool vendor = false,
+    ValueChanged<BuildContext>? onTrialRoleSwitch}) async {
   SharedPreferences.setMockInitialValues({});
   await tester.pumpWidget(LanguageScope(
     language: AppLanguage()..english = true,
     child: MaterialApp(home: HomeShell(
       api: api, authed: api.isLoggedIn, vendorMode: vendor,
+      onTrialRoleSwitch: onTrialRoleSwitch,
       onAuthed: () {}, onLogout: () {}, onToggleMode: () {},
     )),
   ));
@@ -43,6 +45,18 @@ Future<void> showShell(WidgetTester tester, FakeApi api, {bool vendor = false}) 
 int currentIndex(WidgetTester tester) => tester.widget<BottomNavigationBar>(find.byType(BottomNavigationBar).first).currentIndex;
 
 void main() {
+  testWidgets('merchant home menu exposes trial identity switching', (tester) async {
+    final api = FakeApi(role: 'vendor');
+    var opened = false;
+    await showShell(tester, api, vendor: true,
+        onTrialRoleSwitch: (_) => opened = true);
+    await tester.tap(find.byIcon(Icons.menu));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Switch identity'));
+    await tester.pumpAndSettle();
+    expect(opened, isTrue);
+    await tester.pumpWidget(const SizedBox()); api.dispose();
+  });
   testWidgets('consumer back returns the selected tab to home only once', (tester) async {
     final api = FakeApi();
     await showShell(tester, api);

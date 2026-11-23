@@ -48,6 +48,12 @@ const merchant = {'shops': [
 Widget shell(Widget child) => LanguageScope(language: AppLanguage(),
     child: MaterialApp(home: child));
 
+Future<void> openTrialSelector(WidgetTester tester) async {
+  final controller = tester.state<TrialBannerState>(find.byType(TrialBanner));
+  unawaited(controller.open(tester.element(find.byType(Scaffold).first)));
+  await tester.pump(const Duration(milliseconds: 300));
+}
+
 void main() {
   testWidgets('disposed merchant page does not request usage after shops completes', (tester) async {
     final api = DeferredVendorApi();
@@ -87,10 +93,12 @@ void main() {
         TrialBanner(api: api, onRoleChanging: () async { changed = true; },
             onRoleChangeFailed: () {}, onRoleChanged: (_) {}),
       ]))));
-      await tester.tap(find.text('切換身份 ▾'));
-      await tester.pump(const Duration(milliseconds: 300));
+      await openTrialSelector(tester);
       await tester.tap(find.text('示例顧客'));
+      await tester.pump();
       await tester.pump(const Duration(milliseconds: 300));
+      await tester.pump();
+      await tester.pump();
       expect(changed, isFalse);
       expect(find.text('切換失敗，請重試'), findsOneWidget);
       api.shops.complete(merchant);
