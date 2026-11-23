@@ -204,7 +204,7 @@ def test_vendor_preview_create_approve(client):
         "valid_to": "2026-12-16T00:00:00", "total": 50,
     }
     r = client.post("/api/v3/add-coupon-preview", json=body, headers=vh)
-    assert r.status_code == 200 and r.json()["amount_text"] == "90 折"
+    assert r.status_code == 200 and r.json()["amount_text"] == "9 折"
     r = client.post("/api/v3/coupon-previewed", json=body, headers=vh)
     assert r.status_code == 200, r.text
     assert r.json()["coupon"]["status"] == "pending_review"

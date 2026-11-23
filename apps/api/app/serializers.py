@@ -1,5 +1,6 @@
 """Shared model -> dict serializers (keeps routers thin)."""
 import json
+from decimal import Decimal
 
 from sqlalchemy.orm import Session
 
@@ -195,7 +196,9 @@ def amount_text(c: models.Coupon) -> str:
     if c.coupon_type == "Cash" and c.cash_amount is not None:
         return f"減 ${c.cash_amount:g}"
     if c.coupon_type == "Discount" and c.percentage is not None:
-        return f"{c.percentage:g} 折"
+        # percentage is the percentage of the regular price: 85% = 8.5 折.
+        discount = (Decimal(str(c.percentage)) / 10).normalize()
+        return f"{format(discount, 'f')} 折"
     if c.coupon_type == "Gift":
         return f"送{c.gift}"
     if c.coupon_type == "Price" and c.discount_price is not None:

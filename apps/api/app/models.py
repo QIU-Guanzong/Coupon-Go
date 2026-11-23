@@ -140,7 +140,7 @@ class Coupon(Base):
     category_id = Column(Integer, ForeignKey("categories.id"))
     # Amount fields (only the ones matching coupon_type are used)
     cash_amount = Column(Numeric(10, 2), nullable=True)
-    percentage = Column(Numeric(5, 2), nullable=True)      # e.g. 85 = 85折
+    percentage = Column(Numeric(5, 2), nullable=True)      # e.g. 85 = 85% of regular price (8.5 折)
     gift = Column(String(160), default="")
     discount_price = Column(Numeric(10, 2), nullable=True)
     regular_price = Column(Numeric(10, 2), nullable=True)
