@@ -8,7 +8,7 @@ void main() {
     expect(
         source, contains("context.tr('下載 Android 版', 'Download Android app')"));
     expect(source,
-        contains("if (kIsWeb && const bool.fromEnvironment('PUBLIC_DEMO'))"));
+        contains("if (kIsWeb && publicPreview)"));
     expect(source, isNot(contains('下載 Android 示範版')));
     expect(source, isNot(contains('Download Android demo')));
   });

@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../api_client.dart';
+import '../feature_flags.dart';
 import '../language.dart';
 import '../models.dart';
 import '../theme.dart';
@@ -446,9 +447,9 @@ class _BargainCampaignScreenState extends State<BargainCampaignScreen> {
                 backgroundColor: CgColors.orange,
                 foregroundColor: Colors.white,
               ),
-              onPressed: (const bool.fromEnvironment('PUBLIC_DEMO') ||
+              onPressed: (publicPreview ||
                       const bool.fromEnvironment('PUBLIC_TRIAL') || _busy || c.isSoldOut) ? null : _start,
-              child: Text(const bool.fromEnvironment('PUBLIC_DEMO')
+              child: Text(publicPreview
                   ? context.tr('只供瀏覽', 'Browse only')
                   : const bool.fromEnvironment('PUBLIC_TRIAL')
                   ? context.tr('體驗版暫不支援發起', 'Not available in this trial')

@@ -6,6 +6,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../api_client.dart';
+import '../feature_flags.dart';
 import '../language.dart';
 import 'discovery.dart';
 import 'guest_auth.dart' show guestLoginPrompt;
@@ -213,7 +214,7 @@ class _HomeScreenState extends State<HomeScreen> {
             actions: [
               Tooltip(
                 key: _qbotHint,
-                message: const bool.fromEnvironment('PUBLIC_DEMO')
+                message: publicPreview
                     ? context.tr('找優惠、問 Q仔。', 'Ask Q仔 about offers.')
                     : context.tr('找優惠、查積分，問 Q仔。', 'Ask Q仔 for offers or points.'),
                 triggerMode: TooltipTriggerMode.manual,
@@ -270,7 +271,7 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
             ),
           ),
-          if (const bool.fromEnvironment('PUBLIC_DEMO'))
+          if (publicPreview)
             SliverToBoxAdapter(
               child: Container(
                 width: double.infinity,
@@ -1027,7 +1028,7 @@ class _CouponDetailScreenState extends State<CouponDetailScreen> {
       bottomNavigationBar: Padding(
         padding: const EdgeInsets.all(16),
         child: ElevatedButton(
-          onPressed: const bool.fromEnvironment('PUBLIC_DEMO') ||
+          onPressed: publicPreview ||
                   (!c.isPaid && _claimed) || _claiming || (c.isPaid && remaining <= 0) ||
                   (c.isPaid && (c.salePrice == null || c.salePrice! <= 0))
               ? null
@@ -1075,7 +1076,7 @@ class _CouponDetailScreenState extends State<CouponDetailScreen> {
                     if (mounted) setState(() => _claiming = false);
                   }
                 },
-          child: Text(const bool.fromEnvironment('PUBLIC_DEMO')
+          child: Text(publicPreview
               ? context.tr('只供瀏覽', 'Browse only')
               : c.isPaid && remaining <= 0
               ? context.tr('已售罄', 'Sold out')
@@ -1117,7 +1118,7 @@ class _ShopDetailScreenState extends State<ShopDetailScreen> {
   }
 
   Future<void> _launch(Uri uri) async {
-    if (const bool.fromEnvironment('PUBLIC_DEMO')) {
+    if (publicPreview) {
       showCgToast(context, context.tr('此商戶未提供聯絡及導航資料。',
           'Contact and directions are unavailable for this shop.'));
       return;

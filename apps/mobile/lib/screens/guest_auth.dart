@@ -1,10 +1,21 @@
 import 'package:flutter/material.dart';
 
 import '../api_client.dart';
+import '../feature_flags.dart';
 import '../language.dart';
 import '../theme.dart';
 
 Future<bool> guestLoginPrompt(BuildContext context) async {
+  if (publicPreview) {
+    await showDialog<void>(context: context, builder: (dialogContext) => AlertDialog(
+      title: Text(dialogContext.tr('示例預覽', 'Sample preview')),
+      content: Text(dialogContext.tr('目前可瀏覽示例優惠，毋須登入。',
+          'You can browse sample offers without signing in.')),
+      actions: [TextButton(onPressed: () => Navigator.pop(dialogContext),
+          child: Text(dialogContext.tr('繼續瀏覽', 'Continue browsing')))],
+    ));
+    return false;
+  }
   return await showDialog<bool>(
         context: context,
         builder: (c) => Dialog(
@@ -45,6 +56,39 @@ Future<bool> guestLoginPrompt(BuildContext context) async {
         ),
       ) ??
       false;
+}
+
+/// The browse-only website uses examples and never asks for credentials.
+class PreviewWelcomeScreen extends StatelessWidget {
+  const PreviewWelcomeScreen({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tr;
+    return Scaffold(
+      appBar: AppBar(title: const Text('COUPON GO!')),
+      body: Center(child: SingleChildScrollView(child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 420),
+        child: Padding(padding: const EdgeInsets.all(24), child: Column(
+          mainAxisSize: MainAxisSize.min, children: [
+            Image.asset('assets/images/img_logo_cropped.png', height: 115,
+                errorBuilder: (_, __, ___) => const SizedBox.shrink()),
+            const SizedBox(height: 24),
+            Text(t('歡迎來到 Coupon GO!', 'Welcome to Coupon GO!'),
+                textAlign: TextAlign.center,
+                style: Theme.of(context).textTheme.titleLarge),
+            const SizedBox(height: 12),
+            Text(t('以訪客身分瀏覽示例優惠，毋須建立帳戶。',
+                'Browse sample offers as a guest. No account needed.'),
+                textAlign: TextAlign.center),
+            const SizedBox(height: 24),
+            FilledButton(onPressed: () => Navigator.of(context).popUntil((route) => route.isFirst),
+                child: Text(t('繼續瀏覽', 'Continue browsing'))),
+          ],
+        )),
+      ))),
+    );
+  }
 }
 
 enum _Step { chooser, login, register, verify, forgot, reset }
@@ -209,6 +253,7 @@ class _AuthScreenState extends State<AuthScreen> {
         )),
       );
     }
+    if (publicPreview) return const PreviewWelcomeScreen();
     final t = context.tr;
     final accent = widget.vendor ? CgColors.vendorGold : CgColors.primary;
     final title = switch (step) {
