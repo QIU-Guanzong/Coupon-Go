@@ -201,9 +201,11 @@ class _HomeScreenState extends State<HomeScreen> {
             title: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Image.asset('assets/images/img_logo.png', height: 32,
-                    errorBuilder: (_, __, ___) => const SizedBox()),
-                const SizedBox(width: 8),
+                if (MediaQuery.sizeOf(context).width >= 360) ...[
+                  Image.asset('assets/images/img_logo.png', height: 32,
+                      errorBuilder: (_, __, ___) => const SizedBox()),
+                  const SizedBox(width: 8),
+                ],
                 const Flexible(
                   child: Text('COUPON GO!',
                       maxLines: 1, overflow: TextOverflow.ellipsis,
