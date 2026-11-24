@@ -312,6 +312,7 @@ class _MerchantAccountOverviewState extends State<MerchantAccountOverview> {
           for (final item in [
             ('pending', context.tr('待結算', 'Pending settlement')),
             ('available', context.tr('帳面可提取', 'Ledger available')),
+            ('processing', context.tr('提款處理中', 'Payout in progress')),
             ('paid_out', context.tr('已提取', 'Paid out')),
           ])
             ListTile(title: Text(item.$2),
