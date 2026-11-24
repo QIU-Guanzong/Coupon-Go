@@ -82,6 +82,11 @@ Finder _textEither(String zh, String en) =>
     find.byWidgetPredicate((widget) => widget is Text &&
         (widget.data == zh || widget.data == en));
 
+Finder _balanceRow(String zh, String en) => find.ancestor(
+      of: _textEither(zh, en),
+      matching: find.byType(ListTile),
+    );
+
 void main() {
   testWidgets('signed-out screen issues no GET', (tester) async {
     final api = _Api(_readOwner);
@@ -143,7 +148,12 @@ void main() {
     final api = _Api(_readOwner);
     await _show(tester, api);
     expect(find.text('HK\$ 0.00'), findsOneWidget);
-    expect(find.text('—'), findsOneWidget);
+    final available = _balanceRow('帳面可提取', 'Ledger available');
+    final processing = _balanceRow('提款處理中', 'Payout in progress');
+    expect(find.descendant(of: available, matching: find.text('—')),
+        findsOneWidget);
+    expect(find.descendant(of: processing, matching: find.text('—')),
+        findsOneWidget);
     expect(find.text('HK\$ 18.00'), findsOneWidget);
     expect(find.text('acct_private_1'), findsNothing);
     expect(find.text('po_private_fixture'), findsNothing);
@@ -151,6 +161,36 @@ void main() {
       ('/me', null), ('/merchant/shops', null),
       (_status, 1), (_balance, 1), (_ledger, 1),
     ]);
+  });
+
+  testWidgets('reserved payout stays separate from available and paid out',
+      (tester) async {
+    final api = _Api((path, shop) => switch (path) {
+          _balance => {
+              ..._money(shop!, available: 600),
+              'processing': 400,
+              'paid_out': 0,
+            },
+          _ledger => {'total': 0, 'page': 1, 'page_size': 20, 'entries': []},
+          _ => _readOwner(path, shop),
+        });
+    await _show(tester, api);
+
+    expect(
+        find.descendant(
+            of: _balanceRow('帳面可提取', 'Ledger available'),
+            matching: find.text(r'HK$ 600.00')),
+        findsOneWidget);
+    expect(
+        find.descendant(
+            of: _balanceRow('提款處理中', 'Payout in progress'),
+            matching: find.text(r'HK$ 400.00')),
+        findsOneWidget);
+    expect(
+        find.descendant(
+            of: _balanceRow('已提取', 'Paid out'),
+            matching: find.text(r'HK$ 0.00')),
+        findsOneWidget);
   });
 
   testWidgets('switching shops fences old balances; signing out clears results',
