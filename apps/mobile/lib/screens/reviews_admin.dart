@@ -813,10 +813,14 @@ class _MerchantReviewReplyScreenState
                                       child: Text(rev.content),
                                     ),
                                   const SizedBox(height: 8),
+                                  if (const bool.fromEnvironment('PUBLIC_TRIAL'))
+                                    Text(context.tr('體驗版暫不支援回覆評價。',
+                                        'Review replies are unavailable in the trial.')),
                                   Align(
                                     alignment: Alignment.centerRight,
                                     child: ElevatedButton(
-                                      onPressed: () => _reply(rev),
+                                      onPressed: const bool.fromEnvironment('PUBLIC_TRIAL')
+                                          ? null : () => _reply(rev),
                                       child: Text(context.tr('回覆', 'Reply')),
                                     ),
                                   ),
