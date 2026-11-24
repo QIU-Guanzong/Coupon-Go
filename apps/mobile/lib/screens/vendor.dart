@@ -16,6 +16,7 @@ import 'vendor_packages.dart';
 import 'coupon_branch_scope.dart';
 import 'redemption_recovery.dart';
 import 'merchant_dashboard.dart';
+import 'merchant_account_overview.dart';
 import 'scan_batch.dart';
 import 'merchant_branches.dart';
 import 'merchant_staff.dart';
@@ -239,17 +240,10 @@ class _VendorHomeScreenState extends State<VendorHomeScreen> {
   }
 }
 
-class VendorAccountScreen extends StatefulWidget {
+class VendorAccountScreen extends StatelessWidget {
   const VendorAccountScreen({super.key, required this.api});
 
   final ApiClient api;
-
-  @override
-  State<VendorAccountScreen> createState() => _VendorAccountScreenState();
-}
-
-class _VendorAccountScreenState extends State<VendorAccountScreen> {
-  late Future<Map<String, dynamic>> _profile = widget.api.get('/me');
 
   @override
   Widget build(BuildContext context) {
@@ -261,44 +255,7 @@ class _VendorAccountScreenState extends State<VendorAccountScreen> {
       ),
       body: ListView(
         children: [
-          FutureBuilder<Map<String, dynamic>>(
-            future: _profile,
-            builder: (context, snapshot) {
-              if (snapshot.connectionState != ConnectionState.done) {
-                return const Padding(
-                  padding: EdgeInsets.all(16),
-                  child: SkeletonBox(height: 64),
-                );
-              }
-              if (snapshot.hasError) {
-                return ListTile(
-                  title:
-                      Text(context.tr('未能載入帳戶', 'Could not load the account')),
-                  trailing: TextButton(
-                    onPressed: () {
-                      final result = widget.api.get('/me');
-                      setState(() {
-                        _profile = result;
-                      });
-                    },
-                    child: Text(context.tr('重試', 'Retry')),
-                  ),
-                );
-              }
-              final name = snapshot.data?['name'] as String? ?? '';
-              final email = snapshot.data?['email'] as String? ?? '';
-              if (name.isEmpty && email.isEmpty) {
-                return ListTile(
-                    title: Text(context.tr('未有帳戶資料', 'No account details')));
-              }
-              return ListTile(
-                leading: const Icon(Icons.storefront),
-                title: Text(name.isEmpty ? email : name),
-                subtitle:
-                    name.isNotEmpty && email.isNotEmpty ? Text(email) : null,
-              );
-            },
-          ),
+          MerchantAccountOverview(api: api),
           ListTile(
             leading: const Icon(Icons.credit_card),
             title: Text(context.tr('訂閱方案', 'Subscription plans')),
