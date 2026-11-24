@@ -63,7 +63,7 @@ class _NavApi extends ApiClient {
   }
 
   @override
-  Future<List<dynamic>> vendorCoupons() async => [];
+  Future<List<dynamic>> vendorCoupons({String? status}) async => [];
 
   @override
   Future<List<dynamic>> bargainCampaigns() async {
