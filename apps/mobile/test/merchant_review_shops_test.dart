@@ -158,6 +158,19 @@ void main() {
     expect(api.shopReads, isEmpty);
   });
 
+  testWidgets('trial reviews explain that replies are unavailable',
+      (tester) async {
+    final api = ReviewShopsApi([first]);
+    await showHome(tester, api);
+    await openPicker(tester);
+    await tester.tap(find.text('Central'));
+    await tester.pumpAndSettle();
+    expect(find.text('Review replies are unavailable in the trial.'), findsOneWidget);
+    final button = tester.widget<ElevatedButton>(find.widgetWithText(ElevatedButton, 'Reply'));
+    expect(button.onPressed, isNull);
+    expect(api.replies, isEmpty);
+  }, skip: !const bool.fromEnvironment('PUBLIC_TRIAL'));
+
   testWidgets('reply targets the chosen shop review and reloads only that shop',
       (tester) async {
     final api = ReviewShopsApi([first, second]);
@@ -172,7 +185,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(api.replies, [122]);
     expect(api.shopReads, [22, 22]);
-  });
+  }, skip: const bool.fromEnvironment('PUBLIC_TRIAL'));
 
   testWidgets('an open reply dialog cannot send using the next account',
       (tester) async {
@@ -194,5 +207,5 @@ void main() {
     expect(api.replies, isEmpty);
     expect(api.shopReads, [11]);
     expect(find.text('Review for shop 11'), findsNothing);
-  });
+  }, skip: const bool.fromEnvironment('PUBLIC_TRIAL'));
 }
