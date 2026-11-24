@@ -24,7 +24,7 @@ class FakeApi extends ApiClient {
   @override
   Future<List<dynamic>> bargainCampaigns() async => [];
   @override
-  Future<List<dynamic>> vendorCoupons() async => [];
+  Future<List<dynamic>> vendorCoupons({String? status}) async => [];
 }
 
 Future<void> showShell(WidgetTester tester, FakeApi api, {bool vendor = false,
