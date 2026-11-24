@@ -50,3 +50,26 @@ The acceptance tests are `pytest -q infra/interactive-trial/test_trial_api.py`
 with the backend requirements installed. They exercise isolated browser
 sessions and the simulated business flow; real Stripe and real payments are
 not tested by this mode.
+
+## Credential-free entry (C3)
+
+Use the isolated interactive trial for credential-free demos. This replaces
+the older shared merchant account / empty-login proposal: the production
+`POST /login` still requires credentials, and `open_login` in `/app-config`
+does not grant access or change the sign-in form.
+
+The Flutter trial opens `POST /api/v3/trial/session` first, then sends the
+selected `customer`, `vendor`, or `admin` role to
+`POST /api/v3/trial/role`. The direct merchant/customer entry uses the same
+endpoint as the identity menu. A guest can browse without a role token. Role
+changes share data only within the same browser's trial cookie, so a coupon
+claimed as a customer can be scanned as a merchant in that browser. Another
+browser profile has an independent copy of the data and cannot use the
+first browser's role token. Tabs sharing the same cookie are one trial,
+not separate users. After an expired or restarted session, reload the trial
+page to establish a fresh session, then select a role again.
+
+All money movements in this trial are simulated; do not collect card or real
+personal details. The role entry only states that payment does not charge the visitor; it has no
+fields requesting personal information. Keep transaction facts where relevant,
+without adding a persistent banner to product screens.
