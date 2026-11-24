@@ -214,43 +214,109 @@ class _AuthScreenState extends State<AuthScreen> {
     }
   }
 
+  Future<void> _enterTrial() async {
+    if (busy) return;
+    final api = widget.api;
+    final role = widget.vendor ? 'vendor' : 'customer';
+    final revision = api.sessionRevision;
+    final route = ModalRoute.of(context);
+    setState(() {
+      busy = true;
+      error = null;
+    });
+    try {
+      final result = await api.post('/trial/role', body: {'role': role});
+      // A late reply from a dismissed screen must not replace the active role.
+      if (!mounted ||
+          route?.isCurrent == false ||
+          api.sessionRevision != revision) {
+        return;
+      }
+      final token = result['access_token'];
+      if (token is! String ||
+          token.isEmpty ||
+          result['role'] != role ||
+          result['mode'] != 'simulated') {
+        throw const FormatException();
+      }
+      await api.saveToken(token);
+      if (mounted && route?.isCurrent != false) widget.onAuthed();
+    } on ApiException catch (e) {
+      if (mounted) {
+        setState(
+          () => error = e.status == 401
+              ? context.tr(
+                  '請重新載入此頁，再選擇身份。',
+                  'Reload this page, then choose an identity again.',
+                )
+              : context.tr(
+                  '未能切換身份，請重試。',
+                  'Could not switch identity. Try again.',
+                ),
+        );
+      }
+    } catch (_) {
+      if (mounted) {
+        setState(
+          () => error = context.tr(
+            '未能切換身份，請重試。',
+            'Could not switch identity. Try again.',
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => busy = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     if (const bool.fromEnvironment('PUBLIC_TRIAL')) {
-      final role = widget.vendor ? 'vendor' : 'customer';
+      final t = context.tr;
       return Scaffold(
-        appBar: AppBar(title: const Text('示例體驗')),
-        body: Center(child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: ConstrainedBox(constraints: const BoxConstraints(maxWidth: 420),
-            child: Column(mainAxisSize: MainAxisSize.min, children: [
-              Text(widget.vendor ? '使用示例商戶' : '使用示例顧客',
-                  style: Theme.of(context).textTheme.titleLarge),
-              const SizedBox(height: 12),
-              const Text('這是獨立示例資料，付款為模擬，不會扣款。請勿輸入真實個人資料。',
-                  textAlign: TextAlign.center),
-              const SizedBox(height: 20),
-              if (error != null) Text(error!, style: const TextStyle(color: Colors.red)),
-              FilledButton(
-                onPressed: busy ? null : () async {
-                  setState(() { busy = true; error = null; });
-                  try {
-                    final result = await widget.api.post('/trial/role', body: {'role': role});
-                    final token = result['access_token'];
-                    if (token is! String || token.isEmpty) throw const FormatException();
-                    await widget.api.saveToken(token);
-                    if (mounted) widget.onAuthed();
-                  } catch (_) {
-                    if (mounted) setState(() => error = '無法開始體驗，請重試');
-                  } finally {
-                    if (mounted) setState(() => busy = false);
-                  }
-                },
-                child: Text(busy ? '準備中…' : '開始體驗'),
+        appBar: AppBar(title: Text(t('選擇身份', 'Choose an identity'))),
+        body: Center(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.all(24),
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 420),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    widget.vendor
+                        ? t('以商戶身份繼續', 'Continue as a merchant')
+                        : t('以顧客身份繼續', 'Continue as a customer'),
+                    style: Theme.of(context).textTheme.titleLarge,
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 12),
+                  Text(
+                    t('付款不會扣款', 'Payments do not charge you.'),
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 20),
+                  if (error != null)
+                    Semantics(
+                      liveRegion: true,
+                      child: Text(
+                        error!,
+                        style: TextStyle(
+                          color: Theme.of(context).colorScheme.error,
+                        ),
+                      ),
+                    ),
+                  FilledButton(
+                    onPressed: busy ? null : _enterTrial,
+                    child: Text(
+                      busy ? t('處理中…', 'Please wait…') : t('繼續', 'Continue'),
+                    ),
+                  ),
+                ],
               ),
-            ]),
+            ),
           ),
-        )),
+        ),
       );
     }
     if (publicPreview) return const PreviewWelcomeScreen();
