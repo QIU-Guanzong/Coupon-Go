@@ -149,11 +149,17 @@ class _MerchantBranchesScreenState extends State<MerchantBranchesScreen> {
   bool get _canEditShop => !_trialMode && _shop?['is_owner'] == true;
 
   Future<void> _editShop() async {
+    final api = widget.api;
     final shopId = _shopId;
     final session = _session;
     if (shopId == null || !_canEditShop || _busy || _requiresRefresh) return;
-    bool current() => mounted && _session == session &&
-        widget.api.sessionRevision == session && _shopId == shopId && _canEditShop;
+    bool current() =>
+        mounted &&
+        identical(widget.api, api) &&
+        _session == session &&
+        api.sessionRevision == session &&
+        _shopId == shopId &&
+        _canEditShop;
     final path = '/merchant/shops/$shopId';
     final loadFailure = context.tr('未能讀取店舖資料，請重試。',
         'Could not load shop details. Try again.');
@@ -170,21 +176,21 @@ class _MerchantBranchesScreenState extends State<MerchantBranchesScreen> {
     });
     var saving = false;
     try {
-      final detail = await widget.api.get(path);
+      final detail = await api.get(path);
       if (!current()) return;
       final raw = detail['shop'];
       if (raw is! Map || raw['id'] != shopId || raw['shop_name'] is! String) {
         throw const FormatException();
       }
       final shop = Map<String, dynamic>.from(raw);
-      Map<String, String> draft = {};
+      Map<String, Object> draft = {};
       String? editorError;
       while (current()) {
         if (!mounted) return;
-        final changes = await showDialog<Map<String, String>>(
+        final changes = await showDialog<Map<String, Object>>(
           context: context,
           builder: (_) => _ShopTextEditor(
-            api: widget.api,
+            api: api,
             session: session,
             shop: shop,
             draft: draft,
@@ -194,11 +200,13 @@ class _MerchantBranchesScreenState extends State<MerchantBranchesScreen> {
         if (!current() || changes == null || changes.isEmpty) return;
         saving = true;
         try {
-          final updated = await widget.api.patch(path, body: changes);
+          final updated = await api.patch(path, body: changes);
           if (!current()) return;
           final confirmed = updated['shop'];
           if (confirmed is! Map || confirmed['id'] != shopId ||
-              confirmed['shop_name'] is! String) {
+              confirmed['shop_name'] is! String ||
+              (changes.containsKey('category_id') &&
+                  confirmed['category_id'] != changes['category_id'])) {
             throw const FormatException();
           }
         } on ApiException catch (error) {
@@ -228,7 +236,9 @@ class _MerchantBranchesScreenState extends State<MerchantBranchesScreen> {
         });
       }
     } finally {
-      if (mounted && session == _session) setState(() => _busy = false);
+      if (mounted && identical(widget.api, api) && session == _session) {
+        setState(() => _busy = false);
+      }
     }
   }
 
@@ -536,6 +546,14 @@ class _BranchEditorState extends State<_BranchEditor> {
 }
 
 
+class _ShopCategory {
+  const _ShopCategory(this.id, this.name, this.nameEn);
+
+  final int id;
+  final String name;
+  final String nameEn;
+}
+
 class _ShopTextEditor extends StatefulWidget {
   const _ShopTextEditor({
     required this.api,
@@ -548,7 +566,7 @@ class _ShopTextEditor extends StatefulWidget {
   final ApiClient api;
   final int session;
   final Map<String, dynamic> shop;
-  final Map<String, String> draft;
+  final Map<String, Object> draft;
   final String? error;
 
   @override
@@ -568,6 +586,35 @@ class _ShopTextEditorState extends State<_ShopTextEditor> {
   final _form = GlobalKey<FormState>();
   late final Map<String, String> _original;
   late final Map<String, TextEditingController> _controllers;
+  List<_ShopCategory>? _categories;
+  int? _category;
+
+  int? get _originalCategory {
+    final value = widget.shop['category_id'];
+    return value is int && value > 0 ? value : null;
+  }
+
+  Future<List<_ShopCategory>> _loadCategories() async {
+    if (widget.api.sessionRevision != widget.session) return [];
+    final data = await widget.api.get('/get-category-list');
+    final rows = data['categories'];
+    if (rows is! List) throw const FormatException('Invalid categories');
+    final categories = <_ShopCategory>[];
+    final ids = <int>{};
+    for (final row in rows) {
+      if (row is! Map) continue;
+      final id = row['id'];
+      final name = row['name'];
+      if (id is! int || id <= 0 || name is! String ||
+          name.trim().isEmpty || !ids.add(id)) {
+        throw const FormatException('Invalid category');
+      }
+      final english = row['name_en'];
+      categories.add(_ShopCategory(id, name,
+          english is String && english.trim().isNotEmpty ? english : name));
+    }
+    return categories;
+  }
 
   @override
   void initState() {
@@ -578,10 +625,20 @@ class _ShopTextEditorState extends State<_ShopTextEditor> {
     };
     _controllers = {
       for (final key in _original.keys)
-        key: TextEditingController(text: widget.draft[key] ?? _original[key]),
+        key: TextEditingController(
+          text: (widget.draft[key] as String?) ?? _original[key],
+        ),
     };
+    _category = (widget.draft['category_id'] as int?) ?? _originalCategory;
     widget.api.addListener(_checkSession);
     _checkSession();
+    _loadCategories().then(_setCategoryOptions,
+        onError: (Object _) => _setCategoryOptions(const []));
+  }
+
+  void _setCategoryOptions(List<_ShopCategory> categories) {
+    if (!mounted || widget.api.sessionRevision != widget.session) return;
+    setState(() => _categories = categories);
   }
 
   void _checkSession() {
@@ -605,10 +662,52 @@ class _ShopTextEditorState extends State<_ShopTextEditor> {
   String _value(String key) =>
       key == 'name' ? _controllers[key]!.text.trim() : _controllers[key]!.text;
 
-  Map<String, String> get _changed => {
+  Map<String, Object> get _changed => {
         for (final key in _original.keys)
           if (_value(key) != _original[key]) key: _value(key),
+        if (_categoryVisible && _category != _originalCategory)
+          'category_id': _category!,
       };
+
+  bool get _categoryVisible =>
+      _categories?.any((option) => option.id == _category) == true;
+
+  Widget _categoryField(BuildContext context) {
+    final categories = _categories ?? const <_ShopCategory>[];
+    final name = widget.shop['category_name'];
+    final hint = name is String && name.trim().isNotEmpty
+        ? name : context.tr('選擇分類', 'Choose a category');
+    return Padding(
+      padding: const EdgeInsets.only(top: 12),
+      child: InputDecorator(
+        decoration: InputDecoration(labelText: context.tr('分類', 'Category')),
+        child: DropdownButtonHideUnderline(
+          child: DropdownButton<int>(
+            key: const ValueKey('edit-shop-category'),
+            isExpanded: true,
+            value: _categoryVisible ? _category : null,
+            hint: Text(hint, overflow: TextOverflow.ellipsis),
+            disabledHint: Text(
+              _categories == null
+                  ? context.tr('正在載入分類', 'Loading categories')
+                  : context.tr('未能載入分類', 'Categories unavailable'),
+            ),
+            items: [
+              for (final category in categories)
+                DropdownMenuItem(
+                  value: category.id,
+                  child: Text(context.tr(category.name, category.nameEn),
+                      overflow: TextOverflow.ellipsis),
+                ),
+            ],
+            onChanged: categories.isEmpty ? null : (selected) {
+              if (selected != null) setState(() => _category = selected);
+            },
+          ),
+        ),
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) => AlertDialog(
@@ -622,6 +721,7 @@ class _ShopTextEditorState extends State<_ShopTextEditor> {
               if (widget.error != null)
                 Text(widget.error!,
                     style: TextStyle(color: Theme.of(context).colorScheme.error)),
+              _categoryField(context),
               for (final (key, _, chinese, english) in fields)
                 Padding(
                   padding: const EdgeInsets.only(top: 12),
