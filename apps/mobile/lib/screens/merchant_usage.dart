@@ -88,8 +88,7 @@ class _MerchantUsageScreenState extends State<MerchantUsageScreen> {
     } catch (error) {
       if (!isCurrent()) return;
       setState(() {
-        _failure =
-            error is ApiException &&
+        _failure = error is ApiException &&
                 (error.status == 401 || error.status == 403)
             ? _Failure.denied
             : _Failure.unavailable;
@@ -102,8 +101,8 @@ class _MerchantUsageScreenState extends State<MerchantUsageScreen> {
     final session = _session;
     final api = widget.api;
     final fields = [
-      context.tr('店舖編號', 'Shop ID'),
-      context.tr('店舖名稱', 'Shop name'),
+      context.tr('門店編號', 'Shop ID'),
+      context.tr('門店名稱', 'Shop name'),
       context.tr('開始日期 (UTC)', 'Start date (UTC)'),
       context.tr('結束日期 (UTC)', 'End date (UTC)'),
       context.tr('領券次數', 'Coupon claims'),
@@ -117,7 +116,7 @@ class _MerchantUsageScreenState extends State<MerchantUsageScreen> {
         builder: (context, _) {
           final current = session == api.sessionRevision;
           return AlertDialog(
-            title: Text(context.tr('店舖數據 CSV', 'Shop usage CSV')),
+            title: Text(context.tr('門店數據 CSV', 'Shop usage CSV')),
             content: current
                 ? SingleChildScrollView(child: SelectableText(csv))
                 : Text(context.tr('帳戶已切換。', 'The account changed.')),
@@ -205,7 +204,7 @@ class _MerchantUsageScreenState extends State<MerchantUsageScreen> {
                 child: Text(
                   _failure == _Failure.denied
                       ? context.tr(
-                          '沒有權限查看此店舖數據。',
+                          '沒有權限查看此門店數據。',
                           'You don’t have access to this shop data.',
                         )
                       : context.tr(
@@ -223,12 +222,12 @@ class _MerchantUsageScreenState extends State<MerchantUsageScreen> {
                 ),
               ),
             if (data != null && data.shops.isEmpty)
-              Text(context.tr('沒有可查看數據的店舖。', 'No shops to show.')),
+              Text(context.tr('沒有可查看數據的門店。', 'No shops to show.')),
             if (data != null && data.shops.isNotEmpty) ...[
               Text('${data.from} – ${data.to} (UTC)'),
               const SizedBox(height: 8),
               _UsageCard(
-                title: context.tr('店舖合計', 'Shop totals'),
+                title: context.tr('門店合計', 'Shop totals'),
                 counts: data.totals,
                 claimsLabel: claimsLabel,
                 redemptionsLabel: redemptionsLabel,
@@ -238,7 +237,7 @@ class _MerchantUsageScreenState extends State<MerchantUsageScreen> {
               OutlinedButton.icon(
                 onPressed: () => _showCsv(data),
                 icon: const Icon(Icons.download_outlined),
-                label: Text(context.tr('匯出店舖 CSV', 'Export shop CSV')),
+                label: Text(context.tr('匯出門店 CSV', 'Export shop CSV')),
               ),
               const SizedBox(height: 8),
               for (final shop in data.shops)
@@ -257,7 +256,7 @@ class _MerchantUsageScreenState extends State<MerchantUsageScreen> {
                   context,
                 ).push(MaterialPageRoute<void>(builder: legacyBuilder)),
                 child: Text(
-                  context.tr('全部時間的優惠券紀錄', 'All-time coupon activity'),
+                  context.tr('全部時間的優惠券記錄', 'All-time coupon activity'),
                 ),
               ),
             ],

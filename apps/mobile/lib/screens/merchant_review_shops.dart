@@ -48,11 +48,11 @@ class MerchantReviewShopPicker extends StatelessWidget {
                 canAdministerAllShops: canAdministerAllShops)
             : const <int, String?>{};
         return Scaffold(
-          appBar: AppBar(title: Text(context.tr('選擇店舖', 'Choose a shop'))),
+          appBar: AppBar(title: Text(context.tr('選擇門店', 'Choose a shop'))),
           body: shops.isEmpty
               ? Center(
                   child: Text(current
-                      ? context.tr('沒有可回覆評價的店舖。', 'No shops available for replies.')
+                      ? context.tr('沒有可回覆評價的門店。', 'No shops available for replies.')
                       : context.tr('帳戶已切換，請返回重試。', 'The account changed. Go back and try again.')),
                 )
               : ListView(
@@ -62,7 +62,7 @@ class MerchantReviewShopPicker extends StatelessWidget {
                       ListTile(
                         key: ValueKey('review-shop-${shop.key}'),
                         title: Text(shop.value ??
-                            context.tr('店舖 #${shop.key}', 'Shop #${shop.key}')),
+                            context.tr('門店 #${shop.key}', 'Shop #${shop.key}')),
                         trailing: const Icon(Icons.chevron_right),
                         onTap: () {
                           if (api.sessionRevision != sessionRevision) return;

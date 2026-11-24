@@ -137,7 +137,7 @@ void main() {
     final api = ReviewShopsApi([staff, {'id': -1, 'name': 'Invalid'}]);
     await showHome(tester, api, admin: true, english: false);
     await openPicker(tester);
-    expect(find.text('選擇店舖'), findsOneWidget);
+    expect(find.text('選擇門店'), findsOneWidget);
     expect(find.text('Invalid'), findsNothing);
     await tester.tap(find.text('Staff branch'));
     await tester.pumpAndSettle();
