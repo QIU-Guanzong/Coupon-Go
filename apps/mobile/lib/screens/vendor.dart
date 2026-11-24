@@ -324,6 +324,18 @@ class IssueCouponScreen extends StatefulWidget {
 
 class _IssueCouponScreenState extends State<IssueCouponScreen> {
   final _name = TextEditingController();
+  final _nameEn = TextEditingController();
+  final _perUserLimit = TextEditingController(text: '1');
+  List<Map<String, dynamic>>? _categories;
+  int? _categoryId;
+  bool _categoriesFailed = false;
+
+  int? get _validatedLimit {
+    final text = _perUserLimit.text.trim();
+    if (!RegExp(r'^[0-9]+$').hasMatch(text)) return null;
+    final value = int.tryParse(text);
+    return value != null && value > 0 ? value : null;
+  }
   String _type = 'Discount';
   final _percentage = TextEditingController(text: '85');
   final _cash = TextEditingController();
@@ -372,11 +384,41 @@ class _IssueCouponScreenState extends State<IssueCouponScreen> {
     _session = widget.api.sessionRevision;
     widget.api.addListener(_sessionChanged);
     for (final controller in [
-      _name, _percentage, _cash, _salePrice, _gift, _total, _minSpend, _terms,
+      _name, _nameEn, _perUserLimit, _percentage, _cash, _salePrice, _gift, _total, _minSpend, _terms,
     ]) {
       controller.addListener(_markDirty);
     }
     _loadShops();
+    _loadCategories();
+  }
+
+  String _categoryLabel(Map<String, dynamic> row) => context.tr(
+    row['name'] as String,
+    row['name_en'] is String && (row['name_en'] as String).trim().isNotEmpty
+      ? row['name_en'] as String : row['name'] as String,
+  );
+
+  Future<void> _loadCategories() async {
+    setState(() => _categoriesFailed = false);
+    try {
+      final payload = await widget.api.get('/get-category-list');
+      final rows = payload['categories'];
+      if (rows is! List) throw const FormatException();
+      final ids = <int>{};
+      final categories = <Map<String, dynamic>>[];
+      for (final row in rows) {
+        if (row is! Map || row['id'] is! int || row['name'] is! String ||
+            (row['name'] as String).trim().isEmpty || !ids.add(row['id'] as int)) {
+          throw const FormatException();
+        }
+        categories.add(Map<String, dynamic>.from(row));
+      }
+      if (!mounted) return;
+      setState(() => _categories = categories);
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _categoriesFailed = true);
+    }
   }
 
   void _markDirty() {
@@ -435,7 +477,7 @@ class _IssueCouponScreenState extends State<IssueCouponScreen> {
   void dispose() {
     widget.api.removeListener(_sessionChanged);
     for (final controller in [
-      _name, _percentage, _cash, _salePrice, _gift, _total, _minSpend, _terms,
+      _name, _nameEn, _perUserLimit, _percentage, _cash, _salePrice, _gift, _total, _minSpend, _terms,
     ]) {
       controller.dispose();
     }
@@ -472,6 +514,9 @@ class _IssueCouponScreenState extends State<IssueCouponScreen> {
         'branch_ids': List<int>.unmodifiable(_branchIds!),
         'coupon_type': _type,
         'coupon_name': _name.text,
+        'name_en': _nameEn.text.trim(),
+        if (_categoryId != null) 'category_id': _categoryId,
+        'per_user_limit': _validatedLimit,
         'percentage':
             _type == 'Discount' ? double.tryParse(_percentage.text) : null,
         'cash_amount': _type == 'Cash' ? double.tryParse(_cash.text) : null,
@@ -525,6 +570,52 @@ class _IssueCouponScreenState extends State<IssueCouponScreen> {
           TextField(
               controller: _name,
               decoration: const InputDecoration(labelText: '優惠券名稱')),
+          const SizedBox(height: 12),
+          TextField(
+            controller: _nameEn,
+            maxLength: 160,
+            decoration: InputDecoration(labelText: context.tr(
+              '優惠券英文名稱（選填）', 'English coupon name (optional)')),
+          ),
+          if (_categoriesFailed)
+            TextButton(
+              onPressed: _loadCategories,
+              child: Text(context.tr('重新讀取分類', 'Reload categories')),
+            ),
+          if (_categories?.isNotEmpty == true) ...[
+            DropdownButtonFormField<int>(
+              key: const ValueKey('issue-category'),
+              initialValue: _categoryId,
+              isExpanded: true,
+              decoration: InputDecoration(labelText: context.tr(
+                '優惠券分類（選填）', 'Coupon category (optional)')),
+              items: [
+                DropdownMenuItem<int>(
+                  child: Text(context.tr('不設定分類', 'No category')),
+                ),
+                for (final row in _categories!)
+                  DropdownMenuItem<int>(
+                    value: row['id'] as int,
+                    child: Text(_categoryLabel(row)),
+                  ),
+              ],
+              onChanged: (value) {
+                if (value == _categoryId) return;
+                setState(() { _categoryId = value; _dirty = true; });
+              },
+            ),
+            const SizedBox(height: 12),
+          ],
+          TextField(
+            controller: _perUserLimit,
+            keyboardType: TextInputType.number,
+            onChanged: (_) => setState(() {}),
+            decoration: InputDecoration(
+              labelText: context.tr('每人限領', 'Claim limit per person'),
+              errorText: _validatedLimit == null ? context.tr(
+                '請輸入大於 0 的整數', 'Enter a positive whole number') : null,
+            ),
+          ),
           const SizedBox(height: 12),
           DropdownButtonFormField<String>(
             initialValue: _type,
@@ -652,13 +743,18 @@ class _IssueCouponScreenState extends State<IssueCouponScreen> {
                 ElevatedButton.styleFrom(backgroundColor: CgColors.vendorGold),
             onPressed: _trialMode || _shopId == null || _branchIds == null || _submitting || _createUncertain ? null : () async {
               final session = _session;
+              if (_validatedLimit == null) {
+                showCgToast(context, context.tr(
+                  '請輸入每人限領數量', 'Enter the claim limit per person'));
+                return;
+              }
               final now = _nowUtc();
               final scheduledStart = _validFrom;
               final validFrom = scheduledStart ?? now;
               final price = _type == 'Price' ? _parseSalePrice() : null;
               final priceError = _type == 'Price' && price == null
-                  ? context.tr('請輸入有效售價（最少 HK$0.01，最多兩位小數）',
-                      'Enter a valid sale price (at least HK$0.01, up to two decimals).')
+                  ? context.tr('請輸入有效售價（最少 HK\$0.01，最多兩位小數）',
+                      'Enter a valid sale price (at least HK\$0.01, up to two decimals).')
                   : null;
               final dateError = scheduledStart != null && !validFrom.isAfter(now)
                   ? context.tr('定時上架時間必須晚於現在', 'Choose a start time in the future.')
@@ -668,6 +764,9 @@ class _IssueCouponScreenState extends State<IssueCouponScreen> {
               setState(() { _salePriceError = priceError; _dateError = dateError; });
               if (priceError != null || dateError != null) return;
               final draft = _body(validFrom, price);
+              final englishName = _nameEn.text.trim();
+              final category = _categories?.where((row) => row['id'] == _categoryId)
+                  .map(_categoryLabel).firstOrNull;
               final scope = _branchIds!.isEmpty ? '所有分店' : '指定 ${_branchIds!.length} 間分店';
               var creating = false;
               setState(() => _submitting = true);
@@ -687,6 +786,9 @@ class _IssueCouponScreenState extends State<IssueCouponScreen> {
                       '商店：${preview['shop_name']}',
                       '適用：$scope',
                       '數量：${preview['total']}',
+                      '${context.tr('每人限領', 'Claim limit per person')}：${draft['per_user_limit']}',
+                      if (englishName.isNotEmpty) '${context.tr('英文名稱', 'English name')}：$englishName',
+                      if (category != null) '${context.tr('分類', 'Category')}：$category',
                       if (scheduledStart != null)
                         context.tr('生效時間：${_formatHongKong(validFrom)}（香港時間）',
                             'Start: ${_formatHongKong(validFrom)} (Hong Kong time)'),
