@@ -3,6 +3,7 @@ import 'dart:math';
 import 'dart:typed_data';
 
 import 'app_config.dart';
+import 'vendor_coupon_lifecycle.dart';
 
 import 'package:flutter/foundation.dart' show ChangeNotifier;
 import 'package:http/http.dart' as http;
@@ -537,6 +538,20 @@ class ApiClient extends ChangeNotifier {
       (await get('/get-vendor-coupon-list',
           query: status == null ? null : {'status': status}))['coupons']
           as List<dynamic>;
+  Future<String> updateVendorCouponStatus(
+    int id,
+    VendorCouponAction action,
+  ) async {
+    final result = await post('/vendor/coupons/$id/${action.endpoint}');
+    final status = result['status'];
+    if (result['coupon_id'] != id ||
+        status is! String ||
+        !action.confirmedStates.contains(status)) {
+      throw const FormatException('Invalid coupon status response');
+    }
+    return status;
+  }
+
   Future<Map<String, dynamic>> vendorPackageWorkspace() =>
       get('/vendor/package-workspace');
   Future<Map<String, dynamic>> createVendorPackage(Map<String, dynamic> body) =>

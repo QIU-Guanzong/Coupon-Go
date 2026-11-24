@@ -7,6 +7,8 @@ import 'package:flutter/services.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 
 import '../api_client.dart';
+import '../feature_flags.dart' show publicPreview;
+import '../vendor_coupon_lifecycle.dart';
 import '../models.dart';
 import '../language.dart';
 import '../theme.dart';
@@ -49,6 +51,11 @@ class _VendorHomeScreenState extends State<VendorHomeScreen> {
   String? _filterError;
   int _overviewRequest = 0;
   int _filterRequest = 0;
+  int _couponChange = 0;
+  int _overviewCouponRead = 0;
+  int _filteredCouponRead = 0;
+  final _savingCoupons = <int>{};
+  final _couponReceipts = <int, (int, String)>{};
   late int _session;
   bool _allows(String permission) => widget.showAdmin || _shops.any((shop) => shop[permission] == true);
 
@@ -74,6 +81,9 @@ class _VendorHomeScreenState extends State<VendorHomeScreen> {
       _filteredCoupons = [];
       _filterLoading = false;
       _filterError = null;
+      _couponChange = _overviewCouponRead = _filteredCouponRead = 0;
+      _savingCoupons.clear();
+      _couponReceipts.clear();
     });
     _load();
   }
@@ -88,6 +98,7 @@ class _VendorHomeScreenState extends State<VendorHomeScreen> {
     if (!mounted) return;
     final session = _session;
     final request = ++_overviewRequest;
+    final couponRead = _couponChange;
     bool current() =>
         mounted && session == _session && request == _overviewRequest;
     try {
@@ -104,6 +115,7 @@ class _VendorHomeScreenState extends State<VendorHomeScreen> {
         _shops = shops;
         _usage = usage;
         _coupons = list.map((e) => Coupon.fromJson(e)).toList();
+        _overviewCouponRead = couponRead;
         _loading = false;
         _loadError = null;
       });
@@ -122,6 +134,7 @@ class _VendorHomeScreenState extends State<VendorHomeScreen> {
     if (!_allows('can_manage_coupons')) return;
     final session = _session;
     final request = ++_filterRequest;
+    final couponRead = _couponChange;
     bool current() =>
         mounted && session == _session && request == _filterRequest;
     setState(() {
@@ -137,6 +150,7 @@ class _VendorHomeScreenState extends State<VendorHomeScreen> {
       final coupons = rows.map((row) => Coupon.fromJson(row)).toList();
       setState(() {
         _filteredCoupons = coupons;
+        _filteredCouponRead = couponRead;
         _filterLoading = false;
       });
     } catch (error) {
@@ -178,9 +192,91 @@ class _VendorHomeScreenState extends State<VendorHomeScreen> {
     _ => context.tr('狀態未明', 'Unknown status'),
   };
 
+  // Only overlay an acknowledged change on a list fetched before it.
+  String? _pendingStatus(Coupon coupon) {
+    final receipt = _couponReceipts[coupon.id];
+    final read = _couponStatus == null ? _overviewCouponRead : _filteredCouponRead;
+    return receipt != null && receipt.$1 > read ? receipt.$2 : null;
+  }
+
+  bool _canChangeCoupon(Coupon coupon) => !_trialMode &&
+      !publicPreview &&
+      widget.api.isLoggedIn &&
+      coupon.id > 0 &&
+      (widget.showAdmin || _shops.any((shop) =>
+          shop['id'] == coupon.shopId && shop['can_manage_coupons'] == true));
+
+  String _actionLabel(BuildContext context, VendorCouponAction action) => switch (action) {
+        VendorCouponAction.pause => context.tr('暫停', 'Pause'),
+        VendorCouponAction.resume => context.tr('恢復上架', 'Resume'),
+        VendorCouponAction.unlist => context.tr('下架', 'Unlist'),
+        VendorCouponAction.submit => context.tr('提交審核', 'Submit for review'),
+      };
+
+  Future<void> _changeCoupon(Coupon coupon, VendorCouponAction action) async {
+    final session = _session;
+    final api = widget.api;
+    bool current() =>
+        mounted && identical(api, widget.api) && session == _session && session == api.sessionRevision;
+    bool canSubmit() {
+      if (!current() || !_canChangeCoupon(coupon) || _savingCoupons.contains(coupon.id)) {
+        return false;
+      }
+      final displayed = _couponStatus == null ? _coupons : _filteredCoupons;
+      for (final item in displayed) {
+        if (item.id != coupon.id || item.shopId != coupon.shopId) continue;
+        final status = _pendingStatus(item) ?? item.status;
+        return (_couponStatus == null || status == _couponStatus) &&
+            VendorCouponAction.forStatus(status).contains(action);
+      }
+      return false;
+    }
+    if (!canSubmit()) return;
+    if (action == VendorCouponAction.unlist) {
+      final confirm = await showDialog<bool>(
+        context: context,
+        builder: (dialog) => AlertDialog(
+          title: Text(dialog.tr('下架優惠券？', 'Unlist coupon?')),
+          content: Text(dialog.tr(
+            '「${coupon.name}」會移回草稿，顧客將看不到這張券。',
+            '"${coupon.name}" will return to drafts and no longer appear to customers.',
+          )),
+          actions: [
+            TextButton(onPressed: () => Navigator.of(dialog).pop(false),
+                child: Text(dialog.tr('取消', 'Cancel'))),
+            TextButton(onPressed: () => Navigator.of(dialog).pop(true),
+                child: Text(dialog.tr('確認下架', 'Confirm unlist'))),
+          ],
+        ),
+      );
+      if (confirm != true || !canSubmit()) return;
+    }
+    setState(() => _savingCoupons.add(coupon.id));
+    try {
+      final status = await api.updateVendorCouponStatus(coupon.id, action);
+      if (!current()) return;
+      setState(() => _couponReceipts[coupon.id] = (++_couponChange, status));
+      await _refresh();
+    } catch (error) {
+      if (!current()) return;
+      showCgToast(
+        context,
+        error is ApiException && error.status < 500
+            ? error.message
+            : context.tr('未能確認優惠券狀態，請重新整理。', 'Could not confirm coupon status. Refresh the list.'),
+      );
+      await _refresh();
+    } finally {
+      if (current()) setState(() => _savingCoupons.remove(coupon.id));
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
-    final shownCoupons = _couponStatus == null ? _coupons : _filteredCoupons;
+    final shownCoupons = (_couponStatus == null ? _coupons : _filteredCoupons)
+        .where((coupon) => _couponStatus == null || _pendingStatus(coupon) == null ||
+            _pendingStatus(coupon) == _couponStatus)
+        .toList();
     return Scaffold(
       appBar: AppBar(
         backgroundColor: CgColors.vendorGold,
@@ -320,7 +416,12 @@ class _VendorHomeScreenState extends State<VendorHomeScreen> {
               Text(context.tr('體驗版暫不支援修改優惠券的適用分店。',
                   'Changing coupon branches is unavailable in the trial.')),
             if (_allows('can_manage_coupons'))
-              ...shownCoupons.map((c) => Card(
+              ...shownCoupons.map((c) {
+                final status = _pendingStatus(c) ?? c.status;
+                final actions = _canChangeCoupon(c)
+                    ? VendorCouponAction.forStatus(status)
+                    : const <VendorCouponAction>[];
+                return Card(
                   margin: const EdgeInsets.only(top: 8),
                   child: ListTile(
                     leading:
@@ -329,8 +430,8 @@ class _VendorHomeScreenState extends State<VendorHomeScreen> {
                     subtitle: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        if (c.status.isNotEmpty)
-                          Text(_statusLabel(context, c.status),
+                        if (status.isNotEmpty)
+                          Text(_statusLabel(context, status),
                               key: ValueKey('vendor-coupon-status-${c.id}'),
                               style: Theme.of(context).textTheme.labelLarge),
                         Text(context.tr(
@@ -339,14 +440,32 @@ class _VendorHomeScreenState extends State<VendorHomeScreen> {
                         )),
                       ],
                     ),
-                    trailing: IconButton(
-                      tooltip: context.tr('編輯適用分店', 'Edit eligible branches'), icon: const Icon(Icons.storefront_outlined),
-                      onPressed: _trialMode ? null : () => Navigator.of(context).push(MaterialPageRoute(
-                        builder: (_) => CouponBranchEditScreen(api: widget.api, couponId: c.id,
-                          shopId: c.shopId, couponName: c.name))),
-                    ),
+                    trailing: Row(mainAxisSize: MainAxisSize.min, children: [
+                      IconButton(
+                        tooltip: context.tr('編輯適用分店', 'Edit eligible branches'),
+                        icon: const Icon(Icons.storefront_outlined),
+                        onPressed: _trialMode ? null : () => Navigator.of(context).push(MaterialPageRoute(
+                          builder: (_) => CouponBranchEditScreen(api: widget.api, couponId: c.id,
+                            shopId: c.shopId, couponName: c.name))),
+                      ),
+                      if (actions.isNotEmpty)
+                        PopupMenuButton<VendorCouponAction>(
+                          key: ValueKey('vendor-coupon-actions-${c.id}'),
+                          enabled: !_savingCoupons.contains(c.id),
+                          tooltip: context.tr('管理優惠券', 'Manage coupon'),
+                          onSelected: (action) => _changeCoupon(c, action),
+                          itemBuilder: (menuContext) => [
+                            for (final action in actions)
+                              PopupMenuItem(
+                                value: action,
+                                child: Text(_actionLabel(menuContext, action)),
+                              ),
+                          ],
+                        ),
+                    ]),
                   ),
-                )),
+                );
+              }),
             if (_allows('can_manage_coupons') &&
                 shownCoupons.isEmpty &&
                 !_loading &&
