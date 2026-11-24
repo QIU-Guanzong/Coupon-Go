@@ -281,14 +281,14 @@ class _HomeScreenState extends State<HomeScreen> {
             SliverToBoxAdapter(
               child: Container(
                 width: double.infinity,
-                color: const Color(0xFFFFF5E8),
+                color: CgColors.noticeBg,
                 padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
                 child: Row(children: [
-                  const Icon(Icons.info_outline, size: 18, color: Color(0xFF785324)),
+                  const Icon(Icons.info_outline, size: 18, color: CgColors.noticeIcon),
                   const SizedBox(width: 8),
                   Expanded(child: Text(
                     context.tr('以下商戶及優惠為範例資料，僅供瀏覽。', 'The shops and offers below are sample data for browsing only.'),
-                    style: const TextStyle(color: Color(0xFF604317), fontSize: 13),
+                    style: const TextStyle(color: CgColors.noticeText, fontSize: 13),
                   )),
                 ]),
               ),
@@ -401,7 +401,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                       Expanded(
                                         child: image == null
                                             ? const ColoredBox(
-                                                color: Color(0xFFFCEBEA),
+                                                color: CgColors.statusAttentionBg,
                                                 child: Icon(Icons.grid_view_rounded,
                                                   color: CgColors.primary, size: 30),
                                               )

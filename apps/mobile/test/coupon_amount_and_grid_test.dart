@@ -38,6 +38,78 @@ void main() {
     expect(Coupon.fromJson({'coupon_type': 'Other', 'coupon_name': '優惠'}).amountText, '優惠');
   });
 
+  test('paid Price fills a missing headline amount without replacing a legacy price', () {
+    Coupon price({num? sale, num? discount, num? regular}) => Coupon.fromJson({
+          'coupon_type': 'Price',
+          'coupon_name': 'Store offer',
+          'sale_price': sale,
+          'discount_price': discount,
+          'regular_price': regular,
+        });
+
+    final paid = price(sale: 128.50);
+    expect(paid.amountText, 'HK\$128.50');
+    expect(paid.amountTextEnglish, 'HK\$128.50');
+    expect(paid.salePrice, 128.50);
+    expect(paid.isPaid, isTrue);
+
+    final withRedemptionPrice = price(sale: 20, discount: 199.99, regular: 250);
+    expect(withRedemptionPrice.amountText, 'HK\$199.99');
+    expect(withRedemptionPrice.amountTextEnglish, 'HK\$199.99');
+
+    final incomparable = price(sale: 128.50, regular: 199.99);
+    expect(incomparable.amountText, 'Store offer');
+    expect(incomparable.amountTextEnglish, 'Store offer');
+    expect(incomparable.salePrice, 128.50);
+    expect(incomparable.isPaid, isTrue);
+
+    expect(price(discount: 12.34).amountText, 'HK\$12.34');
+    expect(price(sale: 0).amountText, 'Store offer');
+    expect(price(sale: -1).amountTextEnglish, 'Store offer');
+    expect(price(sale: double.infinity).amountText, 'Store offer');
+    expect(Coupon.fromJson({
+      'coupon_type': 'Gift', 'gift': 'tea', 'sale_price': 128.50,
+    }).amountTextEnglish, 'Free tea');
+  });
+
+  for (final english in [false, true]) {
+    testWidgets('paid Price shows HKD on results and detail, english=$english', (tester) async {
+      final api = ApiClient();
+      final language = AppLanguage()..english = english;
+      addTearDown(api.dispose);
+      addTearDown(language.dispose);
+      final row = {
+        'coupon_id': 201,
+        'coupon_type': 'Price',
+        'coupon_name': 'Paid lunch',
+        'shop_name': 'Merchant',
+        'sale_price': 128.50,
+        'discount_price': null,
+        'remaining': 3,
+      };
+      Widget app(Widget child) => LanguageScope(
+        language: language,
+        child: MaterialApp(home: child),
+      );
+      await tester.pumpWidget(app(Scaffold(body: CouponResults(
+        api: api,
+        load: () async => [row],
+        onOpenCoupon: (_) => fail('rendering must not open checkout'),
+      ))));
+      await tester.pumpAndSettle();
+      expect(find.text('HK\$128.50'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+
+      await tester.pumpWidget(app(CouponDetailScreen(
+        api: api, coupon: Coupon.fromJson(row),
+      )));
+      await tester.pumpAndSettle();
+      expect(find.text('HK\$128.50'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox());
+    });
+  }
+
   testWidgets('detail preserves exact original price and minimum spend', (tester) async {
     final coupon = Coupon.fromJson({
       'coupon_id': 4, 'coupon_type': 'Cash', 'coupon_name': '優惠',

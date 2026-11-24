@@ -14,6 +14,15 @@ class CgColors {
   static const textPrimary = Color(0xFF1A1A1A);
   static const textSecondary = Color(0xFF737373);
   static const success = Color(0xFF1E9E5A);
+  static const primaryOnDark = Color(0xFFF3656E);
+  static const noticeBg = Color(0xFFFFF5E8);
+  static const noticeIcon = Color(0xFF785324);
+  static const noticeText = Color(0xFF604317);
+  static const statusAttentionBg = Color(0xFFFCEBEA);
+  static const statusActiveBg = Color(0xFFE5F4E9);
+  static const statusActiveText = Color(0xFF176836);
+  static const statusPendingBg = Color(0xFFFFF2D5);
+  static const statusPendingText = Color(0xFF704900);
 
   /// 金额语义色（UI_SPEC §0），只新增这三个，对比度 ≥ 4.5:1。
   /// 浅色组用于浅色背景上的文字；深色组用于深色背景上的文字。
@@ -68,8 +77,50 @@ const tabularFigures =
     TextStyle(fontFeatures: [FontFeature.tabularFigures()]);
 
 class CgTheme {
+  static const double pageInset = 16;
+  static const double buttonHeight = 56;
+  static const double buttonRadius = 12;
+
+  static ThemeData _withSharedSurface(ThemeData base) {
+    final text = base.textTheme;
+    final action = base.brightness == Brightness.dark
+        ? CgColors.primaryOnDark
+        : CgColors.primary;
+    return base.copyWith(
+      bottomNavigationBarTheme: base.bottomNavigationBarTheme.copyWith(
+        selectedItemColor: action,
+      ),
+      outlinedButtonTheme: OutlinedButtonThemeData(
+        style: OutlinedButton.styleFrom(
+          foregroundColor: action,
+          side: BorderSide(color: action),
+          // A finite width keeps buttons usable in Rows and Wraps.
+          minimumSize: const Size(64, buttonHeight),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(buttonRadius),
+          ),
+        ),
+      ),
+      textTheme: text.copyWith(
+        titleLarge: text.titleLarge?.copyWith(
+          fontSize: 22,
+          fontWeight: FontWeight.bold,
+        ),
+        titleMedium: text.titleMedium?.copyWith(
+          fontSize: 16,
+          fontWeight: FontWeight.bold,
+        ),
+        headlineSmall: text.headlineSmall?.copyWith(
+          fontSize: 28,
+          fontWeight: FontWeight.bold,
+          fontFeatures: tabularFigures.fontFeatures,
+        ),
+      ),
+    );
+  }
+
   static ThemeData light() {
-    return ThemeData(
+    return _withSharedSurface(ThemeData(
       useMaterial3: true,
       fontFamily: 'Roboto',
       fontFamilyFallback: const ['Coupon UI Fallback', 'Coupon UI Supplemental'],
@@ -88,9 +139,9 @@ class CgTheme {
         style: ElevatedButton.styleFrom(
           backgroundColor: CgColors.primary,
           foregroundColor: Colors.white,
-          minimumSize: const Size.fromHeight(56),
+          minimumSize: const Size.fromHeight(buttonHeight),
           shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(12),
+            borderRadius: BorderRadius.circular(buttonRadius),
           ),
           textStyle: const TextStyle(fontFamily: 'Roboto',
               fontFamilyFallback: ['Coupon UI Fallback', 'Coupon UI Supplemental'], fontSize: 17, fontWeight: FontWeight.w600),
@@ -112,11 +163,11 @@ class CgTheme {
           borderSide: const BorderSide(color: CgColors.cardBorder),
         ),
       ),
-    );
+    ));
   }
 
   static ThemeData dark() {
-    return ThemeData(
+    return _withSharedSurface(ThemeData(
       useMaterial3: true,
       brightness: Brightness.dark,
       fontFamily: 'Roboto',
@@ -137,9 +188,9 @@ class CgTheme {
         style: ElevatedButton.styleFrom(
           backgroundColor: CgColors.primary,
           foregroundColor: Colors.white,
-          minimumSize: const Size.fromHeight(56),
+          minimumSize: const Size.fromHeight(buttonHeight),
           shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(12),
+            borderRadius: BorderRadius.circular(buttonRadius),
           ),
           textStyle: const TextStyle(fontFamily: 'Roboto',
               fontFamilyFallback: ['Coupon UI Fallback', 'Coupon UI Supplemental'], fontSize: 17, fontWeight: FontWeight.w600),
@@ -161,6 +212,6 @@ class CgTheme {
           borderSide: const BorderSide(color: Color(0xFF3A3A3A)),
         ),
       ),
-    );
+    ));
   }
 }
