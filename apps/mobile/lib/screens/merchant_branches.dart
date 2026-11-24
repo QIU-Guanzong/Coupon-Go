@@ -146,6 +146,92 @@ class _MerchantBranchesScreenState extends State<MerchantBranchesScreen> {
   String _message(Object error) =>
       error is ApiException ? error.message : '連線未完成，請重試。';
 
+  bool get _canEditShop => !_trialMode && _shop?['is_owner'] == true;
+
+  Future<void> _editShop() async {
+    final shopId = _shopId;
+    final session = _session;
+    if (shopId == null || !_canEditShop || _busy || _requiresRefresh) return;
+    bool current() => mounted && _session == session &&
+        widget.api.sessionRevision == session && _shopId == shopId && _canEditShop;
+    final path = '/merchant/shops/$shopId';
+    final loadFailure = context.tr('未能讀取店舖資料，請重試。',
+        'Could not load shop details. Try again.');
+    final saveFailure = context.tr('未能確認儲存結果，請重新載入核對。',
+        'Could not confirm the save. Reload to check the shop details.');
+    final invalidDetails = context.tr('請核對店舖資料後再儲存。',
+        'Check the shop details and try again.');
+    final denied = context.tr('你沒有權限修改此店舖。',
+        'You do not have permission to edit this shop.');
+    final saved = context.tr('店舖資料已更新。', 'Shop details updated.');
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    var saving = false;
+    try {
+      final detail = await widget.api.get(path);
+      if (!current()) return;
+      final raw = detail['shop'];
+      if (raw is! Map || raw['id'] != shopId || raw['shop_name'] is! String) {
+        throw const FormatException();
+      }
+      final shop = Map<String, dynamic>.from(raw);
+      Map<String, String> draft = {};
+      String? editorError;
+      while (current()) {
+        if (!mounted) return;
+        final changes = await showDialog<Map<String, String>>(
+          context: context,
+          builder: (_) => _ShopTextEditor(
+            api: widget.api,
+            session: session,
+            shop: shop,
+            draft: draft,
+            error: editorError,
+          ),
+        );
+        if (!current() || changes == null || changes.isEmpty) return;
+        saving = true;
+        try {
+          final updated = await widget.api.patch(path, body: changes);
+          if (!current()) return;
+          final confirmed = updated['shop'];
+          if (confirmed is! Map || confirmed['id'] != shopId ||
+              confirmed['shop_name'] is! String) {
+            throw const FormatException();
+          }
+        } on ApiException catch (error) {
+          if (!current()) return;
+          if (error.status == 400 || error.status == 422) {
+            draft = changes;
+            editorError = invalidDetails;
+            continue;
+          }
+          if (error.status == 403) {
+            setState(() => _error = denied);
+            return;
+          }
+          rethrow;
+        }
+        if (!mounted || !current()) return;
+        setState(() => _requiresRefresh = true);
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(saved)));
+        await _loadShops();
+        return;
+      }
+    } catch (_) {
+      if (current()) {
+        setState(() {
+          _requiresRefresh = saving;
+          _error = saving ? saveFailure : loadFailure;
+        });
+      }
+    } finally {
+      if (mounted && session == _session) setState(() => _busy = false);
+    }
+  }
+
   Future<void> _edit([Map<String, dynamic>? branch]) async {
     final shopId = _shopId;
     final session = _session;
@@ -281,6 +367,15 @@ class _MerchantBranchesScreenState extends State<MerchantBranchesScreen> {
                       child: Text('目前沒有可管理的店舖。'),
                     ),
                   if (!_loading && _shopId != null) ...[
+                    if (_canEditShop) ...[
+                      const SizedBox(height: 16),
+                      OutlinedButton.icon(
+                        key: const ValueKey('edit-shop-details'),
+                        onPressed: _busy || _requiresRefresh ? null : _editShop,
+                        icon: const Icon(Icons.edit_outlined),
+                        label: Text(context.tr('編輯店舖資料', 'Edit shop details')),
+                      ),
+                    ],
                     const SizedBox(height: 20),
                     Row(
                       children: [
@@ -435,6 +530,134 @@ class _BranchEditorState extends State<_BranchEditor> {
               }
             },
             child: const Text('儲存'),
+          ),
+        ],
+      );
+}
+
+
+class _ShopTextEditor extends StatefulWidget {
+  const _ShopTextEditor({
+    required this.api,
+    required this.session,
+    required this.shop,
+    required this.draft,
+    required this.error,
+  });
+
+  final ApiClient api;
+  final int session;
+  final Map<String, dynamic> shop;
+  final Map<String, String> draft;
+  final String? error;
+
+  @override
+  State<_ShopTextEditor> createState() => _ShopTextEditorState();
+}
+
+class _ShopTextEditorState extends State<_ShopTextEditor> {
+  static const fields = [
+    ('name', 'shop_name', '店舖名稱', 'Shop name'),
+    ('name_en', 'name_en', '英文名稱', 'English name'),
+    ('address', 'address', '地址', 'Address'),
+    ('phone', 'phone', '電話', 'Phone'),
+    ('description', 'description', '簡介', 'Description'),
+    ('announcement', 'announcement', '公告', 'Announcement'),
+  ];
+
+  final _form = GlobalKey<FormState>();
+  late final Map<String, String> _original;
+  late final Map<String, TextEditingController> _controllers;
+
+  @override
+  void initState() {
+    super.initState();
+    _original = {
+      for (final (key, readKey, _, _) in fields)
+        key: widget.shop[readKey] is String ? widget.shop[readKey] as String : '',
+    };
+    _controllers = {
+      for (final key in _original.keys)
+        key: TextEditingController(text: widget.draft[key] ?? _original[key]),
+    };
+    widget.api.addListener(_checkSession);
+    _checkSession();
+  }
+
+  void _checkSession() {
+    if (widget.api.sessionRevision == widget.session) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && ModalRoute.of(context)?.isCurrent == true) {
+        Navigator.of(context).pop();
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    widget.api.removeListener(_checkSession);
+    for (final controller in _controllers.values) {
+      controller.dispose();
+    }
+    super.dispose();
+  }
+
+  String _value(String key) =>
+      key == 'name' ? _controllers[key]!.text.trim() : _controllers[key]!.text;
+
+  Map<String, String> get _changed => {
+        for (final key in _original.keys)
+          if (_value(key) != _original[key]) key: _value(key),
+      };
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+        title: Text(context.tr('編輯店舖資料', 'Edit shop details')),
+        scrollable: true,
+        content: Form(
+          key: _form,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (widget.error != null)
+                Text(widget.error!,
+                    style: TextStyle(color: Theme.of(context).colorScheme.error)),
+              for (final (key, _, chinese, english) in fields)
+                Padding(
+                  padding: const EdgeInsets.only(top: 12),
+                  child: TextFormField(
+                    key: ValueKey('edit-shop-$key'),
+                    controller: _controllers[key],
+                    decoration: InputDecoration(labelText: context.tr(chinese, english)),
+                    keyboardType: key == 'phone' ? TextInputType.phone : null,
+                    maxLines: const {'description', 'announcement'}.contains(key) ? 3 : 1,
+                    onChanged: (_) => setState(() {}),
+                    validator: key != 'name'
+                        ? null
+                        : (value) => value == null || value.trim().isEmpty
+                            ? context.tr('請輸入店舖名稱。', 'Enter the shop name.')
+                            : null,
+                  ),
+                ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: Text(context.tr('取消', 'Cancel')),
+          ),
+          FilledButton(
+            key: const ValueKey('save-shop-details'),
+            onPressed: _changed.isEmpty
+                ? null
+                : () {
+                    if (widget.api.sessionRevision == widget.session &&
+                        _form.currentState?.validate() == true) {
+                      Navigator.of(context).pop(_changed);
+                    }
+                  },
+            child: Text(context.tr('儲存', 'Save')),
           ),
         ],
       );
