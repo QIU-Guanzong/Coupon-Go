@@ -85,7 +85,8 @@ void main() {
     await tester.enterText(find.byType(TextField).first, '新券');
     FocusManager.instance.primaryFocus?.unfocus();
     await tester.pumpAndSettle();
-    await tester.ensureVisible(find.text('指定分店'));
+    await tester.dragUntilVisible(find.text('指定分店'),
+        find.byType(Scrollable).first, const Offset(0, -220));
     await tester.pumpAndSettle();
     await tester.tap(find.text('指定分店'));
     await tester.pumpAndSettle();

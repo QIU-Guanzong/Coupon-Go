@@ -63,6 +63,20 @@ class Coupon {
     return '${distanceKm!.toStringAsFixed(1)} 公里';
   }
 
+  // A paid Price coupon can have a purchase price without a discounted
+  // redemption price. Keep existing redemption-price displays when supplied.
+  double? get _priceHeadlineAmount {
+    if (type != 'Price') return null;
+    if (discountPrice != null) return discountPrice;
+    // A standalone voucher purchase price is not comparable with the
+    // regular redemption price shown struck through beside this headline.
+    if (regularPrice != null) return null;
+    final paidAmount = salePrice;
+    return paidAmount != null && paidAmount.isFinite && paidAmount > 0
+        ? paidAmount
+        : null;
+  }
+
   String get amountText {
     if (type == 'Cash' && cashAmount != null) return '減 ${formatHkd(cashAmount!)}';
     if (type == 'Discount' && percentage != null) {
@@ -71,10 +85,8 @@ class Coupon {
       return '${_withoutTrailingZeros((percentage! / 10).toStringAsFixed(3))} 折';
     }
     if (type == 'Gift') return '送$gift';
-    if (type == 'Price' && discountPrice != null) {
-      return formatHkd(discountPrice!);
-    }
-    return name;
+    final price = _priceHeadlineAmount;
+    return price == null ? name : formatHkd(price);
   }
 
   String get amountTextEnglish {
@@ -83,8 +95,8 @@ class Coupon {
       return '${_withoutTrailingZeros(percentage!.toStringAsFixed(2))}% of regular price';
     }
     if (type == 'Gift') return 'Free $gift';
-    if (type == 'Price' && discountPrice != null) return formatHkd(discountPrice!);
-    return name;
+    final price = _priceHeadlineAmount;
+    return price == null ? name : formatHkd(price);
   }
 
   int get daysLeft =>

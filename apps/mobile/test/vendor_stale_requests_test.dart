@@ -38,7 +38,7 @@ class DeferredVendorApi extends ApiClient {
   @override
   Future<Map<String, dynamic>> usageData() { usageCalls++; return usage.future; }
   @override
-  Future<List<dynamic>> vendorCoupons() async { couponCalls++; return []; }
+  Future<List<dynamic>> vendorCoupons({String? status}) async { couponCalls++; return []; }
 }
 
 const merchant = {'shops': [

@@ -7,22 +7,25 @@ import 'package:flutter/services.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 
 import '../api_client.dart';
+import '../feature_flags.dart' show publicPreview;
+import '../vendor_coupon_lifecycle.dart';
 import '../models.dart';
 import '../language.dart';
 import '../theme.dart';
 import '../widgets/widgets.dart';
-import 'reviews_admin.dart';
+import 'merchant_review_shops.dart';
 import 'vendor_packages.dart';
 import 'coupon_branch_scope.dart';
 import 'redemption_recovery.dart';
 import 'merchant_dashboard.dart';
+import 'merchant_account_overview.dart';
 import 'scan_batch.dart';
 import 'merchant_branches.dart';
 import 'merchant_staff.dart';
 
 const _trialMode = bool.fromEnvironment('PUBLIC_TRIAL');
 
-/// Vendor home: gold theme, usage summary, issue-coupon entry.
+/// Vendor home: usage summary and coupon-management entry.
 class VendorHomeScreen extends StatefulWidget {
   const VendorHomeScreen(
       {super.key, required this.api, this.showAdmin = false, this.onOpenMenu});
@@ -41,6 +44,17 @@ class _VendorHomeScreenState extends State<VendorHomeScreen> {
   List<Map<String, dynamic>> _shops = [];
   String? _loadError;
   bool _loading = true;
+  String? _couponStatus;
+  List<Coupon> _filteredCoupons = [];
+  bool _filterLoading = false;
+  String? _filterError;
+  int _overviewRequest = 0;
+  int _filterRequest = 0;
+  int _couponChange = 0;
+  int _overviewCouponRead = 0;
+  int _filteredCouponRead = 0;
+  final _savingCoupons = <int>{};
+  final _couponReceipts = <int, (int, String)>{};
   late int _session;
   bool _allows(String permission) => widget.showAdmin || _shops.any((shop) => shop[permission] == true);
 
@@ -55,7 +69,21 @@ class _VendorHomeScreenState extends State<VendorHomeScreen> {
   void _sessionChanged() {
     if (_session == widget.api.sessionRevision) return;
     _session = widget.api.sessionRevision;
-    setState(() { _shops = []; _coupons = []; _usage = null; _loading = true; _loadError = null; });
+    _filterRequest++;
+    setState(() {
+      _shops = [];
+      _coupons = [];
+      _usage = null;
+      _loading = true;
+      _loadError = null;
+      _couponStatus = null;
+      _filteredCoupons = [];
+      _filterLoading = false;
+      _filterError = null;
+      _couponChange = _overviewCouponRead = _filteredCouponRead = 0;
+      _savingCoupons.clear();
+      _couponReceipts.clear();
+    });
     _load();
   }
 
@@ -68,68 +96,244 @@ class _VendorHomeScreenState extends State<VendorHomeScreen> {
   Future<void> _load() async {
     if (!mounted) return;
     final session = _session;
+    final request = ++_overviewRequest;
+    final couponRead = _couponChange;
+    bool current() =>
+        mounted && session == _session && request == _overviewRequest;
     try {
       final data = await widget.api.get('/merchant/shops');
-      if (!mounted || session != _session) return;
+      if (!current()) return;
       final shops = (data['shops'] as List? ?? []).whereType<Map>().map((s) => Map<String, dynamic>.from(s)).toList();
       final isOwner = widget.showAdmin || shops.any((s) => s['is_owner'] == true);
       final canManage = widget.showAdmin || shops.any((s) => s['can_manage_coupons'] == true);
       final usage = isOwner ? await widget.api.usageData() : null;
-      if (!mounted || session != _session) return;
+      if (!current()) return;
       final list = canManage ? await widget.api.vendorCoupons() : <dynamic>[];
-      if (!mounted || session != _session) return;
+      if (!current()) return;
       setState(() {
         _shops = shops;
         _usage = usage;
         _coupons = list.map((e) => Coupon.fromJson(e)).toList();
+        _overviewCouponRead = couponRead;
         _loading = false;
         _loadError = null;
       });
     } catch (error) {
-      if (!mounted || session != _session) return;
-      setState(() { _loading = false; _loadError = error is ApiException ? error.message : '未能載入，請重試。'; });
+      if (!current()) return;
+      setState(() {
+        _loading = false;
+        _loadError = error is ApiException
+            ? error.message
+            : context.tr('未能載入，請重試。', 'Could not load. Try again.');
+      });
+    }
+  }
+
+  Future<void> _filterCoupons(String? status) async {
+    if (!_allows('can_manage_coupons')) return;
+    final session = _session;
+    final request = ++_filterRequest;
+    final couponRead = _couponChange;
+    bool current() =>
+        mounted && session == _session && request == _filterRequest;
+    setState(() {
+      _couponStatus = status;
+      _filteredCoupons = [];
+      _filterLoading = status != null;
+      _filterError = null;
+    });
+    if (status == null) return;
+    try {
+      final rows = await widget.api.vendorCoupons(status: status);
+      if (!current()) return;
+      final coupons = rows.map((row) => Coupon.fromJson(row)).toList();
+      setState(() {
+        _filteredCoupons = coupons;
+        _filteredCouponRead = couponRead;
+        _filterLoading = false;
+      });
+    } catch (error) {
+      if (!current()) return;
+      setState(() {
+        _filterLoading = false;
+        _filterError = error is ApiException
+            ? error.message
+            : context.tr('未能載入優惠券。', 'Could not load coupons.');
+      });
+    }
+  }
+
+  Future<void> _refresh() async {
+    final session = _session;
+    final filterRequest = _filterRequest;
+    final loadingOverview = _load();
+    final overviewRequest = _overviewRequest;
+    await loadingOverview;
+    if (mounted &&
+        session == _session &&
+        filterRequest == _filterRequest &&
+        overviewRequest == _overviewRequest &&
+        _loadError == null &&
+        _couponStatus != null) {
+      await _filterCoupons(_couponStatus);
+    }
+  }
+
+  String _statusLabel(BuildContext context, String status) => switch (status) {
+    'pending_review' => context.tr('待審核', 'Pending review'),
+    'active' => context.tr('已上架', 'Listed'),
+    'paused' => context.tr('已暫停', 'Paused'),
+    'draft' => context.tr('草稿', 'Draft'),
+    'rejected' => context.tr('已拒絕', 'Rejected'),
+    'scheduled' => context.tr('待上架', 'Scheduled'),
+    'sold_out' => context.tr('已售罄', 'Sold out'),
+    'expired' => context.tr('已過期', 'Expired'),
+    _ => context.tr('狀態未明', 'Unknown status'),
+  };
+
+  // Only overlay an acknowledged change on a list fetched before it.
+  String? _pendingStatus(Coupon coupon) {
+    final receipt = _couponReceipts[coupon.id];
+    final read = _couponStatus == null ? _overviewCouponRead : _filteredCouponRead;
+    return receipt != null && receipt.$1 > read ? receipt.$2 : null;
+  }
+
+  bool _canChangeCoupon(Coupon coupon) => !_trialMode &&
+      !publicPreview &&
+      widget.api.isLoggedIn &&
+      coupon.id > 0 &&
+      (widget.showAdmin || _shops.any((shop) =>
+          shop['id'] == coupon.shopId && shop['can_manage_coupons'] == true));
+
+  String _actionLabel(BuildContext context, VendorCouponAction action) => switch (action) {
+        VendorCouponAction.pause => context.tr('暫停', 'Pause'),
+        VendorCouponAction.resume => context.tr('恢復上架', 'Resume'),
+        VendorCouponAction.unlist => context.tr('下架', 'Unlist'),
+        VendorCouponAction.submit => context.tr('提交審核', 'Submit for review'),
+      };
+
+  Future<void> _changeCoupon(Coupon coupon, VendorCouponAction action) async {
+    final session = _session;
+    final api = widget.api;
+    bool current() =>
+        mounted && identical(api, widget.api) && session == _session && session == api.sessionRevision;
+    bool canSubmit() {
+      if (!current() || !_canChangeCoupon(coupon) || _savingCoupons.contains(coupon.id)) {
+        return false;
+      }
+      final displayed = _couponStatus == null ? _coupons : _filteredCoupons;
+      for (final item in displayed) {
+        if (item.id != coupon.id || item.shopId != coupon.shopId) continue;
+        final status = _pendingStatus(item) ?? item.status;
+        return (_couponStatus == null || status == _couponStatus) &&
+            VendorCouponAction.forStatus(status).contains(action);
+      }
+      return false;
+    }
+    if (!canSubmit()) return;
+    if (action == VendorCouponAction.unlist) {
+      final confirm = await showDialog<bool>(
+        context: context,
+        builder: (dialog) => AlertDialog(
+          title: Text(dialog.tr('下架優惠券？', 'Unlist coupon?')),
+          content: Text(dialog.tr(
+            '「${coupon.name}」會移回草稿，顧客將看不到這張券。',
+            '"${coupon.name}" will return to drafts and no longer appear to customers.',
+          )),
+          actions: [
+            TextButton(onPressed: () => Navigator.of(dialog).pop(false),
+                child: Text(dialog.tr('取消', 'Cancel'))),
+            TextButton(onPressed: () => Navigator.of(dialog).pop(true),
+                child: Text(dialog.tr('確認下架', 'Confirm unlist'))),
+          ],
+        ),
+      );
+      if (confirm != true || !canSubmit()) return;
+    }
+    setState(() => _savingCoupons.add(coupon.id));
+    try {
+      final status = await api.updateVendorCouponStatus(coupon.id, action);
+      if (!current()) return;
+      setState(() => _couponReceipts[coupon.id] = (++_couponChange, status));
+      await _refresh();
+    } catch (error) {
+      if (!mounted || !current()) return;
+      showCgToast(
+        context,
+        error is ApiException && error.status < 500
+            ? error.message
+            : context.tr('未能確認優惠券狀態，請重新整理。', 'Could not confirm coupon status. Refresh the list.'),
+      );
+      await _refresh();
+    } finally {
+      if (current()) setState(() => _savingCoupons.remove(coupon.id));
     }
   }
 
   @override
   Widget build(BuildContext context) {
+    final shownCoupons = (_couponStatus == null ? _coupons : _filteredCoupons)
+        .where((coupon) => _couponStatus == null || _pendingStatus(coupon) == null ||
+            _pendingStatus(coupon) == _couponStatus)
+        .toList();
     return Scaffold(
       appBar: AppBar(
-        backgroundColor: CgColors.vendorGold,
-        foregroundColor: CgColors.textPrimary,
         leading: widget.onOpenMenu == null ? null : IconButton(
           icon: const Icon(Icons.menu),
           tooltip: MaterialLocalizations.of(context).openAppDrawerTooltip,
           onPressed: widget.onOpenMenu,
         ),
-        title: const Text('企業版'),
+        title: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (MediaQuery.sizeOf(context).width >= 360) ...[
+              Image.asset(
+                'assets/images/img_logo.png',
+                height: 32,
+                excludeFromSemantics: true,
+                errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+              ),
+              const SizedBox(width: 8),
+            ],
+            Flexible(
+              child: Text(
+                context.tr('企業版', 'Business'),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          ],
+        ),
       ),
       body: RefreshIndicator(
-        onRefresh: _load,
+        onRefresh: _refresh,
         child: ListView(
-          padding: const EdgeInsets.all(16),
+          physics: const AlwaysScrollableScrollPhysics(),
+          padding: const EdgeInsets.all(CgTheme.pageInset),
           children: [
             if (_loading) const Center(child: CircularProgressIndicator()),
-            if (_loadError != null) ...[Text(_loadError!), TextButton(onPressed: _load, child: const Text('重試'))],
+            if (_loadError != null) ...[
+              Text(_loadError!),
+              TextButton(onPressed: _refresh, child: Text(context.tr('重試', 'Retry'))),
+            ],
             if (_usage != null && _allows('is_owner')) Row(
               children: [
                 Expanded(
                     child:
-                        _stat('總下載次數', '${_usage?['total_downloads'] ?? 0}')),
+                        _stat(context.tr('總下載次數', 'Total downloads'), '${_usage?['total_downloads'] ?? 0}')),
                 const SizedBox(width: 12),
                 Expanded(
-                    child: _stat('總使用量', '${_usage?['total_usage'] ?? 0}')),
+                    child: _stat(context.tr('總使用量', 'Total redemptions'), '${_usage?['total_usage'] ?? 0}')),
               ],
             ),
             const SizedBox(height: 16),
             if (_allows('can_manage_coupons')) ElevatedButton(
-              style: ElevatedButton.styleFrom(
-                  backgroundColor: CgColors.vendorGold),
               onPressed: () => Navigator.of(context)
                   .pushNamed('/vendor/issue')
-                  .then((_) => _load()),
-              child: const Text('發券',
-                  style: TextStyle(color: CgColors.textPrimary)),
+                  .then((_) async {
+                if (mounted) await _refresh();
+              }),
+              child: Text(context.tr('發券', 'Issue coupon')),
             ),
             const SizedBox(height: 8),
             if (_allows('is_owner')) OutlinedButton.icon(
@@ -150,71 +354,152 @@ class _VendorHomeScreenState extends State<VendorHomeScreen> {
               onPressed: () => Navigator.of(context).push(MaterialPageRoute(
                   builder: (_) => MerchantRedemptionRecoveryScreen(api: widget.api))),
               icon: const Icon(Icons.manage_search),
-              label: const Text('補錄核銷'),
+              label: Text(context.tr('補錄核銷', 'Record redemption')),
             ),
             const SizedBox(height: 8),
             OutlinedButton.icon(
               onPressed: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => MerchantBranchesScreen(api: widget.api, staffBuilder: (shopId) => MerchantStaffScreen(api: widget.api, shopId: shopId)))),
               icon: const Icon(Icons.storefront_outlined),
-              label: const Text('店舖與分店'),
+              label: Text(context.tr('店舖與分店', 'Shops and branches')),
             ),
             const SizedBox(height: 8),
             if (_allows('is_owner')) OutlinedButton(
               onPressed: () =>
                   Navigator.of(context).pushNamed('/vendor/records'),
-              child: const Text('核銷記錄'),
+              child: Text(context.tr('核銷記錄', 'Redemption history')),
             ),
             const SizedBox(height: 8),
-            if (_allows('is_owner')) OutlinedButton(
-              onPressed: () {
-                if (_coupons.isEmpty) {
-                  showCgToast(context, '暫無商戶資料，無法查看評價');
-                  return;
-                }
-                final shop = _coupons.first;
-                Navigator.of(context).push(MaterialPageRoute(
-                    builder: (_) => MerchantReviewReplyScreen(
-                        api: widget.api,
-                        shopId: shop.shopId,
-                        shopName: shop.shopName)));
-              },
-              child: const Text('評價回覆（差評）'),
-            ),
+            if (!_loading && _loadError == null &&
+                MerchantReviewShopPicker.allowedShops(
+                  _shops,
+                  canAdministerAllShops: widget.showAdmin,
+                ).isNotEmpty)
+              OutlinedButton(
+                key: const Key('vendor-review-shops'),
+                onPressed: () {
+                  final api = widget.api;
+                  final session = _session;
+                  if (session != api.sessionRevision) return;
+                  final roster = _shops;
+                  final admin = widget.showAdmin;
+                  Navigator.of(context).push(MaterialPageRoute<void>(
+                    builder: (_) => MerchantReviewShopPicker(
+                      api: api,
+                      shopRoster: roster,
+                      sessionRevision: session,
+                      canAdministerAllShops: admin,
+                    ),
+                  ));
+                },
+                child: Text(context.tr('評價回覆（差評）', 'Reply to low-rated reviews')),
+              ),
             const SizedBox(height: 8),
             if (widget.showAdmin)
               OutlinedButton(
                 onPressed: () => Navigator.of(context).pushNamed('/admin'),
-                child: const Text('管理後台（結算 / 對賬 / 發票 / 內容 / 角色）'),
+                child: Text(context.tr('管理後台（結算 / 對賬 / 發票 / 內容 / 角色）', 'Admin tools')),
               ),
             const SizedBox(height: 16),
             if (_allows('can_view_settlement')) OutlinedButton(
                 onPressed: () =>
                     Navigator.of(context).pushNamed('/vendor/settlements'),
-                child: const Text('商家結算單')),
-            if (_allows('can_manage_coupons')) const Text('我的優惠券', style: TextStyle(fontWeight: FontWeight.bold)),
+                child: Text(context.tr('商家結算單', 'Settlement statements'))),
+            if (_allows('can_manage_coupons')) ...[
+              Text(context.tr('我的優惠券', 'My coupons'),
+                  style: Theme.of(context).textTheme.titleMedium),
+              DropdownButton<String>(
+                key: const ValueKey('vendor-coupon-status-filter'),
+                value: _couponStatus ?? '',
+                isExpanded: true,
+                onChanged: (value) {
+                  if (value != null) _filterCoupons(value.isEmpty ? null : value);
+                },
+                items: [
+                  DropdownMenuItem(
+                    value: '',
+                    child: Text(context.tr('全部狀態', 'All statuses')),
+                  ),
+                  for (final status in [
+                    'pending_review', 'active', 'paused', 'draft', 'rejected',
+                  ])
+                    DropdownMenuItem(
+                      value: status,
+                      child: Text(_statusLabel(context, status)),
+                    ),
+                ],
+              ),
+              if (_filterLoading) const LinearProgressIndicator(),
+              if (_filterError != null) ...[
+                Text(_filterError!),
+                TextButton(onPressed: () => _filterCoupons(_couponStatus),
+                    child: Text(context.tr('重試', 'Retry'))),
+              ],
+            ],
             if (_allows('can_manage_coupons') && _trialMode)
               Text(context.tr('體驗版暫不支援修改優惠券的適用分店。',
                   'Changing coupon branches is unavailable in the trial.')),
-            ..._coupons.map((c) => Card(
+            if (_allows('can_manage_coupons'))
+              ...shownCoupons.map((c) {
+                final status = _pendingStatus(c) ?? c.status;
+                final actions = _canChangeCoupon(c)
+                    ? VendorCouponAction.forStatus(status)
+                    : const <VendorCouponAction>[];
+                return Card(
                   margin: const EdgeInsets.only(top: 8),
                   child: ListTile(
                     leading:
                         const Icon(Icons.local_offer, color: CgColors.amber),
                     title: Text(c.name),
-                    subtitle:
-                        Text('剩餘 ${c.remaining} · 已核銷 ${c.usedCount ?? '—'}'),
-                    trailing: IconButton(
-                      tooltip: '編輯適用分店', icon: const Icon(Icons.storefront_outlined),
-                      onPressed: _trialMode ? null : () => Navigator.of(context).push(MaterialPageRoute(
-                        builder: (_) => CouponBranchEditScreen(api: widget.api, couponId: c.id,
-                          shopId: c.shopId, couponName: c.name))),
+                    subtitle: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        if (status.isNotEmpty)
+                          Text(_statusLabel(context, status),
+                              key: ValueKey('vendor-coupon-status-${c.id}'),
+                              style: Theme.of(context).textTheme.labelLarge),
+                        Text(context.tr(
+                          '剩餘 ${c.remaining} · 已核銷 ${c.usedCount ?? '—'}',
+                          '${c.remaining} left · ${c.usedCount ?? '—'} redeemed',
+                        )),
+                      ],
                     ),
+                    trailing: Row(mainAxisSize: MainAxisSize.min, children: [
+                      IconButton(
+                        tooltip: context.tr('編輯適用分店', 'Edit eligible branches'),
+                        icon: const Icon(Icons.storefront_outlined),
+                        onPressed: _trialMode ? null : () => Navigator.of(context).push(MaterialPageRoute(
+                          builder: (_) => CouponBranchEditScreen(api: widget.api, couponId: c.id,
+                            shopId: c.shopId, couponName: c.name))),
+                      ),
+                      if (actions.isNotEmpty)
+                        PopupMenuButton<VendorCouponAction>(
+                          key: ValueKey('vendor-coupon-actions-${c.id}'),
+                          enabled: !_savingCoupons.contains(c.id),
+                          tooltip: context.tr('管理優惠券', 'Manage coupon'),
+                          onSelected: (action) => _changeCoupon(c, action),
+                          itemBuilder: (menuContext) => [
+                            for (final action in actions)
+                              PopupMenuItem(
+                                value: action,
+                                child: Text(_actionLabel(menuContext, action)),
+                              ),
+                          ],
+                        ),
+                    ]),
                   ),
-                )),
-            if (_allows('can_manage_coupons') && _coupons.isEmpty && !_loading && _loadError == null)
-              const Padding(
-                padding: EdgeInsets.only(top: 24),
-                child: Text('暫時沒有優惠券，點上面發第一張吧！'),
+                );
+              }),
+            if (_allows('can_manage_coupons') &&
+                shownCoupons.isEmpty &&
+                !_loading &&
+                !_filterLoading &&
+                _loadError == null &&
+                _filterError == null)
+              Padding(
+                padding: const EdgeInsets.only(top: 24),
+                child: Text(_couponStatus == null
+                    ? context.tr('還沒有優惠券。', 'No coupons yet.')
+                    : context.tr('這個狀態沒有優惠券。', 'No coupons with this status.')),
               ),
           ],
         ),
@@ -225,12 +510,11 @@ class _VendorHomeScreenState extends State<VendorHomeScreen> {
   Widget _stat(String label, String value) {
     return Card(
       child: Padding(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.all(CgTheme.pageInset),
         child: Column(
           children: [
             Text(value,
-                style:
-                    const TextStyle(fontSize: 28, fontWeight: FontWeight.bold)),
+                style: Theme.of(context).textTheme.headlineSmall),
             Text(label, style: const TextStyle(color: CgColors.textSecondary)),
           ],
         ),
@@ -239,66 +523,20 @@ class _VendorHomeScreenState extends State<VendorHomeScreen> {
   }
 }
 
-class VendorAccountScreen extends StatefulWidget {
+class VendorAccountScreen extends StatelessWidget {
   const VendorAccountScreen({super.key, required this.api});
 
   final ApiClient api;
 
   @override
-  State<VendorAccountScreen> createState() => _VendorAccountScreenState();
-}
-
-class _VendorAccountScreenState extends State<VendorAccountScreen> {
-  late Future<Map<String, dynamic>> _profile = widget.api.get('/me');
-
-  @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        backgroundColor: CgColors.vendorGold,
-        foregroundColor: CgColors.textPrimary,
         title: Text(context.tr('商戶帳戶', 'Merchant account')),
       ),
       body: ListView(
         children: [
-          FutureBuilder<Map<String, dynamic>>(
-            future: _profile,
-            builder: (context, snapshot) {
-              if (snapshot.connectionState != ConnectionState.done) {
-                return const Padding(
-                  padding: EdgeInsets.all(16),
-                  child: SkeletonBox(height: 64),
-                );
-              }
-              if (snapshot.hasError) {
-                return ListTile(
-                  title:
-                      Text(context.tr('未能載入帳戶', 'Could not load the account')),
-                  trailing: TextButton(
-                    onPressed: () {
-                      final result = widget.api.get('/me');
-                      setState(() {
-                        _profile = result;
-                      });
-                    },
-                    child: Text(context.tr('重試', 'Retry')),
-                  ),
-                );
-              }
-              final name = snapshot.data?['name'] as String? ?? '';
-              final email = snapshot.data?['email'] as String? ?? '';
-              if (name.isEmpty && email.isEmpty) {
-                return ListTile(
-                    title: Text(context.tr('未有帳戶資料', 'No account details')));
-              }
-              return ListTile(
-                leading: const Icon(Icons.storefront),
-                title: Text(name.isEmpty ? email : name),
-                subtitle:
-                    name.isNotEmpty && email.isNotEmpty ? Text(email) : null,
-              );
-            },
-          ),
+          MerchantAccountOverview(api: api),
           ListTile(
             leading: const Icon(Icons.credit_card),
             title: Text(context.tr('訂閱方案', 'Subscription plans')),
@@ -313,9 +551,10 @@ class _VendorAccountScreenState extends State<VendorAccountScreen> {
 
 /// Issue coupon: two-step — fill form -> preview -> submit for review.
 class IssueCouponScreen extends StatefulWidget {
-  const IssueCouponScreen({super.key, required this.api});
+  const IssueCouponScreen({super.key, required this.api, this.now});
 
   final ApiClient api;
+  final DateTime Function()? now;
 
   @override
   State<IssueCouponScreen> createState() => _IssueCouponScreenState();
@@ -323,9 +562,23 @@ class IssueCouponScreen extends StatefulWidget {
 
 class _IssueCouponScreenState extends State<IssueCouponScreen> {
   final _name = TextEditingController();
+  final _nameEn = TextEditingController();
+  final _perUserLimit = TextEditingController(text: '1');
+  List<Map<String, dynamic>>? _categories;
+  int? _categoryId;
+  bool _categoriesFailed = false;
+
+  int? get _validatedLimit {
+    final text = _perUserLimit.text.trim();
+    if (!RegExp(r'^[0-9]+$').hasMatch(text)) return null;
+    final value = int.tryParse(text);
+    return value != null && value > 0 ? value : null;
+  }
   String _type = 'Discount';
   final _percentage = TextEditingController(text: '85');
   final _cash = TextEditingController();
+  final _salePrice = TextEditingController();
+  final _gift = TextEditingController();
   final _total = TextEditingController(text: '100');
   final _minSpend = TextEditingController(text: '0');
   final _terms = TextEditingController();
@@ -337,17 +590,73 @@ class _IssueCouponScreenState extends State<IssueCouponScreen> {
   bool _createUncertain = false;
   bool _dirty = false;
   late int _session;
-  DateTime _validTo = DateTime.now().add(const Duration(days: 30));
+  DateTime? _validFrom;
+  late DateTime _validTo;
+  String? _salePriceError;
+  String? _dateError;
+  static const _hkOffset = Duration(hours: 8);
+
+  DateTime _nowUtc() => (widget.now?.call() ?? DateTime.now()).toUtc();
+
+  DateTime _hongKongClock(DateTime instant) => instant.toUtc().add(_hkOffset);
+
+  DateTime _fromHongKong(DateTime day, TimeOfDay clock) =>
+      DateTime.utc(day.year, day.month, day.day, clock.hour, clock.minute)
+          .subtract(_hkOffset);
+
+  String _formatHongKong(DateTime instant) => _hongKongClock(instant)
+      .toIso8601String().substring(0, 16).replaceFirst('T', ' ');
+
+  double? _parseSalePrice() {
+    final text = _salePrice.text.trim();
+    if (!RegExp(r'^\d+(?:\.\d{1,2})?$').hasMatch(text)) return null;
+    final price = double.tryParse(text);
+    return price != null && price.isFinite && price > 0 && price <= 99999999.99
+        ? price : null;
+  }
 
   @override
   void initState() {
     super.initState();
+    _validTo = _nowUtc().add(const Duration(days: 30));
     _session = widget.api.sessionRevision;
     widget.api.addListener(_sessionChanged);
-    for (final controller in [_name, _percentage, _cash, _total, _minSpend, _terms]) {
+    for (final controller in [
+      _name, _nameEn, _perUserLimit, _percentage, _cash, _salePrice, _gift, _total, _minSpend, _terms,
+    ]) {
       controller.addListener(_markDirty);
     }
     _loadShops();
+    _loadCategories();
+  }
+
+  String _categoryLabel(Map<String, dynamic> row) => context.tr(
+    row['name'] as String,
+    row['name_en'] is String && (row['name_en'] as String).trim().isNotEmpty
+      ? row['name_en'] as String : row['name'] as String,
+  );
+
+  Future<void> _loadCategories() async {
+    setState(() => _categoriesFailed = false);
+    try {
+      final payload = await widget.api.get('/get-category-list');
+      final rows = payload['categories'];
+      if (rows is! List) throw const FormatException();
+      final ids = <int>{};
+      final categories = <Map<String, dynamic>>[];
+      for (final row in rows) {
+        if (row is! Map || row['id'] is! int || row['name'] is! String ||
+            (row['name'] as String).trim().isEmpty || !ids.add(row['id'] as int)) {
+          throw const FormatException();
+        }
+        categories.add(Map<String, dynamic>.from(row));
+      }
+      if (!mounted) return;
+      setState(() => _categories = categories);
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _categoriesFailed = true);
+    }
   }
 
   void _markDirty() {
@@ -405,22 +714,56 @@ class _IssueCouponScreenState extends State<IssueCouponScreen> {
   @override
   void dispose() {
     widget.api.removeListener(_sessionChanged);
-    _name.dispose(); _percentage.dispose(); _cash.dispose(); _total.dispose(); _minSpend.dispose(); _terms.dispose();
+    for (final controller in [
+      _name, _nameEn, _perUserLimit, _percentage, _cash, _salePrice, _gift, _total, _minSpend, _terms,
+    ]) {
+      controller.dispose();
+    }
     super.dispose();
   }
 
-  Map<String, dynamic> _body() => {
+  Future<void> _pickValidFrom() async {
+    final session = _session;
+    final today = _hongKongClock(_nowUtc());
+    final previous = _validFrom == null ? today : _hongKongClock(_validFrom!);
+    final initial = previous.isBefore(today) ? today : previous;
+    final day = await showDatePicker(
+      context: context,
+      initialDate: initial,
+      firstDate: today,
+      currentDate: today,
+      lastDate: today.add(const Duration(days: 365)),
+    );
+    if (day == null || !mounted || session != _session) return;
+    final time = await showTimePicker(
+      context: context,
+      initialTime: TimeOfDay.fromDateTime(initial),
+    );
+    if (time == null || !mounted || session != _session) return;
+    setState(() {
+      _validFrom = _fromHongKong(day, time);
+      _dateError = null;
+      _dirty = true;
+    });
+  }
+
+  Map<String, dynamic> _body(DateTime validFrom, double? salePrice) => {
         'shop_id': _shopId,
-        'branch_ids': _branchIds,
+        'branch_ids': List<int>.unmodifiable(_branchIds!),
         'coupon_type': _type,
         'coupon_name': _name.text,
+        'name_en': _nameEn.text.trim(),
+        if (_categoryId != null) 'category_id': _categoryId,
+        'per_user_limit': _validatedLimit,
         'percentage':
             _type == 'Discount' ? double.tryParse(_percentage.text) : null,
         'cash_amount': _type == 'Cash' ? double.tryParse(_cash.text) : null,
+        if (_type == 'Price') 'sale_price': salePrice,
+        if (_type == 'Gift') 'gift': _gift.text.trim(),
         'min_spend': double.tryParse(_minSpend.text) ?? 0,
         'total': int.tryParse(_total.text) ?? 100,
         'additional_terms': _terms.text,
-        'valid_from': DateTime.now().toIso8601String(),
+        'valid_from': validFrom.toIso8601String(),
         'valid_to': _validTo.toIso8601String(),
       };
 
@@ -435,15 +778,13 @@ class _IssueCouponScreenState extends State<IssueCouponScreen> {
       },
       child: Scaffold(
       appBar: AppBar(
-        backgroundColor: CgColors.vendorGold,
-        foregroundColor: CgColors.textPrimary,
         title: const Text('發券'),
       ),
       body: Center(
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 720),
           child: ListView(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.all(CgTheme.pageInset),
         children: [
           if (_trialMode) ...[
             Text(context.tr('體驗版可填寫內容，暫不支援提交優惠券。',
@@ -466,18 +807,66 @@ class _IssueCouponScreenState extends State<IssueCouponScreen> {
               controller: _name,
               decoration: const InputDecoration(labelText: '優惠券名稱')),
           const SizedBox(height: 12),
+          TextField(
+            controller: _nameEn,
+            maxLength: 160,
+            decoration: InputDecoration(labelText: context.tr(
+              '優惠券英文名稱（選填）', 'English coupon name (optional)')),
+          ),
+          if (_categoriesFailed)
+            TextButton(
+              onPressed: _loadCategories,
+              child: Text(context.tr('重新讀取分類', 'Reload categories')),
+            ),
+          if (_categories?.isNotEmpty == true) ...[
+            DropdownButtonFormField<int>(
+              key: const ValueKey('issue-category'),
+              initialValue: _categoryId,
+              isExpanded: true,
+              decoration: InputDecoration(labelText: context.tr(
+                '優惠券分類（選填）', 'Coupon category (optional)')),
+              items: [
+                DropdownMenuItem<int>(
+                  child: Text(context.tr('不設定分類', 'No category')),
+                ),
+                for (final row in _categories!)
+                  DropdownMenuItem<int>(
+                    value: row['id'] as int,
+                    child: Text(_categoryLabel(row)),
+                  ),
+              ],
+              onChanged: (value) {
+                if (value == _categoryId) return;
+                setState(() { _categoryId = value; _dirty = true; });
+              },
+            ),
+            const SizedBox(height: 12),
+          ],
+          TextField(
+            controller: _perUserLimit,
+            keyboardType: TextInputType.number,
+            onChanged: (_) => setState(() {}),
+            decoration: InputDecoration(
+              labelText: context.tr('每人限領', 'Claim limit per person'),
+              errorText: _validatedLimit == null ? context.tr(
+                '請輸入大於 0 的整數', 'Enter a positive whole number') : null,
+            ),
+          ),
+          const SizedBox(height: 12),
           DropdownButtonFormField<String>(
             initialValue: _type,
             decoration: const InputDecoration(labelText: '券類型'),
-            items: const [
-              DropdownMenuItem(value: 'Cash', child: Text('現金優惠券')),
-              DropdownMenuItem(value: 'Discount', child: Text('折扣優惠券')),
-              DropdownMenuItem(value: 'Gift', child: Text('贈品優惠券')),
+            items: [
+              const DropdownMenuItem(value: 'Cash', child: Text('現金優惠券')),
+              const DropdownMenuItem(value: 'Discount', child: Text('折扣優惠券')),
+              const DropdownMenuItem(value: 'Gift', child: Text('贈品優惠券')),
+              DropdownMenuItem(value: 'Price', child: Text(context.tr('付費優惠券', 'Paid coupon'))),
             ],
             onChanged: (v) => setState(() {
               final next = v ?? 'Discount';
               if (next != _type) _dirty = true;
               _type = next;
+              _salePriceError = null;
             }),
           ),
           const SizedBox(height: 12),
@@ -493,6 +882,27 @@ class _IssueCouponScreenState extends State<IssueCouponScreen> {
                 controller: _cash,
                 keyboardType: TextInputType.number,
                 decoration: const InputDecoration(labelText: '現金金額')),
+          if (_type == 'Price')
+            TextField(
+              key: const ValueKey('issue-sale-price'),
+              controller: _salePrice,
+              keyboardType: const TextInputType.numberWithOptions(decimal: true),
+              decoration: InputDecoration(
+                labelText: context.tr('售價（港幣）', 'Sale price (HKD)'),
+                errorText: _salePriceError,
+              ),
+              onChanged: (_) {
+                if (_salePriceError != null) setState(() => _salePriceError = null);
+              },
+            ),
+          if (_type == 'Gift')
+            TextField(
+              key: const ValueKey('issue-gift'),
+              controller: _gift,
+              decoration: InputDecoration(
+                labelText: context.tr('贈品內容', 'Gift details'),
+              ),
+            ),
           const SizedBox(height: 12),
           TextField(
               controller: _total,
@@ -517,42 +927,106 @@ class _IssueCouponScreenState extends State<IssueCouponScreen> {
           ),
           const SizedBox(height: 12),
           ListTile(
-            title: const Text('到期日期'),
-            subtitle: Text(_validTo.toLocal().toString().split(' ').first),
+            key: const ValueKey('issue-valid-from'),
+            title: Text(context.tr('生效時間（香港時間）', 'Start time (Hong Kong time)')),
+            subtitle: Text(_validFrom == null
+                ? context.tr('審核通過後上架', 'List after approval')
+                : _formatHongKong(_validFrom!)),
+            trailing: _validFrom == null ? const Icon(Icons.schedule) : IconButton(
+              tooltip: context.tr('取消定時上架', 'Remove scheduled start'),
+              onPressed: _submitting ? null : () => setState(() {
+                _validFrom = null;
+                _dateError = null;
+                _dirty = true;
+              }),
+              icon: const Icon(Icons.clear),
+            ),
+            onTap: _submitting ? null : _pickValidFrom,
+          ),
+          ListTile(
+            title: Text(context.tr('到期日期（香港時間）', 'Expiry date (Hong Kong time)')),
+            subtitle: Text(_formatHongKong(_validTo)),
             trailing: const Icon(Icons.calendar_today),
-            onTap: () async {
+            onTap: _submitting ? null : () async {
+              final session = _session;
+              final today = _hongKongClock(_nowUtc());
+              final previous = _hongKongClock(_validTo);
               final picked = await showDatePicker(
                 context: context,
-                initialDate: _validTo,
-                firstDate: DateTime.now(),
-                lastDate: DateTime.now().add(const Duration(days: 365)),
+                initialDate: previous.isBefore(today) ? today : previous,
+                firstDate: today,
+                currentDate: today,
+                lastDate: today.add(const Duration(days: 365)),
               );
-              if (picked != null) setState(() { _validTo = picked; _dirty = true; });
+              if (picked != null && mounted && session == _session) {
+                setState(() {
+                  _validTo = _fromHongKong(picked, const TimeOfDay(hour: 0, minute: 0));
+                  _dateError = null;
+                  _dirty = true;
+                });
+              }
             },
           ),
+          if (_dateError != null)
+            Text(_dateError!, style: TextStyle(color: Theme.of(context).colorScheme.error)),
           const SizedBox(height: 16),
           if (_createUncertain) const Padding(
             padding: EdgeInsets.only(bottom: 12),
             child: Text('提交結果未確認，請返回券列表刷新核對，勿重複建立。'),
           ),
           ElevatedButton(
-            style:
-                ElevatedButton.styleFrom(backgroundColor: CgColors.vendorGold),
             onPressed: _trialMode || _shopId == null || _branchIds == null || _submitting || _createUncertain ? null : () async {
               final session = _session;
-              final draft = _body();
+              if (_validatedLimit == null) {
+                showCgToast(context, context.tr(
+                  '請輸入每人限領數量', 'Enter the claim limit per person'));
+                return;
+              }
+              final now = _nowUtc();
+              final scheduledStart = _validFrom;
+              final validFrom = scheduledStart ?? now;
+              final price = _type == 'Price' ? _parseSalePrice() : null;
+              final priceError = _type == 'Price' && price == null
+                  ? context.tr('請輸入有效售價（最少 HK\$0.01，最多兩位小數）',
+                      'Enter a valid sale price (at least HK\$0.01, up to two decimals).')
+                  : null;
+              final dateError = scheduledStart != null && !validFrom.isAfter(now)
+                  ? context.tr('定時上架時間必須晚於現在', 'Choose a start time in the future.')
+                  : !_validTo.isAfter(validFrom)
+                      ? context.tr('到期日期必須晚於生效時間', 'The expiry must be after the start time.')
+                      : null;
+              setState(() { _salePriceError = priceError; _dateError = dateError; });
+              if (priceError != null || dateError != null) return;
+              final draft = _body(validFrom, price);
+              final englishName = _nameEn.text.trim();
+              final category = _categories?.where((row) => row['id'] == _categoryId)
+                  .map(_categoryLabel).firstOrNull;
               final scope = _branchIds!.isEmpty ? '所有分店' : '指定 ${_branchIds!.length} 間分店';
               var creating = false;
               setState(() => _submitting = true);
               try {
                 final preview = await widget.api.couponPreview(draft);
                 if (!context.mounted || session != _session) return;
+                final previewAmount = price == null
+                    ? preview['amount_text']
+                    : context.tr('售價：${formatHkd(price)}', 'Sale price: ${formatHkd(price)}');
                 final ok = await showDialog<bool>(
                   context: context,
                   builder: (c) => AlertDialog(
                     title: const Text('預覽優惠券'),
-                    content: Text(
-                        '${preview['coupon_name']}\n${preview['amount_text']}\n商店：${preview['shop_name']}\n適用：$scope\n數量：${preview['total']}'),
+                    content: Text([
+                      '${preview['coupon_name']}',
+                      '$previewAmount',
+                      '商店：${preview['shop_name']}',
+                      '適用：$scope',
+                      '數量：${preview['total']}',
+                      '${context.tr('每人限領', 'Claim limit per person')}：${draft['per_user_limit']}',
+                      if (englishName.isNotEmpty) '${context.tr('英文名稱', 'English name')}：$englishName',
+                      if (category != null) '${context.tr('分類', 'Category')}：$category',
+                      if (scheduledStart != null)
+                        context.tr('生效時間：${_formatHongKong(validFrom)}（香港時間）',
+                            'Start: ${_formatHongKong(validFrom)} (Hong Kong time)'),
+                    ].join('\n')),
                     actions: [
                       TextButton(
                           onPressed: () => Navigator.pop(c, false),
@@ -563,7 +1037,13 @@ class _IssueCouponScreenState extends State<IssueCouponScreen> {
                     ],
                   ),
                 );
-                if (ok == true && session == _session) {
+                if (ok == true && context.mounted && session == _session) {
+                  if (scheduledStart != null && !scheduledStart.isAfter(_nowUtc())) {
+                    setState(() => _dateError = context.tr(
+                        '定時上架時間已過，請重新選擇',
+                        'The scheduled start has passed. Choose another time.'));
+                    return;
+                  }
                   creating = true;
                   final res = await widget.api.couponCreate(draft);
                   if (context.mounted && session == _session) {
@@ -588,8 +1068,7 @@ class _IssueCouponScreenState extends State<IssueCouponScreen> {
                 if (mounted && session == _session) setState(() => _submitting = false);
               }
             },
-            child: Text(context.tr('檢查並提交', 'Review and submit'),
-                style: const TextStyle(color: CgColors.textPrimary)),
+            child: Text(context.tr('檢查並提交', 'Review and submit')),
           ),
         ],
       ),
@@ -956,8 +1435,6 @@ class _ScanScreenState extends State<ScanScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        backgroundColor: CgColors.vendorGold,
-        foregroundColor: CgColors.textPrimary,
         title: const Text('掃碼核銷'),
       ),
       body: _errorReason != null
@@ -1014,7 +1491,7 @@ class _ScanScreenState extends State<ScanScreen> {
                       ),
                     if (_prepared == null && _branchChoices.isNotEmpty)
                       Padding(
-                        padding: const EdgeInsets.all(16),
+                        padding: const EdgeInsets.all(CgTheme.pageInset),
                         child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
@@ -1051,7 +1528,7 @@ class _ScanScreenState extends State<ScanScreen> {
                         padding: const EdgeInsets.symmetric(horizontal: 16),
                         child: Card(
                           child: Padding(
-                            padding: const EdgeInsets.all(16),
+                            padding: const EdgeInsets.all(CgTheme.pageInset),
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
@@ -1123,7 +1600,7 @@ class _ScanScreenState extends State<ScanScreen> {
                       ),
                     if (_prepared == null && _branchChoices.isEmpty)
                       Padding(
-                        padding: const EdgeInsets.all(16),
+                        padding: const EdgeInsets.all(CgTheme.pageInset),
                         child: Row(
                           children: [
                             Expanded(
@@ -1279,8 +1756,6 @@ class _RedemptionRecordsScreenState extends State<RedemptionRecordsScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        backgroundColor: CgColors.vendorGold,
-        foregroundColor: CgColors.textPrimary,
         title: const Text('核銷記錄'),
         actions: [
           Semantics(
@@ -1332,7 +1807,7 @@ class _RedemptionRecordsScreenState extends State<RedemptionRecordsScreen> {
           Expanded(
             child: _loading
                 ? ListView(
-                    padding: const EdgeInsets.all(16),
+                    padding: const EdgeInsets.all(CgTheme.pageInset),
                     children: const [
                       SkeletonBox(height: 72),
                       SizedBox(height: 8),
@@ -1417,8 +1892,6 @@ class UsageScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        backgroundColor: CgColors.vendorGold,
-        foregroundColor: CgColors.textPrimary,
         title: const Text('使用數據'),
       ),
       body: FutureBuilder<Map<String, dynamic>>(
@@ -1433,14 +1906,14 @@ class UsageScreen extends StatelessWidget {
           final data = snap.data!;
           final coupons = (data['coupons'] as List?) ?? [];
           return ListView(
-            padding: const EdgeInsets.all(16),
+            padding: const EdgeInsets.all(CgTheme.pageInset),
             children: [
               Row(
                 children: [
                   Expanded(
                       child: Card(
                           child: Padding(
-                    padding: const EdgeInsets.all(16),
+                    padding: const EdgeInsets.all(CgTheme.pageInset),
                     child: Column(children: [
                       Text('${data['total_downloads']}',
                           style: const TextStyle(
@@ -1452,7 +1925,7 @@ class UsageScreen extends StatelessWidget {
                   Expanded(
                       child: Card(
                           child: Padding(
-                    padding: const EdgeInsets.all(16),
+                    padding: const EdgeInsets.all(CgTheme.pageInset),
                     child: Column(children: [
                       Text('${data['total_usage']}',
                           style: const TextStyle(
@@ -1489,8 +1962,6 @@ class SubscriptionScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        backgroundColor: CgColors.vendorGold,
-        foregroundColor: CgColors.textPrimary,
         title: const Text('訂閱計劃'),
       ),
       body: FutureBuilder<List<dynamic>>(
@@ -1503,7 +1974,7 @@ class SubscriptionScreen extends StatelessWidget {
             );
           }
           return ListView(
-            padding: const EdgeInsets.all(16),
+            padding: const EdgeInsets.all(CgTheme.pageInset),
             children: [
               Image.asset('assets/images/ic_program_card.png',
                   height: 120,

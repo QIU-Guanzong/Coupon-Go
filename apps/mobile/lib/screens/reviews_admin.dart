@@ -622,12 +622,18 @@ class _ShopReviewsScreenState extends State<ShopReviewsScreen> {
 /// enforces ownership server-side; this screen only lists the shop's
 /// own reviews.
 class MerchantReviewReplyScreen extends StatefulWidget {
-  const MerchantReviewReplyScreen(
-      {super.key, required this.api, required this.shopId, this.shopName});
+  const MerchantReviewReplyScreen({
+    super.key,
+    required this.api,
+    required this.shopId,
+    this.shopName,
+    this.expectedSessionRevision,
+  });
 
   final ApiClient api;
   final int shopId;
   final String? shopName;
+  final int? expectedSessionRevision;
 
   @override
   State<MerchantReviewReplyScreen> createState() =>
@@ -638,22 +644,27 @@ class _MerchantReviewReplyScreenState
     extends State<MerchantReviewReplyScreen> {
   List<Review> _reviews = [];
   bool _loading = false;
-  String? _error;
+  bool _loadFailed = false;
+  late final int _sessionRevision;
+
+  bool get _current => mounted && widget.api.sessionRevision == _sessionRevision;
 
   @override
   void initState() {
     super.initState();
+    _sessionRevision = widget.expectedSessionRevision ?? widget.api.sessionRevision;
     _load();
   }
 
   Future<void> _load() async {
+    if (!_current) return;
     setState(() {
       _loading = true;
-      _error = null;
+      _loadFailed = false;
     });
     try {
       final list = await widget.api.shopReviews(widget.shopId);
-      if (!mounted) return;
+      if (!_current) return;
       final all = (list['reviews'] as List)
           .map((e) => Review.fromJson(e))
           .toList();
@@ -664,9 +675,9 @@ class _MerchantReviewReplyScreenState
         _loading = false;
       });
     } on ApiException catch (_) {
-      if (mounted) {
+      if (_current) {
         setState(() {
-          _error = '網絡不穩定，請重試';
+          _loadFailed = true;
           _loading = false;
         });
       }
@@ -674,43 +685,78 @@ class _MerchantReviewReplyScreenState
   }
 
   Future<void> _reply(Review rev) async {
+    if (!_current) return;
     final ctrl = TextEditingController();
     final text = await showDialog<String>(
       context: context,
-      builder: (c) => AlertDialog(
-        title: const Text('回覆差評'),
-        content: TextField(
-          controller: ctrl,
-          maxLines: 4,
-          maxLength: 500,
-          decoration: const InputDecoration(hintText: '寫下商戶回覆…'),
-        ),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(c),
-              child: const Text('取消')),
-          TextButton(
-              onPressed: () => Navigator.pop(c, ctrl.text.trim()),
-              child: const Text('發送回覆')),
-        ],
+      builder: (dialogContext) => ListenableBuilder(
+        listenable: widget.api,
+        builder: (c, _) => !_current
+            ? AlertDialog(
+                content: Text(c.tr(
+                  '帳戶已切換，請返回重試。',
+                  'The account changed. Go back and try again.',
+                )),
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.pop(dialogContext),
+                    child: Text(c.tr('關閉', 'Close')),
+                  ),
+                ],
+              )
+            : AlertDialog(
+                title: Text(c.tr('回覆差評', 'Reply to review')),
+                content: TextField(
+                  controller: ctrl,
+                  maxLines: 4,
+                  maxLength: 500,
+                  decoration: InputDecoration(
+                    hintText: c.tr('寫下商戶回覆…', 'Write a reply…'),
+                  ),
+                ),
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.pop(dialogContext),
+                    child: Text(c.tr('取消', 'Cancel')),
+                  ),
+                  TextButton(
+                    onPressed: () => Navigator.pop(dialogContext, ctrl.text.trim()),
+                    child: Text(c.tr('發送回覆', 'Send reply')),
+                  ),
+                ],
+              ),
       ),
     );
-    if (text == null || text.isEmpty) return;
+    if (!_current || text == null || text.isEmpty) return;
     try {
       await widget.api.replyReview(rev.id, text);
-      if (mounted) showCgToast(context, '回覆已發送');
-      _load();
+      if (!mounted || !_current) return;
+      showCgToast(context, context.tr('回覆已發送', 'Reply sent'));
+      await _load();
     } on ApiException catch (e) {
-      if (mounted) showCgToast(context, e.message);
+      if (mounted && _current) showCgToast(context, e.message);
     }
   }
 
   @override
   Widget build(BuildContext context) {
+    return ListenableBuilder(
+      listenable: widget.api,
+      builder: _build,
+    );
+  }
+
+  Widget _build(BuildContext context, Widget? child) {
+    final title = context.tr('差評回覆', 'Review replies');
+    final shopName = _current ? widget.shopName : null;
     return Scaffold(
-      appBar: AppBar(
-          title: Text('${widget.shopName ?? '商戶'} · 差評回覆')),
-      body: _loading
+      appBar: AppBar(title: Text(shopName == null ? title : '$shopName · $title')),
+      body: !_current
+          ? Center(child: Text(context.tr(
+              '帳戶已切換，請返回重試。',
+              'The account changed. Go back and try again.',
+            )))
+          : _loading
           ? ListView(
               padding: const EdgeInsets.all(12),
               children: const [
@@ -719,15 +765,15 @@ class _MerchantReviewReplyScreenState
                 SkeletonBox(height: 96),
               ],
             )
-          : _error != null
+          : _loadFailed
               ? Center(
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      const Text('網絡不穩定，請重試'),
+                      Text(context.tr('未能載入評價，請重試。', 'Could not load reviews. Try again.')),
                       const SizedBox(height: 12),
                       ElevatedButton(
-                          onPressed: _load, child: const Text('重試')),
+                          onPressed: _load, child: Text(context.tr('重試', 'Try again'))),
                     ],
                   ),
                 )
@@ -736,11 +782,11 @@ class _MerchantReviewReplyScreenState
                       child: Column(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
-                          const Text('暫無待回覆的差評。'),
+                          Text(context.tr('沒有待回覆的差評。', 'No reviews awaiting a reply.')),
                           const SizedBox(height: 12),
                           ElevatedButton(
                               onPressed: _load,
-                              child: const Text('重新載入')),
+                              child: Text(context.tr('重新載入', 'Reload'))),
                         ],
                       ),
                     )
@@ -758,7 +804,7 @@ class _MerchantReviewReplyScreenState
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
                                   Text(
-                                      '${rev.userName.isEmpty ? '用戶' : rev.userName} · ${rev.overall.toStringAsFixed(1)} 分',
+                                      '${rev.userName.isEmpty ? context.tr('用戶', 'Customer') : rev.userName} · ${rev.overall.toStringAsFixed(1)}/5',
                                       style: const TextStyle(
                                           fontWeight: FontWeight.bold)),
                                   if (rev.content.isNotEmpty)
@@ -771,7 +817,7 @@ class _MerchantReviewReplyScreenState
                                     alignment: Alignment.centerRight,
                                     child: ElevatedButton(
                                       onPressed: () => _reply(rev),
-                                      child: const Text('回覆'),
+                                      child: Text(context.tr('回覆', 'Reply')),
                                     ),
                                   ),
                                 ],

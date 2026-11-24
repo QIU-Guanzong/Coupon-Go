@@ -29,7 +29,7 @@ class MerchantPackageApi extends ApiClient {
   @override
   Future<Map<String, dynamic>> usageData() async => {};
   @override
-  Future<List<dynamic>> vendorCoupons() async => [];
+  Future<List<dynamic>> vendorCoupons({String? status}) async => [];
   @override
   Future<Map<String, dynamic>> vendorPackageWorkspace() async => {
         'shops': noShop
@@ -105,7 +105,7 @@ class CashierHomeApi extends MerchantPackageApi {
   @override
   Future<Map<String, dynamic>> usageData() async { usageCalls++; return {}; }
   @override
-  Future<List<dynamic>> vendorCoupons() async { couponCalls++; return []; }
+  Future<List<dynamic>> vendorCoupons({String? status}) async { couponCalls++; return []; }
 }
 
 void main() {

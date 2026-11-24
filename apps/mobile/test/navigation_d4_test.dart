@@ -63,7 +63,7 @@ class _NavApi extends ApiClient {
   }
 
   @override
-  Future<List<dynamic>> vendorCoupons() async => [];
+  Future<List<dynamic>> vendorCoupons({String? status}) async => [];
 
   @override
   Future<List<dynamic>> bargainCampaigns() async {
@@ -117,7 +117,10 @@ void main() {
     await tester.pumpAndSettle();
     expect(api.shopCalls, greaterThan(initialCalls));
     expect(tester.widget<BottomNavigationBar>(find.byType(BottomNavigationBar)).currentIndex, 0);
-    expect(find.text('你沒有店舖核銷權限。'), findsOneWidget);
+    expect(
+      find.text('You do not have permission to redeem coupons at this shop.'),
+      findsOneWidget,
+    );
   });
   testWidgets('權限查詢途中改選首頁，不會跳回掃碼', (tester) async {
     final api = _NavApi(role: 'merchant-admin')
