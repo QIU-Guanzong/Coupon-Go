@@ -23,35 +23,33 @@ class TrialBannerState extends State<TrialBanner> {
   Future<void> _select(String role) async {
     if (_busy) return;
     setState(() => _busy = true);
-    final previousToken = widget.api.paymentAccessToken;
-    var staged = false;
+    final api = widget.api;
+    final attempt = api.beginTrialRoleRequest();
     var changing = false;
     try {
       String? token;
       if (role != 'guest') {
-        final result = await widget.api.post('/trial/role', body: {'role': role});
+        final result = await api.post('/trial/role', body: {'role': role});
         final value = result['access_token'];
         if (value is! String || value.isEmpty) throw const FormatException();
         token = value;
       }
-      await widget.api.prepareTrialToken(token);
-      staged = true;
-      if (!mounted) {
-        await widget.api.prepareTrialToken(previousToken);
-        return;
+      final committed = await api.commitTrialRole(
+        token,
+        attempt: attempt,
+        isCurrent: () => mounted && widget.api == api,
+        beforeActivate: () {
+          changing = true;
+          return widget.onRoleChanging();
+        },
+      );
+      if (!mounted) return;
+      if (committed) {
+        widget.onRoleChanged(role);
+      } else if (changing) {
+        widget.onRoleChangeFailed();
       }
-      changing = true;
-      await widget.onRoleChanging();
-      if (!mounted) {
-        await widget.api.prepareTrialToken(previousToken);
-        return;
-      }
-      widget.api.activateTrialToken(token);
-      widget.onRoleChanged(role);
     } catch (_) {
-      if (staged) {
-        try { await widget.api.prepareTrialToken(previousToken); } catch (_) {}
-      }
       if (mounted) {
         if (changing) widget.onRoleChangeFailed();
         WidgetsBinding.instance.addPostFrameCallback((_) {

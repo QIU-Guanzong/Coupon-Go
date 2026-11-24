@@ -218,8 +218,9 @@ class _AuthScreenState extends State<AuthScreen> {
     if (busy) return;
     final api = widget.api;
     final role = widget.vendor ? 'vendor' : 'customer';
-    final revision = api.sessionRevision;
+    final attempt = api.beginTrialRoleRequest();
     final route = ModalRoute.of(context);
+    bool isCurrent() => mounted && route?.isCurrent != false && widget.api == api;
     setState(() {
       busy = true;
       error = null;
@@ -227,11 +228,7 @@ class _AuthScreenState extends State<AuthScreen> {
     try {
       final result = await api.post('/trial/role', body: {'role': role});
       // A late reply from a dismissed screen must not replace the active role.
-      if (!mounted ||
-          route?.isCurrent == false ||
-          api.sessionRevision != revision) {
-        return;
-      }
+      if (!isCurrent()) return;
       final token = result['access_token'];
       if (token is! String ||
           token.isEmpty ||
@@ -239,8 +236,9 @@ class _AuthScreenState extends State<AuthScreen> {
           result['mode'] != 'simulated') {
         throw const FormatException();
       }
-      await api.saveToken(token);
-      if (mounted && route?.isCurrent != false) widget.onAuthed();
+      final committed = await api.commitTrialRole(token,
+          attempt: attempt, isCurrent: isCurrent);
+      if (committed && isCurrent()) widget.onAuthed();
     } on ApiException catch (e) {
       if (mounted) {
         setState(

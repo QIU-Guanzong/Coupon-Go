@@ -73,6 +73,52 @@ class ApiClient extends ChangeNotifier {
     await prefs.remove(_tokenStorageKey);
   }
 
+  int _trialRoleRequest = 0;
+  Future<void> _trialRoleTail = Future<void>.value();
+
+  ({int request, int revision}) beginTrialRoleRequest() =>
+      (request: ++_trialRoleRequest, revision: _sessionRevision);
+
+  /// One commit lane for the direct entry and menu. A cancelled/superseded
+  /// change never activates, and restores storage before the next change writes.
+  Future<bool> commitTrialRole(
+    String? token, {
+    required ({int request, int revision}) attempt,
+    required bool Function() isCurrent,
+    Future<void> Function()? beforeActivate,
+  }) {
+    bool eligible() =>
+        attempt.request == _trialRoleRequest &&
+        attempt.revision == _sessionRevision &&
+        isCurrent();
+
+    final operation = _trialRoleTail.then((_) async {
+      if (!eligible()) return false;
+      try {
+        await prepareTrialToken(token);
+        if (eligible() && beforeActivate != null) {
+          await beforeActivate();
+        }
+        if (eligible()) {
+          activateTrialToken(token);
+          return true;
+        }
+      } catch (_) {
+        // SharedPreferences can change its cache before a platform write fails.
+        // Keep returning the original failure even if the store remains down.
+        try {
+          await prepareTrialToken(_token);
+        } catch (_) {}
+        rethrow;
+      }
+      await prepareTrialToken(_token);
+      return false;
+    });
+
+    _trialRoleTail = operation.then<void>((_) {}, onError: (Object _) {});
+    return operation;
+  }
+
   /// Stage trial identity before tearing down the old route. The active
   /// in-memory identity is changed only after persistence succeeds.
   Future<void> prepareTrialToken(String? token) async {
