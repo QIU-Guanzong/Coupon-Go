@@ -313,9 +313,10 @@ class _VendorAccountScreenState extends State<VendorAccountScreen> {
 
 /// Issue coupon: two-step — fill form -> preview -> submit for review.
 class IssueCouponScreen extends StatefulWidget {
-  const IssueCouponScreen({super.key, required this.api});
+  const IssueCouponScreen({super.key, required this.api, this.now});
 
   final ApiClient api;
+  final DateTime Function()? now;
 
   @override
   State<IssueCouponScreen> createState() => _IssueCouponScreenState();
@@ -326,6 +327,8 @@ class _IssueCouponScreenState extends State<IssueCouponScreen> {
   String _type = 'Discount';
   final _percentage = TextEditingController(text: '85');
   final _cash = TextEditingController();
+  final _salePrice = TextEditingController();
+  final _gift = TextEditingController();
   final _total = TextEditingController(text: '100');
   final _minSpend = TextEditingController(text: '0');
   final _terms = TextEditingController();
@@ -337,14 +340,40 @@ class _IssueCouponScreenState extends State<IssueCouponScreen> {
   bool _createUncertain = false;
   bool _dirty = false;
   late int _session;
-  DateTime _validTo = DateTime.now().add(const Duration(days: 30));
+  DateTime? _validFrom;
+  late DateTime _validTo;
+  String? _salePriceError;
+  String? _dateError;
+  static const _hkOffset = Duration(hours: 8);
+
+  DateTime _nowUtc() => (widget.now?.call() ?? DateTime.now()).toUtc();
+
+  DateTime _hongKongClock(DateTime instant) => instant.toUtc().add(_hkOffset);
+
+  DateTime _fromHongKong(DateTime day, TimeOfDay clock) =>
+      DateTime.utc(day.year, day.month, day.day, clock.hour, clock.minute)
+          .subtract(_hkOffset);
+
+  String _formatHongKong(DateTime instant) => _hongKongClock(instant)
+      .toIso8601String().substring(0, 16).replaceFirst('T', ' ');
+
+  double? _parseSalePrice() {
+    final text = _salePrice.text.trim();
+    if (!RegExp(r'^\d+(?:\.\d{1,2})?$').hasMatch(text)) return null;
+    final price = double.tryParse(text);
+    return price != null && price.isFinite && price > 0 && price <= 99999999.99
+        ? price : null;
+  }
 
   @override
   void initState() {
     super.initState();
+    _validTo = _nowUtc().add(const Duration(days: 30));
     _session = widget.api.sessionRevision;
     widget.api.addListener(_sessionChanged);
-    for (final controller in [_name, _percentage, _cash, _total, _minSpend, _terms]) {
+    for (final controller in [
+      _name, _percentage, _cash, _salePrice, _gift, _total, _minSpend, _terms,
+    ]) {
       controller.addListener(_markDirty);
     }
     _loadShops();
@@ -405,22 +434,53 @@ class _IssueCouponScreenState extends State<IssueCouponScreen> {
   @override
   void dispose() {
     widget.api.removeListener(_sessionChanged);
-    _name.dispose(); _percentage.dispose(); _cash.dispose(); _total.dispose(); _minSpend.dispose(); _terms.dispose();
+    for (final controller in [
+      _name, _percentage, _cash, _salePrice, _gift, _total, _minSpend, _terms,
+    ]) {
+      controller.dispose();
+    }
     super.dispose();
   }
 
-  Map<String, dynamic> _body() => {
+  Future<void> _pickValidFrom() async {
+    final session = _session;
+    final today = _hongKongClock(_nowUtc());
+    final previous = _validFrom == null ? today : _hongKongClock(_validFrom!);
+    final initial = previous.isBefore(today) ? today : previous;
+    final day = await showDatePicker(
+      context: context,
+      initialDate: initial,
+      firstDate: today,
+      currentDate: today,
+      lastDate: today.add(const Duration(days: 365)),
+    );
+    if (day == null || !mounted || session != _session) return;
+    final time = await showTimePicker(
+      context: context,
+      initialTime: TimeOfDay.fromDateTime(initial),
+    );
+    if (time == null || !mounted || session != _session) return;
+    setState(() {
+      _validFrom = _fromHongKong(day, time);
+      _dateError = null;
+      _dirty = true;
+    });
+  }
+
+  Map<String, dynamic> _body(DateTime validFrom, double? salePrice) => {
         'shop_id': _shopId,
-        'branch_ids': _branchIds,
+        'branch_ids': List<int>.unmodifiable(_branchIds!),
         'coupon_type': _type,
         'coupon_name': _name.text,
         'percentage':
             _type == 'Discount' ? double.tryParse(_percentage.text) : null,
         'cash_amount': _type == 'Cash' ? double.tryParse(_cash.text) : null,
+        if (_type == 'Price') 'sale_price': salePrice,
+        if (_type == 'Gift') 'gift': _gift.text.trim(),
         'min_spend': double.tryParse(_minSpend.text) ?? 0,
         'total': int.tryParse(_total.text) ?? 100,
         'additional_terms': _terms.text,
-        'valid_from': DateTime.now().toIso8601String(),
+        'valid_from': validFrom.toIso8601String(),
         'valid_to': _validTo.toIso8601String(),
       };
 
@@ -469,15 +529,17 @@ class _IssueCouponScreenState extends State<IssueCouponScreen> {
           DropdownButtonFormField<String>(
             initialValue: _type,
             decoration: const InputDecoration(labelText: '券類型'),
-            items: const [
-              DropdownMenuItem(value: 'Cash', child: Text('現金優惠券')),
-              DropdownMenuItem(value: 'Discount', child: Text('折扣優惠券')),
-              DropdownMenuItem(value: 'Gift', child: Text('贈品優惠券')),
+            items: [
+              const DropdownMenuItem(value: 'Cash', child: Text('現金優惠券')),
+              const DropdownMenuItem(value: 'Discount', child: Text('折扣優惠券')),
+              const DropdownMenuItem(value: 'Gift', child: Text('贈品優惠券')),
+              DropdownMenuItem(value: 'Price', child: Text(context.tr('付費優惠券', 'Paid coupon'))),
             ],
             onChanged: (v) => setState(() {
               final next = v ?? 'Discount';
               if (next != _type) _dirty = true;
               _type = next;
+              _salePriceError = null;
             }),
           ),
           const SizedBox(height: 12),
@@ -493,6 +555,27 @@ class _IssueCouponScreenState extends State<IssueCouponScreen> {
                 controller: _cash,
                 keyboardType: TextInputType.number,
                 decoration: const InputDecoration(labelText: '現金金額')),
+          if (_type == 'Price')
+            TextField(
+              key: const ValueKey('issue-sale-price'),
+              controller: _salePrice,
+              keyboardType: const TextInputType.numberWithOptions(decimal: true),
+              decoration: InputDecoration(
+                labelText: context.tr('售價（港幣）', 'Sale price (HKD)'),
+                errorText: _salePriceError,
+              ),
+              onChanged: (_) {
+                if (_salePriceError != null) setState(() => _salePriceError = null);
+              },
+            ),
+          if (_type == 'Gift')
+            TextField(
+              key: const ValueKey('issue-gift'),
+              controller: _gift,
+              decoration: InputDecoration(
+                labelText: context.tr('贈品內容', 'Gift details'),
+              ),
+            ),
           const SizedBox(height: 12),
           TextField(
               controller: _total,
@@ -517,19 +600,48 @@ class _IssueCouponScreenState extends State<IssueCouponScreen> {
           ),
           const SizedBox(height: 12),
           ListTile(
-            title: const Text('到期日期'),
-            subtitle: Text(_validTo.toLocal().toString().split(' ').first),
+            key: const ValueKey('issue-valid-from'),
+            title: Text(context.tr('生效時間（香港時間）', 'Start time (Hong Kong time)')),
+            subtitle: Text(_validFrom == null
+                ? context.tr('審核通過後上架', 'List after approval')
+                : _formatHongKong(_validFrom!)),
+            trailing: _validFrom == null ? const Icon(Icons.schedule) : IconButton(
+              tooltip: context.tr('取消定時上架', 'Remove scheduled start'),
+              onPressed: _submitting ? null : () => setState(() {
+                _validFrom = null;
+                _dateError = null;
+                _dirty = true;
+              }),
+              icon: const Icon(Icons.clear),
+            ),
+            onTap: _submitting ? null : _pickValidFrom,
+          ),
+          ListTile(
+            title: Text(context.tr('到期日期（香港時間）', 'Expiry date (Hong Kong time)')),
+            subtitle: Text(_formatHongKong(_validTo)),
             trailing: const Icon(Icons.calendar_today),
-            onTap: () async {
+            onTap: _submitting ? null : () async {
+              final session = _session;
+              final today = _hongKongClock(_nowUtc());
+              final previous = _hongKongClock(_validTo);
               final picked = await showDatePicker(
                 context: context,
-                initialDate: _validTo,
-                firstDate: DateTime.now(),
-                lastDate: DateTime.now().add(const Duration(days: 365)),
+                initialDate: previous.isBefore(today) ? today : previous,
+                firstDate: today,
+                currentDate: today,
+                lastDate: today.add(const Duration(days: 365)),
               );
-              if (picked != null) setState(() { _validTo = picked; _dirty = true; });
+              if (picked != null && mounted && session == _session) {
+                setState(() {
+                  _validTo = _fromHongKong(picked, const TimeOfDay(hour: 0, minute: 0));
+                  _dateError = null;
+                  _dirty = true;
+                });
+              }
             },
           ),
+          if (_dateError != null)
+            Text(_dateError!, style: TextStyle(color: Theme.of(context).colorScheme.error)),
           const SizedBox(height: 16),
           if (_createUncertain) const Padding(
             padding: EdgeInsets.only(bottom: 12),
@@ -540,19 +652,45 @@ class _IssueCouponScreenState extends State<IssueCouponScreen> {
                 ElevatedButton.styleFrom(backgroundColor: CgColors.vendorGold),
             onPressed: _trialMode || _shopId == null || _branchIds == null || _submitting || _createUncertain ? null : () async {
               final session = _session;
-              final draft = _body();
+              final now = _nowUtc();
+              final scheduledStart = _validFrom;
+              final validFrom = scheduledStart ?? now;
+              final price = _type == 'Price' ? _parseSalePrice() : null;
+              final priceError = _type == 'Price' && price == null
+                  ? context.tr('請輸入有效售價（最少 HK$0.01，最多兩位小數）',
+                      'Enter a valid sale price (at least HK$0.01, up to two decimals).')
+                  : null;
+              final dateError = scheduledStart != null && !validFrom.isAfter(now)
+                  ? context.tr('定時上架時間必須晚於現在', 'Choose a start time in the future.')
+                  : !_validTo.isAfter(validFrom)
+                      ? context.tr('到期日期必須晚於生效時間', 'The expiry must be after the start time.')
+                      : null;
+              setState(() { _salePriceError = priceError; _dateError = dateError; });
+              if (priceError != null || dateError != null) return;
+              final draft = _body(validFrom, price);
               final scope = _branchIds!.isEmpty ? '所有分店' : '指定 ${_branchIds!.length} 間分店';
               var creating = false;
               setState(() => _submitting = true);
               try {
                 final preview = await widget.api.couponPreview(draft);
                 if (!context.mounted || session != _session) return;
+                final previewAmount = price == null
+                    ? preview['amount_text']
+                    : context.tr('售價：${formatHkd(price)}', 'Sale price: ${formatHkd(price)}');
                 final ok = await showDialog<bool>(
                   context: context,
                   builder: (c) => AlertDialog(
                     title: const Text('預覽優惠券'),
-                    content: Text(
-                        '${preview['coupon_name']}\n${preview['amount_text']}\n商店：${preview['shop_name']}\n適用：$scope\n數量：${preview['total']}'),
+                    content: Text([
+                      '${preview['coupon_name']}',
+                      '$previewAmount',
+                      '商店：${preview['shop_name']}',
+                      '適用：$scope',
+                      '數量：${preview['total']}',
+                      if (scheduledStart != null)
+                        context.tr('生效時間：${_formatHongKong(validFrom)}（香港時間）',
+                            'Start: ${_formatHongKong(validFrom)} (Hong Kong time)'),
+                    ].join('\n')),
                     actions: [
                       TextButton(
                           onPressed: () => Navigator.pop(c, false),
@@ -563,7 +701,13 @@ class _IssueCouponScreenState extends State<IssueCouponScreen> {
                     ],
                   ),
                 );
-                if (ok == true && session == _session) {
+                if (ok == true && context.mounted && session == _session) {
+                  if (scheduledStart != null && !scheduledStart.isAfter(_nowUtc())) {
+                    setState(() => _dateError = context.tr(
+                        '定時上架時間已過，請重新選擇',
+                        'The scheduled start has passed. Choose another time.'));
+                    return;
+                  }
                   creating = true;
                   final res = await widget.api.couponCreate(draft);
                   if (context.mounted && session == _session) {
