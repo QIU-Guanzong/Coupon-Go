@@ -655,6 +655,13 @@ class _HomeShellState extends State<HomeShell> {
     );
   }
 
+  bool get _showVendorNotifications =>
+      !publicPreview &&
+      widget.vendorMode &&
+      widget.authed &&
+      widget.api.isLoggedIn &&
+      (_role == 'vendor' || _role == 'merchant-admin');
+
   Drawer _drawer() {
     return Drawer(
       child: ListView(
@@ -697,6 +704,19 @@ class _HomeShellState extends State<HomeShell> {
               }
             },
           ),
+          if (_showVendorNotifications)
+            ListTile(
+              key: const Key('vendor-notifications'),
+              leading: const Icon(Icons.notifications_outlined,
+                  color: CgColors.primary),
+              title: Text(context.tr('通知', 'Notifications')),
+              onTap: () {
+                if (!_showVendorNotifications) return;
+                final navigator = Navigator.of(context);
+                navigator.pop();
+                navigator.pushNamed('/notifications');
+              },
+            ),
           if (!widget.vendorMode) ...[
             ListTile(
               leading: const Icon(Icons.content_cut, color: CgColors.primary),
