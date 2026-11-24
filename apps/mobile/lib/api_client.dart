@@ -533,8 +533,10 @@ class ApiClient extends ChangeNotifier {
   Future<List<dynamic>> myBargainSessions() async =>
       (await get('/bargain-my-sessions'))['sessions'] as List<dynamic>;
   // ---- vendor ----
-  Future<List<dynamic>> vendorCoupons() async =>
-      (await get('/get-vendor-coupon-list'))['coupons'] as List<dynamic>;
+  Future<List<dynamic>> vendorCoupons({String? status}) async =>
+      (await get('/get-vendor-coupon-list',
+          query: status == null ? null : {'status': status}))['coupons']
+          as List<dynamic>;
   Future<Map<String, dynamic>> vendorPackageWorkspace() =>
       get('/vendor/package-workspace');
   Future<Map<String, dynamic>> createVendorPackage(Map<String, dynamic> body) =>
