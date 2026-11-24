@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 
 import '../api_client.dart';
+import '../feature_flags.dart';
 import '../language.dart';
 import '../models.dart';
 import '../theme.dart';
@@ -65,9 +66,10 @@ class _ReviewFormScreenState extends State<ReviewFormScreen> {
   }
 
   Future<void> _pickImages() async {
+    if (publicTrial) return;
     const maxImages = 6;
     if (_pickedBytes.length >= maxImages) {
-      showCgToast(context, '圖片最多 6 張');
+      showCgToast(context, context.tr('圖片最多 6 張', 'Add up to 6 photos.'));
       return;
     }
     try {
@@ -112,19 +114,24 @@ class _ReviewFormScreenState extends State<ReviewFormScreen> {
   Future<void> _submit() async {
     if (_submitting) return;
     if (_content.text.trim().length > 500) {
-      showCgToast(context, '文字最多 500 字');
+      showCgToast(context, context.tr('文字最多 500 字', 'Enter up to 500 characters.'));
       return;
     }
+    final api = widget.api;
+    final revision = api.sessionRevision;
+    bool current() => mounted &&
+        identical(api, widget.api) && api.sessionRevision == revision;
     setState(() => _submitting = true);
     try {
       // Gap 11: upload picked photos first; the server returns the
       // /uploads/review-images/... paths to send as images[].
       var images = <String>[];
-      if (_pickedBytes.isNotEmpty) {
+      if (!publicTrial && _pickedBytes.isNotEmpty) {
         final uploaded = await widget.api.uploadReviewImages(_pickedBytes);
         images = uploaded.map((e) => '$e').toList();
       }
-      final data = await widget.api.submitReview(
+      if (!current()) return;
+      final data = await api.submitReview(
         walletItemId: widget.item.id,
         redemptionId: widget.redemptionId,
         taste: _taste,
@@ -135,7 +142,7 @@ class _ReviewFormScreenState extends State<ReviewFormScreen> {
         tags: _splitList(_tags.text),
         claimPoints: _claimPoints,
       );
-      if (!mounted) return;
+      if (!mounted || !current()) return;
       final review = data['review'];
       final points = widget.api.appConfig.value.pointsReview;
       final awarded = review is Map && review['points_given'] == true;
@@ -145,19 +152,19 @@ class _ReviewFormScreenState extends State<ReviewFormScreen> {
       await showDialog<void>(
         context: context,
         builder: (c) => AlertDialog(
-          title: const Text('評價成功'),
+          title: Text(c.tr('評價成功', 'Review submitted')),
           content: Text(pointsLine),
           actions: [
             TextButton(
                 onPressed: () => Navigator.pop(c),
-                child: const Text('確定')),
+                child: Text(c.tr('確定', 'OK'))),
           ],
         ),
       );
-      if (!mounted) return;
+      if (!mounted || !current()) return;
       Navigator.of(context).pop(true);
     } on ApiException catch (e) {
-      if (mounted) showCgToast(context, e.message);
+      if (mounted && current()) showCgToast(context, e.message);
     } finally {
       if (mounted) setState(() => _submitting = false);
     }
@@ -166,7 +173,7 @@ class _ReviewFormScreenState extends State<ReviewFormScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('寫評價')),
+      appBar: AppBar(title: Text(context.tr('寫評價', 'Write a review'))),
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
@@ -176,36 +183,36 @@ class _ReviewFormScreenState extends State<ReviewFormScreen> {
           Text(widget.item.shopName,
               style: const TextStyle(color: CgColors.textSecondary)),
           const SizedBox(height: 16),
-          _dimRow('口味', _taste, (v) => _taste = v),
-          _dimRow('環境', _ambience, (v) => _ambience = v),
-          _dimRow('服務', _service, (v) => _service = v),
+          _dimRow(context.tr('口味', 'Taste'), _taste, (v) => _taste = v),
+          _dimRow(context.tr('環境', 'Atmosphere'), _ambience, (v) => _ambience = v),
+          _dimRow(context.tr('服務', 'Service'), _service, (v) => _service = v),
           const SizedBox(height: 12),
           TextField(
             controller: _content,
             maxLines: 4,
             maxLength: 500,
-            decoration: const InputDecoration(
-                hintText: '分享你的體驗…（最多 500 字）',
-                border: OutlineInputBorder()),
+            decoration: InputDecoration(
+                hintText: context.tr('分享你的體驗…（最多 500 字）', 'Share your visit (up to 500 characters)…'),
+                border: const OutlineInputBorder()),
           ),
           const SizedBox(height: 12),
           TextField(
             controller: _tags,
-            decoration: const InputDecoration(
-                hintText: '推薦菜 / 標籤（用逗號分隔）',
-                border: OutlineInputBorder()),
+            decoration: InputDecoration(
+                hintText: context.tr('推薦菜 / 標籤（用逗號分隔）', 'Recommended dishes / tags (comma-separated)'),
+                border: const OutlineInputBorder()),
           ),
           const SizedBox(height: 12),
           // Gap 11: pick photos from the camera roll; they are uploaded
           // to POST /uploads/review-images on submit (no URL typing).
-          OutlinedButton.icon(
+          if (!publicTrial) OutlinedButton.icon(
             onPressed: _submitting ? null : _pickImages,
             icon: const Icon(Icons.photo_library),
             label: Text(_pickedBytes.isEmpty
-                ? '選擇圖片（最多 6 張）'
-                : '已選 ${_pickedBytes.length} 張（最多 6 張）'),
+                ? context.tr('選擇圖片（最多 6 張）', 'Choose up to 6 photos')
+                : context.tr('已選 ${_pickedBytes.length} 張（最多 6 張）', '${_pickedBytes.length} of 6 selected')),
           ),
-          if (_pickedBytes.isNotEmpty) ...[
+          if (!publicTrial && _pickedBytes.isNotEmpty) ...[
             const SizedBox(height: 8),
             Wrap(
               spacing: 8,
@@ -253,7 +260,7 @@ class _ReviewFormScreenState extends State<ReviewFormScreen> {
             width: double.infinity,
             child: ElevatedButton(
               onPressed: _submitting ? null : _submit,
-              child: Text(_submitting ? '提交中…' : '提交評價'),
+              child: Text(_submitting ? context.tr('提交中…', 'Submitting…') : context.tr('提交評價', 'Submit review')),
             ),
           ),
         ],
@@ -813,17 +820,14 @@ class _MerchantReviewReplyScreenState
                                       child: Text(rev.content),
                                     ),
                                   const SizedBox(height: 8),
-                                  if (const bool.fromEnvironment('PUBLIC_TRIAL'))
-                                    Text(context.tr('體驗版暫不支援回覆評價。',
-                                        'Review replies are unavailable in the trial.')),
-                                  Align(
-                                    alignment: Alignment.centerRight,
-                                    child: ElevatedButton(
-                                      onPressed: const bool.fromEnvironment('PUBLIC_TRIAL')
-                                          ? null : () => _reply(rev),
-                                      child: Text(context.tr('回覆', 'Reply')),
+                                  if (!publicTrial)
+                                    Align(
+                                      alignment: Alignment.centerRight,
+                                      child: ElevatedButton(
+                                        onPressed: () => _reply(rev),
+                                        child: Text(context.tr('回覆', 'Reply')),
+                                      ),
                                     ),
-                                  ),
                                 ],
                               ),
                             ),

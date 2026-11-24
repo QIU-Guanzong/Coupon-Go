@@ -1,4 +1,3 @@
-import 'package:coupon_go/feature_flags.dart';
 import 'dart:async';
 
 import 'package:coupon_go/api_client.dart';
@@ -144,13 +143,6 @@ void main() {
         coupon: Coupon.fromJson({'id': 7, 'name': 'Example coupon'}),
       )));
       await tester.pumpAndSettle();
-      if (publicPreview) {
-        final button = find.widgetWithText(ElevatedButton, 'Browse only');
-        expect(button, findsOneWidget);
-        expect(tester.widget<ElevatedButton>(button).onPressed, isNull);
-        expect(api.claimCalls, 0);
-        expect(find.textContaining('Saved to Q Wallet'), findsNothing);
-      } else {
         await tester.tap(find.text('Claim now'));
         await tester.pumpAndSettle();
         expect(api.claimCalls, 1);
@@ -160,7 +152,6 @@ void main() {
                 : 'Saved to Q Wallet, +27 points'),
             findsOneWidget);
         if (points == null) expect(find.textContaining('+10'), findsNothing);
-      }
       await tester.pumpWidget(const SizedBox());
       api.dispose();
     }

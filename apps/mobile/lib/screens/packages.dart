@@ -5,7 +5,6 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../api_client.dart';
-import '../feature_flags.dart';
 import '../language.dart';
 import '../models.dart';
 import '../stripe_test_bridge.dart';
@@ -25,17 +24,17 @@ import 'reviews_admin.dart';
 /// 返回为准，客户端不自己算钱。
 ///
 /// 未登录可浏览套餐详情（只读）；点「立即抢购」时先登录，登录后回原界面。
-String _displayRefundRule(Package package) {
+String _displayRefundRule(BuildContext context, Package package) {
   if (!const bool.fromEnvironment('PUBLIC_TRIAL') || package.isNonRefundable) {
     return package.refundRuleText;
   }
   if (package.refundPolicy == 'anytime') {
-    return '未使用可申請模擬退款；體驗版不執行過期自動退款';
+    return context.tr('未使用可申請退款；過期不會自動退款。', 'Unused vouchers can be refunded on request. Expiry does not trigger an automatic refund.');
   }
   if (package.refundPolicy == 'expiry_only') {
-    return '僅限過期退款；體驗版不執行過期自動退款';
+    return context.tr('只可在過期後申請退款；過期不會自動退款。', 'Request a refund only after expiry. Expiry does not trigger an automatic refund.');
   }
-  return '體驗版不執行過期自動退款；具體限制以商品規則為準';
+  return context.tr('過期不會自動退款，詳情以商品規則為準。', 'Expiry does not trigger an automatic refund. See the offer terms.');
 }
 
 Future<bool> requirePackageLogin(BuildContext context, ApiClient api) async {
@@ -216,11 +215,6 @@ class _PackageDetailScreenState extends State<PackageDetailScreen> {
   }
 
   Future<void> _openMap(Map<String, dynamic> branch) async {
-    if (publicPreview) {
-      showCgToast(context, context.tr('此商戶未提供導航資料。',
-          'Directions are unavailable for this shop.'));
-      return;
-    }
     final lat = branch['latitude'] ?? branch['lat'];
     final lng = branch['longitude'] ?? branch['lng'];
     final name = (branch['branch_name'] ?? branch['name'] ?? '') as String;
@@ -393,7 +387,7 @@ class _PackageDetailScreenState extends State<PackageDetailScreen> {
                   : const Color(0xFFFFF3CD),
               borderRadius: BorderRadius.circular(8),
             ),
-            child: Text('退款規則：${_displayRefundRule(p)}',
+            child: Text('退款規則：${_displayRefundRule(context, p)}',
                 style: const TextStyle(fontWeight: FontWeight.bold)),
           ),
           const SizedBox(height: 16),
@@ -567,10 +561,8 @@ class _PackageDetailScreenState extends State<PackageDetailScreen> {
                 child: SizedBox(
                   height: 48,
                   child: ElevatedButton(
-                    onPressed: publicPreview || soldOut ? null : _buy,
-                    child: Text(publicPreview
-                        ? context.tr('只供瀏覽', 'Browse only')
-                        : soldOut ? context.tr('已售罄', 'Sold out') : context.tr('立即搶購', 'Buy now')),
+                    onPressed: soldOut ? null : _buy,
+                    child: Text(soldOut ? context.tr('已售罄', 'Sold out') : context.tr('立即搶購', 'Buy now')),
                   ),
                 ),
               ),
@@ -668,13 +660,15 @@ class _PackageCheckoutScreenState extends State<PackageCheckoutScreen> {
       final options = await widget.api.get('/payment-options');
       final prefs = await SharedPreferences.getInstance();
       if (!mounted) return;
-      final fps = options['fps'] == true;
-      final card = options['card'] == true;
+      final mode = options['mode'] is String ? options['mode'] as String : 'unavailable';
+      final valid = !const bool.fromEnvironment('PUBLIC_TRIAL') || mode == 'demo';
+      final fps = valid && options['fps'] == true;
+      final card = valid && options['card'] == true;
       final last = prefs.getString('last_payment_method');
       setState(() {
         _fpsAvailable = fps;
         _cardAvailable = card;
-        _paymentMode = options['mode'] as String? ?? 'unavailable';
+        _paymentMode = valid ? mode : 'unavailable';
         _method = last == 'fps' && fps ? 'fps' : 'card';
         _optionsLoading = false;
       });
@@ -689,7 +683,7 @@ class _PackageCheckoutScreenState extends State<PackageCheckoutScreen> {
   double get _displayTotal => widget.package.packagePrice * _qty;
 
   Future<void> _confirmPay() async {
-    if (_busy || !_agreed) return;
+    if (_busy || !_agreed || (_method == 'card' ? !_cardAvailable : !_fpsAvailable)) return;
     final pkg = widget.package;
     setState(() => _busy = true);
     try {
@@ -823,12 +817,10 @@ class _PackageCheckoutScreenState extends State<PackageCheckoutScreen> {
               ],
             ),
           ),
-          if (_paymentMode == 'demo')
-            const Text('目前為模擬付款，不會扣款。'),
-          if (_paymentMode == 'stripe_test')
-            const Text('目前為 Stripe 測試付款，不會產生真實扣款。'),
+          if (_paymentMode == 'demo' || _paymentMode == 'stripe_test')
+            Text(context.tr('確認訂單不會扣款。', 'Confirming the order will not charge you.')),
           if (!_optionsLoading && !_cardAvailable && !_fpsAvailable)
-            TextButton(onPressed: _loadPaymentOptions, child: const Text('付款暫未開放，點此重新載入')),
+            TextButton(onPressed: _loadPaymentOptions, child: Text(context.tr('未能載入付款方式，請重試。', 'Could not load payment options. Try again.'))),
           const SizedBox(height: 8),
           // 金额明细
           const Text('金額明細', style: TextStyle(fontWeight: FontWeight.bold)),
@@ -938,15 +930,15 @@ class PackageTermsScreen extends StatelessWidget {
                   : const Color(0xFFFFF3CD),
               borderRadius: BorderRadius.circular(8),
             ),
-            child: Text('退款規則：${_displayRefundRule(p)}',
+            child: Text('退款規則：${_displayRefundRule(context, p)}',
                 style: const TextStyle(fontWeight: FontWeight.bold)),
           ),
           if (!p.isNonRefundable)
             Padding(
               padding: const EdgeInsets.only(top: 8),
               child: Text(demoPayment || const bool.fromEnvironment('PUBLIC_TRIAL')
-                  ? '模擬退款不涉及真實資金。'
-                  : '如涉及實際付款，退款將退回原付款方式；到賬時間視支付機構而定。'),
+                  ? context.tr('退款只更新訂單記錄，不會退回款項。', 'A refund only updates the order record; no money is returned.')
+                  : context.tr('退款退回原付款方式，入賬時間視付款機構而定。', 'Refunds go to the original payment method. Timing depends on the payment provider.')),
             ),
           const SizedBox(height: 16),
           const Text('使用規則', style: TextStyle(fontWeight: FontWeight.bold)),
@@ -974,10 +966,16 @@ class PackageTermsScreen extends StatelessWidget {
 /// My orders (UI_SPEC §3.4): tabs 全部 / 待支付 / 已支付 / 已退款；
 /// tap a card for the order detail (number, method, times, refund).
 class OrdersScreen extends StatefulWidget {
-  const OrdersScreen({super.key, required this.api, this.guest = false});
+  const OrdersScreen({
+    super.key,
+    required this.api,
+    this.guest = false,
+    this.initialTab = 0,
+  }) : assert(initialTab >= 0 && initialTab < 4);
 
   final ApiClient api;
   final bool guest;
+  final int initialTab;
 
   @override
   State<OrdersScreen> createState() => _OrdersScreenState();
@@ -1099,10 +1097,7 @@ class _OrdersScreenState extends State<OrdersScreen> with WalletUpdates<OrdersSc
         return _orders.where((o) => o.paymentStatus == 'paid' &&
             o.refundStatus != 'refunded' && o.refundStatus != 'requested').toList();
       case 3:
-        return _orders
-            .where((o) =>
-                o.refundStatus == 'refunded')
-            .toList();
+        return _orders.where((o) => o.hasRefundActivity).toList();
       default:
         return _orders;
     }
@@ -1110,19 +1105,21 @@ class _OrdersScreenState extends State<OrdersScreen> with WalletUpdates<OrdersSc
 
   String _emptyMessage(int tab) {
     if (widget.guest) {
-      return publicPreview
-          ? context.tr('暫時沒有個人訂單。', 'No personal orders yet.')
-          : context.tr('登入後可查看你的訂單。', 'Sign in to view your orders.');
+      return context.tr('登入後可查看你的訂單。', 'Sign in to view your orders.');
     }
     switch (tab) {
       case 1:
-        return '暫時沒有待支付訂單。';
+        return const bool.fromEnvironment('PUBLIC_TRIAL')
+            ? context.tr('暫時沒有待確認訂單。', 'No orders awaiting confirmation.')
+            : context.tr('暫時沒有待支付訂單。', 'No orders awaiting payment.');
       case 2:
-        return '暫時沒有已支付訂單。';
+        return const bool.fromEnvironment('PUBLIC_TRIAL')
+            ? context.tr('暫時沒有已確認訂單。', 'No confirmed orders.')
+            : context.tr('暫時沒有已支付訂單。', 'No paid orders.');
       case 3:
-        return '暫時沒有退款訂單。';
+        return context.tr('暫時沒有退款記錄。', 'No refund activity.');
       default:
-        return '暫時沒有訂單。';
+        return context.tr('暫時沒有訂單。', 'No orders yet.');
     }
   }
 
@@ -1130,15 +1127,20 @@ class _OrdersScreenState extends State<OrdersScreen> with WalletUpdates<OrdersSc
   Widget build(BuildContext context) {
     return DefaultTabController(
       length: 4,
+      initialIndex: widget.initialTab,
       child: Scaffold(
         appBar: AppBar(
           title: Text(context.tr('我的訂單', 'My orders')),
-          bottom: const TabBar(
+          bottom: TabBar(
             tabs: [
-              Tab(text: '全部'),
-              Tab(text: '待支付'),
-              Tab(text: '已支付'),
-              Tab(text: '已退款'),
+              Tab(text: context.tr('全部', 'All')),
+              Tab(text: const bool.fromEnvironment('PUBLIC_TRIAL')
+                  ? context.tr('待確認', 'Awaiting confirmation')
+                  : context.tr('待支付', 'Awaiting payment')),
+              Tab(text: const bool.fromEnvironment('PUBLIC_TRIAL')
+                  ? context.tr('已確認', 'Confirmed')
+                  : context.tr('已支付', 'Paid')),
+              Tab(text: context.tr('退款', 'Refunds')),
             ],
           ),
         ),
@@ -1191,8 +1193,9 @@ class _OrdersScreenState extends State<OrdersScreen> with WalletUpdates<OrdersSc
                                           Chip(label: Text(_statusLabel(context, o))),
                                         ],
                                       ),
-                                      Text(
-                                          '${o.shopName} · ${o.paymentMethodText} · ${formatHkd(o.amount)}'),
+                                      Text(o.demoPayment
+                                          ? '${o.shopName} · ${formatHkd(o.amount)}'
+                                          : '${o.shopName} · ${o.paymentMethodText} · ${formatHkd(o.amount)}'),
                                       if (o.refundStatus != 'none')
                                         Text(
                                             '${context.tr('退款狀態：${o.refundStatusText}', 'Refund: ${o.refundStatusEnglishText}')}'
@@ -1209,7 +1212,9 @@ class _OrdersScreenState extends State<OrdersScreen> with WalletUpdates<OrdersSc
                                                   minimumSize:
                                                       const Size(88, 44)),
                                               onPressed: () => _pay(o),
-                                              child: const Text('去支付'),
+                                              child: Text(o.demoPayment
+                                                  ? context.tr('確認訂單', 'Confirm order')
+                                                  : context.tr('前往付款', 'Continue to checkout')),
                                             ),
                                           if (o.canPay)
                                             OutlinedButton(
@@ -1381,9 +1386,10 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> with WalletUpdate
               style: const TextStyle(color: CgColors.textSecondary)),
           const SizedBox(height: 16),
           _DetailRow(label: '訂單號', value: o.orderNoText),
-          _DetailRow(label: '支付方式', value: o.paymentMethodText),
+          if (!o.demoPayment)
+            _DetailRow(label: context.tr('付款方式', 'Payment method'), value: o.paymentMethodText),
           _DetailRow(
-              label: '支付時間',
+              label: o.demoPayment ? context.tr('確認時間', 'Confirmed at') : context.tr('付款時間', 'Payment time'),
               value: o.paidAt != null
                   ? formatDateTime(o.paidAt)
                   : (o.paymentStatus == 'paid'
@@ -1395,7 +1401,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> with WalletUpdate
               label: '金額',
               value: formatHkd(o.amount),
               valueBold: true),
-          _DetailRow(label: context.tr('支付狀態', 'Payment status'),
+          _DetailRow(label: o.demoPayment ? context.tr('確認狀態', 'Confirmation status') : context.tr('支付狀態', 'Payment status'),
               value: context.tr(o.paymentStatusText, o.paymentStatusEnglishText)),
           _DetailRow(label: context.tr('退款狀態', 'Refund status'),
               value: context.tr(o.refundStatusText, o.refundStatusEnglishText)),
@@ -1411,8 +1417,8 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> with WalletUpdate
             Padding(
               padding: const EdgeInsets.only(top: 12),
               child: Text(o.demoPayment
-                  ? '模擬退款不涉及真實資金。'
-                  : '退款已發起，實際到賬時間視支付機構而定。',
+                  ? context.tr('退款只更新訂單記錄，不會退回款項。', 'A refund only updates the order record; no money is returned.')
+                  : context.tr('退款已發起，入賬時間視付款機構而定。', 'The refund was initiated. Timing depends on the payment provider.'),
                   style: const TextStyle(color: CgColors.textSecondary)),
             ),
           if (o.canRefund) ...[
@@ -1469,16 +1475,20 @@ class _DetailRow extends StatelessWidget {
 /// 点「我已完成支付」，调用方随即进入 [PaymentResultScreen] 轮询结果。
 /// 返回 true 表示进入轮询，false/null 表示用户取消，订单留在待支付状态。
 Future<bool?> showPaymentSheet(BuildContext context, ApiClient api, PackageOrder order) async {
+  if (const bool.fromEnvironment('PUBLIC_TRIAL') && !order.demoPayment) {
+    showCgToast(context, context.tr('未能確認訂單，請稍後重試。', 'Could not confirm the order. Try again later.'));
+    return false;
+  }
   if (order.paymentStatus == 'paid') return true;
   final confirmed = await showDialog<bool>(
     context: context,
     barrierDismissible: false,
     builder: (ctx) => AlertDialog(
-      title: const Text('完成支付'),
-      content: Text(
-          '訂單 #${order.id} · ${formatHkd(order.amount)}\n'
-          '支付方式：${order.paymentMethodText}\n'
-          '${order.demoPayment ? '這是模擬付款，不會扣款。' : '即將前往 Stripe 測試付款頁，並由系統確認付款結果。'}'),
+      title: Text(ctx.tr('確認訂單', 'Confirm order')),
+      content: Text(ctx.tr(
+        '訂單 #${order.id} · ${formatHkd(order.amount)}\n確認此訂單不會扣款。',
+        'Order #${order.id} · ${formatHkd(order.amount)}\nConfirming this order will not charge you.',
+      )),
       actions: [
         TextButton(
           onPressed: () => Navigator.of(ctx).pop(false),
@@ -1486,7 +1496,7 @@ Future<bool?> showPaymentSheet(BuildContext context, ApiClient api, PackageOrder
         ),
         ElevatedButton(
           onPressed: () => Navigator.of(ctx).pop(true),
-          child: Text(order.demoPayment ? '模擬付款' : '前往測試付款'),
+          child: Text(order.demoPayment ? ctx.tr('確認訂單', 'Confirm order') : ctx.tr('前往付款頁', 'Continue to checkout')),
         ),
       ],
     ),
@@ -1505,7 +1515,7 @@ Future<bool?> showPaymentSheet(BuildContext context, ApiClient api, PackageOrder
         'return_url': Uri.base.toString(),
       });
       if (!opened && context.mounted) {
-        showCgToast(context, '請使用網頁版完成測試付款');
+        showCgToast(context, context.tr('請使用網頁版完成付款。', 'Use the web version to continue to checkout.'));
       }
     } on ApiException catch (e) {
       if (context.mounted) showCgToast(context, e.message);
@@ -1836,9 +1846,12 @@ class _PaymentResultScreenState extends State<PaymentResultScreen> {
         const Icon(Icons.confirmation_number,
             size: 72, color: CgColors.primary),
         const SizedBox(height: 16),
-        const Text('優惠券已存入錢包',
+        Text(context.tr('優惠券已存入錢包', 'Voucher added to wallet'),
             textAlign: TextAlign.center,
-            style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
+            style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
+        if (_order.demoPayment || const bool.fromEnvironment('PUBLIC_TRIAL'))
+          Text(context.tr('訂單已確認，不會扣款。', 'Order confirmed. You will not be charged.'),
+              textAlign: TextAlign.center),
         const SizedBox(height: 24),
         _orderSummary(),
         const SizedBox(height: 32),

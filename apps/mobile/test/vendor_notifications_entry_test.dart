@@ -1,7 +1,6 @@
 import 'dart:async';
 
 import 'package:coupon_go/api_client.dart';
-import 'package:coupon_go/feature_flags.dart';
 import 'package:coupon_go/language.dart';
 import 'package:coupon_go/main.dart';
 import 'package:coupon_go/screens/account.dart';
@@ -103,9 +102,6 @@ void main() {
     await openDrawer(tester);
 
     final entry = find.byKey(entryKey);
-    if (publicPreview) {
-      expect(entry, findsNothing);
-    } else {
       expect(entry, findsOneWidget);
       final tile = tester.widget<ListTile>(entry);
       expect((tile.title as Text).data, 'Notifications');
@@ -124,7 +120,6 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.byType(HomeShell), findsOneWidget);
       expect(find.byType(NotificationsScreen), findsNothing);
-    }
     await tester.pumpWidget(const SizedBox());
   });
 
@@ -134,12 +129,8 @@ void main() {
     await showShell(tester, api, english: false);
     await openDrawer(tester);
     final entry = find.byKey(entryKey);
-    if (publicPreview) {
-      expect(entry, findsNothing);
-    } else {
       expect(entry, findsOneWidget);
       expect((tester.widget<ListTile>(entry).title as Text).data, '通知');
-    }
     expect(api.notificationReads, 0);
     await tester.pumpWidget(const SizedBox());
   });

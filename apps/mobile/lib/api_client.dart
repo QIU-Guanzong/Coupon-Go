@@ -3,6 +3,7 @@ import 'dart:math';
 import 'dart:typed_data';
 
 import 'app_config.dart';
+import 'feature_flags.dart';
 import 'vendor_coupon_lifecycle.dart';
 
 import 'package:flutter/foundation.dart' show ChangeNotifier;
@@ -19,8 +20,8 @@ class ApiClient extends ChangeNotifier {
 
   static String get configuredBase {
     const url = String.fromEnvironment('API_BASE_URL',
-        defaultValue: 'http://localhost:8000');
-    return resolveBaseUrl(url, Uri.base);
+        defaultValue: publicTrial ? '/coupongo-trial' : 'http://localhost:8000');
+    return publicTrial ? resolveTrialBase(url) : resolveBaseUrl(url, Uri.base);
   }
 
   /// A web deployment may live below a domain prefix such as /coupongo/.
@@ -28,6 +29,14 @@ class ApiClient extends ChangeNotifier {
     return configured.isEmpty
         ? location.resolve('.').toString().replaceFirst(RegExp(r'/$'), '')
         : configured;
+  }
+
+  /// Fail closed instead of sending a trial token to a production API.
+  static String resolveTrialBase(String configured) {
+    if (configured != '/coupongo-trial') {
+      throw StateError('The public app requires its same-origin trial gateway.');
+    }
+    return configured;
   }
 
   final String baseUrl;
@@ -38,7 +47,7 @@ class ApiClient extends ChangeNotifier {
 
   // A public simulated trial shares the same origin as the real application.
   // It must never overwrite an existing account's persisted token.
-  static const _tokenStorageKey = bool.fromEnvironment('PUBLIC_TRIAL')
+  static const _tokenStorageKey = publicTrial
       ? 'coupon_trial_access_token'
       : 'access_token';
 
@@ -79,6 +88,17 @@ class ApiClient extends ChangeNotifier {
 
   ({int request, int revision}) beginTrialRoleRequest() =>
       (request: ++_trialRoleRequest, revision: _sessionRevision);
+
+  Future<String> requestTrialRole(String role) async {
+    if (role != 'customer' && role != 'vendor') throw const FormatException();
+    final result = await post('/trial/role', body: {'role': role});
+    final token = result['access_token'];
+    if (token is! String || token.isEmpty ||
+        result['role'] != role || result['mode'] != 'simulated') {
+      throw const FormatException();
+    }
+    return token;
+  }
 
   /// One commit lane for the direct entry and menu. A cancelled/superseded
   /// change never activates, and restores storage before the next change writes.

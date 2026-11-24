@@ -500,10 +500,10 @@ class BargainRefund {
   final String note;
 
   String get statusText => switch (status) {
-        'succeeded' => '模擬退款已完成',
-        'pending' => '模擬退款處理中',
-        'failed' => '模擬退款未成功',
-        _ => '模擬退款狀態待確認',
+        'succeeded' => '退款已完成',
+        'pending' => '退款處理中',
+        'failed' => '退款未成功',
+        _ => '退款狀態待確認',
       };
 
   String get reasonText {
@@ -851,6 +851,10 @@ class PackageOrder {
   /// 展示用订单号。
   String get orderNoText => orderNo.isNotEmpty ? orderNo : '#$id';
 
+  /// Statuses emitted by GET /orders for an order with a refund request.
+  bool get hasRefundActivity => const {'requested', 'refunded', 'rejected'}
+      .contains(refundStatus);
+
   String get refundStatusText => switch (refundStatus) {
         'refunded' => '已退款',
         'requested' => '退款處理中',
@@ -880,19 +884,19 @@ class PackageOrder {
       };
 
   String get paymentStatusText => switch (paymentStatus) {
-        'paid' => '已支付',
+        'paid' => demoPayment ? '已確認' : '已支付',
         'failed' => '支付失敗',
         'timeout' => '支付逾時',
         'cancelled' => '已取消',
-        _ => '待支付',
+        _ => demoPayment ? '待確認' : '待支付',
       };
 
   String get paymentStatusEnglishText => switch (paymentStatus) {
-        'paid' => 'Paid',
+        'paid' => demoPayment ? 'Confirmed' : 'Paid',
         'failed' => 'Payment failed',
         'timeout' => 'Payment expired',
         'cancelled' => 'Cancelled',
-        _ => 'Awaiting payment',
+        _ => demoPayment ? 'Awaiting confirmation' : 'Awaiting payment',
       };
 
   String get paymentMethodText => paymentMethod == 'card' ? '信用卡' : 'FPS 轉數快';

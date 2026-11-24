@@ -61,7 +61,7 @@ void main() {
     final api = PayoutApi()..timeoutFirst = true;
     await showPayout(tester, api);
     await tester.enterText(find.byType(TextField), '30.50');
-    await tester.tap(find.text('提交測試提款'));
+    await tester.tap(find.text('提交提款核對'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('確認提交'));
     await tester.pumpAndSettle();
@@ -87,7 +87,7 @@ void main() {
       ];
     await showPayout(tester, api);
     expect(find.text('結果待核對，請勿重複提款'), findsOneWidget);
-    expect(find.text('提交測試提款'), findsNothing);
+    expect(find.text('提交提款核對'), findsNothing);
     await tester.tap(find.text('恢復原提款請求'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('用同一請求核對或重試'));
@@ -102,14 +102,14 @@ void main() {
     await showPayout(tester, api);
     expect(find.text('舊提款缺少請求編號，請聯絡平台核對。'), findsOneWidget);
     expect(find.text('恢復原提款請求'), findsNothing);
-    expect(find.text('提交測試提款'), findsNothing);
+    expect(find.text('提交提款核對'), findsNothing);
   });
   testWidgets('確認框打開時切換帳號不提交舊請求', (tester) async {
     final api = PayoutApi();
     await api.saveToken('first', persist: false);
     await showPayout(tester, api);
     await tester.enterText(find.byType(TextField), '20');
-    await tester.tap(find.text('提交測試提款'));
+    await tester.tap(find.text('提交提款核對'));
     await tester.pumpAndSettle();
     await api.saveToken('second', persist: false);
     await tester.pump();
@@ -123,7 +123,7 @@ void main() {
     await api.saveToken('first', persist: false);
     await showPayout(tester, api);
     await tester.enterText(find.byType(TextField), '20');
-    await tester.tap(find.text('提交測試提款'));
+    await tester.tap(find.text('提交提款核對'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('確認提交'));
     await tester.pump();
@@ -137,7 +137,7 @@ void main() {
     final api = PayoutApi()..preflight = Completer<Map<String, dynamic>>();
     await showPayout(tester, api);
     await tester.enterText(find.byType(TextField), '20');
-    await tester.tap(find.text('提交測試提款'));
+    await tester.tap(find.text('提交提款核對'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('確認提交'));
     await tester.pump();

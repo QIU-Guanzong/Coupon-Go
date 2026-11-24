@@ -32,9 +32,12 @@ template and refuses to start on a second worker. It does not run the normal
 background scheduler: simulated transfer sweeps are triggered by the related
 trial actions within the current browser's database.
 
-Serve a web build under `/coupongo-trial/` with
-`--base-href=/coupongo-trial/ --dart-define=PUBLIC_TRIAL=true
---dart-define=API_BASE_URL=/coupongo-trial`. The reverse proxy must route
+For the public UI build, serve static files at `/coupongo/` with
+`flutter build web --base-href=/coupongo/ --dart-define=PUBLIC_TRIAL=true
+--dart-define=API_BASE_URL=/coupongo-trial`. The existing isolated operator
+preview may still serve the assets at `/coupongo-trial/` with that base href.
+The API prefix is independent of the static base href and must stay
+`/coupongo-trial`; never point this build at the production business API. The reverse proxy must route
 `/coupongo-trial/api/v3/...` to the private service as `/api/v3/...`, keep the
 browser-visible origin unchanged and permit the same-origin camera for merchant
 scanning. Do not reuse the read-only preview's database or static build.
@@ -59,9 +62,11 @@ the older shared merchant account / empty-login proposal: the production
 does not grant access or change the sign-in form.
 
 The Flutter trial opens `POST /api/v3/trial/session` first, then sends the
-selected `customer`, `vendor`, or `admin` role to
+selected `customer` or `vendor` role to
 `POST /api/v3/trial/role`. The direct merchant/customer entry uses the same
-endpoint as the identity menu. A guest can browse without a role token. Role
+endpoint as the identity menu. A visitor may browse without a role token; the public UI opens the
+customer session before customer actions. The public gateway no longer issues
+or accepts an admin token. It refuses admin routes and payout mutations. Role
 changes share data only within the same browser's trial cookie, so a coupon
 claimed as a customer can be scanned as a merchant in that browser. Another
 browser profile has an independent copy of the data and cannot use the
@@ -73,3 +78,35 @@ All money movements in this trial are simulated; do not collect card or real
 personal details. The role entry only states that payment does not charge the visitor; it has no
 fields requesting personal information. Keep transaction facts where relevant,
 without adding a persistent banner to product screens.
+
+
+## Public customer and merchant actions
+
+The gateway only admits the exact write methods/paths, plus these existing
+business operations. Every new write is bound to a role in the current
+browser's database, and the application endpoints still enforce object
+ownership and their normal status transitions.
+
+- Customer: text-only `POST /reviews`, own review history via `GET /reviews/mine`; wallet `GET /points/exchange-options`
+  returns the configured cost and active, free, in-stock, not-yet-held coupons.
+  `POST /points/exchange?coupon_id=…` also checks eligibility before the
+  ordinary points handler. Isolated `POST /bargain-campaigns/{id}/start`
+  records the existing order state without charging money. Help and
+  purchase require a distinct customer in the same database and are not
+  offered in this browser-isolated version.
+- Merchant: coupon preview, submission, field/branch assignment and listing
+  lifecycle; package creation, edits and listing lifecycle. Listing and review states still follow
+  the existing API configuration. No new approval endpoint or exposed admin route.
+- Merchant onboarding accepts only a preset shop choice via the exact
+  customer-only application submission route. It accepts no contact data,
+  identity numbers, file references or uploads, and creates only an isolated
+  pending record. It cannot approve, sign or start payment onboarding.
+- Shared uploads, shop contact/branch-profile edits, staff invitations/role
+  changes, production login and provider cashier/payout are not offered.
+  Customer purchase/redemption/refund receipts from the original isolated
+  journey remain supported; they never charge a card or move real funds.
+
+Deployment is an operator step outside this code change. Do not reuse a
+production database, enable the background scheduler, or provide credentials
+for payment providers. Configure the same-origin cookie and upstream route
+before serving the new package at /coupongo/.

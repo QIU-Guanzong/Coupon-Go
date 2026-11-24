@@ -322,12 +322,9 @@ class _MerchantBranchesScreenState extends State<MerchantBranchesScreen> {
                 physics: const AlwaysScrollableScrollPhysics(),
                 padding: const EdgeInsets.all(20),
                 children: [
-                  const Text('選擇店舖，查看或更新其分店資料。'),
-                  if (_trialMode) ...[
-                    const SizedBox(height: 12),
-                    Text(context.tr('體驗版可查看分店，暫不支援新增或修改。',
-                        'You can view branches in the trial. Adding and editing are unavailable.')),
-                  ],
+                  Text(_trialMode
+                      ? context.tr('選擇店舖，查看其分店資料。', 'Choose a shop to view its branches.')
+                      : context.tr('選擇店舖，查看或更新其分店資料。', 'Choose a shop to view or update its branches.')),
                   if (_shops.isNotEmpty) ...[
                     const SizedBox(height: 16),
                     DropdownButtonFormField<int>(
@@ -395,9 +392,9 @@ class _MerchantBranchesScreenState extends State<MerchantBranchesScreen> {
                             style: Theme.of(context).textTheme.titleLarge,
                           ),
                         ),
-                        if (_shop?['can_manage_branches'] == true)
+                        if (!_trialMode && _shop?['can_manage_branches'] == true)
                           FilledButton.icon(
-                            onPressed: _busy || _requiresRefresh || _trialMode
+                            onPressed: _busy || _requiresRefresh
                                 ? null
                                 : () => _edit(),
                             icon: const Icon(Icons.add),
@@ -422,9 +419,9 @@ class _MerchantBranchesScreenState extends State<MerchantBranchesScreen> {
                               .where((v) => v is String && v.isNotEmpty)
                               .join(' · '),
                         ),
-                        trailing: _shop?['can_manage_branches'] == true
+                        trailing: !_trialMode && _shop?['can_manage_branches'] == true
                             ? TextButton(
-                                onPressed: _busy || _requiresRefresh || _trialMode
+                                onPressed: _busy || _requiresRefresh
                                     ? null
                                     : () => _edit(branch),
                                 child: const Text('編輯'),

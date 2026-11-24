@@ -3,9 +3,12 @@ import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../api_client.dart';
+import '../language.dart';
+
+const _trialMode = bool.fromEnvironment('PUBLIC_TRIAL');
 
 /// Applicant journey backed by the merchant-onboarding API.
-class MerchantOnboardingScreen extends StatefulWidget {
+class MerchantOnboardingScreen extends StatelessWidget {
   const MerchantOnboardingScreen({
     super.key,
     required this.api,
@@ -15,11 +18,167 @@ class MerchantOnboardingScreen extends StatefulWidget {
   final Future<bool> Function(Uri)? openConnectUrl;
 
   @override
-  State<MerchantOnboardingScreen> createState() =>
-      _MerchantOnboardingScreenState();
+  Widget build(BuildContext context) => _trialMode
+      ? _PresetApplication(api: api)
+      : _MerchantApplication(api: api, openConnectUrl: openConnectUrl);
 }
 
-class _MerchantOnboardingScreenState extends State<MerchantOnboardingScreen>
+class _PresetApplication extends StatefulWidget {
+  const _PresetApplication({required this.api});
+
+  final ApiClient api;
+
+  @override
+  State<_PresetApplication> createState() => _PresetApplicationState();
+}
+
+class _PresetApplicationState extends State<_PresetApplication> {
+  static const _choices = ['海港小店', '山邊小館'];
+  String? _choice;
+  String? _status;
+  bool _loading = true;
+  bool _submitting = false;
+  bool _loadFailed = false;
+  bool _submitFailed = false;
+  late int _session;
+
+  @override
+  void initState() {
+    super.initState();
+    _session = widget.api.sessionRevision;
+    widget.api.addListener(_sessionChanged);
+    _refresh();
+  }
+
+  @override
+  void dispose() {
+    widget.api.removeListener(_sessionChanged);
+    super.dispose();
+  }
+
+  bool get _current => mounted && _session == widget.api.sessionRevision;
+
+  void _sessionChanged() {
+    if (_current || !mounted) return;
+    setState(() {
+      _choice = _status = null;
+      _loading = _submitting = false;
+    });
+  }
+
+  Future<void> _refresh() async {
+    if (!_current || !widget.api.isLoggedIn) {
+      if (mounted) setState(() => _loading = false);
+      return;
+    }
+    setState(() {
+      _loading = true;
+      _loadFailed = false;
+    });
+    try {
+      final response = await widget.api.myMerchantApplications();
+      final rows = response['applications'] as List<dynamic>;
+      if (_current) {
+        setState(() {
+          _status = rows.isEmpty ? null : (rows.first as Map)['status'] as String;
+        });
+      }
+    } catch (_) {
+      if (_current) setState(() => _loadFailed = true);
+    } finally {
+      if (_current) setState(() => _loading = false);
+    }
+  }
+
+  Future<void> _submit() async {
+    final label = _choice;
+    if (!_current || _submitting || _status != null || !_choices.contains(label)) return;
+    setState(() {
+      _submitting = true;
+      _submitFailed = false;
+    });
+    try {
+      await widget.api.submitMerchantApplication({'shop_name': label});
+      if (_current) await _refresh();
+    } catch (_) {
+      if (!_current) return;
+      // An interrupted response may still have created the application.
+      // Read its status before exposing another submit.
+      await _refresh();
+      if (_current) setState(() => _submitFailed = _status == null);
+    } finally {
+      if (_current) setState(() => _submitting = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tr;
+    return Scaffold(
+      appBar: AppBar(title: Text(t('商戶入駐申請', 'Merchant application'))),
+      body: ListView(
+        padding: const EdgeInsets.all(16),
+        children: [
+          if (!_current || !widget.api.isLoggedIn)
+            Text(t('請從企業服務重新開啟申請。', 'Open the application from Business again.'))
+          else if (_loading)
+            const LinearProgressIndicator()
+          else if (_loadFailed) ...[
+            Text(t('未能讀取申請進度。', 'Could not load your application status.')),
+            TextButton(onPressed: _refresh, child: Text(t('重試', 'Try again'))),
+          ] else if (_status != null)
+            ListTile(
+              leading: const Icon(Icons.receipt_long_outlined),
+              title: Text(t('申請進度', 'Application status')),
+              subtitle: Text(switch (_status) {
+                'pending' => t('待審核', 'Pending review'),
+                'approved' => t('已通過', 'Approved'),
+                'rejected' => t('未通過', 'Not approved'),
+                _ => t('待確認', 'Awaiting confirmation'),
+              }),
+            )
+          else ...[
+            Text(t('選擇要登記的店舖。此步驟不需提供聯絡資料或文件。',
+                'Choose a shop to register. No contact details or documents are required.')),
+            const SizedBox(height: 16),
+            DropdownButtonFormField<String>(
+              key: const ValueKey('preset-merchant-shop'),
+              initialValue: _choice,
+              decoration: InputDecoration(labelText: t('店舖', 'Shop')),
+              items: [
+                DropdownMenuItem(value: _choices[0], child: Text(t(_choices[0], 'Harbour Shop'))),
+                DropdownMenuItem(value: _choices[1], child: Text(t(_choices[1], 'Hillside Kitchen'))),
+              ],
+              onChanged: _submitting ? null : (value) => setState(() => _choice = value),
+            ),
+            const SizedBox(height: 16),
+            if (_submitFailed)
+              Text(t('未能提交申請，請稍後重試。', 'Could not submit the application. Try again later.')),
+            FilledButton(
+              key: const ValueKey('preset-merchant-submit'),
+              onPressed: _choice == null || _submitting ? null : _submit,
+              child: Text(_submitting
+                  ? t('提交中…', 'Submitting…')
+                  : t('提交申請', 'Submit application')),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _MerchantApplication extends StatefulWidget {
+  const _MerchantApplication({required this.api, this.openConnectUrl});
+
+  final ApiClient api;
+  final Future<bool> Function(Uri)? openConnectUrl;
+
+  @override
+  State<_MerchantApplication> createState() => _MerchantOnboardingScreenState();
+}
+
+class _MerchantOnboardingScreenState extends State<_MerchantApplication>
     with WidgetsBindingObserver {
   final _form = GlobalKey<FormState>();
   final _shop = TextEditingController();
@@ -125,7 +284,7 @@ class _MerchantOnboardingScreenState extends State<MerchantOnboardingScreen>
               ..._application!,
               'stripe_status_source': 'simulated'
             };
-            _connectMessage = '目前為本地模擬，沒有可開啟的正式收款頁面。';
+            _connectMessage = context.tr('未有可開啟的正式收款頁面。', 'No live payments page is available.');
           });
         }
         return;
@@ -148,7 +307,7 @@ class _MerchantOnboardingScreenState extends State<MerchantOnboardingScreen>
             ..._application!,
             'stripe_status_source': 'stripe_test'
           };
-          _connectMessage = '已開啟 Stripe 測試設定；返回後請刷新收款狀態。';
+          _connectMessage = context.tr('已開啟收款設定；返回後請刷新收款狀態。', 'Payments setup opened. Refresh the status when you return.');
         });
       }
     } catch (e) {
@@ -187,9 +346,10 @@ class _MerchantOnboardingScreenState extends State<MerchantOnboardingScreen>
             ..._application!,
             'stripe_status_source': simulated ? 'simulated' : 'stripe_test'
           };
-          _connectMessage = simulated
-              ? (active ? '本地模擬已完成；不代表正式開戶。' : '本地模擬尚未完成；不代表正式開戶。')
-              : (active ? 'Stripe 測試能力已開通；不代表正式開戶。' : 'Stripe 測試資料尚未完成，請繼續設定。');
+          _connectMessage = active
+              ? context.tr('已完成收款設定，正式收款尚未開通。',
+                  'Payments setup is complete. Live payments are not enabled.')
+              : context.tr('收款設定尚未完成。', 'Payments setup is incomplete.');
         });
       }
     } catch (e) {
@@ -485,11 +645,13 @@ class _MerchantOnboardingScreenState extends State<MerchantOnboardingScreen>
                               : '合約：已簽署版本 ${signed['version']}',
                         ),
                         Text(switch (source) {
-                          'simulated' => '收款帳戶：測試模擬狀態，並非正式開戶',
-                          'unverified' => '收款帳戶：狀態尚未驗證',
-                          'not_started' => '收款帳戶：尚未開始',
-                          'stripe_test' => '收款帳戶：Stripe 測試狀態，並非正式入駐',
-                          _ => '收款帳戶：狀態待確認',
+                          'simulated' || 'stripe_test' => context.tr(
+                              '收款帳戶：未開通正式收款', 'Payments account: live payments not enabled'),
+                          'unverified' => context.tr(
+                              '收款帳戶：狀態尚未驗證', 'Payments account: status not verified'),
+                          'not_started' => context.tr(
+                              '收款帳戶：尚未開始', 'Payments account: setup not started'),
+                          _ => context.tr('收款帳戶：狀態待確認', 'Payments account: status unconfirmed'),
                         }),
                         const SizedBox(height: 12),
                         if (status == 'pending') ...[
@@ -497,7 +659,7 @@ class _MerchantOnboardingScreenState extends State<MerchantOnboardingScreen>
                             alignment: Alignment.centerLeft,
                             child: OutlinedButton(
                               onPressed: _busy ? null : _startConnect,
-                              child: const Text('開啟 Stripe 測試設定'),
+                              child: Text(context.tr('開啟收款設定', 'Open payments setup')),
                             ),
                           ),
                           Align(
@@ -548,7 +710,7 @@ class _MerchantOnboardingScreenState extends State<MerchantOnboardingScreen>
                           const Padding(
                             padding: EdgeInsets.symmetric(vertical: 8),
                             child: Text(
-                              '測試合約，內容尚待確認，並非正式合約。',
+                              '合約內容尚待確認，未生效。',
                               style: TextStyle(fontWeight: FontWeight.bold),
                             ),
                           ),

@@ -128,6 +128,7 @@ void main() {
     final api = ReviewShopsApi([staff]);
     await showHome(tester, api);
     expect(find.text('Reply to low-rated reviews'), findsNothing);
+    expect(find.text('Customer reviews'), findsNothing);
     expect(api.shopReads, isEmpty);
     expect(api.replies, isEmpty);
   });
@@ -158,16 +159,15 @@ void main() {
     expect(api.shopReads, isEmpty);
   });
 
-  testWidgets('trial reviews explain that replies are unavailable',
+  testWidgets('isolated merchant reviews do not expose a reply action',
       (tester) async {
     final api = ReviewShopsApi([first]);
     await showHome(tester, api);
     await openPicker(tester);
     await tester.tap(find.text('Central'));
     await tester.pumpAndSettle();
-    expect(find.text('Review replies are unavailable in the trial.'), findsOneWidget);
-    final button = tester.widget<ElevatedButton>(find.widgetWithText(ElevatedButton, 'Reply'));
-    expect(button.onPressed, isNull);
+    expect(find.widgetWithText(ElevatedButton, 'Reply'), findsNothing);
+    expect(find.textContaining('in the trial'), findsNothing);
     expect(api.replies, isEmpty);
   }, skip: !const bool.fromEnvironment('PUBLIC_TRIAL'));
 

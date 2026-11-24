@@ -1,14 +1,12 @@
 import 'dart:async';
 
 import 'package:coupon_go/api_client.dart';
-import 'package:coupon_go/feature_flags.dart';
 import 'package:coupon_go/language.dart';
 import 'package:coupon_go/screens/vendor.dart';
 import 'package:coupon_go/vendor_coupon_lifecycle.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-const _readOnly = publicPreview || bool.fromEnvironment('PUBLIC_TRIAL');
 const _couponId = 3;
 const _actionsKey = ValueKey('vendor-coupon-actions-3');
 const _statusKey = ValueKey('vendor-coupon-status-3');
@@ -158,11 +156,6 @@ void main() {
     (tester) async {
       final api = _LifecycleApi();
       await _open(tester, api, english: true);
-      if (_readOnly) {
-        expect(find.byKey(_actionsKey), findsNothing);
-        expect(api.requests, isEmpty);
-        return;
-      }
       await _select(tester, 'Pause');
       expect(_status(tester), 'Paused');
       await _select(tester, 'Resume');
@@ -195,7 +188,6 @@ void main() {
   ) async {
     final api = _LifecycleApi();
     await _open(tester, api);
-    if (_readOnly) return;
     await _select(tester, '下架');
     expect(find.text('下架優惠券？'), findsOneWidget);
     api.canManage = false;
@@ -212,8 +204,7 @@ void main() {
     (tester) async {
       final api = _LifecycleApi();
       await _open(tester, api);
-      if (_readOnly) return;
-      api.waitForMutation = Completer<void>();
+        api.waitForMutation = Completer<void>();
       final buttons = find.byKey(_actionsKey);
       final item = tester.widget<PopupMenuButton<VendorCouponAction>>(buttons);
       item.onSelected!(VendorCouponAction.pause);
@@ -245,7 +236,6 @@ void main() {
   ) async {
     final api = _LifecycleApi();
     await _open(tester, api, english: true);
-    if (_readOnly) return;
     final filter = find.byKey(const ValueKey('vendor-coupon-status-filter'));
     tester.widget<DropdownButton<String>>(filter).onChanged!('active');
     await tester.pumpAndSettle();

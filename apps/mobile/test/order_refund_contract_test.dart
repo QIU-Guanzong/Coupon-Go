@@ -1,3 +1,4 @@
+import 'package:coupon_go/feature_flags.dart';
 import 'package:coupon_go/api_client.dart';
 import 'package:coupon_go/models.dart';
 import 'package:coupon_go/screens/account.dart';
@@ -77,10 +78,10 @@ void main() {
     await tester.pumpWidget(MaterialApp(home: Scaffold(body: WalletScreen(api: api, onShowQr: (_) async {}))));
     await tester.pumpAndSettle();
     expect(find.textContaining('套餐券 ×1'), findsOneWidget);
-    await tester.tap(find.text('退款'));
+    await tester.tap(find.byTooltip('申請退款'));
     await tester.pumpAndSettle();
     expect(find.textContaining('訂單共 2 份'), findsOneWidget);
-    expect(find.textContaining('整單實付 HK\$100.00'), findsOneWidget);
+    expect(find.textContaining(publicTrial ? '訂單未扣款' : '整單實付 HK\$100.00'), findsOneWidget);
     expect(find.textContaining('整筆訂單及其所有券'), findsOneWidget);
     await tester.tap(find.text('確認退款'));
     await tester.pumpAndSettle();
@@ -92,7 +93,7 @@ void main() {
     final api = ContractApi(refundable: false, needsReview: true);
     await tester.pumpWidget(MaterialApp(home: Scaffold(body: WalletScreen(api: api, onShowQr: (_) async {}))));
     await tester.pumpAndSettle();
-    expect(find.text('退款'), findsNothing);
+    expect(find.byTooltip('申請退款'), findsNothing);
     expect(find.textContaining('券資料待核對'), findsOneWidget);
     expect(tester.widget<ElevatedButton>(find.widgetWithText(ElevatedButton, '出示')).onPressed, isNull);
     await tester.pumpWidget(MaterialApp(home: OrderDetailScreen(api: api, orderId: 13)));
@@ -104,9 +105,9 @@ void main() {
     final api = ContractApi(paidCoupon: true);
     await tester.pumpWidget(MaterialApp(home: Scaffold(body: WalletScreen(api: api, onShowQr: (_) async {}))));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('退款'));
+    await tester.tap(find.byTooltip('申請退款'));
     await tester.pumpAndSettle();
-    expect(find.textContaining('整單實付 HK\$100.00'), findsOneWidget);
+    expect(find.textContaining(publicTrial ? '訂單未扣款' : '整單實付 HK\$100.00'), findsOneWidget);
     await tester.tap(find.text('確認退款'));
     await tester.pumpAndSettle();
     expect(api.refundedOrder, 13);

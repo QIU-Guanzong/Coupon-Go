@@ -3,7 +3,6 @@ import 'package:geolocator/geolocator.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../api_client.dart';
-import '../feature_flags.dart';
 import '../language.dart';
 import '../models.dart';
 import '../theme.dart';
@@ -173,18 +172,13 @@ class _NearbyScreenState extends State<NearbyScreen> {
   }
 
   Future<void> _navigate(Shop shop) async {
-    if (publicPreview) {
-      showCgToast(context, context.tr('此商戶未提供導航資料。',
-          'Directions are unavailable for this shop.'));
-      return;
-    }
     final url = 'https://www.google.com/maps/dir/?api=1'
         '&destination=${shop.latitude},${shop.longitude}';
     final uri = Uri.parse(url);
     if (await canLaunchUrl(uri)) {
       await launchUrl(uri, mode: LaunchMode.externalApplication);
     } else if (mounted) {
-      showCgToast(context, '無法開啟 Google Maps');
+      showCgToast(context, context.tr('未能開啟地圖', 'Could not open the map'));
     }
   }
 

@@ -94,7 +94,7 @@ void main() {
             onRoleChangeFailed: () {}, onRoleChanged: (_) {}),
       ]))));
       await openTrialSelector(tester);
-      await tester.tap(find.text('示例顧客'));
+      await tester.tap(find.text('顧客'));
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 300));
       await tester.pump();

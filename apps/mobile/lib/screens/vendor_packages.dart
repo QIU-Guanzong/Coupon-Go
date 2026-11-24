@@ -4,7 +4,6 @@ import '../api_client.dart';
 import '../language.dart';
 import '../theme.dart';
 
-const _trialMode = bool.fromEnvironment('PUBLIC_TRIAL');
 
 /// Merchant package workspace. Server status is always the source of truth.
 class VendorPackagesScreen extends StatefulWidget {
@@ -138,16 +137,11 @@ class _VendorPackagesScreenState extends State<VendorPackagesScreen> {
                                             color: Theme.of(context)
                                                 .colorScheme
                                                 .onSurfaceVariant)),
-                                    if (_trialMode) ...[
-                                      const SizedBox(height: 12),
-                                      Text(t('體驗版可查看套餐，暫不支援建立、編輯或調整上架狀態。',
-                                          'You can view packages in the trial. Creating, editing and changing availability are unavailable.')),
-                                    ],
                                     const SizedBox(height: 16),
                                     Align(
                                         alignment: Alignment.centerLeft,
                                         child: FilledButton.icon(
-                                            onPressed: _shops.isEmpty || _trialMode
+                                            onPressed: _shops.isEmpty
                                                 ? null
                                                 : () => _edit(),
                                             icon: const Icon(Icons.add),
@@ -261,7 +255,7 @@ class _VendorPackagesScreenState extends State<VendorPackagesScreen> {
                   Wrap(spacing: 8, children: [
                     for (final entry in actions.entries)
                       TextButton(
-                          onPressed: _busyId != null || _trialMode
+                          onPressed: _busyId != null
                               ? null
                               : () => entry.key == 'edit'
                                   ? _edit(item)

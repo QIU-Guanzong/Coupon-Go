@@ -52,20 +52,20 @@ void main() {
     await tester.tap(find.text('Retry'));
     await tester.pumpAndSettle();
     expect(api.reads, 2);
-    await tester.tap(find.text('+852 2345 6789'));
+    if (publicTrial) {
+      expect(find.text('+852 2345 6789'), findsNothing);
+    } else {
+      await tester.tap(find.text('+852 2345 6789'));
+    }
     await tester.scrollUntilVisible(find.text('Central branch'), 100);
     await tester.tap(find.text('Central branch'));
     await tester.scrollUntilVisible(find.text('Address not listed'), 100);
     await tester.tap(find.text('Address not listed'));
     await tester.pumpAndSettle();
-    if (publicPreview) {
-      expect(uris, isEmpty);
-    } else {
-      expect(uris, hasLength(2));
-      expect(uris.first, Uri.parse('tel:+85223456789'));
-      expect(uris.last.host, 'www.google.com');
-      expect(uris.last.queryParameters['query'], '皇后大道中 7 號');
-    }
+    expect(uris, hasLength(publicTrial ? 1 : 2));
+    if (!publicTrial) expect(uris.first, Uri.parse('tel:+85223456789'));
+    expect(uris.last.host, 'www.google.com');
+    expect(uris.last.queryParameters['query'], '皇后大道中 7 號');
   });
 
   testWidgets('guest can open guide and about but cannot log out or delete',

@@ -63,6 +63,15 @@ Future<void> _tap(WidgetTester tester, String text) async {
 }
 
 void main() {
+  testWidgets('isolated identities do not expose real account deletion or logout',
+      (tester) async {
+    final api = _Api();
+    await _mount(tester, api);
+    expect(find.text('Delete account'), findsNothing);
+    expect(find.text('Log out'), findsNothing);
+    expect(api.deletes, 0);
+  }, skip: !publicTrial);
+
   testWidgets('delete entry follows log out for signed-in accounts, not guests',
       (tester) async {
     await _mount(tester, _Api());
@@ -71,7 +80,7 @@ void main() {
         greaterThan(tester.getTopLeft(find.text('Log out')).dy));
     await _mount(tester, _Api(loggedIn: false));
     expect(find.text('Delete account'), findsNothing);
-  });
+  }, skip: publicTrial);
 
   testWidgets('two explicit choices needed and cancelling does not submit',
       (tester) async {
@@ -89,7 +98,7 @@ void main() {
     expect(api.deletes, 1);
     expect(api.loggedIn, false);
     expect(logouts, 1);
-  });
+  }, skip: publicTrial);
 
   testWidgets('withdrawable cashback offers withdrawal and does not delete',
       (tester) async {
@@ -112,7 +121,7 @@ void main() {
     expect(page.minWithdrawHkd, 50);
     expect(page.dailyWithdrawLimitHkd, 500);
     expect(api.deletes, 0);
-  });
+  }, skip: publicTrial);
 
   testWidgets('below minimum and unavailable balances are not treated as zero',
       (tester) async {
@@ -130,7 +139,7 @@ void main() {
     await _tap(tester, 'Review cashback');
     expect(find.text('Cashback'), findsOneWidget);
     expect(api.deletes, 0);
-  });
+  }, skip: publicTrial);
 
   testWidgets('paid-voucher blocker offers refund or use and opens orders', (tester) async {
     final api = _Api()..deleteConflict = ApiException(
@@ -147,7 +156,7 @@ void main() {
     expect(find.text('My orders'), findsOneWidget);
     expect(api.loggedIn, isTrue);
     expect(api.deletes, 1);
-  });
+  }, skip: publicTrial);
 
   testWidgets('a failed confirmed request preserves the session', (tester) async {
     final api = _Api()..failDelete = true;
@@ -162,5 +171,5 @@ void main() {
     expect(api.loggedIn, true);
     expect(logouts, 0);
     expect(find.text('Delete account'), findsOneWidget);
-  });
+  }, skip: publicTrial);
 }

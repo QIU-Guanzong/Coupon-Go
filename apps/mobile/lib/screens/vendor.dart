@@ -7,7 +7,6 @@ import 'package:flutter/services.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 
 import '../api_client.dart';
-import '../feature_flags.dart' show publicPreview;
 import '../vendor_coupon_lifecycle.dart';
 import '../models.dart';
 import '../language.dart';
@@ -23,7 +22,6 @@ import 'scan_batch.dart';
 import 'merchant_branches.dart';
 import 'merchant_staff.dart';
 
-const _trialMode = bool.fromEnvironment('PUBLIC_TRIAL');
 
 /// Vendor home: usage summary and coupon-management entry.
 class VendorHomeScreen extends StatefulWidget {
@@ -198,8 +196,7 @@ class _VendorHomeScreenState extends State<VendorHomeScreen> {
     return receipt != null && receipt.$1 > read ? receipt.$2 : null;
   }
 
-  bool _canChangeCoupon(Coupon coupon) => !_trialMode &&
-      !publicPreview &&
+  bool _canChangeCoupon(Coupon coupon) =>
       widget.api.isLoggedIn &&
       coupon.id > 0 &&
       (widget.showAdmin || _shops.any((shop) =>
@@ -391,7 +388,9 @@ class _VendorHomeScreenState extends State<VendorHomeScreen> {
                     ),
                   ));
                 },
-                child: Text(context.tr('評價回覆（差評）', 'Reply to low-rated reviews')),
+                child: Text(const bool.fromEnvironment('PUBLIC_TRIAL')
+                    ? context.tr('顧客評價', 'Customer reviews')
+                    : context.tr('評價回覆（差評）', 'Reply to low-rated reviews')),
               ),
             const SizedBox(height: 8),
             if (widget.showAdmin)
@@ -435,9 +434,6 @@ class _VendorHomeScreenState extends State<VendorHomeScreen> {
                     child: Text(context.tr('重試', 'Retry'))),
               ],
             ],
-            if (_allows('can_manage_coupons') && _trialMode)
-              Text(context.tr('體驗版暫不支援修改優惠券的適用分店。',
-                  'Changing coupon branches is unavailable in the trial.')),
             if (_allows('can_manage_coupons'))
               ...shownCoupons.map((c) {
                 final status = _pendingStatus(c) ?? c.status;
@@ -467,7 +463,7 @@ class _VendorHomeScreenState extends State<VendorHomeScreen> {
                       IconButton(
                         tooltip: context.tr('編輯適用分店', 'Edit eligible branches'),
                         icon: const Icon(Icons.storefront_outlined),
-                        onPressed: _trialMode ? null : () => Navigator.of(context).push(MaterialPageRoute(
+                        onPressed: () => Navigator.of(context).push(MaterialPageRoute(
                           builder: (_) => CouponBranchEditScreen(api: widget.api, couponId: c.id,
                             shopId: c.shopId, couponName: c.name))),
                       ),
@@ -786,11 +782,6 @@ class _IssueCouponScreenState extends State<IssueCouponScreen> {
           child: ListView(
         padding: const EdgeInsets.all(CgTheme.pageInset),
         children: [
-          if (_trialMode) ...[
-            Text(context.tr('體驗版可填寫內容，暫不支援提交優惠券。',
-                'You can fill in coupon details in the trial, but submission is unavailable.')),
-            const SizedBox(height: 12),
-          ],
           if (_shopsError != null) ...[Text(_shopsError!), TextButton(onPressed: _loadShops, child: const Text('重試'))],
           if (_shops == null && _shopsError == null) const LinearProgressIndicator(),
           if (_shops != null && _shops!.isEmpty) const Text('此帳戶尚未有可管理的商店。'),
@@ -975,7 +966,7 @@ class _IssueCouponScreenState extends State<IssueCouponScreen> {
             child: Text('提交結果未確認，請返回券列表刷新核對，勿重複建立。'),
           ),
           ElevatedButton(
-            onPressed: _trialMode || _shopId == null || _branchIds == null || _submitting || _createUncertain ? null : () async {
+            onPressed: _shopId == null || _branchIds == null || _submitting || _createUncertain ? null : () async {
               final session = _session;
               if (_validatedLimit == null) {
                 showCgToast(context, context.tr(
