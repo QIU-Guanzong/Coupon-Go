@@ -27,7 +27,7 @@ class FakeTrialApi extends ApiClient {
       {Map<String, dynamic>? body, Map<String, String>? query}) async {
     if (fail) throw Exception('unavailable');
     roles.add(body!['role'] as String);
-    return {'access_token': 'example-token'};
+    return {'access_token': 'example-token', 'role': body['role'], 'mode': 'simulated'};
   }
 }
 
@@ -47,7 +47,9 @@ void main() {
       onRoleChanged: roles.add,
     ))));
     await openTrialSelector(tester);
-    expect(find.textContaining('付款為模擬'), findsOneWidget);
+    expect(find.text('商戶'), findsOneWidget);
+    expect(find.text('顧客'), findsOneWidget);
+    expect(find.textContaining('模擬'), findsNothing);
     await tester.tap(find.text('取消'));
     await tester.pumpAndSettle();
     expect(api.roles, isEmpty);
@@ -66,7 +68,7 @@ void main() {
       onRoleChanged: (_) => fail('should not activate a new role'),
     ))));
     await openTrialSelector(tester);
-    await tester.tap(find.text('示例商戶'));
+    await tester.tap(find.text('商戶'));
     await tester.pumpAndSettle();
     expect(restored, isTrue);
     expect(api.paymentAccessToken, 'old-admin');
@@ -87,14 +89,14 @@ void main() {
     ));
     expect(find.text('示例數據・模擬付款｜資料會重置'), findsNothing);
     await openTrialSelector(tester);
-    await tester.tap(find.text('示例顧客'));
+    await tester.tap(find.text('顧客'));
     await tester.pumpAndSettle();
     expect(api.roles, ['customer']);
     expect(selected, ['customer']);
     expect(api.isLoggedIn, isTrue);
     api.fail = true;
     await openTrialSelector(tester);
-    await tester.tap(find.text('示例商戶'));
+    await tester.tap(find.text('商戶'));
     await tester.pumpAndSettle();
     expect(find.text('切換失敗，請重試'), findsOneWidget);
     expect(selected, ['customer']);
@@ -115,7 +117,7 @@ void main() {
       onRoleChanged: (role) => events.add('show:$role'),
     ))));
     await openTrialSelector(tester);
-    await tester.tap(find.text('示例商戶'));
+    await tester.tap(find.text('商戶'));
     await tester.pump();
     await tester.pump();
     expect(events, ['remove-old-route']);
@@ -148,7 +150,7 @@ void main() {
     })));
     expect(api.overviewTokens, ['old-admin']);
     await openTrialSelector(tester);
-    await tester.tap(find.text('示例商戶'));
+    await tester.tap(find.text('商戶'));
     await tester.pumpAndSettle();
     expect(find.text('old admin overview'), findsNothing);
     expect(api.paymentAccessToken, 'example-token');
@@ -167,7 +169,7 @@ void main() {
       onRoleChangeFailed: () {}, onRoleChanged: (_) {},
     ))));
     await openTrialSelector(tester);
-    await tester.tap(find.text('示例商戶'));
+    await tester.tap(find.text('商戶'));
     await tester.pumpAndSettle();
     expect(removed, isFalse);
     expect(api.paymentAccessToken, 'old-admin');
@@ -186,15 +188,15 @@ void main() {
       home: const Scaffold(),
     ));
     await openTrialSelector(tester);
-    expect(find.text('示例商戶'), findsOneWidget);
+    expect(find.text('商戶'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('Q仔 explains the read-only recommendation boundary', (tester) async {
+  testWidgets('Q仔 has no read-only promotional banner', (tester) async {
     final language = AppLanguage();
     await tester.pumpWidget(LanguageScope(language: language,
       child: MaterialApp(home: QBotScreen(api: FakeTrialApi()))));
-    expect(find.textContaining('Q仔使用只讀示例'), findsOneWidget);
+    expect(find.textContaining('只讀示例'), findsNothing);
     language.dispose();
   }, skip: !const bool.fromEnvironment('PUBLIC_TRIAL'));
 }

@@ -60,7 +60,7 @@ void main() {
   testWidgets('consumer back returns the selected tab to home only once', (tester) async {
     final api = FakeApi();
     await showShell(tester, api);
-    await tester.tap(find.text('Q Wallet').last); await tester.pump();
+    await tester.tap(find.text('Me').last); await tester.pump();
     expect(currentIndex(tester), 4);
     await tester.tap(find.text('Collect').last); await tester.pump();
     expect(currentIndex(tester), 1);
@@ -72,7 +72,7 @@ void main() {
   testWidgets('an inner route and drawer close before returning the tab home', (tester) async {
     final api = FakeApi();
     await showShell(tester, api);
-    await tester.tap(find.text('Q Wallet').last); await tester.pump();
+    await tester.tap(find.text('Me').last); await tester.pump();
     final nav = Navigator.of(tester.element(find.byType(HomeShell)));
     nav.push(MaterialPageRoute<void>(builder: (_) => const Scaffold(body: Text('Inner detail'))));
     await tester.pump(const Duration(milliseconds: 500));
@@ -109,7 +109,7 @@ void main() {
       })),
     ));
     await tester.pump(); await tester.pump(const Duration(seconds: 1));
-    await tester.tap(find.text('Q Wallet').last); await tester.pump();
+    await tester.tap(find.text('Me').last); await tester.pump();
     expect(currentIndex(tester), 4);
     setParent(() => vendor = true); await tester.pump(); await tester.pump();
     expect(currentIndex(tester), 0);

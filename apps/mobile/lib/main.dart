@@ -7,7 +7,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart' show kIsWeb, LicenseRegistry, LicenseEntryWithLineBreaks;
 import 'package:flutter/services.dart' show Clipboard, ClipboardData, rootBundle;
 import 'package:flutter_localizations/flutter_localizations.dart';
-import 'package:url_launcher/url_launcher.dart';
 
 import 'api_client.dart';
 import 'feature_flags.dart';
@@ -19,9 +18,9 @@ import 'screens/admin_v2.dart';
 import 'screens/bargain.dart';
 import 'screens/cashback.dart';
 import 'screens/customer.dart';
-import 'screens/guest_auth.dart' show PreviewWelcomeScreen;
 import 'screens/nearby.dart';
 import 'screens/packages.dart';
+import 'screens/personal_activity.dart';
 import 'screens/reviews_admin.dart';
 import 'screens/vendor.dart';
 import 'theme.dart';
@@ -36,19 +35,21 @@ void main() {
 }
 
 class CouponGoApp extends StatefulWidget {
-  const CouponGoApp({super.key});
+  const CouponGoApp({super.key, this.api});
+
+  final ApiClient? api;
 
   @override
   State<CouponGoApp> createState() => _CouponGoAppState();
 }
 
 class _CouponGoAppState extends State<CouponGoApp> {
-  final _api = ApiClient();
+  late final _api = widget.api ?? ApiClient();
   final _language = AppLanguage();
   bool _ready = false;
   bool _authed = false;
   bool _vendorMode = false;
-  String? _trialError;
+  bool _startupFailed = false;
   bool _changingTrialRole = false;
   final _navigatorKey = GlobalKey<NavigatorState>();
   final _messengerKey = GlobalKey<ScaffoldMessengerState>();
@@ -62,17 +63,45 @@ class _CouponGoAppState extends State<CouponGoApp> {
   }
 
   Future<void> _initialise() async {
-    if (mounted) setState(() { _trialError = null; _ready = false; });
+    if (mounted) setState(() { _startupFailed = false; _ready = false; });
     try {
-      if (const bool.fromEnvironment('PUBLIC_TRIAL')) {
+      await _language.load();
+      if (publicTrial) {
         final session = await _api.post('/trial/session');
-        if (session['reset'] == true) await _api.clearToken();
+        if (session['mode'] != 'simulated' || session['reset'] is! bool) {
+          throw const FormatException();
+        }
+        if (session['reset'] == true) {
+          await _api.clearToken();
+          await BrowsingHistory.clearTrial();
+        }
+        await _api.loadToken();
+        String? activeRole;
+        if (_api.isLoggedIn) {
+          try {
+            final role = (await _api.get('/me'))['role'];
+            if (role == 'customer' || role == 'vendor') activeRole = role as String;
+          } on ApiException catch (e) {
+            if (e.status != 401 && e.status != 403) rethrow;
+          }
+        }
+        if (!mounted) return;
+        if (activeRole == null) {
+          final attempt = _api.beginTrialRoleRequest();
+          final token = await _api.requestTrialRole('customer');
+          final committed = await _api.commitTrialRole(token,
+              attempt: attempt, isCurrent: () => mounted && !_ready);
+          if (!committed || !mounted) return;
+          activeRole = 'customer';
+        }
+        _vendorMode = activeRole == 'vendor';
+      } else {
+        await _api.loadToken();
       }
-      await Future.wait([if (!publicPreview) _api.loadToken(), _language.load()]);
       unawaited(_api.appConfig.load());
       if (mounted) setState(() { _ready = true; _authed = _api.isLoggedIn; });
     } catch (_) {
-      if (mounted) setState(() { _trialError = '體驗暫時無法開始，請稍後重試。'; });
+      if (mounted) setState(() => _startupFailed = true);
     }
   }
 
@@ -94,11 +123,7 @@ class _CouponGoAppState extends State<CouponGoApp> {
       _authed = _api.isLoggedIn;
       _vendorMode = role == 'vendor';
     });
-    if (role == 'admin') {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted && !_changingTrialRole) _navigatorKey.currentState?.pushNamed('/admin');
-      });
-    }
+
   }
 
   void _sessionChanged() {
@@ -111,7 +136,7 @@ class _CouponGoAppState extends State<CouponGoApp> {
   @override
   void dispose() {
     _api.removeListener(_sessionChanged);
-    _api.dispose();
+    if (widget.api == null) _api.dispose();
     _language.dispose();
     super.dispose();
   }
@@ -119,10 +144,15 @@ class _CouponGoAppState extends State<CouponGoApp> {
   @override
   Widget build(BuildContext context) {
     if (!_ready) {
-      if (_trialError != null) {
+      if (_startupFailed) {
+        final english = _language.english;
         return MaterialApp(home: Scaffold(body: Center(child: Column(
-          mainAxisSize: MainAxisSize.min, children: [Text(_trialError!),
-          TextButton(onPressed: _initialise, child: const Text('重試'))]))));
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(english ? 'Could not connect. Please try again.' : '暫時無法連線，請重試。'),
+            TextButton(onPressed: _initialise, child: Text(english ? 'Retry' : '重試')),
+          ],
+        ))));
       }
       return const Directionality(textDirection: TextDirection.ltr, child: SplashScreen());
     }
@@ -133,7 +163,7 @@ class _CouponGoAppState extends State<CouponGoApp> {
       title: 'Coupon GO!',
       navigatorKey: _navigatorKey,
       scaffoldMessengerKey: _messengerKey,
-      builder: (context, child) => const bool.fromEnvironment('PUBLIC_TRIAL')
+      builder: (context, child) => publicTrial
           ? Column(verticalDirection: VerticalDirection.up, children: [
               Expanded(child: _changingTrialRole ? const SizedBox.shrink() : (child ?? const SizedBox.shrink())),
               TrialBanner(key: _trialRoleKey, api: _api, messengerKey: _messengerKey, onRoleChanging: _trialRoleChanging,
@@ -144,8 +174,11 @@ class _CouponGoAppState extends State<CouponGoApp> {
               api: _api,
               authed: _authed,
               vendorMode: _vendorMode,
-              onTrialRoleSwitch: const bool.fromEnvironment('PUBLIC_TRIAL')
+              onTrialRoleSwitch: publicTrial
                   ? (context) => _trialRoleKey.currentState?.open(context) : null,
+              onTrialRoleSelected: publicTrial
+                  ? (role) async => await _trialRoleKey.currentState?.select(role)
+                  : null,
               onAuthed: () => setState(() => _authed = true),
               onLogout: () => setState(() { _authed = false; _vendorMode = false; }),
               onToggleMode: () =>
@@ -153,10 +186,15 @@ class _CouponGoAppState extends State<CouponGoApp> {
             ),
       onGenerateRoute: (settings) {
         final route = settings.name ?? '';
-        if (publicPreview && (route == '/admin' || route.startsWith('/admin/') ||
-            route == '/vendor' || route.startsWith('/vendor/'))) {
-          return MaterialPageRoute(settings: settings,
-              builder: (_) => const PreviewWelcomeScreen());
+        // Public roles use the isolated customer/merchant gateway. Do not
+        // expose administrative surfaces by URL; the application is distinct.
+        if (publicTrial &&
+            ((route == '/admin' || route.startsWith('/admin/')) &&
+             route != '/admin/apply')) {
+          return MaterialPageRoute(settings: settings, builder: (c) => Scaffold(
+            appBar: AppBar(title: const Text('Coupon GO!')),
+            body: Center(child: Text(c.tr('找不到此頁面。', 'Page not found.'))),
+          ));
         }
         switch (settings.name) {
           case '/notifications':
@@ -191,8 +229,9 @@ class _CouponGoAppState extends State<CouponGoApp> {
             return MaterialPageRoute(
                 builder: (_) => PackageListScreen(api: _api));
           case '/orders':
+          case '/orders/refunds':
             return MaterialPageRoute(
-                builder: (_) => OrdersScreen(api: _api, guest: !_authed));
+                builder: (_) => OrdersScreen(api: _api, guest: !_authed, initialTab: route == '/orders/refunds' ? 3 : 0));
           case '/package-details':
             return MaterialPageRoute(
                 builder: (_) => PackageDetailScreen(
@@ -304,6 +343,7 @@ class HomeShell extends StatefulWidget {
     required this.onLogout,
     required this.onToggleMode,
     this.onTrialRoleSwitch,
+    this.onTrialRoleSelected,
   });
 
   final ApiClient api;
@@ -313,6 +353,7 @@ class HomeShell extends StatefulWidget {
   final VoidCallback onLogout;
   final VoidCallback onToggleMode;
   final ValueChanged<BuildContext>? onTrialRoleSwitch;
+  final Future<void> Function(String)? onTrialRoleSelected;
 
   @override
   State<HomeShell> createState() => _HomeShellState();
@@ -321,6 +362,7 @@ class HomeShell extends StatefulWidget {
 class _HomeShellState extends State<HomeShell> {
   int _index = 0, _vendorIndex = 0, _roleRequest = 0, _vendorTabRequest = 0;
   String? _role;
+  String? _browseKey;
   bool _canRedeem = false, _canAnalytics = false;
   final _visited = <int>{0};
   LocalHistoryEntry? _tabHistory;
@@ -374,12 +416,17 @@ class _HomeShellState extends State<HomeShell> {
     final request = ++_roleRequest;
     _vendorTabRequest++;
     if (widget.vendorMode && _vendorIndex != 0) _clearTabHistory();
-    setState(() { _role = null; _canRedeem = false; _canAnalytics = false; _vendorIndex = 0; });
+    setState(() { _role = null; _browseKey = null; _canRedeem = false; _canAnalytics = false; _vendorIndex = 0; });
     if (!widget.api.isLoggedIn) return;
     try {
-      final role = (await widget.api.get('/me'))['role'];
+      final profile = await widget.api.get('/me');
+      final role = profile['role'];
       if (mounted && request == _roleRequest) {
-        setState(() => _role = role is String ? role : null);
+        setState(() {
+          _role = role is String ? role : null;
+          _browseKey = profile['consent_required'] == true
+              ? null : BrowsingHistory.keyFor(profile['id']);
+        });
       }
     } catch (_) {
       // Leave privileged navigation hidden when role verification fails.
@@ -416,12 +463,53 @@ class _HomeShellState extends State<HomeShell> {
     }
   }
 
+  void _rememberVisit(RecentVisit visit) {
+    final key = _browseKey;
+    if (key == null || visit.id <= 0 || visit.name.trim().isEmpty ||
+        visit.name.length > 160) {
+      return;
+    }
+    unawaited(BrowsingHistory.remember(key, visit).catchError((Object _) {}));
+  }
+
+  Future<void> _openHistory(String key) async {
+    final api = widget.api, revision = widget.api.sessionRevision;
+    bool current() => mounted && widget.api == api &&
+        api.sessionRevision == revision && _browseKey == key;
+    await Navigator.of(context).push(MaterialPageRoute(
+      builder: (_) => BrowsingHistoryScreen(
+        storageKey: key,
+        api: api,
+        onOpen: (visit) async {
+          if (!current()) return;
+          if (visit.kind == VisitKind.coupon) {
+            final raw = (await api.couponDetails(visit.id))['coupon'];
+            if (!current()) return;
+            if (raw is! Map<String, dynamic>) throw const FormatException();
+            final coupon = Coupon.fromJson(raw);
+            if (coupon.id != visit.id) throw const FormatException();
+            await _openCoupon(coupon);
+          } else {
+            final raw = (await api.shopDetails(visit.id))['shop'];
+            if (!current()) return;
+            if (raw is! Map<String, dynamic>) throw const FormatException();
+            final shop = Shop.fromJson(raw);
+            if (shop.id != visit.id) throw const FormatException();
+            await _openShop(shop);
+          }
+        },
+      ),
+    ));
+  }
+
   Future<void> _openCoupon(Coupon c) async {
+    _rememberVisit(RecentVisit(VisitKind.coupon, c.id, c.name));
     await Navigator.of(context).push(MaterialPageRoute(
         builder: (_) => CouponDetailScreen(api: widget.api, coupon: c)));
   }
 
   Future<void> _openShop(Shop s) async {
+    _rememberVisit(RecentVisit(VisitKind.shop, s.id, s.name));
     await Navigator.of(context).push(MaterialPageRoute(
         builder: (_) => ShopDetailScreen(
             api: widget.api, shop: s, onOpenCoupon: _openCoupon)));
@@ -443,6 +531,11 @@ class _HomeShellState extends State<HomeShell> {
   }
 
   Future<void> _openCorporate() async {
+    final choose = widget.onTrialRoleSelected;
+    if (publicTrial && choose != null) {
+      await choose(widget.vendorMode ? 'customer' : 'vendor');
+      return;
+    }
     if (!widget.vendorMode) {
       if (widget.api.isLoggedIn) {
         try {
@@ -592,6 +685,28 @@ class _HomeShellState extends State<HomeShell> {
         active: _index == 4,
         guest: !widget.authed,
         api: widget.api,
+        showProfile: true,
+        onOpenFavorites: () => _selectCustomerTab(1),
+        onInviteFriends: _inviteFriends,
+        onOpenCorporate: _openCorporate,
+        onOpenMyReviews: !publicTrial || !widget.authed ? null : () {
+          Navigator.of(context).push(MaterialPageRoute(
+            builder: (_) => MyReviewsScreen(api: widget.api),
+          ));
+        },
+        onOpenBrowsingHistory: _browseKey == null ? null : () {
+          final key = _browseKey;
+          if (key != null) _openHistory(key);
+        },
+        onOpenRefunds: () => Navigator.of(context).pushNamed('/orders/refunds'),
+        onRequireSignIn: () async {
+          final choose = widget.onTrialRoleSelected;
+          if (publicTrial && choose != null) {
+            await choose('customer');
+          } else {
+            await _authenticate();
+          }
+        },
         onShowQr: (item) => Navigator.of(context).push(MaterialPageRoute(
             builder: (_) => QrShowScreen(api: widget.api, item: item))),
       ),
@@ -608,10 +723,7 @@ class _HomeShellState extends State<HomeShell> {
             _openDiscovery();
             return;
           }
-          if (mounted) {
-            setState(() { _visited.add(i); _index = i; });
-            _syncTabHistory();
-          }
+          _selectCustomerTab(i);
         },
         items: [
           BottomNavigationBarItem(icon: Image.asset('assets/images/ic_home.png',height: 24, width: 24), label: context.tr('主頁', 'Home')),
@@ -625,10 +737,16 @@ class _HomeShellState extends State<HomeShell> {
               icon: Image.asset('assets/images/ic_limited_time.png',height: 24, width: 24), label: context.tr('限時', 'Limited Time')),
           BottomNavigationBarItem(
               icon: Image.asset('assets/images/ic_wallet.png',height: 24, width: 24),
-              label: 'Q Wallet'),
+              label: context.tr('我的', 'Me')),
         ],
       ),
     );
+  }
+
+  void _selectCustomerTab(int index) {
+    if (!mounted) return;
+    setState(() { _visited.add(index); _index = index; });
+    _syncTabHistory();
   }
 
   Widget _vendorNavIcon(
@@ -695,7 +813,6 @@ class _HomeShellState extends State<HomeShell> {
   }
 
   bool get _showVendorNotifications =>
-      !publicPreview &&
       widget.vendorMode &&
       widget.authed &&
       widget.api.isLoggedIn &&
@@ -733,7 +850,7 @@ class _HomeShellState extends State<HomeShell> {
             ),
           ListTile(
             leading: const Icon(Icons.person, color: CgColors.primary),
-            title: Text(publicPreview ? context.tr('訪客瀏覽', 'Guest browsing') : widget.api.isLoggedIn ? context.tr('我的帳戶','Account') : context.tr('登錄','Login')),
+            title: Text(widget.api.isLoggedIn ? context.tr('我的帳戶','Account') : context.tr('登錄','Login')),
             onTap: () {
               Navigator.of(context).pop();
               if (!widget.api.isLoggedIn) {
@@ -806,6 +923,7 @@ class _HomeShellState extends State<HomeShell> {
               _openCorporate();
             },
           ),
+          if (!publicTrial || !widget.vendorMode)
           ListTile(
             leading:
                 const Icon(Icons.storefront, color: CgColors.primary),
@@ -815,7 +933,7 @@ class _HomeShellState extends State<HomeShell> {
               Navigator.of(context).pushNamed('/admin/apply');
             },
           ),
-          if (_role == 'admin' || _role == 'support')
+          if (!publicTrial && (_role == 'admin' || _role == 'support'))
             ListTile(
               leading: const Icon(Icons.admin_panel_settings,
                   color: CgColors.primary),
@@ -830,29 +948,6 @@ class _HomeShellState extends State<HomeShell> {
             ),
           ListTile(leading: const Icon(Icons.chat_outlined), title: const Text('Q仔'),
             onTap: () { Navigator.of(context).pop(); Navigator.of(context).pushNamed('/qbot'); }),
-          if (kIsWeb && publicPreview)
-            ListTile(
-              leading: const Icon(Icons.android, color: CgColors.primary),
-              title: Text(context.tr('下載 Android 版', 'Download Android app')),
-              onTap: () async {
-                const publicUrl = String.fromEnvironment('PUBLIC_WEB_URL');
-                final base = publicUrl.isNotEmpty
-                    ? Uri.parse(publicUrl)
-                    : Uri.base.resolve('/coupongo/');
-                final uri = base.resolve('downloads/coupon-go-demo.apk');
-                Navigator.of(context).pop();
-                try {
-                  if (await launchUrl(uri, webOnlyWindowName: '_self')) return;
-                } catch (_) {
-                  // The feedback below covers blocked or unsupported launches.
-                }
-                if (mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-                    content: Text(context.tr('暫時無法下載，請稍後再試。', 'Download unavailable. Please try again.')),
-                  ));
-                }
-              },
-            ),
           ListTile(
             leading: const Icon(Icons.help_outline, color: CgColors.primary),
             title: Text(context.tr('新手指南','Guide')),
@@ -964,9 +1059,7 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
               const SkeletonBox(height: 72),
             Text(context.tr('收藏優惠券', 'Saved coupons'), style: const TextStyle(fontWeight: FontWeight.bold)),
             if (!_loading && !_hasError && _coupons.isEmpty) Text(widget.guest
-                ? (publicPreview
-                    ? context.tr('暫時沒有收藏的優惠券。', 'No saved coupons yet.')
-                    : context.tr('登入後可查看收藏的優惠券。', 'Sign in to view saved coupons.'))
+                ? context.tr('登入後可查看收藏的優惠券。', 'Sign in to view saved coupons.')
                 : context.tr('暫時沒有收藏的優惠券。', 'No saved coupons yet.')),
             ..._coupons.map((c) => Card(
                   margin: const EdgeInsets.only(top: 8),
@@ -984,9 +1077,7 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
             const SizedBox(height: 16),
             Text(context.tr('收藏商店', 'Saved stores'), style: const TextStyle(fontWeight: FontWeight.bold)),
             if (!_loading && !_hasError && _shops.isEmpty) Text(widget.guest
-                ? (publicPreview
-                    ? context.tr('暫時沒有收藏的商店。', 'No saved stores yet.')
-                    : context.tr('登入後可查看收藏的商店。', 'Sign in to view saved shops.'))
+                ? context.tr('登入後可查看收藏的商店。', 'Sign in to view saved shops.')
                 : context.tr('暫時沒有收藏的商店。', 'No saved stores yet.')),
             ..._shops.map((s) => Card(
                   margin: const EdgeInsets.only(top: 8),

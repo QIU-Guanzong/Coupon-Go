@@ -87,11 +87,6 @@ def test_browser_sessions_are_independent_and_complete_business_journey(gateway)
         entries = client.get('/api/v3/merchant/connect/ledger', params={'shop_id': 1}, headers=vendor)
         if entries.status_code == 200:
             provider_ids.append(entries.json())
-        admin = role(client, 'admin')
-        settlement = client.post('/api/v3/admin/settlements/generate', headers=admin,
-            json={'shop_id': 1, 'period': datetime.now(timezone.utc).strftime('%Y-%m')})
-        assert settlement.status_code == 201, settlement.text
-        assert settlement.json()['settlement']['gross_amount'] == pytest.approx(298)
         revoked = client.post(f"/api/v3/redemptions/{scan.json()['redemption_id']}/revoke", headers=vendor)
         assert revoked.status_code == 200, revoked.text
         refund = client.post(f'/api/v3/orders/{order_id}/refund', headers=customer, json={})
@@ -210,3 +205,200 @@ def test_qbot_uses_only_the_existing_local_quota_gateway(gateway, monkeypatch):
     assert len(calls) == 5
     assert all(url == gateway.QBOT_URL and headers == {'Content-Type': 'application/json'}
                for url, headers, _ in calls)
+
+
+def trial_browser(gateway):
+    client = TestClient(gateway.app)
+    assert client.post('/api/v3/trial/session').status_code == 200
+    return client
+
+
+def test_review_and_point_exchange_share_only_current_browser(gateway):
+    a, b = trial_browser(gateway), trial_browser(gateway)
+    customer = role(a, 'customer')
+    other = role(b, 'customer')
+    vendor = role(a, 'vendor')
+    first_points = a.get('/api/v3/points', headers=customer).json()['balance']
+    claim = a.post('/api/v3/new-favorite-coupon', params={'coupon_id': 1}, headers=customer)
+    assert claim.status_code == 200, claim.text
+    item = claim.json()['wallet_item_id']
+    qr = a.post('/api/v3/store-scaned-qr-values', params={'wallet_item_id': item}, headers=customer)
+    assert qr.status_code == 200, qr.text
+    scanned = a.post('/api/v3/new-scan-coupon', headers=vendor, json={'code': qr.json()['code']})
+    assert scanned.status_code == 200, scanned.text
+    details = dict(wallet_item_id=item, taste=5, ambience=4, service=4, content='味道不錯')
+    assert a.post('/api/v3/reviews', headers=vendor, json=details).status_code == 403
+    assert a.post('/api/v3/reviews', headers=customer, json=dict(details, images=['file'])).status_code == 422
+    review = a.post('/api/v3/reviews', headers=customer, json=details)
+    assert review.status_code == 200, review.text
+    mine = '/api/v3/reviews/mine'
+    assert a.get(mine).status_code == 401
+    assert a.get(mine, headers=vendor).status_code == 403
+    reply = a.get(mine, headers=customer)
+    assert reply.headers['cache-control'] == 'no-store'
+    rows = reply.json()['reviews']
+    row = next(row for row in rows if row['id'] == review.json()['review']['id'])
+    assert row['content'] == '味道不錯'
+    assert row['created_at'].endswith('Z')
+    assert row['points_given'] is True
+    assert set(row) == {'id', 'shop_name', 'content', 'created_at', 'overall', 'reply_text', 'points_given'}
+    assert all(r['content'] != '味道不錯' for r in b.get(mine, headers=other).json()['reviews'])
+    assert b.get(mine, headers=customer).status_code == 401
+    before_exchange = review.json()['balance']
+    assert before_exchange == first_points + 45
+    assert a.post('/api/v3/reviews', headers=customer, json=details).status_code == 400
+    assert a.get('/api/v3/points/exchange-options').status_code == 401
+    assert a.get('/api/v3/points/exchange-options', headers=vendor).status_code == 403
+    options = a.get('/api/v3/points/exchange-options', headers=customer)
+    assert options.headers['cache-control'] == 'no-store'
+    data = options.json()
+    assert data['cost'] == 9
+    coupon = data['coupons'][0]
+    assert set(coupon) == {'id', 'coupon_name', 'shop_name'}
+    exchanged = a.post('/api/v3/points/exchange', headers=customer, params={'coupon_id': coupon['id']})
+    assert exchanged.status_code == 200, exchanged.text
+    assert exchanged.json()['balance'] == before_exchange - data['cost']
+    assert coupon not in a.get('/api/v3/points/exchange-options', headers=customer).json()['coupons']
+    assert coupon in b.get('/api/v3/points/exchange-options', headers=other).json()['coupons']
+    assert b.get('/api/v3/points/exchange-options', headers=customer).status_code == 401
+
+
+def test_bargain_start_only_and_no_other_browser_persona(gateway):
+    client = trial_browser(gateway)
+    customer = role(client, 'customer')
+    vendor = role(client, 'vendor')
+    path = '/api/v3/bargain-campaigns/1/start'
+    assert client.post(path, headers=vendor).status_code == 403
+    result = client.post(path, headers=customer)
+    assert result.status_code == 200, result.text
+    session = result.json()['session']
+    for action in ('help', 'purchase'):
+        assert client.post(f"/api/v3/bargain-sessions/{session['id']}/{action}",
+                           headers=customer).status_code == 403
+
+
+def test_application_only_fixed_shop_choices_and_no_admin_role(gateway):
+    client = trial_browser(gateway)
+    customer = role(client, 'customer')
+    vendor = role(client, 'vendor')
+    target = '/api/v3/admin/merchant-applications'
+    sample = {'shop_name': '海港小店'}
+    assert client.post(target, json=sample).status_code == 401
+    assert client.post(target, headers=vendor, json=sample).status_code == 403
+    for extra in ({'contact_name': 'Name'}, {'br_file_id': 1}, {'phone': '12345678'}):
+        assert client.post(target, headers=customer, json={**sample, **extra}).status_code == 422
+    assert client.post(target, headers=customer, json={'shop_name': 'Other'}).status_code == 422
+    result = client.post(target, headers=customer, json=sample)
+    assert result.status_code == 201, result.text
+    assert result.json()['application']['shop_name'] == sample['shop_name']
+    assert client.get('/api/v3/merchant-applications/mine', headers=customer).status_code == 200
+    assert client.get(target, headers=customer).status_code == 403
+    assert client.post('/api/v3/trial/role', json={'role': 'admin'}).status_code == 400
+    assert client.post('/api/v3/trial/role', json={'role': ['admin']}).status_code == 400
+    assert client.post('/api/v3/merchant/connect/payouts', headers=vendor, json={}).status_code == 403
+    assert client.get('/api/v3/merchant-files/1', headers=vendor).status_code == 403
+
+
+def test_vendor_coupon_lifecycle_and_package_operations(gateway):
+    client = trial_browser(gateway)
+    customer = role(client, 'customer')
+    vendor = role(client, 'vendor')
+    from datetime import timedelta
+    now = datetime.now(timezone.utc)
+    dates = {'valid_from': (now - timedelta(hours=1)).isoformat(),
+             'valid_to': (now + timedelta(days=7)).isoformat()}
+    coupon = {'shop_id': 1, 'coupon_type': 'Discount', 'coupon_name': '新優惠',
+              'cash_amount': 10, 'total': 12, **dates}
+    for endpoint in ('add-coupon-preview', 'coupon-previewed'):
+        route = '/api/v3/' + endpoint
+        assert client.post(route, json=coupon, headers=customer).status_code == 403
+        assert client.post(route, json={**coupon, 'image': '/uploads/a'}, headers=vendor).status_code == 422
+        result = client.post(route, json=coupon, headers=vendor)
+        assert result.status_code == 200, result.text
+    coupon_id = result.json()['coupon']['id']
+    assert client.post('/api/v3/assign-branches', headers=vendor, json={
+        'coupon_id': coupon_id, 'branch_ids': []}).status_code == 200
+    new = client.patch(f'/api/v3/vendor/coupons/{coupon_id}', headers=vendor, json={'name_en': 'Special'})
+    assert new.status_code == 200, new.text
+
+    payload = {'shop_id': 1, 'name': '二人套餐', 'original_price': 138,
+               'package_price': 100, 'stock_total': 5, **dates}
+    package = client.post('/api/v3/packages', headers=vendor, json=payload)
+    assert package.status_code == 201, package.text
+    pkg_id = package.json()['package']['id']
+    edit = client.patch(f'/api/v3/vendor/packages/{pkg_id}', headers=vendor, json={'name_en': 'New menu'})
+    assert edit.status_code == 200, edit.text
+    assert client.patch(f'/api/v3/vendor/packages/{pkg_id}', headers=vendor, content=b'x' * 16385).status_code == 413
+
+    # The template contains ordinary already-approved active listings.
+    # Make no admin exception to force a newly submitted product live.
+    for namespace in ('coupons', 'packages'):
+        for action in ('pause', 'resume', 'unlist', 'submit'):
+            route = f'/api/v3/vendor/{namespace}/1/{action}'
+            changed = client.post(route, headers=vendor)
+            assert changed.status_code == 200, changed.text
+        assert client.post(f'/api/v3/vendor/{namespace}/1/approve', headers=vendor, json={}).status_code == 403
+
+
+@pytest.mark.parametrize('state', ['paid', 'future', 'expired', 'sold-out', 'paused'])
+def test_exchange_options_and_write_reject_the_same_ineligible_coupon(gateway, state):
+    from datetime import timedelta
+
+    client = trial_browser(gateway)
+    customer = role(client, 'customer')
+    path = gateway._session_file(client.cookies.get(gateway.COOKIE))[1]
+    data = client.get('/api/v3/points/exchange-options', headers=customer).json()
+    coupon_id = data['coupons'][0]['id']
+    engine, db = gateway._db(path)
+    try:
+        coupon = db.get(gateway.models.Coupon, coupon_id)
+        today = datetime.now(timezone.utc).replace(tzinfo=None)
+        if state == 'paid':
+            coupon.sale_price = 1
+        elif state == 'future':
+            coupon.valid_from = today + timedelta(days=1)
+        elif state == 'expired':
+            coupon.valid_to = today - timedelta(days=1)
+        elif state == 'sold-out':
+            coupon.remaining = 0
+        else:
+            coupon.status = 'paused'
+        db.commit()
+    finally:
+        db.close()
+        engine.dispose()
+    before = client.get('/api/v3/points', headers=customer).json()['balance']
+    choices = client.get('/api/v3/points/exchange-options', headers=customer).json()
+    assert coupon_id not in {row['id'] for row in choices['coupons']}
+    assert client.post('/api/v3/points/exchange', params={'coupon_id': coupon_id},
+                       headers=customer).status_code == 400
+    assert client.get('/api/v3/points', headers=customer).json()['balance'] == before
+
+
+def test_trial_seed_labels_are_neutral_without_overwriting_a_custom_name(gateway):
+    client = trial_browser(gateway)
+    customer = role(client, 'customer')
+    vendor = role(client, 'vendor')
+    for headers, label in ((customer, '顧客'), (vendor, '商戶')):
+        profile = client.get('/api/v3/me', headers=headers).json()
+        assert profile['name'] == profile['registered_name'] == label
+    raw = client.cookies.get(gateway.COOKIE)
+    _, session_path = gateway._session_file(raw)
+    engine, db = gateway._db(session_path)
+    try:
+        db.query(gateway.models.User).filter_by(role='customer').one().name = 'Demo 用戶'
+        db.query(gateway.models.User).filter_by(role='vendor').one().name = '海邊店主'
+        db.commit()
+    finally:
+        db.close()
+        engine.dispose()
+    assert client.post('/api/v3/trial/session').json()['reset'] is False
+    assert client.cookies.get(gateway.COOKIE) == raw
+    for choice, label in (('customer', '顧客'), ('vendor', '海邊店主')):
+        profile = client.get('/api/v3/me', headers=role(client, choice)).json()
+        assert profile['name'] == profile['registered_name'] == label
+    source = gateway.sqlite3.connect(f'file:{gateway.TEMPLATE}?mode=ro', uri=True)
+    try:
+        assert source.execute("SELECT name FROM users WHERE role='customer'").fetchone() == ('Demo 用戶',)
+    finally:
+        source.close()

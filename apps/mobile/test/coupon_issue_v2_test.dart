@@ -6,7 +6,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-const _trialMode = bool.fromEnvironment('PUBLIC_TRIAL');
 const _priceKey = ValueKey('issue-sale-price');
 const _giftKey = ValueKey('issue-gift');
 const _startKey = ValueKey('issue-valid-from');
@@ -137,12 +136,6 @@ void main() {
     final api = _IssueApi();
     await _open(tester, api);
     await _chooseType(tester, '付費優惠券');
-    if (_trialMode) {
-      expect(tester.widget<ElevatedButton>(_reviewButton).onPressed, isNull);
-      expect(api.previews, isEmpty);
-      expect(api.creates, isEmpty);
-      return;
-    }
     final price = find.byKey(_priceKey);
     for (final invalid in ['', '0.00', '-2', '1.234', 'Infinity', '1e2', '100000000.00']) {
       await _fill(tester, price, invalid);
@@ -179,7 +172,6 @@ void main() {
     await _fill(tester, find.byKey(_priceKey), '88');
     await _chooseType(tester, '贈品優惠券');
     await _fill(tester, find.byKey(_giftKey), ' 咖啡一杯 ');
-    if (_trialMode) return;
     await _review(tester);
     expect(api.previews.single['coupon_type'], 'Gift');
     expect(api.previews.single['gift'], '咖啡一杯');
@@ -194,7 +186,6 @@ void main() {
     final api = _IssueApi();
     final now = DateTime.utc(2026, 12, 1, 17);
     await _open(tester, api, now: () => now);
-    if (_trialMode) return;
     final hongKongToday = now.add(const Duration(hours: 8));
     DateTime dayOffset(int days) =>
         DateTime(hongKongToday.year, hongKongToday.month, hongKongToday.day + days);
@@ -224,7 +215,6 @@ void main() {
     final api = _IssueApi();
     var now = DateTime.utc(2026, 12, 1, 17);
     await _open(tester, api, now: () => now);
-    if (_trialMode) return;
     await _start(tester, DateTime(2026, 12, 2), const TimeOfDay(hour: 2, minute: 0));
     await _review(tester);
     expect(api.previews.single['valid_from'], '2026-12-01T18:00:00.000Z');

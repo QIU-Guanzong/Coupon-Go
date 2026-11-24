@@ -86,6 +86,7 @@ class OnboardingApi extends ApiClient {
 }
 
 void main() {
+  group('production application flow', () {
   testWidgets('申請使用香港欄位並顯示服務端待審進度', (tester) async {
     final api = OnboardingApi();
     await tester.pumpWidget(
@@ -101,7 +102,7 @@ void main() {
     expect(api.submission?['shop_name'], '測試店舖');
     expect(api.submission?['br_number'], '12345678');
     expect(find.text('測試店舖 · 待審核'), findsOneWidget);
-    expect(find.text('收款帳戶：測試模擬狀態，並非正式開戶'), findsOneWidget);
+    expect(find.text('收款帳戶：未開通正式收款'), findsOneWidget);
   });
 
   testWidgets('測試合約明確標示並須同意後簽署指定版本', (tester) async {
@@ -112,7 +113,7 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('查看當前合約'));
     await tester.pumpAndSettle();
-    expect(find.text('測試合約，內容尚待確認，並非正式合約。'), findsOneWidget);
+    expect(find.text('合約內容尚待確認，未生效。'), findsOneWidget);
     await tester.dragUntilVisible(find.text('簽署此版本'),
         find.byType(Scrollable).first, const Offset(0, -300));
     await tester.pumpAndSettle();
@@ -149,7 +150,7 @@ void main() {
       MaterialApp(home: MerchantOnboardingScreen(api: api)),
     );
     await tester.pumpAndSettle();
-    expect(find.text('收款帳戶：Stripe 測試狀態，並非正式入駐'), findsOneWidget);
+    expect(find.text('收款帳戶：未開通正式收款'), findsOneWidget);
     api.source = 'future_state';
     await tester.tap(find.text('刷新進度'));
     await tester.pumpAndSettle();
@@ -170,14 +171,14 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    await tester.tap(find.text('開啟 Stripe 測試設定'));
+    await tester.tap(find.text('開啟收款設定'));
     await tester.pumpAndSettle();
     expect(opened, isFalse);
-    expect(find.text('收款帳戶：測試模擬狀態，並非正式開戶'), findsOneWidget);
-    expect(find.text('目前為本地模擬，沒有可開啟的正式收款頁面。'), findsOneWidget);
+    expect(find.text('收款帳戶：未開通正式收款'), findsOneWidget);
+    expect(find.text('未有可開啟的正式收款頁面。'), findsOneWidget);
     await tester.tap(find.text('刷新收款狀態'));
     await tester.pumpAndSettle();
-    expect(find.text('本地模擬已完成；不代表正式開戶。'), findsOneWidget);
+    expect(find.text('已完成收款設定，正式收款尚未開通。'), findsOneWidget);
   });
 
   testWidgets('Stripe 測試頁返回後同步實際能力', (tester) async {
@@ -195,12 +196,13 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    await tester.tap(find.text('開啟 Stripe 測試設定'));
+    await tester.tap(find.text('開啟收款設定'));
     await tester.pumpAndSettle();
     expect(opened?.host, 'connect.stripe.com');
     tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
     await tester.pumpAndSettle();
     expect(api.syncCalls, 1);
-    expect(find.text('Stripe 測試能力已開通；不代表正式開戶。'), findsOneWidget);
+    expect(find.text('已完成收款設定，正式收款尚未開通。'), findsOneWidget);
   });
+  }, skip: const bool.fromEnvironment('PUBLIC_TRIAL'));
 }

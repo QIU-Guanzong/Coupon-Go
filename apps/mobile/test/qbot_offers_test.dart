@@ -1,4 +1,3 @@
-import 'package:coupon_go/feature_flags.dart';
 import 'dart:async';
 
 import 'package:coupon_go/api_client.dart';
@@ -41,14 +40,14 @@ class _BotApi extends ApiClient {
     reads.add('coupon:$id');
     return waitingCoupon?.future ??
         {
-          'coupon': {'id': id, 'name': 'Tea coupon', 'shop_name': 'Central Tea'}
+          'coupon': {'id': id, 'name': 'Tea coupon', 'shop_name': 'Central Tea', 'remaining': 5}
         };
   }
 
   @override
   Future<Map<String, dynamic>> packageDetails(int id) async {
     reads.add('package:$id');
-    return {'package_id': id, 'name': 'Lunch package', 'shop_name': 'Bistro'};
+    return {'package_id': id, 'name': 'Lunch package', 'shop_name': 'Bistro', 'stock_left': 5, 'package_price': 25};
   }
 
   @override
@@ -168,7 +167,7 @@ void main() {
     expect(api.posts, ['/qbot/chat']);
   });
 
-  testWidgets('browse-only offer detail actions do not open login or send transactions',
+  testWidgets('opening in-stock offers shows available actions without sending writes',
       (tester) async {
     final api = _BotApi()..offers = [
       _offer('coupon', 11, 'Tea coupon'),
@@ -177,9 +176,9 @@ void main() {
     ];
     await _ask(tester, api);
     for (final item in [
-      ('coupon', 11, 'Browse only'),
-      ('package', 42, 'Browse only'),
-      ('bargain', 69, 'Browse only'),
+      ('coupon', 11, 'Claim now'),
+      ('package', 42, 'Buy now'),
+      ('bargain', 69, 'Start bargain'),
     ]) {
       await tester.ensureVisible(_tile(item.$1, item.$2));
       await tester.tap(_tile(item.$1, item.$2));
@@ -188,13 +187,13 @@ void main() {
       await tester.pumpAndSettle();
       final button = find.widgetWithText(ElevatedButton, item.$3);
       expect(button, findsOneWidget);
-      expect(tester.widget<ElevatedButton>(button).onPressed, isNull);
+      expect(tester.widget<ElevatedButton>(button).onPressed, isNotNull);
       expect(api.isLoggedIn, isFalse);
       expect(api.posts, ['/qbot/chat']);
       tester.state<NavigatorState>(find.byType(Navigator)).pop();
       await tester.pumpAndSettle();
     }
-  }, skip: !publicPreview);
+  });
 
   testWidgets('guest home opens Q仔 and reads an offer without a login wall',
       (tester) async {
@@ -219,15 +218,11 @@ void main() {
     ));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
-    if (publicPreview) {
-      expect(find.text('The shops and offers below are sample data for browsing only.'), findsOneWidget);
-    }
+    expect(find.text('The shops and offers below are sample data for browsing only.'), findsNothing);
     await tester.tap(find.text('Q仔'));
     await tester.pumpAndSettle();
     expect(find.byType(QBotScreen), findsOneWidget);
-    if (publicPreview) {
-      expect(find.text('The shops and offers below are sample data for browsing only.'), findsOneWidget);
-    }
+    expect(find.text('The shops and offers below are sample data for browsing only.'), findsNothing);
     await tester.enterText(find.byType(TextField), 'What can I browse?');
     await tester.pump();
     await tester.tap(find.byTooltip('Send'));

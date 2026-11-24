@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../api_client.dart';
+import '../language.dart';
 import '../theme.dart';
 import 'merchant_payout.dart';
 
@@ -23,11 +24,12 @@ String? _unresolved(Map? balance) {
   return '有 ${_count(transfers)} 筆轉帳$amountText及 ${_count(reversals)} 筆沖回待核對；待確認金額不代表已到帳。';
 }
 
-String _mode(Object? mode) => switch (mode) {
-      'simulated' => '當前收款環境：本地模擬',
-      'stripe_test' => '當前收款環境：Stripe 測試',
-      'unavailable' => '當前收款環境：尚未配置',
-      _ => '當前收款環境：待確認',
+const _trialMode = bool.fromEnvironment('PUBLIC_TRIAL');
+
+String _mode(BuildContext context, Object? mode) => switch (mode) {
+      'simulated' || 'stripe_test' => context.tr('未開通正式收款', 'Live payments are not enabled'),
+      'unavailable' => context.tr('未設定收款帳戶', 'Payments account not set up'),
+      _ => context.tr('收款狀態待確認', 'Payments status unconfirmed'),
     };
 
 class MerchantDashboardScreen extends StatefulWidget {
@@ -116,7 +118,7 @@ class _MerchantDashboardScreenState extends State<MerchantDashboardScreen> {
                     ],
                     if (hasData && !_loading && _error == null) ...[
                       const SizedBox(height: 14),
-                      Text(_mode(balance['connect_mode'])),
+                      Text(_mode(context, balance['connect_mode'])),
                       const Text('環境標示不代表歷史流水來源或款項已到帳。'),
                       const SizedBox(height: 12),
                       if (balance['balance_complete'] != true) ...[
@@ -339,7 +341,7 @@ class _MerchantShopDashboardScreenState
                       _error == null &&
                       _dashboard != null &&
                       _entries != null) ...[
-                    Align(
+                    if (!_trialMode) Align(
                         alignment: Alignment.centerLeft,
                         child: OutlinedButton.icon(
                             onPressed: () => Navigator.of(context).push(
@@ -350,11 +352,11 @@ class _MerchantShopDashboardScreenState
                                         shopName: widget.shopName))),
                             icon: const Icon(
                                 Icons.account_balance_wallet_outlined),
-                            label: const Text('Stripe 測試提款'))),
+                            label: Text(context.tr('提款紀錄', 'Withdrawal history')))),
                     const Text('店舖餘額',
                         style: TextStyle(
                             fontSize: 22, fontWeight: FontWeight.bold)),
-                    Text(_mode(_balance?['connect_mode'])),
+                    Text(_mode(context, _balance?['connect_mode'])),
                     if (_balance?['balance_complete'] != true)
                       Text(_balance?['balance_complete'] == false
                           ? '有 ${_count(_balance?['legacy_untracked_redemptions'])} 筆歷史核銷待核對，金額僅包含已接入流水。'

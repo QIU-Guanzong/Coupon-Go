@@ -6,7 +6,6 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../api_client.dart';
-import '../feature_flags.dart';
 import '../language.dart';
 import 'discovery.dart';
 import 'guest_auth.dart' show guestLoginPrompt;
@@ -220,9 +219,7 @@ class _HomeScreenState extends State<HomeScreen> {
             actions: [
               Tooltip(
                 key: _qbotHint,
-                message: publicPreview
-                    ? context.tr('找優惠、問 Q仔。', 'Ask Q仔 about offers.')
-                    : context.tr('找優惠、查積分，問 Q仔。', 'Ask Q仔 for offers or points.'),
+                message: context.tr('找優惠、問 Q仔。', 'Ask Q仔 about offers.'),
                 triggerMode: TooltipTriggerMode.manual,
                 preferBelow: true,
                 excludeFromSemantics: true,
@@ -277,22 +274,6 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
             ),
           ),
-          if (publicPreview)
-            SliverToBoxAdapter(
-              child: Container(
-                width: double.infinity,
-                color: CgColors.noticeBg,
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-                child: Row(children: [
-                  const Icon(Icons.info_outline, size: 18, color: CgColors.noticeIcon),
-                  const SizedBox(width: 8),
-                  Expanded(child: Text(
-                    context.tr('以下商戶及優惠為範例資料，僅供瀏覽。', 'The shops and offers below are sample data for browsing only.'),
-                    style: const TextStyle(color: CgColors.noticeText, fontSize: 13),
-                  )),
-                ]),
-              ),
-            ),
           if (_loading)
             const SliverToBoxAdapter(
               child: Padding(
@@ -1026,8 +1007,7 @@ class _CouponDetailScreenState extends State<CouponDetailScreen> {
       bottomNavigationBar: Padding(
         padding: const EdgeInsets.all(16),
         child: ElevatedButton(
-          onPressed: publicPreview ||
-                  (!c.isPaid && _claimed) || _claiming || (c.isPaid && remaining <= 0) ||
+          onPressed: (!c.isPaid && _claimed) || _claiming || (c.isPaid && remaining <= 0) ||
                   (c.isPaid && (c.salePrice == null || c.salePrice! <= 0))
               ? null
               : () async {
@@ -1074,9 +1054,7 @@ class _CouponDetailScreenState extends State<CouponDetailScreen> {
                     if (mounted) setState(() => _claiming = false);
                   }
                 },
-          child: Text(publicPreview
-              ? context.tr('只供瀏覽', 'Browse only')
-              : c.isPaid && remaining <= 0
+          child: Text(c.isPaid && remaining <= 0
               ? context.tr('已售罄', 'Sold out')
               : c.isPaid && (c.salePrice == null || c.salePrice! <= 0)
               ? context.tr('價格暫不可用', 'Price unavailable')
@@ -1116,11 +1094,6 @@ class _ShopDetailScreenState extends State<ShopDetailScreen> {
   }
 
   Future<void> _launch(Uri uri) async {
-    if (publicPreview) {
-      showCgToast(context, context.tr('此商戶未提供聯絡及導航資料。',
-          'Contact and directions are unavailable for this shop.'));
-      return;
-    }
     try {
       final launched = await (widget.launchExternal?.call(uri) ??
           launchUrl(uri, mode: LaunchMode.externalApplication));
@@ -1187,7 +1160,7 @@ class _ShopDetailScreenState extends State<ShopDetailScreen> {
                   style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
               Text('${shop.areaName} · ${shop.categoryName}'),
               if (shop.address.isNotEmpty) Text(shop.address),
-              if (phone.trim().isNotEmpty)
+              if (!const bool.fromEnvironment('PUBLIC_TRIAL') && phone.trim().isNotEmpty)
                 ListTile(
                   contentPadding: EdgeInsets.zero,
                   leading: const Icon(Icons.call_outlined),

@@ -37,6 +37,7 @@ if os.environ.get('REDIS_URL'):
 from app import config, connect_gateway, connect_service, models, security
 from app.database import get_db
 from app.main import app as backend
+from app.models_line_b import Review
 
 ROOT = Path(os.environ['TRIAL_STATE_DIR']).resolve()
 TEMPLATE = ROOT / 'template.db'
@@ -106,6 +107,12 @@ QBOT_URL = os.environ.get('TRIAL_QBOT_PROXY_URL', '')
 if QBOT_URL and QBOT_URL != 'http://127.0.0.1:18760/api/v3/qbot/chat':
     raise RuntimeError('trial Q仔 must use the existing local quota gateway')
 CURRENT = ContextVar('coupon_trial_session', default=None)
+# Exact seed identities, not general name replacements. Keep the template and
+# native API untouched; normalize only the private copy in use by this browser.
+TRIAL_IDENTITIES = {
+    'customer': ('demo@coupon-go.example', 'Demo 用戶', '顧客'),
+    'vendor': ('vendor@coupon-go.example', 'Demo 商戶', '商戶'),
+}
 
 # The mock provider's idempotency store is process-wide. Namespace its keys
 # per isolated browser database, or identical ledger IDs cross-contaminate.
@@ -177,6 +184,9 @@ def _new_session():
             dest = sqlite3.connect(path)
             try:
                 source.backup(dest)
+                for role, (email, old_name, name) in TRIAL_IDENTITIES.items():
+                    dest.execute('UPDATE users SET name=? WHERE email=? AND role=? AND name=?',
+                                 (name, email, role, old_name))
                 created = dest.execute('SELECT created_at FROM trial_template_metadata').fetchone()[0]
                 shift = max(0, int(now) - int(created))
                 # Preserve each sample offer's original duration when the
@@ -216,9 +226,15 @@ def _trial_get_db(request: Request):
 
 backend.dependency_overrides[get_db] = _trial_get_db
 
-# Only endpoints required for browsing and the simulated customer/merchant/
-# settlement journey are reachable. Real registration, OTP, arbitrary upload,
-# webhook, account deletion, third-party identity and AI calls are unavailable.
+# Exact method/path matches; native API still owns object permissions.
+CUSTOMER_ROLE = (("POST", r'/api/v3/(?:reviews|points/exchange|admin/merchant-applications|bargain-campaigns/[0-9]+/start)'),)
+VENDOR_ROLE = (
+    ("POST", r'/api/v3/(?:add-coupon-preview|coupon-previewed|assign-branches|packages)'),
+    ("POST", r'/api/v3/vendor/(?:coupons|packages)/[0-9]+/(?:pause|resume|unlist|submit)'),
+    ("PATCH", r'/api/v3/vendor/(?:coupons|packages)/[0-9]+'),
+)
+ROLE_WRITES = tuple((verb, re.compile(path), role) for role, routes in (
+    ('customer', CUSTOMER_ROLE), ('vendor', VENDOR_ROLE)) for verb, path in routes)
 WRITE_PATHS = tuple(re.compile(p) for p in (
     r'/api/v3/auto-suggestion-new', r'/api/v3/delete-search-history',
     r'/api/v3/favorite-shop', r'/api/v3/favorite-coupon-all',
@@ -229,13 +245,67 @@ WRITE_PATHS = tuple(re.compile(p) for p in (
     r'/api/v3/packages/[0-9]+/purchase', r'/api/v3/coupons/[0-9]+/purchase',
     r'/api/v3/orders/[0-9]+/(?:demo-payment|confirm-payment|retry-payment|cancel|refund)',
     r'/api/v3/(?:packages|coupons)/[0-9]+/refund',
-    r'/api/v3/admin/settlements/generate',
-    r'/api/v3/admin/settlements/[0-9]+/(?:approve|dispute|resolve|pay|transfers)',
-    r'/api/v3/merchant/connect/payouts',
     r'/api/v3/notifications/(?:read-all|[0-9]+/read)',
 ))
 DENY_READ = re.compile(r'/api/v3/(?:_dev|dev|merchant-files|uploads|qbot)(?:/|$)')
 SETTLE_ACTION = re.compile(r'/api/v3/(?:new-scan-coupon(?:/batch)?|redemptions/[0-9]+/revoke|orders/[0-9]+/refund|packages/[0-9]+/refund|coupons/[0-9]+/refund)')
+EXCHANGE_OPTIONS = '/api/v3/points/exchange-options'
+MY_REVIEWS = '/api/v3/reviews/mine'
+APPLICATION = '/api/v3/admin/merchant-applications'
+APPLICATION_NAMES = frozenset({'海港小店', '山邊小館'})
+TEXT_REVIEW_KEYS = {'wallet_item_id', 'redemption_id', 'taste', 'ambience', 'service',
+                    'content', 'images', 'tags', 'claim_points'}
+
+
+def _exchange_rows(db, user_id):
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    acquired = (db.query(models.WalletItem.id).filter(
+        models.WalletItem.coupon_id == models.Coupon.id,
+        models.WalletItem.user_id == user_id).exists())
+    return (db.query(models.Coupon.id, models.Coupon.coupon_name, models.Shop.name)
+            .join(models.Shop, models.Shop.id == models.Coupon.shop_id)
+            .filter(models.Coupon.is_points_exchange.is_(True),
+                    (models.Coupon.sale_price.is_(None)) | (models.Coupon.sale_price == 0),
+                    models.Coupon.status == 'active', models.Coupon.remaining > 0,
+                    models.Coupon.valid_from <= now, models.Coupon.valid_to > now,
+                    ~acquired))
+
+
+def _exchange_options(path, user_id):
+    engine, db = _db(path)
+    try:
+        return [{'id': cid, 'coupon_name': name, 'shop_name': shop}
+                for cid, name, shop in _exchange_rows(db, user_id)
+                .order_by(models.Coupon.id).limit(100)]
+    finally:
+        db.close()
+        engine.dispose()
+
+
+def _exchange_available(path, user_id, coupon_id):
+    engine, db = _db(path)
+    try:
+        return _exchange_rows(db, user_id).filter(models.Coupon.id == coupon_id).first() is not None
+    finally:
+        db.close()
+        engine.dispose()
+
+
+def _my_reviews(path, user_id):
+    engine, db = _db(path)
+    try:
+        rows = (db.query(Review, models.Shop.name)
+                .join(models.Shop, models.Shop.id == Review.shop_id)
+                .filter(Review.user_id == user_id)
+                .order_by(Review.created_at.desc(), Review.id.desc()).limit(100))
+        return [{'id': review.id, 'shop_name': shop, 'content': review.content or '',
+                 'created_at': (review.created_at.isoformat() + 'Z' if review.created_at else None),
+                 'overall': review.overall, 'reply_text': review.reply_text or '',
+                 'points_given': bool(review.points_given)}
+                for review, shop in rows]
+    finally:
+        db.close()
+        engine.dispose()
 
 
 def _dispatch(path):
@@ -259,8 +329,8 @@ class TrialGateway:
         path, method = scope['path'], scope['method'].upper()
         origin = request.headers.get('origin')
         if origin and origin.rstrip('/') != PUBLIC_ORIGIN:
-            return await JSONResponse({'detail': '體驗來源不符'}, 403)(scope, receive, send)
-        if method == 'POST':
+            return await JSONResponse({'detail': '來源不符'}, 403)(scope, receive, send)
+        if method in ('POST', 'PATCH'):
             # Read a small bounded JSON body, including chunked requests.
             body = bytearray()
             while True:
@@ -288,7 +358,7 @@ class TrialGateway:
             if reset:
                 created = await asyncio.to_thread(_new_session)
                 if created is None:
-                    return await JSONResponse({'detail': '體驗人數已滿，請稍後再試'}, 503)(scope, receive, send)
+                    return await JSONResponse({'detail': '目前使用人數較多，請稍後再試'}, 503)(scope, receive, send)
                 raw, sid, session_path = created
             else:
                 sid, session_path = found
@@ -300,7 +370,7 @@ class TrialGateway:
                                 httponly=True, secure=COOKIE_SECURE, samesite='strict')
             return await response(scope, receive, send)
         if not found:
-            return await JSONResponse({'detail': '體驗已結束，請重新開始'}, 401)(scope, receive, send)
+            return await JSONResponse({'detail': '連線已逾時，請重新載入'}, 401)(scope, receive, send)
         sid, session_path = found
         if path == '/api/v3/qbot/chat' and method == 'POST':
             if not QBOT_URL:
@@ -327,39 +397,90 @@ class TrialGateway:
             try:
                 payload = await request.json()
                 role = payload.get('role') if isinstance(payload, dict) else None
+                if not isinstance(role, str):
+                    role = None
             except (ValueError, TypeError):
                 role = None
-            email = {'customer': 'demo@coupon-go.example',
-                     'vendor': 'vendor@coupon-go.example',
-                     'admin': 'admin@coupon-go.example'}.get(role)
-            if email is None:
-                return await JSONResponse({'detail': '請選擇體驗身份'}, 400)(scope, receive, send)
+            identity = TRIAL_IDENTITIES.get(role)
+            if identity is None:
+                return await JSONResponse({'detail': '請選擇身份'}, 400)(scope, receive, send)
+            email, old_name, name = identity
             def get_user():
                 engine, db = _db(session_path)
                 try:
                     user = db.query(models.User).filter_by(email=email, role=role, is_active=True).first()
+                    if user and user.name == old_name:
+                        user.name = name
+                        db.commit()
                     return user.id if user else None
                 finally:
                     db.close()
                     engine.dispose()
             user_id = await asyncio.to_thread(get_user)
             if user_id is None:
-                return await JSONResponse({'detail': '體驗身份暫不可用'}, 503)(scope, receive, send)
+                return await JSONResponse({'detail': '目前無法切換身份'}, 503)(scope, receive, send)
             claims = {'sub': str(user_id), 'role': role, 'trial': sid,
                       'exp': datetime.now(timezone.utc) + timedelta(seconds=TTL)}
             token = jwt.encode(claims, config.SECRET_KEY, algorithm=config.ALGORITHM)
             return await JSONResponse({'access_token': token, 'role': role, 'mode': 'simulated'})(scope, receive, send)
-        if not path.startswith('/api/v3/') or DENY_READ.match(path):
-            return await JSONResponse({'detail': '體驗版不提供此功能'}, 403)(scope, receive, send)
-        if method not in ('GET', 'HEAD') and not (method == 'POST' and any(p.fullmatch(path) for p in WRITE_PATHS)):
-            return await JSONResponse({'detail': '體驗版不提供此操作'}, 403)(scope, receive, send)
+        legacy_allowed = method == 'POST' and any(p.fullmatch(path) for p in WRITE_PATHS)
+        required_role = next((role for verb, pattern, role in ROLE_WRITES
+                              if method == verb and pattern.fullmatch(path)), None)
+        is_exchange_list = path == EXCHANGE_OPTIONS and method == 'GET'
+        is_my_reviews = path == MY_REVIEWS and method == 'GET'
+        if (not path.startswith('/api/v3/') or DENY_READ.match(path)
+                or (path.startswith('/api/v3/admin') and not (path == APPLICATION and method == 'POST'))
+                or (path == '/api/v3/merchant/connect/payouts' and method not in ('GET', 'HEAD'))):
+            return await JSONResponse({'detail': '此功能不可用'}, 403)(scope, receive, send)
+        if method not in ('GET', 'HEAD') and not (legacy_allowed or required_role):
+            return await JSONResponse({'detail': '此操作不可用'}, 403)(scope, receive, send)
         auth = request.headers.get('authorization', '')
+        payload = None
         if auth:
             scheme, _, token = auth.partition(' ')
             payload = security.decode_token(token) if scheme.lower() == 'bearer' else None
-            if not payload or payload.get('trial') != sid:
-                return await JSONResponse({'detail': '體驗身份已失效，請重新選擇'}, 401)(scope, receive, send)
-        if int(request.headers.get('content-length', '0') or 0) > 16384:
+            if not payload or payload.get('trial') != sid or payload.get('role') not in ('customer', 'vendor'):
+                return await JSONResponse({'detail': '身份已失效，請重新選擇'}, 401)(scope, receive, send)
+        if required_role or is_exchange_list or is_my_reviews:
+            if payload is None:
+                return await JSONResponse({'detail': '請選擇身份'}, 401)(scope, receive, send)
+            if payload.get('role') != (required_role or 'customer'):
+                return await JSONResponse({'detail': '目前身份無權執行此操作'}, 403)(scope, receive, send)
+        if is_my_reviews:
+            rows = await asyncio.to_thread(_my_reviews, session_path, int(payload['sub']))
+            return await JSONResponse({'reviews': rows}, headers={'Cache-Control': 'no-store'})(scope, receive, send)
+        if is_exchange_list:
+            coupons = await asyncio.to_thread(_exchange_options, session_path, int(payload['sub']))
+            return await JSONResponse({'cost': config.POINTS_EXCHANGE_COST, 'coupons': coupons},
+                                      headers={'Cache-Control': 'no-store'})(scope, receive, send)
+        if method == 'POST' and path == '/api/v3/points/exchange':
+            coupons = request.query_params.getlist('coupon_id')
+            if len(coupons) != 1 or not re.fullmatch(r'[0-9]{1,18}', coupons[0]):
+                return await JSONResponse({'detail': '請選擇優惠券'}, 422)(scope, receive, send)
+            if not await asyncio.to_thread(_exchange_available, session_path, int(payload['sub']), int(coupons[0])):
+                return await JSONResponse({'detail': '此優惠券現時不可兌換'}, 400)(scope, receive, send)
+        if (method == 'POST' and path in (APPLICATION, '/api/v3/reviews', '/api/v3/add-coupon-preview',
+                                         '/api/v3/coupon-previewed')
+                or method == 'PATCH' and re.fullmatch(r'/api/v3/vendor/coupons/[0-9]+', path)):
+            try:
+                form = json.loads(body)
+            except (UnicodeDecodeError, ValueError):
+                form = None
+            valid = isinstance(form, dict)
+            if valid and path == APPLICATION:
+                name = form.get('shop_name')
+                valid = (set(form) == {'shop_name'} and isinstance(name, str) and name in APPLICATION_NAMES)
+            elif valid and path == '/api/v3/reviews':
+                valid = set(form) <= TEXT_REVIEW_KEYS and ('images' not in form or form['images'] == [])
+            elif valid:
+                valid = form.get('image') in ('', None)
+            if not valid:
+                return await JSONResponse({'detail': '請只提交此頁提供的資料'}, 422)(scope, receive, send)
+        try:
+            length = int(request.headers.get('content-length', '0') or 0)
+        except ValueError:
+            return await JSONResponse({'detail': '內容格式不正確'}, 400)(scope, receive, send)
+        if length > 16384:
             return await JSONResponse({'detail': '內容過長'}, 413)(scope, receive, send)
         with LOCK:
             IN_FLIGHT[sid] = IN_FLIGHT.get(sid, 0) + 1

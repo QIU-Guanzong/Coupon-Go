@@ -6,6 +6,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../api_client.dart';
 import '../theme.dart';
+import '../language.dart';
 
 /// Test-mode Connect payout. A durable client request id is saved before
 /// sending, and server-side unresolved operations are loaded on every visit.
@@ -177,14 +178,15 @@ class _MerchantPayoutScreenState extends State<MerchantPayoutScreen> {
           throw const FormatException('Could not update local request');
         }
       }
-      if (!_isCurrent(revision)) return;
+      if (!mounted || !_isCurrent(revision)) return;
+      final t = context.tr;
       setState(() {
         if (status == 'paid_out' || status == 'failed') _localRequest = null;
         _message = switch (status) {
-          'paid_out' => '測試提款已完成；不涉及真實款項。',
-          'failed' => '測試提款失敗，請核對後再試。',
-          'submitted' || 'processing' => '測試提款處理中，請稍後刷新狀態。',
-          _ => '提款結果待核對，請勿另建請求。',
+          'paid_out' => t('核對已完成，沒有轉移款項。', 'Verification complete. No funds were moved.'),
+          'failed' => t('未能完成提款核對，請重試。', 'Verification could not complete. Try again.'),
+          'submitted' || 'processing' => t('核對處理中，請稍後刷新狀態。', 'Verification in progress. Refresh the status shortly.'),
+          _ => t('結果待核對，請勿另建請求。', 'Verification pending. Do not start another request.'),
         };
       });
       await _load();
@@ -222,9 +224,12 @@ class _MerchantPayoutScreenState extends State<MerchantPayoutScreen> {
     final confirm = await showDialog<bool>(
         context: context,
         builder: (context) => AlertDialog(
-                title: const Text('確認測試提款'),
+                title: Text(context.tr('確認提款核對', 'Confirm payout verification')),
                 content: Text(
-                    '為 ${widget.shopName} 提交 HK\$$amount 的測試提款？此流程不涉及真實款項。'),
+                    context.tr(
+                      '${widget.shopName}：確認核對 HK\$$amount？不會轉移款項。',
+                      '${widget.shopName}: verify HK\$$amount? No funds will be moved.',
+                    )),
                 actions: [
                   TextButton(
                       onPressed: () => Navigator.pop(context, false),
@@ -341,7 +346,7 @@ class _MerchantPayoutScreenState extends State<MerchantPayoutScreen> {
     final available = _balance?['available'];
     return Scaffold(
         appBar: AppBar(
-            title: const Text('Stripe 測試提款'),
+            title: Text(context.tr('提款核對', 'Payout verification')),
             backgroundColor: CgColors.vendorGold),
         body: Center(
             child: ConstrainedBox(
@@ -351,7 +356,8 @@ class _MerchantPayoutScreenState extends State<MerchantPayoutScreen> {
                       style: const TextStyle(
                           fontSize: 23, fontWeight: FontWeight.bold)),
                   const SizedBox(height: 8),
-                  const Text('目前只支援測試或模擬，不會進行正式提款；歷史流水須按實際記錄核對。'),
+                  Text(context.tr('此流程不會轉移款項。款項狀態以實際流水為準。',
+                      'This process does not move funds. Check the ledger for the actual status.')),
                   if (_loading) const LinearProgressIndicator(),
                   if (_error != null) ...[
                     const SizedBox(height: 12),
@@ -371,10 +377,9 @@ class _MerchantPayoutScreenState extends State<MerchantPayoutScreen> {
                   if (!_loading && _error == null && _balance != null) ...[
                     const SizedBox(height: 16),
                     Text(switch (mode) {
-                      'simulated' => '本地模擬環境',
-                      'stripe_test' => 'Stripe 測試環境',
-                      'unavailable' => '收款服務尚未配置',
-                      _ => '收款環境待確認',
+                      'simulated' || 'stripe_test' => context.tr('核對渠道已連接', 'Verification channel connected'),
+                      'unavailable' => context.tr('未連接收款渠道', 'No payout channel connected'),
+                      _ => context.tr('收款狀態待確認', 'Payout status unconfirmed'),
                     }),
                     Text(
                         '已接入流水可提取：${available is num ? 'HK\$${available.toStringAsFixed(2)}' : '—'}'),
@@ -427,7 +432,7 @@ class _MerchantPayoutScreenState extends State<MerchantPayoutScreen> {
                       const SizedBox(height: 14),
                       FilledButton(
                           onPressed: ready && !_busy ? _create : null,
-                          child: const Text('提交測試提款')),
+                          child: Text(context.tr('提交提款核對', 'Submit payout verification'))),
                       if (!ready) const Text('收款帳戶尚未就緒，暫不能提款。'),
                     ],
                     const SizedBox(height: 12),

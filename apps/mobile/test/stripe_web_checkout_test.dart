@@ -75,10 +75,10 @@ void main() {
       expect(fps.enabled, isFalse);
       await tester.drag(find.byType(ListView).first, const Offset(0, -350));
       await tester.pumpAndSettle();
-      if (options['mode'] == 'unavailable') {
-        expect(find.text('付款暫未開放，點此重新載入'), findsOneWidget);
+      if (options['mode'] == 'unavailable' || const bool.fromEnvironment('PUBLIC_TRIAL')) {
+        expect(find.text('未能載入付款方式，請重試。'), findsOneWidget);
       } else {
-        expect(find.text('目前為 Stripe 測試付款，不會產生真實扣款。'), findsOneWidget);
+        expect(find.text('確認訂單不會扣款。'), findsOneWidget);
       }
       await tester.pumpWidget(const SizedBox());
       api.dispose();

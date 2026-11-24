@@ -241,17 +241,15 @@ class _MerchantStaffScreenState extends State<MerchantStaffScreen> {
                         physics: const AlwaysScrollableScrollPhysics(),
                         padding: const EdgeInsets.all(16),
                         children: [
-                          const Text('邀請已註冊的用戶，並按職責設定店舖權限。'),
-                          if (_trialMode) ...[
+                          if (!_trialMode) ...[
+                            Text(context.tr('邀請已註冊的用戶，並按職責設定店舖權限。',
+                                'Invite registered users and choose their shop permissions.')),
                             const SizedBox(height: 12),
-                            Text(context.tr('體驗版可查看店員，暫不支援邀請或修改角色。',
-                                'You can view staff in the trial. Invitations and role changes are unavailable.')),
+                            FilledButton.icon(
+                                onPressed: _busy ? null : _invite,
+                                icon: const Icon(Icons.person_add_alt),
+                                label: Text(context.tr('邀請店員', 'Invite staff'))),
                           ],
-                          const SizedBox(height: 12),
-                          FilledButton.icon(
-                              onPressed: _busy || _trialMode ? null : _invite,
-                              icon: const Icon(Icons.person_add_alt),
-                              label: const Text('邀請店員')),
                           const SizedBox(height: 12),
                           if (_members.isEmpty)
                             const Padding(
@@ -267,8 +265,8 @@ class _MerchantStaffScreenState extends State<MerchantStaffScreen> {
                               subtitle: Text(
                                   '${member['email'] ?? ''}\n${_roles[member['role']] ?? member['role']} · ${member['status'] == 'active' ? '已加入' : '待確認'}'),
                               isThreeLine: true,
-                              trailing: PopupMenuButton<String>(
-                                  enabled: !_busy && !_trialMode,
+                              trailing: _trialMode ? null : PopupMenuButton<String>(
+                                  enabled: !_busy,
                                   onSelected: (action) {
                                     if (action == 'role') _changeRole(member);
                                     if (action == 'remove') _remove(member);

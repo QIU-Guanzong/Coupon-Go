@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 
 import '../api_client.dart';
 import '../models.dart';
+import '../language.dart';
 import '../theme.dart';
 import '../widgets/widgets.dart';
 import 'reviews_admin.dart';
@@ -632,8 +633,9 @@ class _OrdersAdminScreenState extends State<OrdersAdminScreen> {
             if (o.refundStatus == 'refunded')
               Padding(
                 padding: const EdgeInsets.only(top: 8),
-                child: Text(o.demoPayment ? '模擬退款不涉及真實資金。'
-                    : '退款已發起，實際到賬時間視支付機構而定。',
+                child: Text(o.demoPayment
+                    ? context.tr('訂單未扣款，沒有款項退回。', 'This order was not charged. No funds were returned.')
+                    : context.tr('退款已發起，實際到賬時間視支付機構而定。', 'Refund initiated. Arrival time depends on the payment provider.'),
                     style: const TextStyle(color: CgColors.textSecondary)),
               ),
             const SizedBox(height: 12),

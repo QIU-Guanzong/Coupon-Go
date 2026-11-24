@@ -1105,3 +1105,21 @@ subtitle, has_branch: 0|1}], keyword}`（券與商户各最多 5 條）。
 | 出示頁二維碼倒計時與換碼 | 已寫清 | `expires_in_seconds=900`；到期重新調 `POST /store-scaned-qr-values` 換碼 |
 | 商户返現比例 X% | **未確認** | 無接口返回該字段；服務端默認線下比例 5% 未經接口暴露，商户詳情頁暫不顯示，待後端補字段 |
 | 提現 `failed` 的標記接口 | **未確認** | 無公開接口可把提現標記為失敗；`failure_reason` 由運營側服務端函數寫入，客戶端只讀 |
+
+### 公共網站隔離會話（不適用正式 API）
+
+在獨立的 `/coupongo-trial/api/v3` 網關建立瀏覽器會話及顧客／商戶身份後，
+顧客可用 `GET /points/exchange-options` 取得
+`{"cost":9,"coupons":[{"id":123,"coupon_name":"…","shop_name":"…"}]}`。
+此處的積分成本讀取服務端配置，列表只含目前可兌換的免費券、不含已持有或已失效的券。
+發送 `POST /points/exchange?coupon_id=123` 前仍會再次核對券狀態與身份；
+餘額以正式既有積分規則核對，所產生的紀錄僅存在該瀏覽器的獨立資料庫。
+
+此網關的 `POST /reviews` 只接受文字評價，必須是同一身份已核銷的券。
+`GET /reviews/mine` 按時間倒序返回當前顧客自己的最近 100 筆評價，
+每筆含 `id / shop_name / content / created_at / overall / reply_text / points_given`，
+不返回媒體、付款資料或身份資料。
+`POST /admin/merchant-applications` 僅為顧客身份的入駐申請入口，接受
+`{"shop_name":"海港小店"}` 或 `{"shop_name":"山邊小館"}`，不接受個人聯絡
+資料、文件或身份號碼。其他後台操作、登入、上傳、開戶、付款集成及提款
+不可從此網關執行。顧客的訂單確認及退款只變更其隔離紀錄，不會扣款。

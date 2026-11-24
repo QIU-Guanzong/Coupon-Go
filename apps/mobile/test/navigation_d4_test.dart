@@ -150,15 +150,19 @@ void main() {
       tester.state<ScaffoldState>(outer).openDrawer();
       await tester.pumpAndSettle();
       expect(find.text('Administration'), findsNothing);
+      if (publicTrial) {
+        expect(find.text('Merchant application'), findsNothing);
+      } else {
       await tester.scrollUntilVisible(find.text('Merchant application'), 150,
           scrollable: find.descendant(
               of: find.byType(Drawer), matching: find.byType(Scrollable)));
       expect(find.text('Merchant application'), findsOneWidget);
+      }
       expect(find.text('Invite Friends'), findsNothing);
       api.pendingMe!.complete({'role': role, 'name': 'Tea House'});
       await tester.pumpAndSettle();
       expect(find.text('Administration'),
-          role == 'admin' ? findsOneWidget : findsNothing);
+          !publicTrial && role == 'admin' ? findsOneWidget : findsNothing);
       await tester.pumpWidget(const SizedBox());
     }
   });
@@ -240,12 +244,12 @@ void main() {
     final app = tester.widget<MaterialApp>(find.byType(MaterialApp));
     expect(app.onGenerateRoute!(const RouteSettings(name: '/cashback')),
         cashbackEnabled ? isA<MaterialPageRoute>() : isNull);
-  });
+  }, skip: publicTrial);
 
   testWidgets('unavailable social options are hidden', (tester) async {
     await tester.pumpWidget(_app(AuthScreen(api: _NavApi(), onAuthed: () {})));
     await tester.pumpAndSettle();
-    expect(find.text('Continue with Email account'), findsOneWidget);
+    expect(find.text('Continue with Email account'), publicTrial ? findsNothing : findsOneWidget);
     expect(find.textContaining('Google'), findsNothing);
     expect(find.textContaining('Facebook'), findsNothing);
   });

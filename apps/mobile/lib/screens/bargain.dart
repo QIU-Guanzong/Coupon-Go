@@ -4,12 +4,13 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../api_client.dart';
-import '../feature_flags.dart';
 import '../language.dart';
 import '../models.dart';
 import '../theme.dart';
 import '../widgets/widgets.dart';
 import 'account.dart';
+
+const _isolatedPublicSession = bool.fromEnvironment('PUBLIC_TRIAL');
 
 /// Bargain 2C screens (line E): list (§4.1) / campaign start (§4.2),
 /// my bargain (§4.3) + friend help (§4.4), group-formed result.
@@ -158,23 +159,25 @@ class _BargainListScreenState extends State<BargainListScreen> {
                                 ),
                               ),
                             ),
-                          const SliverToBoxAdapter(
+                          SliverToBoxAdapter(
                             child: Padding(
-                              padding: EdgeInsets.fromLTRB(16, 16, 16, 8),
+                              padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
                               child: Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
-                                  Text('砍價套餐',
-                                      style: TextStyle(
+                                  Text(context.tr('砍價套餐', 'Bargain offers'),
+                                      style: const TextStyle(
                                           fontWeight: FontWeight.bold,
                                           fontSize: 16)),
-                                  SizedBox(height: 4),
-                                  Text('分享助力砍價，越砍越便宜，數量有限，先到先得。',
-                                      style: TextStyle(color: Colors.grey)),
-                                  SizedBox(height: 4),
+                                  const SizedBox(height: 4),
+                                  Text(_isolatedPublicSession
+                                      ? context.tr('數量有限，先到先得。', 'Limited stock, first come first served.')
+                                      : context.tr('分享助力砍價，數量有限，先到先得。', 'Share a bargain to lower the price. Stock is limited.'),
+                                      style: const TextStyle(color: Colors.grey)),
+                                  const SizedBox(height: 4),
                                   Text(
-                                      '發起即鎖定 1 份庫存；預付及退款均為模擬，不涉及真實資金。',
-                                      style: TextStyle(
+                                      context.tr('發起後鎖定 1 份庫存，不會扣款。', 'Starting reserves one item. You will not be charged.'),
+                                      style: const TextStyle(
                                           color: Colors.grey, fontSize: 12)),
                                 ],
                               ),
@@ -435,7 +438,8 @@ class _BargainCampaignScreenState extends State<BargainCampaignScreen> {
           Text('已有 ${c.helperCount} 人在砍 · ${c.helperLimit} 人成團',
               style: const TextStyle(color: CgColors.textSecondary)),
           const SizedBox(height: 24),
-          Text('模擬預付 ${formatHkd(c.originalPrice)}，砍價差額按狀態處理',
+          Text(context.tr('預付金額為 ${formatHkd(c.originalPrice)}，差額按砍價結果處理。',
+              'The recorded prepayment is ${formatHkd(c.originalPrice)}. Any price difference depends on the bargain result.'),
               textAlign: TextAlign.center,
               style: const TextStyle(fontWeight: FontWeight.bold)),
           const SizedBox(height: 8),
@@ -447,13 +451,8 @@ class _BargainCampaignScreenState extends State<BargainCampaignScreen> {
                 backgroundColor: CgColors.orange,
                 foregroundColor: Colors.white,
               ),
-              onPressed: (publicPreview ||
-                      const bool.fromEnvironment('PUBLIC_TRIAL') || _busy || c.isSoldOut) ? null : _start,
-              child: Text(publicPreview
-                  ? context.tr('只供瀏覽', 'Browse only')
-                  : const bool.fromEnvironment('PUBLIC_TRIAL')
-                  ? context.tr('體驗版暫不支援發起', 'Not available in this trial')
-                  : _busy
+              onPressed: (_busy || c.isSoldOut) ? null : _start,
+              child: Text(_busy
                   ? context.tr('處理中…', 'Processing…')
                   : c.isSoldOut
                       ? context.tr('已售罄', 'Sold out')
@@ -461,9 +460,9 @@ class _BargainCampaignScreenState extends State<BargainCampaignScreen> {
             ),
           ),
           const SizedBox(height: 8),
-          const Text('預付及退款均為模擬，不涉及真實資金。',
+          Text(context.tr('此操作只更新訂單記錄，不會扣款。', 'This only updates the order record and will not charge you.'),
               textAlign: TextAlign.center,
-              style: TextStyle(color: CgColors.textSecondary, fontSize: 12)),
+              style: const TextStyle(color: CgColors.textSecondary, fontSize: 12)),
         ],
       ),
     );
@@ -647,8 +646,8 @@ class _BargainDetailScreenState extends State<BargainDetailScreen> {
       builder: (ctx) => AlertDialog(
         title: Text(context.tr('現在購買', 'Buy now')),
         content: Text(context.tr(
-            '以當前價 ${formatHkd(s.currentPrice)} 模擬結算。\n差價 ${formatHkd(refund)} 將模擬退款，不涉及真實資金。',
-            'Simulate checkout at ${formatHkd(s.currentPrice)}. The ${formatHkd(refund)} refund is simulated; no real money is involved.',
+            '按現價 ${formatHkd(s.currentPrice)} 確認。差價 ${formatHkd(refund)} 會反映在訂單記錄，不會扣款或返還款項。',
+            'Confirm at the current price of ${formatHkd(s.currentPrice)}. The ${formatHkd(refund)} difference will be recorded without a charge or money transfer.',
         )),
         actions: [
           TextButton(
@@ -821,7 +820,7 @@ class _BargainDetailScreenState extends State<BargainDetailScreen> {
                 lines: [
                   if (s.refunds.isNotEmpty)
                     ...s.refunds.map((r) => '${r.reasonText} ${formatHkd(r.amount)} · ${r.statusText}'),
-                  '模擬退款不涉及真實資金。',
+                  context.tr('退款只更新訂單記錄，不會退回款項。', 'A refund only updates the order record; no money is returned.'),
                 ],
               ),
             ],
@@ -832,7 +831,7 @@ class _BargainDetailScreenState extends State<BargainDetailScreen> {
                 title: '砍價已結束',
                 lines: [
                   ...s.refunds.map((r) => '${r.reasonText} ${formatHkd(r.amount)} · ${r.statusText}'),
-                  '模擬退款不涉及真實資金。',
+                  context.tr('退款只更新訂單記錄，不會退回款項。', 'A refund only updates the order record; no money is returned.'),
                 ],
               ),
               const SizedBox(height: 16),
@@ -845,7 +844,7 @@ class _BargainDetailScreenState extends State<BargainDetailScreen> {
                 ),
               ),
             ],
-            if (active) ...[
+            if (active && !_isolatedPublicSession) ...[
               const SizedBox(height: 16),
               // 发起人：分享为主；好友：帮忙砍一刀为主；归属未知时两者都显示。
               if (isOwner != false)
@@ -902,7 +901,9 @@ class _BargainDetailScreenState extends State<BargainDetailScreen> {
             if (s.helps.isEmpty)
               Padding(
                 padding: const EdgeInsets.only(top: 8),
-                child: Text(context.tr('分享給好友，每人幫你砍一刀。', 'Share with friends so each one can help lower the price.')),
+                child: Text(_isolatedPublicSession
+                    ? context.tr('暫無助力記錄。', 'No help activity yet.')
+                    : context.tr('分享給好友，每人幫你砍一刀。', 'Share with friends so each one can help lower the price.')),
               ),
             ...s.helps.map((hp) => ListTile(
                   contentPadding: EdgeInsets.zero,
@@ -1040,7 +1041,7 @@ class BargainResultScreen extends StatelessWidget {
                   leading:
                       const Icon(Icons.replay, color: CgColors.primary),
                   title: Text('差價 ${formatHkd(refundAmount)} · ${BargainRefund.fromJson(refund!).statusText}'),
-                  subtitle: const Text('模擬退款不涉及真實資金。'),
+                  subtitle: Text(context.tr('退款只更新訂單記錄，不會退回款項。', 'A refund only updates the order record; no money is returned.')),
                 ),
               ),
             const Spacer(),

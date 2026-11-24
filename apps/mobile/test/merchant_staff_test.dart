@@ -1,7 +1,6 @@
 import 'package:coupon_go/api_client.dart';
 import 'package:coupon_go/screens/merchant_staff.dart';
 import 'package:coupon_go/screens/guest_auth.dart';
-import 'package:coupon_go/feature_flags.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -96,7 +95,7 @@ void main() {
     await tester.tap(find.text('登錄').last);
     await tester.pumpAndSettle();
     expect(authed, isTrue);
-  }, skip: _trialMode || publicPreview); // These modes do not offer account login.
+  }, skip: _trialMode); // These modes do not offer account login.
   testWidgets('店主使用電郵與角色發送邀請', (tester) async {
     final api = StaffApi();
     await tester.pumpWidget(

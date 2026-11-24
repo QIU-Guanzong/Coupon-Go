@@ -85,7 +85,7 @@ void main() {
           unawaited(
               menu.currentState!.open(tester.element(find.byType(Scaffold))));
           await tester.pumpAndSettle();
-          await tester.tap(find.text('示例顧客'));
+          await tester.tap(find.text('顧客'));
           await tester.pumpAndSettle();
         }
         store.vendorWrite.complete();

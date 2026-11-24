@@ -9,6 +9,7 @@ class AppConfig {
     this.pointsClaim,
     this.pointsRedeem,
     this.pointsReview,
+    this.pointsExpireMonths,
     this.qrTtlSeconds,
     this.cashbackUnlockDays,
   });
@@ -23,12 +24,13 @@ class AppConfig {
       pointsClaim: rule('points_claim'),
       pointsRedeem: rule('points_redeem'),
       pointsReview: rule('points_review'),
+      pointsExpireMonths: rule('points_expire_months', allowZero: false),
       qrTtlSeconds: rule('qr_ttl_seconds', allowZero: false),
       cashbackUnlockDays: rule('cashback_unlock_days', allowZero: false),
     );
   }
 
-  final int? pointsClaim, pointsRedeem, pointsReview;
+  final int? pointsClaim, pointsRedeem, pointsReview, pointsExpireMonths;
   final int? qrTtlSeconds, cashbackUnlockDays;
 }
 
