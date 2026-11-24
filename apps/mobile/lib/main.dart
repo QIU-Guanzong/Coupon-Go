@@ -462,7 +462,7 @@ class _HomeShellState extends State<HomeShell> {
         });
       } catch (_) {
         if (mounted && session == widget.api.sessionRevision) {
-          showCgToast(context, '未能確認店舖權限，請重試。');
+          showCgToast(context, context.tr('未能確認店舖權限，請重試。', 'Could not verify shop permissions. Try again.'));
         }
         return;
       }
@@ -483,17 +483,17 @@ class _HomeShellState extends State<HomeShell> {
         final canAnalytics = values[1]['role'] == 'admin' || shops.any((shop) => shop is Map && shop['is_owner'] == true);
         setState(() { _canRedeem = canRedeem; _canAnalytics = canAnalytics; });
       } catch (_) {
-        if (mounted && session == widget.api.sessionRevision && request == _vendorTabRequest) showCgToast(context, '未能確認店舖權限，請重試。');
+        if (mounted && session == widget.api.sessionRevision && request == _vendorTabRequest) showCgToast(context, context.tr('未能確認店舖權限，請重試。', 'Could not verify shop permissions. Try again.'));
         return;
       }
     }
     if (!mounted || request != _vendorTabRequest) return;
     if (index == 1 && !_canRedeem) {
-      showCgToast(context, '你沒有店舖核銷權限。');
+      showCgToast(context, context.tr('你沒有店舖核銷權限。', 'You do not have permission to redeem coupons at this shop.'));
       return;
     }
     if (index == 2 && !_canAnalytics) {
-      showCgToast(context, '目前帳戶無法查看此數據。');
+      showCgToast(context, context.tr('目前帳戶無法查看此數據。', 'This account cannot view these figures.'));
       return;
     }
     setState(() => _vendorIndex = index);
@@ -625,6 +625,27 @@ class _HomeShellState extends State<HomeShell> {
     );
   }
 
+  Widget _vendorNavIcon(
+    String asset,
+    IconData fallback,
+    int index, {
+    bool preserveBrandColors = false,
+  }) {
+    final theme = Theme.of(context);
+    final color = _vendorIndex == index
+        ? theme.bottomNavigationBarTheme.selectedItemColor ?? CgColors.primary
+        : theme.colorScheme.onSurfaceVariant;
+    return Image.asset(
+      'assets/images/$asset.png',
+      width: 24,
+      height: 24,
+      color: preserveBrandColors ? null : color,
+      colorBlendMode: preserveBrandColors ? null : BlendMode.srcIn,
+      excludeFromSemantics: true,
+      errorBuilder: (_, __, ___) => Icon(fallback, size: 24, color: color),
+    );
+  }
+
   Widget _vendorShell() {
     String tr(String zh, String en) => context.tr(zh, en);
     return Scaffold(
@@ -640,16 +661,25 @@ class _HomeShellState extends State<HomeShell> {
       bottomNavigationBar: BottomNavigationBar(
         currentIndex: _vendorIndex,
         type: BottomNavigationBarType.fixed,
-        selectedItemColor: CgColors.amber,
         onTap: _selectVendorTab,
         items: [
-          BottomNavigationBarItem(icon: const Icon(Icons.home), label: tr('首頁', 'Home')),
           BottomNavigationBarItem(
-              icon: const Icon(Icons.qr_code_scanner), label: tr('掃碼', 'Scan')),
+              icon: _vendorNavIcon('ic_home', Icons.home_outlined, 0),
+              label: tr('首頁', 'Home')),
           BottomNavigationBarItem(
-              icon: const Icon(Icons.bar_chart), label: tr('數據', 'Analytics')),
+              icon: _vendorNavIcon(
+                'ic_scanqr_code',
+                Icons.qr_code_scanner,
+                1,
+                preserveBrandColors: true,
+              ),
+              label: tr('掃碼', 'Scan')),
           BottomNavigationBarItem(
-              icon: const Icon(Icons.person), label: tr('我的', 'Account')),
+              icon: _vendorNavIcon('ic_usage_data', Icons.bar_chart, 2),
+              label: tr('數據', 'Analytics')),
+          BottomNavigationBarItem(
+              icon: _vendorNavIcon('ic_user', Icons.person_outline, 3),
+              label: tr('我的', 'Account')),
         ],
       ),
     );

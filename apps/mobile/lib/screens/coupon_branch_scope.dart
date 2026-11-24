@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../api_client.dart';
-import '../theme.dart';
+import '../language.dart';
 
 /// null means the selection has not loaded or is incomplete; [] means all branches.
 class BranchScopePicker extends StatefulWidget {
@@ -226,7 +226,7 @@ class _CouponBranchEditScreenState extends State<CouponBranchEditScreen> {
   @override
   Widget build(BuildContext context) => Scaffold(
       appBar: AppBar(
-          title: const Text('編輯適用分店'), backgroundColor: CgColors.vendorGold),
+          title: Text(context.tr('編輯適用分店', 'Edit applicable branches'))),
       body: ListView(padding: const EdgeInsets.all(20), children: [
         Text(widget.couponName, style: Theme.of(context).textTheme.titleLarge),
         const SizedBox(height: 8),

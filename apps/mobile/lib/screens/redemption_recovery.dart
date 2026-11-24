@@ -3,7 +3,7 @@ import 'dart:math';
 import 'package:flutter/material.dart';
 
 import '../api_client.dart';
-import '../theme.dart';
+import '../language.dart';
 
 String _errorMessage(Object error) =>
     error is ApiException ? error.message : '連線未完成，請稍後再試。';
@@ -225,8 +225,7 @@ class _MerchantRedemptionRecoveryScreenState
   @override
   Widget build(BuildContext context) => Scaffold(
         appBar: AppBar(
-          backgroundColor: CgColors.vendorGold,
-          title: const Text('補記核銷'),
+          title: Text(context.tr('補記核銷', 'Record a redemption')),
         ),
         body: Center(
           child: ConstrainedBox(
@@ -482,8 +481,7 @@ class _ForceRevokeRedemptionScreenState
   @override
   Widget build(BuildContext context) => Scaffold(
         appBar: AppBar(
-          backgroundColor: CgColors.vendorGold,
-          title: const Text('客服撤銷核銷'),
+          title: Text(context.tr('客服撤銷核銷', 'Reverse a redemption')),
         ),
         body: Center(
           child: ConstrainedBox(

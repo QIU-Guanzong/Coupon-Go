@@ -101,8 +101,6 @@ class _VendorPackagesScreenState extends State<VendorPackagesScreen> {
     final t = context.tr;
     return Scaffold(
       appBar: AppBar(
-          backgroundColor: CgColors.vendorGold,
-          foregroundColor: CgColors.textPrimary,
           title: Text(t('套餐管理', 'Packages'))),
       body: _loading
           ? const Center(child: CircularProgressIndicator())
@@ -231,14 +229,14 @@ class _VendorPackagesScreenState extends State<VendorPackagesScreen> {
                           horizontal: 10, vertical: 5),
                       decoration: BoxDecoration(
                           color: status == 'active'
-                              ? const Color(0xffe5f4e9)
-                              : const Color(0xfffff2d5),
+                              ? CgColors.statusActiveBg
+                              : CgColors.statusPendingBg,
                           borderRadius: BorderRadius.circular(6)),
                       child: Text(_status(context, status),
                           style: TextStyle(
                               color: status == 'active'
-                                  ? const Color(0xff176836)
-                                  : const Color(0xff704900),
+                                  ? CgColors.statusActiveText
+                                  : CgColors.statusPendingText,
                               fontWeight: FontWeight.w600))),
                 ]),
                 const SizedBox(height: 12),
@@ -544,8 +542,6 @@ class _VendorPackageEditorState extends State<VendorPackageEditor> {
         },
         child: Scaffold(
           appBar: AppBar(
-              backgroundColor: CgColors.vendorGold,
-              foregroundColor: CgColors.textPrimary,
               title: Text(_editing
                   ? t('編輯套餐', 'Edit package')
                   : t('建立套餐', 'Create package'))),

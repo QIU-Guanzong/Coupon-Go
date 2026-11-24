@@ -95,41 +95,56 @@ class _VendorHomeScreenState extends State<VendorHomeScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        backgroundColor: CgColors.vendorGold,
-        foregroundColor: CgColors.textPrimary,
         leading: widget.onOpenMenu == null ? null : IconButton(
           icon: const Icon(Icons.menu),
           tooltip: MaterialLocalizations.of(context).openAppDrawerTooltip,
           onPressed: widget.onOpenMenu,
         ),
-        title: const Text('企業版'),
+        title: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (MediaQuery.sizeOf(context).width >= 360) ...[
+              Image.asset(
+                'assets/images/img_logo.png',
+                height: 32,
+                excludeFromSemantics: true,
+                errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+              ),
+              const SizedBox(width: 8),
+            ],
+            Flexible(
+              child: Text(
+                context.tr('企業版', 'Business'),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          ],
+        ),
       ),
       body: RefreshIndicator(
         onRefresh: _load,
         child: ListView(
-          padding: const EdgeInsets.all(16),
+          padding: const EdgeInsets.all(CgTheme.pageInset),
           children: [
             if (_loading) const Center(child: CircularProgressIndicator()),
-            if (_loadError != null) ...[Text(_loadError!), TextButton(onPressed: _load, child: const Text('重試'))],
+            if (_loadError != null) ...[Text(_loadError!), TextButton(onPressed: _load, child: Text(context.tr('重試', 'Retry')))],
             if (_usage != null && _allows('is_owner')) Row(
               children: [
                 Expanded(
                     child:
-                        _stat('總下載次數', '${_usage?['total_downloads'] ?? 0}')),
+                        _stat(context.tr('總下載次數', 'Total downloads'), '${_usage?['total_downloads'] ?? 0}')),
                 const SizedBox(width: 12),
                 Expanded(
-                    child: _stat('總使用量', '${_usage?['total_usage'] ?? 0}')),
+                    child: _stat(context.tr('總使用量', 'Total uses'), '${_usage?['total_usage'] ?? 0}')),
               ],
             ),
             const SizedBox(height: 16),
             if (_allows('can_manage_coupons')) ElevatedButton(
-              style: ElevatedButton.styleFrom(
-                  backgroundColor: CgColors.vendorGold),
               onPressed: () => Navigator.of(context)
                   .pushNamed('/vendor/issue')
                   .then((_) => _load()),
-              child: const Text('發券',
-                  style: TextStyle(color: CgColors.textPrimary)),
+              child: Text(context.tr('發券', 'Issue coupon')),
             ),
             const SizedBox(height: 8),
             if (_allows('is_owner')) OutlinedButton.icon(
@@ -150,25 +165,25 @@ class _VendorHomeScreenState extends State<VendorHomeScreen> {
               onPressed: () => Navigator.of(context).push(MaterialPageRoute(
                   builder: (_) => MerchantRedemptionRecoveryScreen(api: widget.api))),
               icon: const Icon(Icons.manage_search),
-              label: const Text('補錄核銷'),
+              label: Text(context.tr('補錄核銷', 'Record a redemption')),
             ),
             const SizedBox(height: 8),
             OutlinedButton.icon(
               onPressed: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => MerchantBranchesScreen(api: widget.api, staffBuilder: (shopId) => MerchantStaffScreen(api: widget.api, shopId: shopId)))),
               icon: const Icon(Icons.storefront_outlined),
-              label: const Text('店舖與分店'),
+              label: Text(context.tr('店舖與分店', 'Shops and branches')),
             ),
             const SizedBox(height: 8),
             if (_allows('is_owner')) OutlinedButton(
               onPressed: () =>
                   Navigator.of(context).pushNamed('/vendor/records'),
-              child: const Text('核銷記錄'),
+              child: Text(context.tr('核銷記錄', 'Redemption records')),
             ),
             const SizedBox(height: 8),
             if (_allows('is_owner')) OutlinedButton(
               onPressed: () {
                 if (_coupons.isEmpty) {
-                  showCgToast(context, '暫無商戶資料，無法查看評價');
+                  showCgToast(context, context.tr('暫無商戶資料，無法查看評價', 'No shop is available to review.'));
                   return;
                 }
                 final shop = _coupons.first;
@@ -178,20 +193,22 @@ class _VendorHomeScreenState extends State<VendorHomeScreen> {
                         shopId: shop.shopId,
                         shopName: shop.shopName)));
               },
-              child: const Text('評價回覆（差評）'),
+              child: Text(context.tr('評價回覆（差評）', 'Reply to negative reviews')),
             ),
             const SizedBox(height: 8),
             if (widget.showAdmin)
               OutlinedButton(
                 onPressed: () => Navigator.of(context).pushNamed('/admin'),
-                child: const Text('管理後台（結算 / 對賬 / 發票 / 內容 / 角色）'),
+                child: Text(context.tr('管理後台（結算 / 對賬 / 發票 / 內容 / 角色）', 'Administration (settlement, reconciliation, invoices, content, roles)')),
               ),
             const SizedBox(height: 16),
             if (_allows('can_view_settlement')) OutlinedButton(
                 onPressed: () =>
                     Navigator.of(context).pushNamed('/vendor/settlements'),
-                child: const Text('商家結算單')),
-            if (_allows('can_manage_coupons')) const Text('我的優惠券', style: TextStyle(fontWeight: FontWeight.bold)),
+                child: Text(context.tr('商家結算單', 'Settlement statements'))),
+            if (_allows('can_manage_coupons'))
+              Text(context.tr('我的優惠券', 'My coupons'),
+                  style: Theme.of(context).textTheme.titleMedium),
             if (_allows('can_manage_coupons') && _trialMode)
               Text(context.tr('體驗版暫不支援修改優惠券的適用分店。',
                   'Changing coupon branches is unavailable in the trial.')),
@@ -202,9 +219,11 @@ class _VendorHomeScreenState extends State<VendorHomeScreen> {
                         const Icon(Icons.local_offer, color: CgColors.amber),
                     title: Text(c.name),
                     subtitle:
-                        Text('剩餘 ${c.remaining} · 已核銷 ${c.usedCount ?? '—'}'),
+                        Text(context.tr(
+                            '剩餘 ${c.remaining} · 已核銷 ${c.usedCount ?? '—'}',
+                            '${c.remaining} remaining · ${c.usedCount ?? '—'} redeemed')),
                     trailing: IconButton(
-                      tooltip: '編輯適用分店', icon: const Icon(Icons.storefront_outlined),
+                      tooltip: context.tr('編輯適用分店', 'Edit applicable branches'), icon: const Icon(Icons.storefront_outlined),
                       onPressed: _trialMode ? null : () => Navigator.of(context).push(MaterialPageRoute(
                         builder: (_) => CouponBranchEditScreen(api: widget.api, couponId: c.id,
                           shopId: c.shopId, couponName: c.name))),
@@ -212,9 +231,10 @@ class _VendorHomeScreenState extends State<VendorHomeScreen> {
                   ),
                 )),
             if (_allows('can_manage_coupons') && _coupons.isEmpty && !_loading && _loadError == null)
-              const Padding(
-                padding: EdgeInsets.only(top: 24),
-                child: Text('暫時沒有優惠券，點上面發第一張吧！'),
+              Padding(
+                padding: const EdgeInsets.only(top: 24),
+                child: Text(context.tr('暫時沒有優惠券，點上面發第一張吧！',
+                    'No coupons yet. Use the button above to issue one.')),
               ),
           ],
         ),
@@ -225,12 +245,11 @@ class _VendorHomeScreenState extends State<VendorHomeScreen> {
   Widget _stat(String label, String value) {
     return Card(
       child: Padding(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.all(CgTheme.pageInset),
         child: Column(
           children: [
             Text(value,
-                style:
-                    const TextStyle(fontSize: 28, fontWeight: FontWeight.bold)),
+                style: Theme.of(context).textTheme.headlineSmall),
             Text(label, style: const TextStyle(color: CgColors.textSecondary)),
           ],
         ),
@@ -255,8 +274,6 @@ class _VendorAccountScreenState extends State<VendorAccountScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        backgroundColor: CgColors.vendorGold,
-        foregroundColor: CgColors.textPrimary,
         title: Text(context.tr('商戶帳戶', 'Merchant account')),
       ),
       body: ListView(
@@ -435,15 +452,13 @@ class _IssueCouponScreenState extends State<IssueCouponScreen> {
       },
       child: Scaffold(
       appBar: AppBar(
-        backgroundColor: CgColors.vendorGold,
-        foregroundColor: CgColors.textPrimary,
         title: const Text('發券'),
       ),
       body: Center(
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 720),
           child: ListView(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.all(CgTheme.pageInset),
         children: [
           if (_trialMode) ...[
             Text(context.tr('體驗版可填寫內容，暫不支援提交優惠券。',
@@ -536,8 +551,6 @@ class _IssueCouponScreenState extends State<IssueCouponScreen> {
             child: Text('提交結果未確認，請返回券列表刷新核對，勿重複建立。'),
           ),
           ElevatedButton(
-            style:
-                ElevatedButton.styleFrom(backgroundColor: CgColors.vendorGold),
             onPressed: _trialMode || _shopId == null || _branchIds == null || _submitting || _createUncertain ? null : () async {
               final session = _session;
               final draft = _body();
@@ -588,8 +601,7 @@ class _IssueCouponScreenState extends State<IssueCouponScreen> {
                 if (mounted && session == _session) setState(() => _submitting = false);
               }
             },
-            child: Text(context.tr('檢查並提交', 'Review and submit'),
-                style: const TextStyle(color: CgColors.textPrimary)),
+            child: Text(context.tr('檢查並提交', 'Review and submit')),
           ),
         ],
       ),
@@ -956,8 +968,6 @@ class _ScanScreenState extends State<ScanScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        backgroundColor: CgColors.vendorGold,
-        foregroundColor: CgColors.textPrimary,
         title: const Text('掃碼核銷'),
       ),
       body: _errorReason != null
@@ -1014,7 +1024,7 @@ class _ScanScreenState extends State<ScanScreen> {
                       ),
                     if (_prepared == null && _branchChoices.isNotEmpty)
                       Padding(
-                        padding: const EdgeInsets.all(16),
+                        padding: const EdgeInsets.all(CgTheme.pageInset),
                         child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
@@ -1051,7 +1061,7 @@ class _ScanScreenState extends State<ScanScreen> {
                         padding: const EdgeInsets.symmetric(horizontal: 16),
                         child: Card(
                           child: Padding(
-                            padding: const EdgeInsets.all(16),
+                            padding: const EdgeInsets.all(CgTheme.pageInset),
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
@@ -1123,7 +1133,7 @@ class _ScanScreenState extends State<ScanScreen> {
                       ),
                     if (_prepared == null && _branchChoices.isEmpty)
                       Padding(
-                        padding: const EdgeInsets.all(16),
+                        padding: const EdgeInsets.all(CgTheme.pageInset),
                         child: Row(
                           children: [
                             Expanded(
@@ -1279,8 +1289,6 @@ class _RedemptionRecordsScreenState extends State<RedemptionRecordsScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        backgroundColor: CgColors.vendorGold,
-        foregroundColor: CgColors.textPrimary,
         title: const Text('核銷記錄'),
         actions: [
           Semantics(
@@ -1332,7 +1340,7 @@ class _RedemptionRecordsScreenState extends State<RedemptionRecordsScreen> {
           Expanded(
             child: _loading
                 ? ListView(
-                    padding: const EdgeInsets.all(16),
+                    padding: const EdgeInsets.all(CgTheme.pageInset),
                     children: const [
                       SkeletonBox(height: 72),
                       SizedBox(height: 8),
@@ -1417,8 +1425,6 @@ class UsageScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        backgroundColor: CgColors.vendorGold,
-        foregroundColor: CgColors.textPrimary,
         title: const Text('使用數據'),
       ),
       body: FutureBuilder<Map<String, dynamic>>(
@@ -1433,14 +1439,14 @@ class UsageScreen extends StatelessWidget {
           final data = snap.data!;
           final coupons = (data['coupons'] as List?) ?? [];
           return ListView(
-            padding: const EdgeInsets.all(16),
+            padding: const EdgeInsets.all(CgTheme.pageInset),
             children: [
               Row(
                 children: [
                   Expanded(
                       child: Card(
                           child: Padding(
-                    padding: const EdgeInsets.all(16),
+                    padding: const EdgeInsets.all(CgTheme.pageInset),
                     child: Column(children: [
                       Text('${data['total_downloads']}',
                           style: const TextStyle(
@@ -1452,7 +1458,7 @@ class UsageScreen extends StatelessWidget {
                   Expanded(
                       child: Card(
                           child: Padding(
-                    padding: const EdgeInsets.all(16),
+                    padding: const EdgeInsets.all(CgTheme.pageInset),
                     child: Column(children: [
                       Text('${data['total_usage']}',
                           style: const TextStyle(
@@ -1489,8 +1495,6 @@ class SubscriptionScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        backgroundColor: CgColors.vendorGold,
-        foregroundColor: CgColors.textPrimary,
         title: const Text('訂閱計劃'),
       ),
       body: FutureBuilder<List<dynamic>>(
@@ -1503,7 +1507,7 @@ class SubscriptionScreen extends StatelessWidget {
             );
           }
           return ListView(
-            padding: const EdgeInsets.all(16),
+            padding: const EdgeInsets.all(CgTheme.pageInset),
             children: [
               Image.asset('assets/images/ic_program_card.png',
                   height: 120,

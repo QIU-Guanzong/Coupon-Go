@@ -4,7 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../api_client.dart';
-import '../theme.dart';
+import '../language.dart';
 
 /// Batch redemption uses the same read-only check as single scans.
 class ScanBatchScreen extends StatefulWidget {
@@ -196,7 +196,7 @@ class _ScanBatchScreenState extends State<ScanBatchScreen> {
   @override
   Widget build(BuildContext context) => Scaffold(
       appBar: AppBar(
-          title: const Text('批量核銷'), backgroundColor: CgColors.vendorGold),
+          title: Text(context.tr('批量核銷', 'Batch redemption'))),
       body: ListView(padding: const EdgeInsets.all(20), children: [
         const Text('逐張輸入兌換碼並核對券及分店；提交時整批核銷。'),
         if (_error != null)
