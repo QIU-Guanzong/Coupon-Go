@@ -1,4 +1,5 @@
 import 'screens/merchant_onboarding.dart';
+import 'screens/merchant_usage.dart';
 import 'screens/trial_banner.dart';
 import 'dart:async';
 
@@ -223,7 +224,12 @@ class _CouponGoAppState extends State<CouponGoApp> {
           case '/vendor/scan':
             return MaterialPageRoute(builder: (_) => ScanScreen(api: _api));
           case '/vendor/usage':
-            return MaterialPageRoute(builder: (_) => UsageScreen(api: _api));
+            return MaterialPageRoute(
+              builder: (_) => MerchantUsageScreen(
+                api: _api,
+                legacyUsageBuilder: (_) => UsageScreen(api: _api),
+              ),
+            );
           case '/vendor/plans':
             return MaterialPageRoute(
                 builder: (_) => SubscriptionScreen(api: _api));
@@ -632,7 +638,10 @@ class _HomeShellState extends State<HomeShell> {
       drawer: _drawer(),
       body: switch (_vendorIndex) {
         1 => ScanScreen(api: widget.api),
-        2 => UsageScreen(api: widget.api),
+        2 => MerchantUsageScreen(
+            api: widget.api,
+            legacyUsageBuilder: (_) => UsageScreen(api: widget.api),
+          ),
         3 => VendorAccountScreen(api: widget.api),
         _ => VendorHomeScreen(api: widget.api, showAdmin: _role == 'admin',
             onOpenMenu: () => _vendorScaffoldKey.currentState?.openDrawer()),

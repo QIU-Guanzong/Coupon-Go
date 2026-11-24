@@ -11,7 +11,7 @@ import '../models.dart';
 import '../language.dart';
 import '../theme.dart';
 import '../widgets/widgets.dart';
-import 'reviews_admin.dart';
+import 'merchant_review_shops.dart';
 import 'vendor_packages.dart';
 import 'coupon_branch_scope.dart';
 import 'redemption_recovery.dart';
@@ -165,21 +165,30 @@ class _VendorHomeScreenState extends State<VendorHomeScreen> {
               child: const Text('核銷記錄'),
             ),
             const SizedBox(height: 8),
-            if (_allows('is_owner')) OutlinedButton(
-              onPressed: () {
-                if (_coupons.isEmpty) {
-                  showCgToast(context, '暫無商戶資料，無法查看評價');
-                  return;
-                }
-                final shop = _coupons.first;
-                Navigator.of(context).push(MaterialPageRoute(
-                    builder: (_) => MerchantReviewReplyScreen(
-                        api: widget.api,
-                        shopId: shop.shopId,
-                        shopName: shop.shopName)));
-              },
-              child: const Text('評價回覆（差評）'),
-            ),
+            if (!_loading && _loadError == null &&
+                MerchantReviewShopPicker.allowedShops(
+                  _shops,
+                  canAdministerAllShops: widget.showAdmin,
+                ).isNotEmpty)
+              OutlinedButton(
+                key: const Key('vendor-review-shops'),
+                onPressed: () {
+                  final api = widget.api;
+                  final session = _session;
+                  if (session != api.sessionRevision) return;
+                  final roster = _shops;
+                  final admin = widget.showAdmin;
+                  Navigator.of(context).push(MaterialPageRoute<void>(
+                    builder: (_) => MerchantReviewShopPicker(
+                      api: api,
+                      shopRoster: roster,
+                      sessionRevision: session,
+                      canAdministerAllShops: admin,
+                    ),
+                  ));
+                },
+                child: Text(context.tr('評價回覆（差評）', 'Reply to low-rated reviews')),
+              ),
             const SizedBox(height: 8),
             if (widget.showAdmin)
               OutlinedButton(
