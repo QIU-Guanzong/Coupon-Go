@@ -258,7 +258,7 @@ class _VendorHomeScreenState extends State<VendorHomeScreen> {
       setState(() => _couponReceipts[coupon.id] = (++_couponChange, status));
       await _refresh();
     } catch (error) {
-      if (!current()) return;
+      if (!mounted || !current()) return;
       showCgToast(
         context,
         error is ApiException && error.status < 500
