@@ -41,6 +41,14 @@ class _VendorHomeScreenState extends State<VendorHomeScreen> {
   List<Map<String, dynamic>> _shops = [];
   String? _loadError;
   bool _loading = true;
+  // The unfiltered list also supplies the existing review-reply shortcut.
+  // A coupon filter must never change that shortcut's shop.
+  String? _couponStatus;
+  List<Coupon> _filteredCoupons = [];
+  bool _filterLoading = false;
+  String? _filterError;
+  int _overviewRequest = 0;
+  int _filterRequest = 0;
   late int _session;
   bool _allows(String permission) => widget.showAdmin || _shops.any((shop) => shop[permission] == true);
 
@@ -55,7 +63,18 @@ class _VendorHomeScreenState extends State<VendorHomeScreen> {
   void _sessionChanged() {
     if (_session == widget.api.sessionRevision) return;
     _session = widget.api.sessionRevision;
-    setState(() { _shops = []; _coupons = []; _usage = null; _loading = true; _loadError = null; });
+    _filterRequest++;
+    setState(() {
+      _shops = [];
+      _coupons = [];
+      _usage = null;
+      _loading = true;
+      _loadError = null;
+      _couponStatus = null;
+      _filteredCoupons = [];
+      _filterLoading = false;
+      _filterError = null;
+    });
     _load();
   }
 
@@ -68,16 +87,19 @@ class _VendorHomeScreenState extends State<VendorHomeScreen> {
   Future<void> _load() async {
     if (!mounted) return;
     final session = _session;
+    final request = ++_overviewRequest;
+    bool current() =>
+        mounted && session == _session && request == _overviewRequest;
     try {
       final data = await widget.api.get('/merchant/shops');
-      if (!mounted || session != _session) return;
+      if (!current()) return;
       final shops = (data['shops'] as List? ?? []).whereType<Map>().map((s) => Map<String, dynamic>.from(s)).toList();
       final isOwner = widget.showAdmin || shops.any((s) => s['is_owner'] == true);
       final canManage = widget.showAdmin || shops.any((s) => s['can_manage_coupons'] == true);
       final usage = isOwner ? await widget.api.usageData() : null;
-      if (!mounted || session != _session) return;
+      if (!current()) return;
       final list = canManage ? await widget.api.vendorCoupons() : <dynamic>[];
-      if (!mounted || session != _session) return;
+      if (!current()) return;
       setState(() {
         _shops = shops;
         _usage = usage;
@@ -86,13 +108,79 @@ class _VendorHomeScreenState extends State<VendorHomeScreen> {
         _loadError = null;
       });
     } catch (error) {
-      if (!mounted || session != _session) return;
-      setState(() { _loading = false; _loadError = error is ApiException ? error.message : '未能載入，請重試。'; });
+      if (!current()) return;
+      setState(() {
+        _loading = false;
+        _loadError = error is ApiException
+            ? error.message
+            : context.tr('未能載入，請重試。', 'Could not load. Try again.');
+      });
     }
   }
 
+  Future<void> _filterCoupons(String? status) async {
+    if (!_allows('can_manage_coupons')) return;
+    final session = _session;
+    final request = ++_filterRequest;
+    bool current() =>
+        mounted && session == _session && request == _filterRequest;
+    setState(() {
+      _couponStatus = status;
+      _filteredCoupons = [];
+      _filterLoading = status != null;
+      _filterError = null;
+    });
+    if (status == null) return;
+    try {
+      final rows = await widget.api.vendorCoupons(status: status);
+      if (!current()) return;
+      final coupons = rows.map((row) => Coupon.fromJson(row)).toList();
+      setState(() {
+        _filteredCoupons = coupons;
+        _filterLoading = false;
+      });
+    } catch (error) {
+      if (!current()) return;
+      setState(() {
+        _filterLoading = false;
+        _filterError = error is ApiException
+            ? error.message
+            : context.tr('未能載入優惠券。', 'Could not load coupons.');
+      });
+    }
+  }
+
+  Future<void> _refresh() async {
+    final session = _session;
+    final filterRequest = _filterRequest;
+    final loadingOverview = _load();
+    final overviewRequest = _overviewRequest;
+    await loadingOverview;
+    if (mounted &&
+        session == _session &&
+        filterRequest == _filterRequest &&
+        overviewRequest == _overviewRequest &&
+        _loadError == null &&
+        _couponStatus != null) {
+      await _filterCoupons(_couponStatus);
+    }
+  }
+
+  String _statusLabel(BuildContext context, String status) => switch (status) {
+    'pending_review' => context.tr('待審核', 'Pending review'),
+    'active' => context.tr('已上架', 'Listed'),
+    'paused' => context.tr('已暫停', 'Paused'),
+    'draft' => context.tr('草稿', 'Draft'),
+    'rejected' => context.tr('已拒絕', 'Rejected'),
+    'scheduled' => context.tr('待上架', 'Scheduled'),
+    'sold_out' => context.tr('已售罄', 'Sold out'),
+    'expired' => context.tr('已過期', 'Expired'),
+    _ => context.tr('狀態未明', 'Unknown status'),
+  };
+
   @override
   Widget build(BuildContext context) {
+    final shownCoupons = _couponStatus == null ? _coupons : _filteredCoupons;
     return Scaffold(
       appBar: AppBar(
         backgroundColor: CgColors.vendorGold,
@@ -102,23 +190,27 @@ class _VendorHomeScreenState extends State<VendorHomeScreen> {
           tooltip: MaterialLocalizations.of(context).openAppDrawerTooltip,
           onPressed: widget.onOpenMenu,
         ),
-        title: const Text('企業版'),
+        title: Text(context.tr('企業版', 'Business')),
       ),
       body: RefreshIndicator(
-        onRefresh: _load,
+        onRefresh: _refresh,
         child: ListView(
+          physics: const AlwaysScrollableScrollPhysics(),
           padding: const EdgeInsets.all(16),
           children: [
             if (_loading) const Center(child: CircularProgressIndicator()),
-            if (_loadError != null) ...[Text(_loadError!), TextButton(onPressed: _load, child: const Text('重試'))],
+            if (_loadError != null) ...[
+              Text(_loadError!),
+              TextButton(onPressed: _refresh, child: Text(context.tr('重試', 'Retry'))),
+            ],
             if (_usage != null && _allows('is_owner')) Row(
               children: [
                 Expanded(
                     child:
-                        _stat('總下載次數', '${_usage?['total_downloads'] ?? 0}')),
+                        _stat(context.tr('總下載次數', 'Total downloads'), '${_usage?['total_downloads'] ?? 0}')),
                 const SizedBox(width: 12),
                 Expanded(
-                    child: _stat('總使用量', '${_usage?['total_usage'] ?? 0}')),
+                    child: _stat(context.tr('總使用量', 'Total redemptions'), '${_usage?['total_usage'] ?? 0}')),
               ],
             ),
             const SizedBox(height: 16),
@@ -127,9 +219,11 @@ class _VendorHomeScreenState extends State<VendorHomeScreen> {
                   backgroundColor: CgColors.vendorGold),
               onPressed: () => Navigator.of(context)
                   .pushNamed('/vendor/issue')
-                  .then((_) => _load()),
-              child: const Text('發券',
-                  style: TextStyle(color: CgColors.textPrimary)),
+                  .then((_) async {
+                if (mounted) await _refresh();
+              }),
+              child: Text(context.tr('發券', 'Issue coupon'),
+                  style: const TextStyle(color: CgColors.textPrimary)),
             ),
             const SizedBox(height: 8),
             if (_allows('is_owner')) OutlinedButton.icon(
@@ -150,25 +244,25 @@ class _VendorHomeScreenState extends State<VendorHomeScreen> {
               onPressed: () => Navigator.of(context).push(MaterialPageRoute(
                   builder: (_) => MerchantRedemptionRecoveryScreen(api: widget.api))),
               icon: const Icon(Icons.manage_search),
-              label: const Text('補錄核銷'),
+              label: Text(context.tr('補錄核銷', 'Record redemption')),
             ),
             const SizedBox(height: 8),
             OutlinedButton.icon(
               onPressed: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => MerchantBranchesScreen(api: widget.api, staffBuilder: (shopId) => MerchantStaffScreen(api: widget.api, shopId: shopId)))),
               icon: const Icon(Icons.storefront_outlined),
-              label: const Text('店舖與分店'),
+              label: Text(context.tr('店舖與分店', 'Shops and branches')),
             ),
             const SizedBox(height: 8),
             if (_allows('is_owner')) OutlinedButton(
               onPressed: () =>
                   Navigator.of(context).pushNamed('/vendor/records'),
-              child: const Text('核銷記錄'),
+              child: Text(context.tr('核銷記錄', 'Redemption history')),
             ),
             const SizedBox(height: 8),
             if (_allows('is_owner')) OutlinedButton(
               onPressed: () {
                 if (_coupons.isEmpty) {
-                  showCgToast(context, '暫無商戶資料，無法查看評價');
+                  showCgToast(context, context.tr('暫無商戶資料，無法查看評價', 'No shop information for reviews.'));
                   return;
                 }
                 final shop = _coupons.first;
@@ -178,43 +272,92 @@ class _VendorHomeScreenState extends State<VendorHomeScreen> {
                         shopId: shop.shopId,
                         shopName: shop.shopName)));
               },
-              child: const Text('評價回覆（差評）'),
+              child: Text(context.tr('評價回覆（差評）', 'Reply to negative reviews')),
             ),
             const SizedBox(height: 8),
             if (widget.showAdmin)
               OutlinedButton(
                 onPressed: () => Navigator.of(context).pushNamed('/admin'),
-                child: const Text('管理後台（結算 / 對賬 / 發票 / 內容 / 角色）'),
+                child: Text(context.tr('管理後台（結算 / 對賬 / 發票 / 內容 / 角色）', 'Admin tools')),
               ),
             const SizedBox(height: 16),
             if (_allows('can_view_settlement')) OutlinedButton(
                 onPressed: () =>
                     Navigator.of(context).pushNamed('/vendor/settlements'),
-                child: const Text('商家結算單')),
-            if (_allows('can_manage_coupons')) const Text('我的優惠券', style: TextStyle(fontWeight: FontWeight.bold)),
+                child: Text(context.tr('商家結算單', 'Settlement statements'))),
+            if (_allows('can_manage_coupons')) ...[
+              Text(context.tr('我的優惠券', 'My coupons'),
+                  style: const TextStyle(fontWeight: FontWeight.bold)),
+              DropdownButton<String>(
+                key: const ValueKey('vendor-coupon-status-filter'),
+                value: _couponStatus ?? '',
+                isExpanded: true,
+                onChanged: (value) {
+                  if (value != null) _filterCoupons(value.isEmpty ? null : value);
+                },
+                items: [
+                  DropdownMenuItem(
+                    value: '',
+                    child: Text(context.tr('全部狀態', 'All statuses')),
+                  ),
+                  for (final status in [
+                    'pending_review', 'active', 'paused', 'draft', 'rejected',
+                  ])
+                    DropdownMenuItem(
+                      value: status,
+                      child: Text(_statusLabel(context, status)),
+                    ),
+                ],
+              ),
+              if (_filterLoading) const LinearProgressIndicator(),
+              if (_filterError != null) ...[
+                Text(_filterError!),
+                TextButton(onPressed: () => _filterCoupons(_couponStatus),
+                    child: Text(context.tr('重試', 'Retry'))),
+              ],
+            ],
             if (_allows('can_manage_coupons') && _trialMode)
               Text(context.tr('體驗版暫不支援修改優惠券的適用分店。',
                   'Changing coupon branches is unavailable in the trial.')),
-            ..._coupons.map((c) => Card(
+            if (_allows('can_manage_coupons'))
+              ...shownCoupons.map((c) => Card(
                   margin: const EdgeInsets.only(top: 8),
                   child: ListTile(
                     leading:
                         const Icon(Icons.local_offer, color: CgColors.amber),
                     title: Text(c.name),
-                    subtitle:
-                        Text('剩餘 ${c.remaining} · 已核銷 ${c.usedCount ?? '—'}'),
+                    subtitle: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        if (c.status.isNotEmpty)
+                          Text(_statusLabel(context, c.status),
+                              key: ValueKey('vendor-coupon-status-${c.id}'),
+                              style: Theme.of(context).textTheme.labelLarge),
+                        Text(context.tr(
+                          '剩餘 ${c.remaining} · 已核銷 ${c.usedCount ?? '—'}',
+                          '${c.remaining} left · ${c.usedCount ?? '—'} redeemed',
+                        )),
+                      ],
+                    ),
                     trailing: IconButton(
-                      tooltip: '編輯適用分店', icon: const Icon(Icons.storefront_outlined),
+                      tooltip: context.tr('編輯適用分店', 'Edit eligible branches'), icon: const Icon(Icons.storefront_outlined),
                       onPressed: _trialMode ? null : () => Navigator.of(context).push(MaterialPageRoute(
                         builder: (_) => CouponBranchEditScreen(api: widget.api, couponId: c.id,
                           shopId: c.shopId, couponName: c.name))),
                     ),
                   ),
                 )),
-            if (_allows('can_manage_coupons') && _coupons.isEmpty && !_loading && _loadError == null)
-              const Padding(
-                padding: EdgeInsets.only(top: 24),
-                child: Text('暫時沒有優惠券，點上面發第一張吧！'),
+            if (_allows('can_manage_coupons') &&
+                shownCoupons.isEmpty &&
+                !_loading &&
+                !_filterLoading &&
+                _loadError == null &&
+                _filterError == null)
+              Padding(
+                padding: const EdgeInsets.only(top: 24),
+                child: Text(_couponStatus == null
+                    ? context.tr('還沒有優惠券。', 'No coupons yet.')
+                    : context.tr('這個狀態沒有優惠券。', 'No coupons with this status.')),
               ),
           ],
         ),
