@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 
 import '../api_client.dart';
+import '../feature_flags.dart';
 import '../language.dart';
 import '../theme.dart';
 import '../vendor_coupon_lifecycle.dart';
@@ -164,7 +165,11 @@ class _IssueCouponScreenState extends State<IssueCouponScreen> {
     if (source['category_id'] is int) {
       _categoryId = source['category_id'] as int;
     }
-    if (source['image'] is String) _image = source['image'] as String;
+    // Trial copies are new listings; media upload stays unavailable.
+    // Keep existing edit images so they are not removed by an unrelated save.
+    if ((!publicTrial || _editing) && source['image'] is String) {
+      _image = source['image'] as String;
+    }
     final refund = source['refund_policy'];
     if (refund is String && _refundPolicies.contains(refund)) {
       _refundPolicy = refund;
@@ -441,7 +446,7 @@ class _IssueCouponScreenState extends State<IssueCouponScreen> {
   }
 
   Future<void> _chooseImage() async {
-    if (_controlsLocked) return;
+    if (publicTrial || _controlsLocked) return;
     final session = _session;
     setState(() {
       _uploading = true;
@@ -821,17 +826,18 @@ class _IssueCouponScreenState extends State<IssueCouponScreen> {
                               url: _image,
                               height: 100,
                               apiBaseUrl: widget.api.baseUrl),
-                        OutlinedButton.icon(
-                          key: const ValueKey('issue-coupon-image'),
-                          onPressed: _controlsLocked ? null : _chooseImage,
-                          icon: const Icon(Icons.image_outlined),
-                          label: Text(_uploading
-                              ? context.tr('正在加入圖片…', 'Adding image…')
-                              : _image.isEmpty
-                                  ? context.tr('加入優惠券圖片', 'Add coupon image')
-                                  : context.tr(
-                                      '更換優惠券圖片', 'Replace coupon image')),
-                        ),
+                        if (!publicTrial)
+                          OutlinedButton.icon(
+                            key: const ValueKey('issue-coupon-image'),
+                            onPressed: _controlsLocked ? null : _chooseImage,
+                            icon: const Icon(Icons.image_outlined),
+                            label: Text(_uploading
+                                ? context.tr('正在加入圖片…', 'Adding image…')
+                                : _image.isEmpty
+                                    ? context.tr('加入優惠券圖片', 'Add coupon image')
+                                    : context.tr(
+                                        '更換優惠券圖片', 'Replace coupon image')),
+                          ),
                         if (_imageError != null)
                           Text(_imageError!,
                               style: TextStyle(
