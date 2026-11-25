@@ -11,9 +11,7 @@ import 'merchant_review_shops.dart';
 
 enum _ReviewFilter { all, pending, replied, low, disputed }
 
-/// Paginated merchant review workspace. The current API only returns public
-/// records. Keep successful dispute receipts in this account's open workspace
-/// without advertising a full merchant dispute history.
+/// Merchant workspace with a scoped public-list fallback for older servers.
 class MerchantReviewsScreen extends StatefulWidget {
   const MerchantReviewsScreen({
     super.key,
@@ -22,6 +20,8 @@ class MerchantReviewsScreen extends StatefulWidget {
     this.expectedSessionRevision,
     this.canAdministerAllShops = false,
     this.onFirstPagePending,
+    this.onPendingChanged,
+    this.onPrivateAccessDenied,
   });
 
   final ApiClient api;
@@ -29,6 +29,8 @@ class MerchantReviewsScreen extends StatefulWidget {
   final int? expectedSessionRevision;
   final bool canAdministerAllShops;
   final ValueChanged<int>? onFirstPagePending;
+  final VoidCallback? onPendingChanged;
+  final VoidCallback? onPrivateAccessDenied;
 
   @override
   State<MerchantReviewsScreen> createState() => _MerchantReviewsScreenState();
@@ -44,6 +46,10 @@ class _MerchantReviewsScreenState extends State<MerchantReviewsScreen> {
   int _page = 1;
   int _pages = 1;
   int? _total;
+  int? _shopPending;
+  bool _serverScoped = false;
+  bool _merchantRouteMissing = false;
+  bool _forbidden = false;
   ShopRating? _rating;
   bool _loading = true;
   bool _failed = false;
@@ -79,6 +85,8 @@ class _MerchantReviewsScreenState extends State<MerchantReviewsScreen> {
       _disputeReceipts.clear();
       _firstPagePending.clear();
       _total = null;
+      _shopPending = null;
+      _forbidden = false;
       _rating = null;
       _operationSuccess = null;
     });
@@ -130,49 +138,131 @@ class _MerchantReviewsScreenState extends State<MerchantReviewsScreen> {
     }
   }
 
-  Future<void> _loadPage({int? page, bool refreshRating = true}) async {
+  Future<void> _loadPage({
+    int? page,
+    bool refreshRating = true,
+    bool keepConfirmation = false,
+  }) async {
     final shop = _shopId;
     if (!_current || shop == null) return;
     final target = page ?? _page;
     final generation = ++_generation;
+    final filter = _filter;
+    final sort = _sort;
     setState(() {
       _loading = true;
       _failed = false;
+      _forbidden = false;
       _rows = [];
-      _operationSuccess = null;
+      _total = null;
+      if (keepConfirmation) _shopPending = null;
+      if (!keepConfirmation) _operationSuccess = null;
     });
-    if (refreshRating) _loadRating(shop, generation);
     try {
-      final payload =
-          await widget.api.shopReviews(shop, page: target, sort: _sort);
+      Map<String, dynamic>? payload;
+      if (!publicTrial && !_merchantRouteMissing) {
+        try {
+          payload = await widget.api.merchantReviews(
+            shop,
+            page: target,
+            sort: sort,
+            status: switch (filter) {
+              _ReviewFilter.all => 'all',
+              _ReviewFilter.disputed => 'disputed',
+              _ => 'visible',
+            },
+            unreplied: switch (filter) {
+              _ReviewFilter.pending => true,
+              _ReviewFilter.replied => false,
+              _ => null,
+            },
+            maxStars: filter == _ReviewFilter.low ? 2 : null,
+          );
+          if (!_accept(generation)) return;
+          if (payload['shop_id'] != shop) {
+            throw const FormatException('Merchant review scope mismatch');
+          }
+        } on ApiException catch (error) {
+          if (!_accept(generation)) return;
+          if (error.status != 404) rethrow;
+          _merchantRouteMissing = true;
+        }
+      }
+      final serverScoped = payload != null;
+      payload ??= await widget.api.shopReviews(shop, page: target, sort: sort);
+      if (!_accept(generation)) return;
       final received = (payload['reviews'] as List)
           .map(
               (item) => Review.fromJson(Map<String, dynamic>.from(item as Map)))
-          .where((review) =>
-              review.id > 0 &&
-              review.shopId == shop &&
-              (review.status.isEmpty || review.status == 'visible'))
+          .where((row) => row.id > 0 && row.shopId == shop)
+          .where((row) => !serverScoped
+              ? row.status.isEmpty || row.status == 'visible'
+              : switch (filter) {
+                  _ReviewFilter.all =>
+                    row.status == 'visible' || row.status == 'disputed',
+                  _ReviewFilter.disputed => row.status == 'disputed',
+                  _ => row.status == 'visible',
+                })
           .toList();
-      if (!_accept(generation)) return;
       final current = payload['current_page'];
       final pages = payload['total_pages'];
       final total = payload['total'];
       setState(() {
         final excluded = _disputeReceipts[shop] ?? const <int, Review>{};
-        _rows = received.where((row) => !excluded.containsKey(row.id)).toList();
+        _serverScoped = serverScoped;
+        if (!serverScoped) _shopPending = null;
+        _rows = serverScoped
+            ? received
+            : received.where((row) => !excluded.containsKey(row.id)).toList();
         _page = current is int && current > 0 ? current : target;
         _pages = pages is int && pages >= _page ? pages : _page;
         _total = total is int && total >= 0 ? total : null;
         _loading = false;
       });
-      _publishFirstPagePending();
-    } catch (_) {
-      if (_accept(generation)) {
-        setState(() {
-          _loading = false;
-          _failed = true;
-        });
+      if (refreshRating) _loadRating(shop, generation);
+      if (serverScoped) {
+        await _loadPending(shop, generation);
+      } else {
+        _publishFirstPagePending();
       }
+    } catch (error) {
+      if (!_accept(generation)) return;
+      final denied =
+          error is ApiException && (error.status == 401 || error.status == 403);
+      setState(() {
+        _loading = false;
+        _failed = true;
+        _forbidden = denied;
+        _shopPending = null;
+        _rating = null;
+        _rows = [];
+        if (denied) {
+          _disputeReceipts.clear();
+          _firstPagePending.clear();
+        }
+      });
+      if (denied) widget.onPrivateAccessDenied?.call();
+    }
+  }
+
+  Future<void> _loadPending(int shop, int generation) async {
+    int? value;
+    try {
+      value = await widget.api.merchantReviewPendingCount(shopId: shop);
+    } catch (_) {
+      // An unavailable count cannot be inferred from one filtered page.
+    }
+    if (_accept(generation)) setState(() => _shopPending = value);
+  }
+
+  void _selectFilter(_ReviewFilter filter) {
+    if (filter == _filter) return;
+    setState(() {
+      _filter = filter;
+      _operationSuccess = null;
+    });
+    if ((!publicTrial && !_merchantRouteMissing) || _failed) {
+      _loadPage(page: 1);
     }
   }
 
@@ -190,6 +280,7 @@ class _MerchantReviewsScreenState extends State<MerchantReviewsScreen> {
     setState(() {
       _shopId = shop;
       _total = null;
+      _shopPending = null;
       _rating = null;
       _page = 1;
       _pages = 1;
@@ -198,6 +289,7 @@ class _MerchantReviewsScreenState extends State<MerchantReviewsScreen> {
   }
 
   List<Review> get _visible {
+    if (_serverScoped) return _rows;
     if (_filter == _ReviewFilter.disputed) {
       return _disputeReceipts[_shopId]?.values.toList().reversed.toList() ?? [];
     }
@@ -244,7 +336,9 @@ class _MerchantReviewsScreenState extends State<MerchantReviewsScreen> {
     }
     setState(() {
       if (dispute) {
-        (_disputeReceipts[_shopId!] ??= {})[receipt.id] = receipt;
+        if (!_serverScoped) {
+          (_disputeReceipts[_shopId!] ??= {})[receipt.id] = receipt;
+        }
         _rows.removeWhere((row) => row.id == receipt.id);
         // The receipt confirms this row only, not the current aggregate.
         _total = null;
@@ -259,8 +353,13 @@ class _MerchantReviewsScreenState extends State<MerchantReviewsScreen> {
           ? context.tr('申訴已提交', 'Dispute submitted')
           : context.tr('回覆已發送', 'Reply sent');
     });
-    _publishFirstPagePending();
-    if (dispute) _loadRating(receipt.shopId, generation);
+    if (_serverScoped) {
+      widget.onPendingChanged?.call();
+      await _loadPage(keepConfirmation: true);
+    } else {
+      _publishFirstPagePending();
+      if (dispute) _loadRating(receipt.shopId, generation);
+    }
   }
 
   @override
@@ -314,7 +413,8 @@ class _MerchantReviewsScreenState extends State<MerchantReviewsScreen> {
                             _ReviewSummary(
                               rating: _rating?.overall,
                               total: _total,
-                              pagePending: count,
+                              pending: _serverScoped ? _shopPending : count,
+                              complete: _serverScoped,
                             ),
                           ],
                           const SizedBox(height: CgTheme.space12),
@@ -329,17 +429,16 @@ class _MerchantReviewsScreenState extends State<MerchantReviewsScreen> {
                                     child: ChoiceChip(
                                       label: Text(_filterLabel(c, filter)),
                                       selected: _filter == filter,
-                                      onSelected: (_) => setState(() {
-                                        _operationSuccess = null;
-                                        _filter = filter;
-                                      }),
+                                      onSelected: (_) => _selectFilter(filter),
                                     ),
                                   ),
                               ],
                             ),
                           ),
                           const SizedBox(height: CgTheme.space12),
-                          if (_filter != _ReviewFilter.disputed && shop != null)
+                          if ((_serverScoped ||
+                                  _filter != _ReviewFilter.disputed) &&
+                              shop != null)
                             DropdownButtonFormField<String>(
                               initialValue: _sort,
                               decoration: InputDecoration(
@@ -364,17 +463,21 @@ class _MerchantReviewsScreenState extends State<MerchantReviewsScreen> {
                             Semantics(
                                 liveRegion: true,
                                 child: Text(_operationSuccess!)),
-                          if (_filter == _ReviewFilter.disputed)
+                          if (!_serverScoped &&
+                              !_loading &&
+                              !_failed &&
+                              _filter == _ReviewFilter.disputed)
                             Text(c.tr('此處只顯示本次開啟頁面時提交的申訴。',
                                 'This view shows disputes submitted while this workspace is open.')),
-                          if (_loading &&
-                              _filter != _ReviewFilter.disputed) ...[
+                          if (_loading) ...[
                             const SkeletonBox(height: 124),
                             const SizedBox(height: CgTheme.space8),
                             const SkeletonBox(height: 124),
-                          ] else if (_failed &&
-                              _filter != _ReviewFilter.disputed) ...[
-                            Text(c.tr('未能載入評價。', 'Could not load reviews.')),
+                          ] else if (_failed) ...[
+                            Text(_forbidden
+                                ? c.tr('無法管理此門店的評價。',
+                                    'You cannot manage reviews for this shop.')
+                                : c.tr('未能載入評價。', 'Could not load reviews.')),
                             Align(
                               alignment: Alignment.centerLeft,
                               child: OutlinedButton(
@@ -388,11 +491,13 @@ class _MerchantReviewsScreenState extends State<MerchantReviewsScreen> {
                               Padding(
                                 padding: const EdgeInsets.symmetric(
                                     vertical: CgTheme.space16),
-                                child: Text(_filter == _ReviewFilter.disputed
-                                    ? c.tr('本次沒有提交申訴。',
-                                        'No disputes submitted here yet.')
-                                    : c.tr('本頁沒有符合條件的評價。',
-                                        'No matching reviews on this page.')),
+                                child: Text(_serverScoped
+                                    ? c.tr('沒有符合條件的評價。', 'No matching reviews.')
+                                    : _filter == _ReviewFilter.disputed
+                                        ? c.tr('本次沒有提交申訴。',
+                                            'No disputes submitted here yet.')
+                                        : c.tr('本頁沒有符合條件的評價。',
+                                            'No matching reviews on this page.')),
                               ),
                             for (final review in reviews)
                               _MerchantReviewCard(
@@ -408,7 +513,9 @@ class _MerchantReviewsScreenState extends State<MerchantReviewsScreen> {
                                         ? null
                                         : () => _edit(review, dispute: true),
                               ),
-                            if (_filter != _ReviewFilter.disputed && _pages > 1)
+                            if ((_serverScoped ||
+                                    _filter != _ReviewFilter.disputed) &&
+                                _pages > 1)
                               Wrap(
                                 alignment: WrapAlignment.center,
                                 crossAxisAlignment: WrapCrossAlignment.center,
@@ -443,11 +550,13 @@ class _ReviewSummary extends StatelessWidget {
   const _ReviewSummary({
     required this.rating,
     required this.total,
-    required this.pagePending,
+    required this.pending,
+    required this.complete,
   });
   final double? rating;
   final int? total;
-  final int pagePending;
+  final int? pending;
+  final bool complete;
 
   @override
   Widget build(BuildContext context) => Card(
@@ -462,9 +571,14 @@ class _ReviewSummary extends StatelessWidget {
                 Text(context.tr('${rating!.toStringAsFixed(1)} 分',
                     '${rating!.toStringAsFixed(1)} / 5')),
               if (total != null)
-                Text(context.tr('共 $total 條公開評價', '$total public reviews')),
-              Text(context.tr('本頁 $pagePending 條待回覆',
-                  '$pagePending awaiting reply on this page')),
+                Text(complete
+                    ? context.tr('符合條件 $total 條', '$total matching reviews')
+                    : context.tr('共 $total 條公開評價', '$total public reviews')),
+              if (pending != null)
+                Text(complete
+                    ? context.tr('$pending 條待回覆', '$pending awaiting reply')
+                    : context.tr('本頁 $pending 條待回覆',
+                        '$pending awaiting reply on this page')),
             ],
           ),
         ),

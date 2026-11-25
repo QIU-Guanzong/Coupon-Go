@@ -65,6 +65,10 @@ class ReviewShopsApi extends ApiClient {
     Map<String, String>? query,
   }) async {
     if (path == '/merchant/shops') return {'shops': shops};
+    if (path == '/merchant/reviews' ||
+        path == '/merchant/reviews/pending-count') {
+      throw ApiException(404, 'Not Found');
+    }
     if (path == '/get-vendor-coupon-list') return {'coupons': <dynamic>[]};
     if (path == '/get-vendor-usage-data-new') return {};
     throw StateError('Unexpected GET: $path');

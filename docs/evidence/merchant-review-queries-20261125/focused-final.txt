@@ -1,0 +1,24 @@
+00:00 +0: loading /tmp/cg-r1r2-flutter.ALaMRR/test/merchant_review_server_queries_test.dart
+00:00 +0: /tmp/cg-r1r2-flutter.ALaMRR/test/merchant_review_server_queries_test.dart: workspace uses authorized pending totals, filters and durable dispute pages
+00:01 +1: /tmp/cg-r1r2-flutter.ALaMRR/test/merchant_review_server_queries_test.dart: unavailable count is omitted, not guessed from server page
+00:02 +2: /tmp/cg-r1r2-flutter.ALaMRR/test/merchant_review_server_queries_test.dart: merchant home gets the actual all-shops badge before entering
+00:02 +3: /tmp/cg-r1r2-flutter.ALaMRR/test/merchant_review_server_queries_test.dart: 401/403 are not legacy fallback; mismatch is never displayed
+00:02 +4: /tmp/cg-r1r2-flutter.ALaMRR/test/merchant_review_server_queries_test.dart: account change clears data and ignores old private receipt
+00:02 +5: /tmp/cg-r1r2-flutter.ALaMRR/test/merchant_review_server_queries_test.dart: switching shops discards the previous shop pending receipt
+00:02 +6: /tmp/cg-r1r2-flutter.ALaMRR/test/merchant_review_server_queries_test.dart: trial keeps pre-existing public read path and cannot write
+00:02 +6 ~1: loading /tmp/cg-r1r2-flutter.ALaMRR/test/merchant_review_shops_test.dart
+00:03 +6 ~1: /tmp/cg-r1r2-flutter.ALaMRR/test/merchant_review_shops_test.dart: vendor home only enters authorized stores; switch in one screen
+00:05 +7 ~1: /tmp/cg-r1r2-flutter.ALaMRR/test/merchant_review_shops_test.dart: membership alone does not make the entry or deep route eligible
+00:05 +8 ~1: /tmp/cg-r1r2-flutter.ALaMRR/test/merchant_review_shops_test.dart: admin roster is available, title localizes and expired view clears
+00:05 +9 ~1: /tmp/cg-r1r2-flutter.ALaMRR/test/merchant_review_shops_test.dart: 390px actual page, honest pending, and filters false
+00:06 +10 ~1: /tmp/cg-r1r2-flutter.ALaMRR/test/merchant_review_shops_test.dart: 390px actual page, honest pending, and filters true
+00:06 +11 ~1: /tmp/cg-r1r2-flutter.ALaMRR/test/merchant_review_shops_test.dart: old shop response cannot repopulate the next shop list
+00:06 +12 ~1: /tmp/cg-r1r2-flutter.ALaMRR/test/merchant_review_shops_test.dart: successful reply replaces this row without reload; edit survives failure
+00:07 +13 ~1: /tmp/cg-r1r2-flutter.ALaMRR/test/merchant_review_shops_test.dart: successful dispute receipt exits public filters and shows disabled dispute
+00:07 +14 ~1: /tmp/cg-r1r2-flutter.ALaMRR/test/merchant_review_shops_test.dart: wrong-store reply receipt does not show success or remove original
+00:07 +15 ~1: /tmp/cg-r1r2-flutter.ALaMRR/test/merchant_review_shops_test.dart: session change closes write affordances and removes old draft
+00:07 +16 ~1: /tmp/cg-r1r2-flutter.ALaMRR/test/merchant_review_shops_test.dart: isolated review surface is read only
+00:07 +16 ~2: /tmp/cg-r1r2-flutter.ALaMRR/test/merchant_review_shops_test.dart: customer sees server reply date, not invented metadata
+00:07 +17 ~2: loading /tmp/cg-r1r2-flutter.ALaMRR/test/vendor_stack_integration_test.dart
+00:08 +17 ~2: /tmp/cg-r1r2-flutter.ALaMRR/test/vendor_stack_integration_test.dart: brand survives and coupon filters never change review shop scope
+00:10 +18 ~2: All tests passed!
