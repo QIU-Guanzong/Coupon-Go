@@ -1,0 +1,96 @@
+........................................                                 [100%]
+=============================== warnings summary ===============================
+app/schemas_line_b.py:30
+  /tmp/cg-review-r4.0rAxVt/apps/api/app/schemas_line_b.py:30: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.14/migration/
+    class ReviewOut(BaseModel):
+
+app/schemas_line_b.py:109
+  /tmp/cg-review-r4.0rAxVt/apps/api/app/schemas_line_b.py:109: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.14/migration/
+    class MerchantFileOut(BaseModel):
+
+app/schemas_line_b.py:130
+  /tmp/cg-review-r4.0rAxVt/apps/api/app/schemas_line_b.py:130: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.14/migration/
+    class MerchantApplicationOut(BaseModel):
+
+app/schemas_line_b.py:195
+  /tmp/cg-review-r4.0rAxVt/apps/api/app/schemas_line_b.py:195: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.14/migration/
+    class MerchantContractVersionOut(BaseModel):
+
+app/schemas_line_b.py:211
+  /tmp/cg-review-r4.0rAxVt/apps/api/app/schemas_line_b.py:211: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.14/migration/
+    class MerchantContractSignatureOut(BaseModel):
+
+app/schemas_line_b.py:224
+  /tmp/cg-review-r4.0rAxVt/apps/api/app/schemas_line_b.py:224: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.14/migration/
+    class AdminAuditLogOut(BaseModel):
+
+app/schemas_packages.py:85
+  /tmp/cg-review-r4.0rAxVt/apps/api/app/schemas_packages.py:85: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.14/migration/
+    class PackageOut(BaseModel):
+
+app/schemas_packages.py:130
+  /tmp/cg-review-r4.0rAxVt/apps/api/app/schemas_packages.py:130: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.14/migration/
+    class PaymentOut(BaseModel):
+
+app/schemas_packages.py:146
+  /tmp/cg-review-r4.0rAxVt/apps/api/app/schemas_packages.py:146: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.14/migration/
+    class OrderOut(BaseModel):
+
+app/schemas_packages.py:211
+  /tmp/cg-review-r4.0rAxVt/apps/api/app/schemas_packages.py:211: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.14/migration/
+    class RefundOut(BaseModel):
+
+app/schemas.py:87
+  /tmp/cg-review-r4.0rAxVt/apps/api/app/schemas.py:87: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.14/migration/
+    class UserOut(BaseModel):
+
+app/schemas.py:111
+  /tmp/cg-review-r4.0rAxVt/apps/api/app/schemas.py:111: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.14/migration/
+    class CouponOut(BaseModel):
+
+app/schemas.py:148
+  /tmp/cg-review-r4.0rAxVt/apps/api/app/schemas.py:148: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.14/migration/
+    class ShopOut(BaseModel):
+
+app/schemas.py:168
+  /tmp/cg-review-r4.0rAxVt/apps/api/app/schemas.py:168: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.14/migration/
+    class BranchOut(BaseModel):
+
+app/schemas.py:344
+  /tmp/cg-review-r4.0rAxVt/apps/api/app/schemas.py:344: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.14/migration/
+    class NotificationOut(BaseModel):
+
+app/main.py:66
+  /tmp/cg-review-r4.0rAxVt/apps/api/app/main.py:66: DeprecationWarning: 
+          on_event is deprecated, use lifespan event handlers instead.
+  
+          Read more about it in the
+          [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+          
+    @app.on_event("startup")
+
+../../../../workspace/shared/coupon-go-abc-45fb44de.wizCD2/gateway-venv/lib/python3.12/site-packages/fastapi/applications.py:5039
+../../../../workspace/shared/coupon-go-abc-45fb44de.wizCD2/gateway-venv/lib/python3.12/site-packages/fastapi/applications.py:5039
+  /workspace/shared/coupon-go-abc-45fb44de.wizCD2/gateway-venv/lib/python3.12/site-packages/fastapi/applications.py:5039: DeprecationWarning: 
+          on_event is deprecated, use lifespan event handlers instead.
+  
+          Read more about it in the
+          [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+          
+    return self.router.on_event(event_type)  # ty: ignore[deprecated]
+
+app/main.py:89
+  /tmp/cg-review-r4.0rAxVt/apps/api/app/main.py:89: DeprecationWarning: 
+          on_event is deprecated, use lifespan event handlers instead.
+  
+          Read more about it in the
+          [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+          
+    @app.on_event("shutdown")
+
+../../../../workspace/shared/coupon-go-abc-45fb44de.wizCD2/gateway-venv/lib/python3.12/site-packages/fastapi/testclient.py:1
+  /workspace/shared/coupon-go-abc-45fb44de.wizCD2/gateway-venv/lib/python3.12/site-packages/fastapi/testclient.py:1: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.
+    from starlette.testclient import TestClient as TestClient  # noqa
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+40 passed, 20 warnings in 23.61s
