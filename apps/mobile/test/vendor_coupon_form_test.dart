@@ -2,6 +2,7 @@ import 'dart:io';
 import 'dart:ui' as ui;
 
 import 'package:coupon_go/api_client.dart';
+import 'package:coupon_go/feature_flags.dart';
 import 'package:coupon_go/language.dart';
 import 'package:coupon_go/screens/vendor.dart';
 import 'package:coupon_go/screens/vendor_coupon_workspace.dart';
@@ -298,12 +299,17 @@ void main() {
       await _enter(
           t, find.byKey(const ValueKey('issue-discount-price')), '105');
       final image = find.byKey(const ValueKey('issue-coupon-image'));
-      api.imageFails = true;
-      await _tap(t, image);
-      expect(find.text('圖片未能上傳'), findsOneWidget);
-      api.imageFails = false;
-      await _tap(t, image);
-      expect(api.uploads, 2);
+      if (publicTrial) {
+        expect(image, findsNothing);
+        expect(api.uploads, 0);
+      } else {
+        api.imageFails = true;
+        await _tap(t, image);
+        expect(find.text('圖片未能上傳'), findsOneWidget);
+        api.imageFails = false;
+        await _tap(t, image);
+        expect(api.uploads, 2);
+      }
       await _image(t, 'paid-form-$lg');
       final refund = find.byKey(const ValueKey('issue-refund-policy'));
       await _tap(t, refund);
@@ -315,13 +321,40 @@ void main() {
       expect(
           api.previews.single, containsPair('refund_policy', 'non_refundable'));
       expect(api.previews.single,
-          containsPair('image', '/uploads/merchant-images/fixture.webp'));
+          containsPair('image',
+              publicTrial ? '' : '/uploads/merchant-images/fixture.webp'));
       expect(api.creates, isEmpty);
       await _image(t, 'paid-review-$lg');
       await _tap(t, find.text(en ? 'Submit for review' : '提交審核'));
       expect(api.creates.single, api.previews.single);
     });
   }
+
+  testWidgets('trial copy with existing image submits without uploading',
+      (t) async {
+    final api = _CouponFixture();
+    await _open(
+        t,
+        Scaffold(
+            body: Builder(
+                builder: (context) => TextButton(
+                    onPressed: () => Navigator.of(context).push(
+                        MaterialPageRoute(
+                            builder: (_) => IssueCouponScreen(
+                                api: api,
+                                copyCoupon: const {
+                                  ..._active,
+                                  'image': '/uploads/merchant-images/existing.webp',
+                                }))),
+                    child: const Text('Open copy')))));
+    await _tap(t, find.text('Open copy'));
+    await _enter(t, find.widgetWithText(TextField, '數量'), '12');
+    await _tap(t, find.text('檢查並提交'));
+    expect(api.previews.single['image'], '');
+    await _tap(t, find.text('提交審核'));
+    expect(api.creates.single['image'], '');
+    expect(api.uploads, 0);
+  }, skip: !publicTrial);
 
   testWidgets('account switch during review sends zero PATCH requests',
       (t) async {
