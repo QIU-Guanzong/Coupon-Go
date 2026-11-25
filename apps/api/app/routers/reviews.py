@@ -40,9 +40,10 @@ The legacy POST /review endpoint is left untouched (points-only, no
 Review row, no rating effect).
 """
 import json
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import func
+from sqlalchemy import and_, case, func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -312,6 +313,116 @@ def list_shop_reviews(shop_id: int, page: int = Query(1, ge=1),
             "total_pages": out["total_pages"], "total": out["total"],
             "rating_distribution": _rating_distribution(db, shop_id),
             "reviews": [review_out(db, r, counts, helped) for r in page_items]}
+
+
+def _review_management_shops(db: Session, user: models.User, shop_id: int | None):
+    """Owner/admin scope used by merchant reply and the existing shop picker."""
+    shops = db.query(models.Shop)
+    if user.role != "admin":
+        shops = shops.filter(models.Shop.vendor_id == user.id)
+    if shop_id is not None:
+        shops = shops.filter(models.Shop.id == shop_id)
+    # Unrelated and missing shops deliberately produce the same result.
+    if (user.role != "admin" or shop_id is not None) and not db.query(shops.exists()).scalar():
+        raise HTTPException(status_code=403, detail="沒有權限管理此店舖的評價")
+    return shops
+
+
+def _reply_missing():
+    return func.length(func.trim(func.coalesce(Review.reply_text, ""))) == 0
+
+
+def _merchant_review_distribution(db: Session, allowed_ids) -> dict[str, int]:
+    """SQL buckets matching the public endpoint's round() and 1–5 clamp."""
+    star = case(
+        (Review.overall < 1.5, 1),
+        (Review.overall <= 2.5, 2),
+        (Review.overall < 3.5, 3),
+        (Review.overall <= 4.5, 4),
+        else_=5,
+    )
+    counts = dict((db.query(star, func.count(Review.id))
+                   .filter(Review.shop_id.in_(allowed_ids), Review.status == "visible")
+                   .group_by(star).all()))
+    return {str(n): counts.get(n, 0) for n in range(1, 6)}
+
+
+@router.get("/merchant/reviews")
+def list_merchant_reviews(
+    shop_id: int | None = Query(None, ge=1),
+    status: Literal["all", "visible", "disputed"] = "visible",
+    unreplied: bool | None = None,
+    max_stars: float | None = Query(None, ge=1, le=5),
+    sort: Literal["latest", "helpful"] = "latest",
+    page: int = Query(1, ge=1, le=100_000),
+    page_size: int = Query(20, ge=1, le=100),
+    user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Merchant workspace only: filter/count in SQL, materialize one page."""
+    shops = _review_management_shops(db, user, shop_id)
+    allowed_ids = shops.with_entities(models.Shop.id).statement
+    visible_statuses = ("visible", "disputed") if status == "all" else (status,)
+    filters = [Review.shop_id.in_(allowed_ids), Review.status.in_(visible_statuses)]
+    if unreplied is True:
+        # Disputes are not awaiting action even when no reply exists.
+        filters.extend([Review.status == "visible", _reply_missing()])
+    elif unreplied is False:
+        filters.append(~_reply_missing())
+    if max_stars is not None:
+        filters.append(Review.overall <= max_stars)
+
+    total = db.query(func.count(Review.id)).filter(*filters).scalar() or 0
+    total_pages = max(1, (total + page_size - 1) // page_size)
+    current_page = min(page, total_pages)
+    rows = db.query(Review).filter(*filters)
+    if sort == "helpful":
+        # Group only the matching review set; tie breaks are stable across pages.
+        votes = (db.query(ReviewHelpfulVote.review_id,
+                          func.count(ReviewHelpfulVote.id).label("vote_count"))
+                 .filter(ReviewHelpfulVote.review_id.in_(
+                     db.query(Review.id).filter(*filters).statement))
+                 .group_by(ReviewHelpfulVote.review_id).subquery())
+        rows = (rows.outerjoin(votes, votes.c.review_id == Review.id)
+                .order_by(func.coalesce(votes.c.vote_count, 0).desc()))
+    items = (rows.order_by(Review.created_at.desc(), Review.id.desc())
+             .offset((current_page - 1) * page_size).limit(page_size).all())
+    ids = [item.id for item in items]
+    names = {}
+    if items:
+        names = dict(db.query(models.User.id, models.User.name)
+                     .filter(models.User.id.in_({item.user_id for item in items})).all())
+    counts = _helpful_counts(db, ids)
+    return {"shop_id": shop_id, "current_page": current_page, "total_pages": total_pages,
+            "total": total,
+            "rating_distribution": _merchant_review_distribution(db, allowed_ids),
+            "reviews": [
+                {"id": item.id, "shop_id": item.shop_id,
+                 "user_name": names.get(item.user_id, "") or "",
+                 "taste": item.taste, "ambience": item.ambience, "service": item.service,
+                 "overall": item.overall, "content": item.content or "",
+                 "images": item.images_list, "tags": item.tags_list,
+                 "helpful_count": counts.get(item.id, 0), "status": item.status,
+                 "reply_text": (item.reply_text or "").strip(),
+                 "replied_at": item.replied_at, "created_at": item.created_at}
+                for item in items
+            ]}
+
+
+@router.get("/merchant/reviews/pending-count")
+def merchant_review_pending_count(
+    shop_id: int | None = Query(None, ge=1),
+    user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Count all actionable unreplied reviews, including zero-count shops."""
+    shops = _review_management_shops(db, user, shop_id)
+    counts = (shops.with_entities(models.Shop.id, func.count(Review.id))
+              .outerjoin(Review, and_(Review.shop_id == models.Shop.id,
+                                       Review.status == "visible", _reply_missing()))
+              .group_by(models.Shop.id).order_by(models.Shop.id).all())
+    return {"shop_id": shop_id, "total": sum(count for _, count in counts),
+            "shops": [{"shop_id": sid, "pending_count": count} for sid, count in counts]}
 
 
 @router.get("/shops/{shop_id}/rating")
