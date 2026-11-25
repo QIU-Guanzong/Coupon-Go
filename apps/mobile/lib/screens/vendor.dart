@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 
 import '../api_client.dart';
+import '../feature_flags.dart';
 import '../vendor_coupon_lifecycle.dart';
 import '../models.dart';
 import '../language.dart';
@@ -44,7 +45,9 @@ class _VendorHomeScreenState extends State<VendorHomeScreen> {
   List<Coupon> _coupons = [];
   List<Map<String, dynamic>> _shops = [];
   String? _loadError;
-  int? _pendingReviewPageCount;
+  int? _pendingReviewCount;
+  bool _reviewCountFromServer = false;
+  int _reviewCountRequest = 0;
   bool _loading = true;
   String? _couponStatus;
   List<Coupon> _filteredCoupons = [];
@@ -73,8 +76,10 @@ class _VendorHomeScreenState extends State<VendorHomeScreen> {
     if (_session == widget.api.sessionRevision) return;
     _session = widget.api.sessionRevision;
     _filterRequest++;
+    _reviewCountRequest++;
     setState(() {
-      _pendingReviewPageCount = null;
+      _pendingReviewCount = null;
+      _reviewCountFromServer = false;
       _shops = [];
       _coupons = [];
       _usage = null;
@@ -127,6 +132,7 @@ class _VendorHomeScreenState extends State<VendorHomeScreen> {
         _loading = false;
         _loadError = null;
       });
+      if (isOwner) unawaited(_loadPendingReviews());
     } catch (error) {
       if (!current()) return;
       setState(() {
@@ -136,6 +142,30 @@ class _VendorHomeScreenState extends State<VendorHomeScreen> {
             : context.tr('未能載入，請重試。', 'Could not load. Try again.');
       });
     }
+  }
+
+  Future<void> _loadPendingReviews() async {
+    if (publicTrial || !mounted) return;
+    final session = _session;
+    final request = ++_reviewCountRequest;
+    int? total;
+    try {
+      total = await widget.api.merchantReviewPendingCount();
+    } catch (_) {
+      // Leave no full-count badge if the API is unavailable or access changed.
+    }
+    if (!mounted ||
+        session != _session ||
+        session != widget.api.sessionRevision ||
+        request != _reviewCountRequest) {
+      return;
+    }
+    setState(() {
+      if (total != null || _reviewCountFromServer) {
+        _pendingReviewCount = total;
+      }
+      _reviewCountFromServer = total != null;
+    });
   }
 
   Future<void> _filterCoupons(String? status) async {
@@ -433,21 +463,46 @@ class _VendorHomeScreenState extends State<VendorHomeScreen> {
                                 api.sessionRevision != session) {
                               return;
                             }
-                            setState(() => _pendingReviewPageCount = count);
+                            if (!_reviewCountFromServer) {
+                              setState(() => _pendingReviewCount = count);
+                            }
+                          },
+                          onPendingChanged: () {
+                            if (mounted && _session == session) {
+                              setState(() {
+                                _pendingReviewCount = null;
+                                _reviewCountFromServer = false;
+                              });
+                              unawaited(_loadPendingReviews());
+                            }
+                          },
+                          onPrivateAccessDenied: () {
+                            if (mounted && _session == session) {
+                              _reviewCountRequest++;
+                              setState(() {
+                                _pendingReviewCount = null;
+                                _reviewCountFromServer = false;
+                              });
+                            }
                           },
                         ),
                       ),
                     );
                   },
-                  icon: _pendingReviewPageCount != null &&
-                          _pendingReviewPageCount! > 0
+                  icon: _pendingReviewCount != null &&
+                          _pendingReviewCount! > 0
                       ? Tooltip(
-                          message: context.tr(
-                            '已載入的評價首頁有 $_pendingReviewPageCount 條待回覆',
-                            '$_pendingReviewPageCount awaiting reply on loaded first review pages',
-                          ),
+                          message: _reviewCountFromServer
+                              ? context.tr(
+                                  '$_pendingReviewCount 條評價待回覆',
+                                  '$_pendingReviewCount reviews awaiting reply',
+                                )
+                              : context.tr(
+                                  '已載入的評價首頁有 $_pendingReviewCount 條待回覆',
+                                  '$_pendingReviewCount awaiting reply on loaded first review pages',
+                                ),
                           child: Badge(
-                            label: Text('$_pendingReviewPageCount'),
+                            label: Text('$_pendingReviewCount'),
                             child: const Icon(Icons.reviews_outlined),
                           ),
                         )

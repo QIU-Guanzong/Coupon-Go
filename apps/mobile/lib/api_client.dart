@@ -402,6 +402,37 @@ class ApiClient extends ChangeNotifier {
         // Gap 9: sort=helpful is a real server sort by helpful_count.
         if (sort == 'helpful') 'sort': 'helpful',
       });
+  Future<Map<String, dynamic>> merchantReviews(
+    int shopId, {
+    required int page,
+    required String sort,
+    required String status,
+    bool? unreplied,
+    int? maxStars,
+  }) =>
+      get('/merchant/reviews', query: {
+        'shop_id': '$shopId',
+        'page': '$page',
+        'sort': sort,
+        'status': status,
+        if (unreplied != null) 'unreplied': '$unreplied',
+        if (maxStars != null) 'max_stars': '$maxStars',
+      });
+
+  Future<int?> merchantReviewPendingCount({int? shopId}) async {
+    final reply = await get(
+      '/merchant/reviews/pending-count',
+      query: {if (shopId != null) 'shop_id': '$shopId'},
+    );
+    final total = reply['total'];
+    return reply.containsKey('shop_id') &&
+            reply['shop_id'] == shopId &&
+            total is int &&
+            total >= 0
+        ? total
+        : null;
+  }
+
   Future<Map<String, dynamic>> shopRating(int shopId) async =>
       get('/shops/$shopId/rating');
   // Gap 9: vote / cancel a helpful vote on a review. Returns
