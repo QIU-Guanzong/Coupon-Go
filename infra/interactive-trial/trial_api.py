@@ -19,7 +19,12 @@ import threading
 import time
 
 from fastapi import Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
+from starlette.datastructures import UploadFile
+from starlette.exceptions import HTTPException as StarletteHTTPException
+from starlette.formparsers import MultiPartException
+
+import trial_coupon_images as coupon_images
 import jwt
 import httpx
 from sqlalchemy import create_engine
@@ -100,6 +105,7 @@ for old in SESSIONS_ROOT.iterdir():
 SESSIONS = SESSIONS_ROOT / BOOT
 SESSIONS.mkdir(parents=True, exist_ok=False, mode=0o700)
 LOCK = threading.RLock()
+IMAGE_SLOTS = threading.BoundedSemaphore(2)
 IN_FLIGHT: dict[str, int] = {}
 CREATIONS: list[float] = []
 QBOT_CALLS: dict[str, list[float]] = {}
@@ -319,6 +325,102 @@ def _dispatch(path):
         engine.dispose()
 
 
+def _image_problem(detail, status):
+    return JSONResponse({'detail': detail}, status, headers={'Cache-Control': 'no-store'})
+
+
+def _vendor_id(header, sid):
+    scheme, _, token = header.partition(' ')
+    payload = security.decode_token(token) if scheme.lower() == 'bearer' else None
+    if not payload or payload.get('trial') != sid or payload.get('role') not in ('customer', 'vendor'):
+        return None, 401
+    subject = payload.get('sub')
+    if (not isinstance(subject, str) or not re.fullmatch(r'[1-9][0-9]{0,17}', subject)
+            or payload.get('purpose') is not None):
+        return None, 401
+    if payload['role'] != 'vendor':
+        return None, 403
+    return int(subject), 200
+
+
+async def _upload_coupon_image(scope, receive, sid, path, request):
+    owner, error = _vendor_id(request.headers.get('authorization', ''), sid)
+    if owner is None:
+        return _image_problem('請選擇商家身份', error)
+    if (request.headers.get('content-type', '').split(';', 1)[0].strip().lower()
+            != 'multipart/form-data' or request.query_params):
+        return _image_problem('請選擇一張優惠券圖片', 422)
+    try:
+        length = int(request.headers.get('content-length', '0'))
+        if length < 0:
+            raise ValueError()
+    except ValueError:
+        return _image_problem('內容格式不正確', 400)
+    if length > coupon_images.MAX_MULTIPART:
+        return _image_problem('圖片過大', 413)
+    if not IMAGE_SLOTS.acquire(blocking=False):
+        return _image_problem('請稍後再上傳', 429)
+    with LOCK:
+        IN_FLIGHT[sid] = IN_FLIGHT.get(sid, 0) + 1
+    try:
+        async def read_image_body():
+            data = bytearray()
+            while True:
+                chunk = await receive()
+                if chunk['type'] != 'http.request':
+                    raise ConnectionAbortedError()
+                next_bytes = chunk.get('body', b'')
+                if len(data) + len(next_bytes) > coupon_images.MAX_MULTIPART:
+                    raise OverflowError()
+                data.extend(next_bytes)
+                if not chunk.get('more_body', False):
+                    return bytes(data)
+
+        try:
+            body = await asyncio.wait_for(read_image_body(), timeout=15)
+        except OverflowError:
+            return _image_problem('圖片過大', 413)
+        except (ConnectionAbortedError, asyncio.TimeoutError):
+            return _image_problem('圖片未能上傳', 408)
+
+        async def replay():
+            return {'type': 'http.request', 'body': body, 'more_body': False}
+
+        try:
+            form_request = Request(scope, replay)
+            async with form_request.form(max_files=1, max_fields=1,
+                                         max_part_size=256) as form:
+                if set(form) != {'files', 'shop_id'}:
+                    return _image_problem('請選擇一張優惠券圖片及店舖', 422)
+                entry = form['files']
+                shop = form['shop_id']
+                if (not isinstance(entry, UploadFile) or not isinstance(shop, str)
+                        or not re.fullmatch(r'[1-9][0-9]{0,17}', shop)):
+                    return _image_problem('請選擇一張優惠券圖片及店舖', 422)
+                shop_id = int(shop)
+                email = TRIAL_IDENTITIES['vendor'][0]
+                if not await asyncio.to_thread(coupon_images.can_upload, path, owner, shop_id, email):
+                    return _image_problem('沒有權限', 403)
+                raw = await entry.read(coupon_images.MAX_UPLOAD + 1)
+                if len(raw) > coupon_images.MAX_UPLOAD:
+                    return _image_problem('圖片過大', 413)
+                image = await asyncio.to_thread(coupon_images.sanitize, raw, entry.content_type)
+                ref = await asyncio.to_thread(coupon_images.store, path, owner, shop_id, email, image)
+        except (ValueError, StarletteHTTPException, MultiPartException):
+            return _image_problem('圖片無效，請選擇 JPG、PNG 或 WebP', 422)
+        except PermissionError:
+            return _image_problem('沒有權限', 403)
+        except coupon_images.ImageQuota:
+            return _image_problem('本次使用的優惠券圖片已達上限', 429)
+        return JSONResponse({'images': [ref]}, 201, headers={'Cache-Control': 'no-store'})
+    finally:
+        with LOCK:
+            IN_FLIGHT[sid] -= 1
+            if not IN_FLIGHT[sid]:
+                del IN_FLIGHT[sid]
+        IMAGE_SLOTS.release()
+
+
 class TrialGateway:
     async def __call__(self, scope, receive, send):
         if scope['type'] != 'http':
@@ -330,6 +432,25 @@ class TrialGateway:
         origin = request.headers.get('origin')
         if origin and origin.rstrip('/') != PUBLIC_ORIGIN:
             return await JSONResponse({'detail': '來源不符'}, 403)(scope, receive, send)
+        if path == coupon_images.ROUTE or coupon_images.PATH.fullmatch(path):
+            found_image_session = _session_file(request.cookies.get(COOKIE))
+            if method == 'POST' and path == coupon_images.ROUTE:
+                if not found_image_session:
+                    return await _image_problem('連線已逾時，請重新載入', 401)(scope, receive, send)
+                image_reply = await _upload_coupon_image(scope, receive, *found_image_session, request)
+                return await image_reply(scope, receive, send)
+            if method == 'GET' and (image_match := coupon_images.PATH.fullmatch(path)):
+                if found_image_session and not request.query_params:
+                    image = await asyncio.to_thread(coupon_images.get, found_image_session[1],
+                                                    image_match.group(1))
+                    if image is not None:
+                        return await Response(image, media_type='image/webp', headers={
+                            'Cache-Control': 'private, no-store',
+                            'Cross-Origin-Resource-Policy': 'same-origin',
+                            'X-Content-Type-Options': 'nosniff',
+                        })(scope, receive, send)
+                return await _image_problem('找不到圖片', 404)(scope, receive, send)
+            return await _image_problem('此操作不可用', 403)(scope, receive, send)
         if method in ('POST', 'PATCH'):
             # Read a small bounded JSON body, including chunked requests.
             body = bytearray()
@@ -472,10 +593,29 @@ class TrialGateway:
                 valid = (set(form) == {'shop_name'} and isinstance(name, str) and name in APPLICATION_NAMES)
             elif valid and path == '/api/v3/reviews':
                 valid = set(form) <= TEXT_REVIEW_KEYS and ('images' not in form or form['images'] == [])
-            elif valid:
-                valid = form.get('image') in ('', None)
+            elif valid and form.get('image') not in ('', None):
+                owner, _ = _vendor_id(auth, sid)
+                coupon = re.fullmatch(r'/api/v3/vendor/coupons/([1-9][0-9]{0,17})', path)
+                valid = owner is not None and await asyncio.to_thread(
+                    coupon_images.can_attach, session_path, form['image'], owner,
+                    TRIAL_IDENTITIES['vendor'][0], shop_id=form.get('shop_id'),
+                    coupon_id=int(coupon.group(1)) if coupon else None,
+                )
+                if method == 'PATCH' and not coupon:
+                    valid = False
             if not valid:
                 return await JSONResponse({'detail': '請只提交此頁提供的資料'}, 422)(scope, receive, send)
+        if ((method == 'POST' and path == '/api/v3/packages')
+                or (method == 'PATCH' and re.fullmatch(r'/api/v3/vendor/packages/[0-9]+', path))):
+            try:
+                package = json.loads(body)
+            except (UnicodeDecodeError, ValueError):
+                package = None  # Native validation owns other malformed package fields.
+            media = package.get('images') if isinstance(package, dict) else None
+            if isinstance(media, list) and any(
+                isinstance(image, str) and coupon_images.ROUTE + '/' in image for image in media
+            ):
+                return await _image_problem('優惠券圖片只供優惠券使用', 422)(scope, receive, send)
         try:
             length = int(request.headers.get('content-length', '0') or 0)
         except ValueError:
