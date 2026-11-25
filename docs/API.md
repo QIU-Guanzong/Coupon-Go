@@ -939,6 +939,44 @@ returned（退貨）`。成功響應 `{message: "返現已作廢", transaction}`
 | POST | `/uploads/review-images` | 上傳晒圖（multipart，`files`，最多 9 張，每張 ≤5MB；見「晒圖上傳」節） |
 | POST | `/review?wallet_item_id=` | 【舊版】評價已用券，+15 分（一次）；不寫評價記錄、不影響星級 |
 
+#### 商戶評價管理（唯讀）
+
+兩條路徑僅限店主或平台 `admin`，與回覆評價的權限一致；
+門店員工（包括 `merchant-admin`）及評價作者不因此獲得商戶管理權限。
+未登入回 401，指定未獲授權或不存在的店舖回 403。未指定 `shop_id` 時，
+店主跨其所有自有店舖聚合，`admin` 跨所有店舖。
+
+| 方法 | 路徑 | 說明 |
+|---|---|---|
+| GET | `/merchant/reviews?shop_id=11&status=visible&unreplied=true&sort=latest&page=1&page_size=20` | 店舖評價分頁及篩選；`shop_id`、`unreplied`、`max_stars` 可省略 |
+| GET | `/merchant/reviews/pending-count?shop_id=11` | 待回覆可見評價全量計數，按店分組，包含 0 條的店舖；不受分頁影響 |
+
+列表 `status` 預設 `visible`，另支援 `disputed`（從庫讀取跨工作階段的申訴）、
+`all`（兩種均含），隱藏評價始終排除。 `unreplied=true` 只列待回覆的可見
+評價，不含申訴；`false` 只列已有回覆的評價。低評可加 `max_stars=2`。
+`sort=helpful` 按有用票數排序後以時間、ID 作平手比較；預設按時間、ID 由新至舊。
+頁號最小 1、最大 100000，`page_size` 預設 20、最大 100，超出實際頁數回最後一頁。
+`total` 是全部符合條件的筆數，`rating_distribution` 是授權範圍內全部可見評價
+的星級分布，均非本頁計數。申訴理由、顧客帳戶／錢包／核銷 ID 及聯絡資料不回傳。
+
+篩選列表回傳形狀：
+
+```json
+{"shop_id":11,"current_page":1,"total_pages":1,"total":1,
+ "rating_distribution":{"1":0,"2":1,"3":0,"4":2,"5":0},
+ "reviews":[{"id":18,"shop_id":11,"status":"visible","user_name":"Chan",
+ "overall":2.0,"taste":2,"ambience":2,"service":2,"content":"等候較久",
+ "images":[],"tags":[],"helpful_count":0,"reply_text":"","replied_at":null,
+ "created_at":"2026-11-24T12:00:00"}]}
+```
+
+`GET /merchant/reviews/pending-count` 跨店回傳形狀：
+
+```json
+{"shop_id":null,"total":3,"shops":[{"shop_id":11,"pending_count":3},
+ {"shop_id":12,"pending_count":0}]}
+```
+
 請求示例：
 
 ```json
