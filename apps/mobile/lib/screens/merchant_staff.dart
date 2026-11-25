@@ -226,7 +226,7 @@ class _MerchantStaffScreenState extends State<MerchantStaffScreen> {
 
   @override
   Widget build(BuildContext context) => Scaffold(
-        appBar: AppBar(title: const Text('店員管理')),
+        appBar: AppBar(title: Text(context.tr('店員管理', 'Staff management'))),
         body: _loading
             ? const Center(child: CircularProgressIndicator())
             : _error != null
@@ -390,7 +390,7 @@ class _ShopInvitationsScreenState extends State<ShopInvitationsScreen> {
 
   @override
   Widget build(BuildContext context) => Scaffold(
-        appBar: AppBar(title: const Text('店員邀請')),
+        appBar: AppBar(title: Text(context.tr('店員邀請', 'Staff invitations'))),
         body: _loading
             ? const Center(child: CircularProgressIndicator())
             : _error != null

@@ -592,7 +592,7 @@ class _MerchantOnboardingScreenState extends State<_MerchantApplication>
       canPop: !_dirty || _allowExit,
       onPopInvokedWithResult: (didPop, _) => _confirmExit(didPop),
       child: Scaffold(
-        appBar: AppBar(title: const Text('商戶入駐')),
+        appBar: AppBar(title: Text(context.tr('商戶入駐', 'Merchant application'))),
         body: _loading
             ? const Center(child: CircularProgressIndicator())
             : Center(

@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 
 import '../api_client.dart';
 import '../language.dart';
-import '../theme.dart';
 
 const _trialMode = bool.fromEnvironment('PUBLIC_TRIAL');
 
@@ -310,8 +309,7 @@ class _MerchantBranchesScreenState extends State<MerchantBranchesScreen> {
   @override
   Widget build(BuildContext context) => Scaffold(
         appBar: AppBar(
-          backgroundColor: CgColors.vendorGold,
-          title: const Text('店舖與分店'),
+          title: Text(context.tr('店舖與分店', 'Shops and branches')),
         ),
         body: Center(
           child: ConstrainedBox(
@@ -360,7 +358,7 @@ class _MerchantBranchesScreenState extends State<MerchantBranchesScreen> {
                     ),
                     TextButton(
                       onPressed: _busy ? null : _loadShops,
-                      child: const Text('重新載入'),
+                      child: Text(context.tr('重新載入', 'Reload')),
                     ),
                   ],
                   if (_loading)
@@ -398,7 +396,7 @@ class _MerchantBranchesScreenState extends State<MerchantBranchesScreen> {
                                 ? null
                                 : () => _edit(),
                             icon: const Icon(Icons.add),
-                            label: const Text('新增分店'),
+                            label: Text(context.tr('新增分店', 'Add branch')),
                           ),
                       ],
                     ),
@@ -424,12 +422,12 @@ class _MerchantBranchesScreenState extends State<MerchantBranchesScreen> {
                                 onPressed: _busy || _requiresRefresh
                                     ? null
                                     : () => _edit(branch),
-                                child: const Text('編輯'),
+                                child: Text(context.tr('編輯', 'Edit')),
                               )
                             : null,
                       ),
                     if (_shop?['can_manage_branches'] != true)
-                      const Text('你可以查看分店；如需修改，請聯絡店主。'),
+                      Text(context.tr('你可以查看分店；如需修改，請聯絡店主。', 'Contact the shop owner to edit branch details.')),
                     if (_shop?['can_manage_members'] == true &&
                         widget.staffBuilder != null) ...[
                       const SizedBox(height: 20),
@@ -443,7 +441,7 @@ class _MerchantBranchesScreenState extends State<MerchantBranchesScreen> {
                                   ),
                                 ),
                         icon: const Icon(Icons.people_outline),
-                        label: const Text('員工與角色'),
+                        label: Text(context.tr('員工與角色', 'Staff and roles')),
                       ),
                     ],
                   ],
@@ -524,7 +522,7 @@ class _BranchEditorState extends State<_BranchEditor> {
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
-            child: const Text('取消'),
+            child: Text(context.tr('取消', 'Cancel')),
           ),
           FilledButton(
             onPressed: () {
@@ -536,7 +534,7 @@ class _BranchEditorState extends State<_BranchEditor> {
                 });
               }
             },
-            child: const Text('儲存'),
+            child: Text(context.tr('儲存', 'Save')),
           ),
         ],
       );

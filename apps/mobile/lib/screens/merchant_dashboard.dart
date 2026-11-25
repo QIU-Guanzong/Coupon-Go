@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 
 import '../api_client.dart';
 import '../language.dart';
-import '../theme.dart';
 import 'merchant_payout.dart';
 
 String _money(Object? value) =>
@@ -91,15 +90,15 @@ class _MerchantDashboardScreenState extends State<MerchantDashboardScreen> {
     final hasData = balance != null && _dashboard != null;
     return Scaffold(
       appBar: AppBar(
-          backgroundColor: CgColors.vendorGold, title: const Text('經營與餘額')),
+          title: Text(context.tr('經營與餘額', 'Business and balance'))),
       body: Center(
           child: ConstrainedBox(
               constraints: const BoxConstraints(maxWidth: 800),
               child: RefreshIndicator(
                   onRefresh: _load,
                   child: ListView(padding: const EdgeInsets.all(20), children: [
-                    const Text('商戶餘額',
-                        style: TextStyle(
+                    Text(context.tr('商戶餘額', 'Merchant balance'),
+                        style: const TextStyle(
                             fontSize: 24, fontWeight: FontWeight.bold)),
                     const SizedBox(height: 6),
                     const Text('收款狀態以 Connect 流水為準；結算單供對帳。'),
@@ -114,7 +113,7 @@ class _MerchantDashboardScreenState extends State<MerchantDashboardScreen> {
                       Align(
                           alignment: Alignment.centerLeft,
                           child: TextButton(
-                              onPressed: _load, child: const Text('重試'))),
+                              onPressed: _load, child: Text(context.tr('重試', 'Retry')))),
                     ],
                     if (hasData && !_loading && _error == null) ...[
                       const SizedBox(height: 14),
@@ -154,7 +153,7 @@ class _MerchantDashboardScreenState extends State<MerchantDashboardScreen> {
                               onPressed: () => Navigator.of(context)
                                   .pushNamed('/vendor/settlements'),
                               icon: const Icon(Icons.receipt_long_outlined),
-                              label: const Text('查看結算單'))),
+                              label: Text(context.tr('查看結算單', 'View statements')))),
                       const Divider(height: 36),
                       Row(children: [
                         const Expanded(
@@ -204,8 +203,8 @@ class _MerchantDashboardScreenState extends State<MerchantDashboardScreen> {
                           value: _rate(
                               totals['conversion_rate'], totals['claims'])),
                       const SizedBox(height: 20),
-                      const Text('店舖',
-                          style: TextStyle(
+                      Text(context.tr('店舖', 'Shops'),
+                          style: const TextStyle(
                               fontSize: 19, fontWeight: FontWeight.w600)),
                       if (shops.isEmpty)
                         const Padding(
@@ -216,7 +215,7 @@ class _MerchantDashboardScreenState extends State<MerchantDashboardScreen> {
                           ListTile(
                               contentPadding: EdgeInsets.zero,
                               title: Text('${raw['shop_name'] ?? '店舖'}'),
-                              subtitle: const Text('查看核銷、券及流水'),
+                              subtitle: Text(context.tr('查看核銷、券及流水', 'Redemptions, coupons and transfers')),
                               trailing: const Icon(Icons.chevron_right),
                               onTap: () => Navigator.of(context).push(
                                   MaterialPageRoute(
@@ -327,7 +326,7 @@ class _MerchantShopDashboardScreenState
         : <dynamic>[];
     return Scaffold(
         appBar: AppBar(
-            title: Text(widget.shopName), backgroundColor: CgColors.vendorGold),
+            title: Text(widget.shopName)),
         body: Center(
             child: ConstrainedBox(
                 constraints: const BoxConstraints(maxWidth: 800),
@@ -335,7 +334,7 @@ class _MerchantShopDashboardScreenState
                   if (_loading) const LinearProgressIndicator(),
                   if (_error != null) ...[
                     Text(_error!),
-                    TextButton(onPressed: _load, child: const Text('重試'))
+                    TextButton(onPressed: _load, child: Text(context.tr('重試', 'Retry')))
                   ],
                   if (!_loading &&
                       _error == null &&
@@ -353,8 +352,8 @@ class _MerchantShopDashboardScreenState
                             icon: const Icon(
                                 Icons.account_balance_wallet_outlined),
                             label: Text(context.tr('提款紀錄', 'Withdrawal history')))),
-                    const Text('店舖餘額',
-                        style: TextStyle(
+                    Text(context.tr('店舖餘額', 'Shop balance'),
+                        style: const TextStyle(
                             fontSize: 22, fontWeight: FontWeight.bold)),
                     Text(_mode(context, _balance?['connect_mode'])),
                     if (_balance?['balance_complete'] != true)
@@ -389,7 +388,7 @@ class _MerchantShopDashboardScreenState
                             _rate(totals['conversion_rate'], totals['claims'])),
                     const Divider(height: 32),
                     ExpansionTile(
-                        title: const Text('每日核銷'),
+                        title: Text(context.tr('每日核銷', 'Daily redemptions')),
                         tilePadding: EdgeInsets.zero,
                         children: [
                           if (trend.isEmpty)
@@ -406,8 +405,8 @@ class _MerchantShopDashboardScreenState
                                   trailing: Text(_money(day['gross_amount']))),
                         ]),
                     const Divider(height: 32),
-                    const Text('優惠券表現',
-                        style: TextStyle(
+                    Text(context.tr('優惠券表現', 'Coupon performance'),
+                        style: const TextStyle(
                             fontSize: 19, fontWeight: FontWeight.w600)),
                     if (coupons.isEmpty)
                       const Padding(
@@ -422,8 +421,8 @@ class _MerchantShopDashboardScreenState
                                 '領取 ${_count(c['claims'])} · 核銷 ${_count(c['redemptions'])}'),
                             trailing: Text(_money(c['gross_amount']))),
                     const Divider(height: 32),
-                    const Text('轉帳流水',
-                        style: TextStyle(
+                    Text(context.tr('轉帳流水', 'Transfer history'),
+                        style: const TextStyle(
                             fontSize: 19, fontWeight: FontWeight.w600)),
                     if (entries.isEmpty)
                       const Padding(
@@ -448,7 +447,7 @@ class _MerchantShopDashboardScreenState
                                       _load();
                                     }
                                   : null,
-                              child: const Text('上一頁')),
+                              child: Text(context.tr('上一頁', 'Previous'))),
                           Text('第 $_page 頁'),
                           TextButton(
                               onPressed: _page <
@@ -460,7 +459,7 @@ class _MerchantShopDashboardScreenState
                                       _load();
                                     }
                                   : null,
-                              child: const Text('下一頁')),
+                              child: Text(context.tr('下一頁', 'Next'))),
                         ]),
                   ]
                 ]))));

@@ -5,7 +5,6 @@ import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../api_client.dart';
-import '../theme.dart';
 import '../language.dart';
 
 /// Test-mode Connect payout. A durable client request id is saved before
@@ -233,10 +232,10 @@ class _MerchantPayoutScreenState extends State<MerchantPayoutScreen> {
                 actions: [
                   TextButton(
                       onPressed: () => Navigator.pop(context, false),
-                      child: const Text('取消')),
+                      child: Text(context.tr('取消', 'Cancel'))),
                   FilledButton(
                       onPressed: () => Navigator.pop(context, true),
-                      child: const Text('確認提交'))
+                      child: Text(context.tr('確認提交', 'Confirm request')))
                 ]));
     if (confirm != true ||
         !_isCurrent(revision) ||
@@ -346,8 +345,7 @@ class _MerchantPayoutScreenState extends State<MerchantPayoutScreen> {
     final available = _balance?['available'];
     return Scaffold(
         appBar: AppBar(
-            title: Text(context.tr('提款核對', 'Payout verification')),
-            backgroundColor: CgColors.vendorGold),
+            title: Text(context.tr('提款核對', 'Payout verification'))),
         body: Center(
             child: ConstrainedBox(
                 constraints: const BoxConstraints(maxWidth: 680),
@@ -368,7 +366,7 @@ class _MerchantPayoutScreenState extends State<MerchantPayoutScreen> {
                                 color: Theme.of(context).colorScheme.error))),
                     TextButton(
                         onPressed: _busy ? null : _load,
-                        child: const Text('刷新狀態'))
+                        child: Text(context.tr('刷新狀態', 'Refresh status')))
                   ],
                   if (_message != null) ...[
                     const SizedBox(height: 12),
@@ -386,8 +384,8 @@ class _MerchantPayoutScreenState extends State<MerchantPayoutScreen> {
                     if (_invalidSavedRequest) const Text('本機提款記錄無法讀取，請聯絡平台核對。'),
                     if (_active.isNotEmpty) ...[
                       const SizedBox(height: 16),
-                      const Text('待完成提款',
-                          style: TextStyle(
+                      Text(context.tr('待完成提款', 'Pending payout'),
+                          style: const TextStyle(
                               fontSize: 18, fontWeight: FontWeight.bold)),
                       for (final row in _active)
                         ListTile(
@@ -406,7 +404,7 @@ class _MerchantPayoutScreenState extends State<MerchantPayoutScreen> {
                           child: TextButton(
                               onPressed:
                                   _busy ? null : () => _restore(_active.first),
-                              child: const Text('恢復原提款請求'))),
+                              child: Text(context.tr('恢復原提款請求', 'Resume payout request')))),
                     if (_active.any((row) => row['request_id'] == null))
                       const Text('舊提款缺少請求編號，請聯絡平台核對。'),
                     if (_localRequest != null) ...[
@@ -417,7 +415,7 @@ class _MerchantPayoutScreenState extends State<MerchantPayoutScreen> {
                           onPressed: _busy || !_localCanRetry || !ready
                               ? null
                               : () => _send(_localRequest!),
-                          child: const Text('用同一請求核對或重試')),
+                          child: Text(context.tr('用同一請求核對或重試', 'Check or retry this request'))),
                     ],
                     if (_active.isEmpty &&
                         _localRequest == null &&
@@ -438,7 +436,7 @@ class _MerchantPayoutScreenState extends State<MerchantPayoutScreen> {
                     const SizedBox(height: 12),
                     TextButton(
                         onPressed: _busy ? null : _load,
-                        child: const Text('刷新狀態')),
+                        child: Text(context.tr('刷新狀態', 'Refresh status'))),
                   ],
                 ]))));
   }

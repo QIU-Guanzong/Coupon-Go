@@ -717,7 +717,6 @@ class _HomeShellState extends State<HomeShell> {
       bottomNavigationBar: BottomNavigationBar(
         currentIndex: _index,
         type: BottomNavigationBarType.fixed,
-        selectedItemColor: CgColors.primary,
         onTap: (i) async {
           if (i == 2) {
             _openDiscovery();
@@ -792,7 +791,7 @@ class _HomeShellState extends State<HomeShell> {
         items: [
           BottomNavigationBarItem(
               icon: _vendorNavIcon('ic_home', Icons.home_outlined, 0),
-              label: tr('首頁', 'Home')),
+              label: tr('主頁', 'Home')),
           BottomNavigationBarItem(
               icon: _vendorNavIcon(
                 'ic_scanqr_code',
