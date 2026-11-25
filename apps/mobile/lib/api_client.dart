@@ -604,6 +604,21 @@ class ApiClient extends ChangeNotifier {
       (await get('/get-vendor-coupon-list',
           query: status == null ? null : {'status': status}))['coupons']
           as List<dynamic>;
+  Future<Map<String, dynamic>> vendorCouponPage({
+    required int page,
+    int pageSize = 20,
+    String? status,
+    String? query,
+  }) => get('/get-vendor-coupon-list', query: {
+    'page': '$page',
+    'page_size': '$pageSize',
+    if (status != null) 'status': status,
+    if (query != null && query.isNotEmpty) 'q': query,
+  });
+
+  Future<Map<String, dynamic>> vendorCouponDetails(int id) =>
+      get('/vendor/coupons/$id');
+
   Future<String> updateVendorCouponStatus(
     int id,
     VendorCouponAction action,

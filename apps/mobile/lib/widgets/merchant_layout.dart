@@ -9,24 +9,38 @@ class MerchantStatusPill extends StatelessWidget {
     required this.label,
     required this.active,
     this.labelKey,
+    this.listingStatus,
   });
 
   final String label;
   final bool active;
   final Key? labelKey;
+  final String? listingStatus;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final dark = theme.brightness == Brightness.dark;
-    final foreground = active
-        ? (dark ? CgColors.moneyPositiveDark : CgColors.statusActiveText)
-        : (dark ? CgColors.moneyPendingDark : CgColors.statusPendingText);
+    final scheme = theme.colorScheme;
+    final (Color foreground, Color background) = switch (listingStatus) {
+      'rejected' => (scheme.onErrorContainer, scheme.errorContainer),
+      'draft' || 'paused' || 'scheduled' => (
+          dark ? Colors.white : const Color(0xFF4B5059),
+          dark ? const Color(0xFF3A3D44) : const Color(0xFFEEEFF1),
+        ),
+      'expired' || 'sold_out' => (Colors.white, const Color(0xFF565861)),
+      _ => (
+          active
+              ? (dark ? CgColors.moneyPositiveDark : CgColors.statusActiveText)
+              : (dark ? CgColors.moneyPendingDark : CgColors.statusPendingText),
+          dark
+              ? scheme.surfaceContainerHigh
+              : (active ? CgColors.statusActiveBg : CgColors.statusPendingBg),
+        ),
+    };
     return DecoratedBox(
       decoration: BoxDecoration(
-        color: dark
-            ? theme.colorScheme.surfaceContainerHigh
-            : (active ? CgColors.statusActiveBg : CgColors.statusPendingBg),
+        color: background,
         borderRadius: const BorderRadius.all(Radius.circular(999)),
       ),
       child: Padding(
