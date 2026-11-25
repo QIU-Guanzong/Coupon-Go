@@ -50,7 +50,7 @@ from ..models_line_f import SettlementReversal, SettlementTransfer
 from ..settlement_basis import BASIS_EXPLAINER, settlement_basis, settlement_basis_note
 from ..shared import (audit_log as _log, csv_response, money as _money,
                       paginate, vendor_shop_ids)
-from ..notify import notify
+from ..notify import notify, notify_review_account
 from ..permissions_line_f import (
     ALL_ROLES, SHOP_MEMBER_ROLES, SHOP_ROLE_PERMISSIONS,
     can_access_shop, can_request_invoice_for_shop, can_view_settlement_shop,
@@ -1688,7 +1688,10 @@ def resolve_review_dispute(review_id: int,
                            user: models.User = Depends(
                                require_perm("reviews.dispute.resolve")),
                            db: Session = Depends(get_db)):
-    review = db.query(Review).filter(Review.id == review_id).first()
+    # Lock before reading the current status so a replay cannot both
+    # resolve and notify after another request has already done so.
+    review = (db.query(Review).filter(Review.id == review_id)
+              .with_for_update().first())
     if review is None:
         raise HTTPException(status_code=404, detail="找不到此評價")
     if review.status != "disputed":
@@ -1705,6 +1708,10 @@ def resolve_review_dispute(review_id: int,
     recompute_rating(db, review.shop_id)
     _log(db, user.id, "review.dispute.resolve", "review", review.id,
          f"decision={body.decision}; note={body.note}")
+    owner_id = (db.query(models.Shop.vendor_id)
+                .filter(models.Shop.id == review.shop_id).scalar())
+    notify_review_account(db, owner_id, user.id, "評價申訴結果", msg,
+                          "review_dispute_resolved", review.shop_id)
     db.commit()
     db.refresh(review)
     return {"message": msg, "review": review_out(db, review)}

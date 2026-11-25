@@ -935,9 +935,16 @@ returned（退貨）`。成功響應 `{message: "返現已作廢", transaction}`
 | GET | `/shops/{id}/rating` | 商户評分聚合 |
 | POST | `/reviews/{id}/reply` | 商户回覆（該店商户或 admin） |
 | POST | `/reviews/{id}/dispute` | 差評申訴（作者 / 該店商户 / admin） |
+| POST | `/reviews/{id}/resolve` | 按既有管理員權限裁決申訴（`uphold` / `dismiss`） |
 | POST | `/reviews/{id}/helpful` | 有用投票 |
 | POST | `/uploads/review-images` | 上傳晒圖（multipart，`files`，最多 9 張，每張 ≤5MB；見「晒圖上傳」節） |
 | POST | `/review?wallet_item_id=` | 【舊版】評價已用券，+15 分（一次）；不寫評價記錄、不影響星級 |
+
+站內通知使用現有 `GET /get-notification-list`：第一次回覆公開評價時，
+該評價作者收到 `review_reply`；重試或編輯同一回覆不再發通知。申訴成功裁決時，
+該店店主收到 `review_dispute_resolved`；重複裁決不再發通知。通知與評價在同一
+交易寫入，不通知操作人本人、停用或已刪除的帳戶，不包含評價內容、回覆原文或
+申訴／裁決理由。不發電郵、簡訊或推播。
 
 #### 商戶評價管理（唯讀）
 
