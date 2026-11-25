@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../api_client.dart';
+import '../feature_flags.dart';
 import '../language.dart';
 import '../models.dart';
 import '../theme.dart';
@@ -21,8 +22,10 @@ class CatalogPhoto extends StatelessWidget {
       return Image.asset(url, width: double.infinity, height: height, fit: BoxFit.cover,
         errorBuilder: (_, __, ___) => empty);
     }
-    if (url.startsWith('http://') || url.startsWith('https://') || url.startsWith('/uploads/')) {
-      final imageUrl = url.startsWith('/uploads/')
+    final local = url.startsWith('/uploads/') ||
+        (publicTrial && ApiClient.isTrialCouponImagePath(url));
+    if (url.startsWith('http://') || url.startsWith('https://') || local) {
+      final imageUrl = local
           ? '${(apiBaseUrl ?? ApiClient.configuredBase).replaceFirst(RegExp(r'/$'), '')}$url'
           : url;
       return Image.network(imageUrl, width: double.infinity, height: height, fit: BoxFit.cover,

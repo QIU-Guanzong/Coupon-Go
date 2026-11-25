@@ -2,15 +2,23 @@ import 'dart:io';
 import 'dart:ui' as ui;
 
 import 'package:coupon_go/api_client.dart';
+import 'package:coupon_go/feature_flags.dart';
 import 'package:coupon_go/language.dart';
 import 'package:coupon_go/screens/vendor.dart';
 import 'package:coupon_go/screens/vendor_coupon_workspace.dart';
 import 'package:coupon_go/theme.dart';
+import 'package:coupon_go/widgets/widgets.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
+
+const _privateImage =
+    '/api/v3/trial/coupon-images/0123456789abcdef0123456789abcdef.webp';
+const _merchantImage = '/uploads/merchant-images/fixture.webp';
 
 const _active = <String, dynamic>{
   'coupon_id': 9,
@@ -42,6 +50,7 @@ class _CouponFixture extends ApiClient {
   final previews = <Map<String, dynamic>>[];
   final creates = <Map<String, dynamic>>[];
   int uploads = 0;
+  final uploadShops = <int?>[];
   bool existingOrder = false;
   bool wrongReceipt = false;
   bool imageFails = false;
@@ -92,12 +101,14 @@ class _CouponFixture extends ApiClient {
   }
 
   @override
-  Future<String> uploadCouponImage(String filename, Uint8List bytes) async {
+  Future<String> uploadCouponImage(String filename, Uint8List bytes,
+      {int? shopId}) async {
     uploads++;
+    uploadShops.add(shopId);
     if (imageFails) throw ApiException(400, '圖片未能上傳');
     expect(filename, 'picture.webp');
     expect(bytes, [1, 2, 3]);
-    return '/uploads/merchant-images/fixture.webp';
+    return publicTrial ? _privateImage : _merchantImage;
   }
 
   @override
@@ -304,6 +315,7 @@ void main() {
       api.imageFails = false;
       await _tap(t, image);
       expect(api.uploads, 2);
+      expect(api.uploadShops, [6, 6]);
       await _image(t, 'paid-form-$lg');
       final refund = find.byKey(const ValueKey('issue-refund-policy'));
       await _tap(t, refund);
@@ -315,13 +327,78 @@ void main() {
       expect(
           api.previews.single, containsPair('refund_policy', 'non_refundable'));
       expect(api.previews.single,
-          containsPair('image', '/uploads/merchant-images/fixture.webp'));
+          containsPair('image', publicTrial ? _privateImage : _merchantImage));
       expect(api.creates, isEmpty);
       await _image(t, 'paid-review-$lg');
       await _tap(t, find.text(en ? 'Submit for review' : '提交審核'));
       expect(api.creates.single, api.previews.single);
     });
   }
+
+  test('image client submits to the exact endpoint for its mode', () async {
+    final api = ApiClient(baseUrl: 'https://example.test/coupongo-trial');
+    api.activateTrialToken('fixture-vendor');
+    final h = MockClient((request) async {
+      expect(request.method, 'POST');
+      expect(request.url.path, publicTrial
+          ? '/coupongo-trial/api/v3/trial/coupon-images'
+          : '/coupongo-trial/api/v3/uploads/merchant-images');
+      expect(request.headers['authorization'], 'Bearer fixture-vendor');
+      expect(request.body.contains('name="shop_id"'), publicTrial);
+      expect(request.body, contains('filename="coupon.png"'));
+      return http.Response(
+          '{"images":["${publicTrial ? _privateImage : _merchantImage}"]}', 201);
+    });
+    final result = await http.runWithClient(
+        () => api.uploadCouponImage('cover.png',
+            Uint8List.fromList([1, 2, 3]), shopId: 7),
+        () => h);
+    expect(result, publicTrial ? _privateImage : _merchantImage);
+    api.dispose();
+  });
+
+  testWidgets('private trial cover uses only the trial gateway origin/prefix',
+      (t) async {
+    await _open(
+        t,
+        const Scaffold(
+            body: CatalogPhoto(
+                url: _privateImage,
+                apiBaseUrl: 'https://example.test/coupongo-trial', height: 80)));
+    final images = t.widgetList<Image>(find.byType(Image));
+    if (publicTrial) {
+      final image = images.single.image as NetworkImage;
+      expect(image.url, 'https://example.test/coupongo-trial$_privateImage');
+    } else {
+      expect(images, isEmpty);
+    }
+  });
+
+  testWidgets('trial copy with existing image submits without uploading',
+      (t) async {
+    final api = _CouponFixture();
+    await _open(
+        t,
+        Scaffold(
+            body: Builder(
+                builder: (context) => TextButton(
+                    onPressed: () => Navigator.of(context).push(
+                        MaterialPageRoute(
+                            builder: (_) => IssueCouponScreen(
+                                api: api,
+                                copyCoupon: const {
+                                  ..._active,
+                                  'image': '/uploads/merchant-images/existing.webp',
+                                }))),
+                    child: const Text('Open copy')))));
+    await _tap(t, find.text('Open copy'));
+    await _enter(t, find.widgetWithText(TextField, '數量'), '12');
+    await _tap(t, find.text('檢查並提交'));
+    expect(api.previews.single['image'], '');
+    await _tap(t, find.text('提交審核'));
+    expect(api.creates.single['image'], '');
+    expect(api.uploads, 0);
+  }, skip: !publicTrial);
 
   testWidgets('account switch during review sends zero PATCH requests',
       (t) async {
