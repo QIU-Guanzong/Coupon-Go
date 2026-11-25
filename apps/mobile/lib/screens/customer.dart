@@ -45,6 +45,9 @@ class _HomeScreenState extends State<HomeScreen> {
   String _area = '全部地區';
   bool _loading = true;
   bool _error = false;
+  bool _packagesPending = false;
+  int _homeLoad = 0;
+  int _areaLoad = 0;
   static const _qbotHintSeen = 'home_qbot_hint_seen_v1';
   final _qbotHint = GlobalKey<TooltipState>();
   Timer? _qbotHintTimer;
@@ -87,8 +90,14 @@ class _HomeScreenState extends State<HomeScreen> {
     super.dispose();
   }
 
+  bool _isCurrentHomeLoad(ApiClient api, int load) =>
+      mounted && identical(widget.api, api) && load == _homeLoad;
+
   Future<void> _load() async {
-    if (mounted) setState(() => _loading = true);
+    if (!mounted) return;
+    final api = widget.api;
+    final load = ++_homeLoad;
+    setState(() => _loading = true);
     try {
       // Gap 10: best-effort last-known position only — no permission
       // prompt on the home page. When the OS has no cached position
@@ -109,52 +118,71 @@ class _HomeScreenState extends State<HomeScreen> {
         lat = null;
         lng = null;
       }
-      final data = await widget.api.home(lat: lat, lng: lng);
-      // Packages + bargain campaigns are best-effort: a failure here
-      // must not blank the whole home page.
-      var packages = <Package>[];
-      var campaigns = <BargainCampaign>[];
-      try {
-        packages = (await widget.api.packages())
-            .map((e) => Package.fromJson(e as Map<String, dynamic>))
-            .toList();
-      } on ApiException {
-        packages = <Package>[];
-      }
-      try {
-        campaigns = (await widget.api.bargainCampaigns())
-            .map((e) => BargainCampaign.fromJson(e as Map<String, dynamic>))
-            .toList();
-      } on ApiException {
-        campaigns = <BargainCampaign>[];
-      }
-      if (!mounted) return;
+      if (!_isCurrentHomeLoad(api, load)) return;
+      final data = await api.home(lat: lat, lng: lng);
+      if (!_isCurrentHomeLoad(api, load)) return;
       setState(() {
         _home = data;
-        _packages = packages;
-        _campaigns = campaigns;
+        _packagesPending = true;
         _loading = false;
         _error = false;
       });
-      _loadAreaCoupons();
+      // Secondary sections are independent: never hold the home result for either.
+      unawaited(_loadPackages(api, load));
+      unawaited(_loadCampaigns(api, load));
+      unawaited(_loadAreaCoupons());
     } catch (_) {
-      if (mounted) {
-        setState(() {
-          _loading = false;
-          _error = true;
-        });
-      }
+      if (!_isCurrentHomeLoad(api, load)) return;
+      setState(() {
+        _loading = false;
+        _error = true;
+      });
     }
   }
 
-  Future<void> _loadAreaCoupons() async {
+  Future<void> _loadPackages(ApiClient api, int load) async {
+    var packages = <Package>[];
     try {
-      final list = _area == '全部地區'
+      packages = (await api.packages())
+          .map((row) => Package.fromJson(row as Map<String, dynamic>))
+          .toList();
+    } catch (_) {
+      // Optional content should not change the main home result.
+    }
+    if (!_isCurrentHomeLoad(api, load)) return;
+    setState(() {
+      _packages = packages;
+      _packagesPending = false;
+    });
+  }
+
+  Future<void> _loadCampaigns(ApiClient api, int load) async {
+    var campaigns = <BargainCampaign>[];
+    try {
+      campaigns = (await api.bargainCampaigns())
+          .map((row) => BargainCampaign.fromJson(row as Map<String, dynamic>))
+          .toList();
+    } catch (_) {
+      // Optional content should not change the main home result.
+    }
+    if (!_isCurrentHomeLoad(api, load)) return;
+    setState(() => _campaigns = campaigns);
+  }
+
+  Future<void> _loadAreaCoupons() async {
+    final api = widget.api;
+    final homeLoad = _homeLoad;
+    final areaLoad = ++_areaLoad;
+    final area = _area;
+    try {
+      final list = area == '全部地區'
           ? _coupons('popular_coupons')
-          : (await widget.api.classification(area: _area))
+          : (await api.classification(area: area))
               .map((e) => Coupon.fromJson(e as Map<String, dynamic>))
               .toList();
-      if (mounted) setState(() => _areaCoupons = list);
+      if (_isCurrentHomeLoad(api, homeLoad) && areaLoad == _areaLoad) {
+        setState(() => _areaCoupons = list);
+      }
     } on ApiException {
       // Keep the previous list; area filtering must not blank the page.
     }
@@ -472,7 +500,12 @@ class _HomeScreenState extends State<HomeScreen> {
                   ],
                   // 热门套餐：2 列网格
                   SectionHeader(title: context.tr('熱門套餐','Popular packages'), onViewAll: _openPackageList),
-                  if (_packages.isEmpty)
+                  if (_packages.isEmpty && _packagesPending)
+                    const Padding(
+                      padding: EdgeInsets.symmetric(horizontal: 16),
+                      child: SkeletonBox(height: 40),
+                    )
+                  else if (_packages.isEmpty)
                     Padding(
                       padding: const EdgeInsets.symmetric(horizontal: 16),
                       child: Text(context.tr('暫時沒有熱門套餐。','No popular packages yet.'),
