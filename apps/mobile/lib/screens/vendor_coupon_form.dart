@@ -446,7 +446,8 @@ class _IssueCouponScreenState extends State<IssueCouponScreen> {
   }
 
   Future<void> _chooseImage() async {
-    if (publicTrial || _controlsLocked) return;
+    final shop = _shopId;
+    if (_controlsLocked || (publicTrial && shop == null)) return;
     final session = _session;
     setState(() {
       _uploading = true;
@@ -461,7 +462,7 @@ class _IssueCouponScreenState extends State<IssueCouponScreen> {
       }
       final bytes = await file.readAsBytes();
       if (!mounted || session != _session) return;
-      final url = await widget.api.uploadCouponImage(file.name, bytes);
+      final url = await widget.api.uploadCouponImage(file.name, bytes, shopId: shop);
       if (!mounted || session != _session) return;
       setState(() {
         _image = url;
@@ -758,11 +759,19 @@ class _IssueCouponScreenState extends State<IssueCouponScreen> {
                                     value: shop['id'] as int,
                                     child: Text(shop['name'] as String)))
                                 .toList(),
-                            onChanged: (id) => setState(() {
-                              if (id != _shopId) _dirty = true;
-                              _shopId = id;
-                              _branchIds = null;
-                            }),
+                            onChanged: _controlsLocked
+                                ? null
+                                : (id) => setState(() {
+                                      if (id != _shopId) {
+                                        _dirty = true;
+                                        if (publicTrial) {
+                                          _image = '';
+                                          _imageError = null;
+                                        }
+                                      }
+                                      _shopId = id;
+                                      _branchIds = null;
+                                    }),
                           ),
                         const SizedBox(height: CgTheme.space12),
                         TextField(
@@ -826,18 +835,20 @@ class _IssueCouponScreenState extends State<IssueCouponScreen> {
                               url: _image,
                               height: 100,
                               apiBaseUrl: widget.api.baseUrl),
-                        if (!publicTrial)
-                          OutlinedButton.icon(
-                            key: const ValueKey('issue-coupon-image'),
-                            onPressed: _controlsLocked ? null : _chooseImage,
-                            icon: const Icon(Icons.image_outlined),
-                            label: Text(_uploading
-                                ? context.tr('正在加入圖片…', 'Adding image…')
-                                : _image.isEmpty
-                                    ? context.tr('加入優惠券圖片', 'Add coupon image')
-                                    : context.tr(
-                                        '更換優惠券圖片', 'Replace coupon image')),
-                          ),
+                        OutlinedButton.icon(
+                          key: const ValueKey('issue-coupon-image'),
+                          onPressed: _controlsLocked ||
+                                  (publicTrial && _shopId == null)
+                              ? null
+                              : _chooseImage,
+                          icon: const Icon(Icons.image_outlined),
+                          label: Text(_uploading
+                              ? context.tr('正在加入圖片…', 'Adding image…')
+                              : _image.isEmpty
+                                  ? context.tr('加入優惠券圖片', 'Add coupon image')
+                                  : context.tr(
+                                      '更換優惠券圖片', 'Replace coupon image')),
+                        ),
                         if (_imageError != null)
                           Text(_imageError!,
                               style: TextStyle(

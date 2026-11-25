@@ -654,7 +654,12 @@ class ApiClient extends ChangeNotifier {
           int id, Map<String, dynamic> changedFields) =>
       patch('/vendor/coupons/$id', body: changedFields);
 
-  Future<String> uploadCouponImage(String filename, Uint8List bytes) async {
+  static bool isTrialCouponImagePath(String value) => RegExp(
+          r'^/api/v3/trial/coupon-images/[a-f0-9]{32}\.webp$')
+      .hasMatch(value);
+
+  Future<String> uploadCouponImage(String filename, Uint8List bytes,
+      {int? shopId}) async {
     final ext = filename.split('.').last.toLowerCase();
     final subtype = switch (ext) {
       'jpg' || 'jpeg' => 'jpeg',
@@ -665,16 +670,24 @@ class ApiClient extends ChangeNotifier {
     if (bytes.isEmpty || bytes.length > 5 * 1024 * 1024) {
       throw const FormatException('Invalid coupon image size');
     }
-    final req = http.MultipartRequest(
-        'POST', Uri.parse('$baseUrl/api/v3/uploads/merchant-images'));
+    if (publicTrial && (shopId == null || shopId < 1 || _token == null)) {
+      throw const FormatException('Choose a shop and merchant identity');
+    }
+    const endpoint = publicTrial
+        ? '/api/v3/trial/coupon-images'
+        : '/api/v3/uploads/merchant-images';
+    final req = http.MultipartRequest('POST', Uri.parse('$baseUrl$endpoint'));
     if (_token != null) req.headers['Authorization'] = 'Bearer $_token';
+    if (publicTrial) req.fields['shop_id'] = '$shopId';
     req.files.add(http.MultipartFile.fromBytes('files', bytes,
         filename: 'coupon.$ext', contentType: MediaType('image', subtype)));
     final response = _decode(await http.Response.fromStream(await req.send()));
     final images = response['images'];
     if (images is! List || images.length != 1 || images.single is! String ||
-        !RegExp(r'^/uploads/merchant-images/[a-zA-Z0-9_-]+\.(?:jpg|jpeg|png|webp)$')
-            .hasMatch(images.single as String)) {
+        !(publicTrial
+            ? isTrialCouponImagePath(images.single as String)
+            : RegExp(r'^/uploads/merchant-images/[a-zA-Z0-9_-]+\.(?:jpg|jpeg|png|webp)$')
+                .hasMatch(images.single as String))) {
       throw const FormatException('Invalid coupon image receipt');
     }
     return images.single as String;
