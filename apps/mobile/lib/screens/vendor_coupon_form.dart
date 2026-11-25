@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 
 import '../api_client.dart';
+import '../feature_flags.dart';
 import '../language.dart';
 import '../theme.dart';
 import '../vendor_coupon_lifecycle.dart';
@@ -164,7 +165,11 @@ class _IssueCouponScreenState extends State<IssueCouponScreen> {
     if (source['category_id'] is int) {
       _categoryId = source['category_id'] as int;
     }
-    if (source['image'] is String) _image = source['image'] as String;
+    // Trial copies are new listings; media upload stays unavailable.
+    // Keep existing edit images so they are not removed by an unrelated save.
+    if ((!publicTrial || _editing) && source['image'] is String) {
+      _image = source['image'] as String;
+    }
     final refund = source['refund_policy'];
     if (refund is String && _refundPolicies.contains(refund)) {
       _refundPolicy = refund;
@@ -441,7 +446,8 @@ class _IssueCouponScreenState extends State<IssueCouponScreen> {
   }
 
   Future<void> _chooseImage() async {
-    if (_controlsLocked) return;
+    final shop = _shopId;
+    if (_controlsLocked || (publicTrial && shop == null)) return;
     final session = _session;
     setState(() {
       _uploading = true;
@@ -456,7 +462,7 @@ class _IssueCouponScreenState extends State<IssueCouponScreen> {
       }
       final bytes = await file.readAsBytes();
       if (!mounted || session != _session) return;
-      final url = await widget.api.uploadCouponImage(file.name, bytes);
+      final url = await widget.api.uploadCouponImage(file.name, bytes, shopId: shop);
       if (!mounted || session != _session) return;
       setState(() {
         _image = url;
@@ -753,11 +759,19 @@ class _IssueCouponScreenState extends State<IssueCouponScreen> {
                                     value: shop['id'] as int,
                                     child: Text(shop['name'] as String)))
                                 .toList(),
-                            onChanged: (id) => setState(() {
-                              if (id != _shopId) _dirty = true;
-                              _shopId = id;
-                              _branchIds = null;
-                            }),
+                            onChanged: _controlsLocked
+                                ? null
+                                : (id) => setState(() {
+                                      if (id != _shopId) {
+                                        _dirty = true;
+                                        if (publicTrial) {
+                                          _image = '';
+                                          _imageError = null;
+                                        }
+                                      }
+                                      _shopId = id;
+                                      _branchIds = null;
+                                    }),
                           ),
                         const SizedBox(height: CgTheme.space12),
                         TextField(
@@ -823,7 +837,10 @@ class _IssueCouponScreenState extends State<IssueCouponScreen> {
                               apiBaseUrl: widget.api.baseUrl),
                         OutlinedButton.icon(
                           key: const ValueKey('issue-coupon-image'),
-                          onPressed: _controlsLocked ? null : _chooseImage,
+                          onPressed: _controlsLocked ||
+                                  (publicTrial && _shopId == null)
+                              ? null
+                              : _chooseImage,
                           icon: const Icon(Icons.image_outlined),
                           label: Text(_uploading
                               ? context.tr('正在加入圖片…', 'Adding image…')

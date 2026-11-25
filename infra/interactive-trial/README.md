@@ -49,7 +49,7 @@ additional trial-session rate limit; it never exposes or loads the model key.
 Enable only after confirming that its recommendation IDs match the trial seed.
 When unconfigured or unavailable the API returns an explicit unavailable error.
 
-The acceptance tests are `pytest -q infra/interactive-trial/test_trial_api.py`
+The acceptance tests are `pytest -q infra/interactive-trial/test_trial_api.py infra/interactive-trial/test_trial_coupon_images.py`
 with the backend requirements installed. They exercise isolated browser
 sessions and the simulated business flow; real Stripe and real payments are
 not tested by this mode.
@@ -110,3 +110,25 @@ Deployment is an operator step outside this code change. Do not reuse a
 production database, enable the background scheduler, or provide credentials
 for payment providers. Configure the same-origin cookie and upstream route
 before serving the new package at /coupongo/.
+
+### Isolated coupon cover images
+
+- `POST /api/v3/trial/coupon-images`: a signed vendor identity for the
+  current browser and an owned shop are required. Send exactly one
+  multipart `files` part plus `shop_id`. Accepts verified still JPEG, PNG
+  or WebP up to 5 MiB, 4,096 pixels on either edge and 12 million pixels
+  total. The gateway stores only resized, metadata-free WebP (maximum
+  1,280 pixels on either edge), at most 24 images and 12 MiB per browser.
+- `GET /api/v3/trial/coupon-images/{id}.webp` uses the same-origin
+  trial cookie, not a bearer in the URL. It is private/no-store and
+  disappears with that browser’s trial database on expiry or restart.
+  The normal same-origin `/coupongo-trial/api/v3/` proxy includes this
+  path; do not mount a shared image directory or serve these bytes
+  from another origin. Before any future release, verify the reverse proxy’s
+  body-size ceiling for this exact upload endpoint; the gateway’s own cap
+  stays at 5 MiB plus multipart framing.
+- The upload receipt is accepted only by coupon preview/create/edit,
+  for the same browser, merchant and shop. Existing listing rights
+  and review status still apply. Shared image uploads, package cover
+  reuse, review photos and merchant-document uploads remain unchanged.
+  This is a trial-only SQLite table, not a production migration or route.
