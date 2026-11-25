@@ -1,0 +1,14 @@
+00:00 +0: loading /tmp/coupon-c4c5-final-render/test/vendor_coupon_form_test.dart
+00:00 +0: (setUpAll)
+00:00 +0: 390 edit active coupon from merchant detail and confirm only changed fields: zh
+00:02 +1: 390 conflict preserves 409 and copy asks for fresh stock: zh
+00:03 +2: 390 paid create field values stay separate and are confirmed once: zh
+00:04 +3: 390 edit active coupon from merchant detail and confirm only changed fields: en
+00:05 +4: 390 conflict preserves 409 and copy asks for fresh stock: en
+00:06 +5: 390 paid create field values stay separate and are confirmed once: en
+00:07 +6: account switch during review sends zero PATCH requests
+00:08 +7: mismatched PATCH receipt cannot silently update the coupon
+00:08 +8: legacy Price coupon without a sale price can be renamed without making it paid
+00:08 +9: an inherited expiry farther than one year opens the HK picker without crashing
+00:09 +10: (tearDownAll)
+00:09 +10: All tests passed!

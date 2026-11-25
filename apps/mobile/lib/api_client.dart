@@ -619,6 +619,37 @@ class ApiClient extends ChangeNotifier {
   Future<Map<String, dynamic>> vendorCouponDetails(int id) =>
       get('/vendor/coupons/$id');
 
+  Future<Map<String, dynamic>> editVendorCoupon(
+          int id, Map<String, dynamic> changedFields) =>
+      patch('/vendor/coupons/$id', body: changedFields);
+
+  Future<String> uploadCouponImage(String filename, Uint8List bytes) async {
+    final ext = filename.split('.').last.toLowerCase();
+    final subtype = switch (ext) {
+      'jpg' || 'jpeg' => 'jpeg',
+      'png' => 'png',
+      'webp' => 'webp',
+      _ => throw const FormatException('Unsupported coupon image'),
+    };
+    if (bytes.isEmpty || bytes.length > 5 * 1024 * 1024) {
+      throw const FormatException('Invalid coupon image size');
+    }
+    final req = http.MultipartRequest(
+        'POST', Uri.parse('$baseUrl/api/v3/uploads/merchant-images'));
+    if (_token != null) req.headers['Authorization'] = 'Bearer $_token';
+    req.files.add(http.MultipartFile.fromBytes('files', bytes,
+        filename: 'coupon.$ext', contentType: MediaType('image', subtype)));
+    final response = _decode(await http.Response.fromStream(await req.send()));
+    final images = response['images'];
+    if (images is! List || images.length != 1 || images.single is! String ||
+        !RegExp(r'^/uploads/merchant-images/[a-zA-Z0-9_-]+\.(?:jpg|jpeg|png|webp)$')
+            .hasMatch(images.single as String)) {
+      throw const FormatException('Invalid coupon image receipt');
+    }
+    return images.single as String;
+  }
+
+
   Future<String> updateVendorCouponStatus(
     int id,
     VendorCouponAction action,
