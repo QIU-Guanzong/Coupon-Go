@@ -1,0 +1,8 @@
+00:00 +0: loading /tmp/coupon-c7c8-61.pXkI8X/baseline/capture_review_center_test.dart
+00:00 +0: (setUpAll)
+00:00 +0: compact review evidence en customer=false
+00:01 +1: compact review evidence en customer=true
+00:01 +2: compact review evidence zh customer=false
+00:01 +3: compact review evidence zh customer=true
+00:01 +4: (tearDownAll)
+00:01 +4: All tests passed!

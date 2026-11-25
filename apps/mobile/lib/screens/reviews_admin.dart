@@ -353,6 +353,7 @@ class _ShopReviewsScreenState extends State<ShopReviewsScreen> {
         _rating = ShopRating.fromJson(rating);
         _reviews = (list['reviews'] as List)
             .map((e) => Review.fromJson(e))
+            .where((review) => review.status.isEmpty || review.status == 'visible')
             .toList();
         _total = list['total'] as int? ?? _reviews.length;
         _loading = false;
@@ -381,7 +382,7 @@ class _ShopReviewsScreenState extends State<ShopReviewsScreen> {
       padding: const EdgeInsets.symmetric(vertical: 2),
       child: Row(
         children: [
-          SizedBox(width: 28, child: Text('$star 星')),
+          SizedBox(width: 28, child: Text(context.tr('$star 星', '$star ★'))),
           Expanded(
             child: LinearProgressIndicator(
               value: frac,
@@ -397,17 +398,43 @@ class _ShopReviewsScreenState extends State<ShopReviewsScreen> {
     );
   }
 
-  Widget _replyBox(String reply) {
+  Widget _replyBox(Review review) {
+    final theme = Theme.of(context);
+    final repliedAt = review.repliedAt;
     return Container(
-      margin: const EdgeInsets.only(left: 16, top: 8),
-      padding: const EdgeInsets.all(10),
+      key: ValueKey('customer-reply-${review.id}'),
+      width: double.infinity,
+      margin: const EdgeInsets.only(top: CgTheme.space8),
+      padding: const EdgeInsets.all(CgTheme.space12),
       decoration: BoxDecoration(
-        color: const Color(0xFFF5F5F6),
+        color: theme.colorScheme.surfaceContainerLow,
         borderRadius: BorderRadius.circular(8),
       ),
-      child: Text('商戶回覆：$reply',
-          style: const TextStyle(color: CgColors.textSecondary)),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text([
+            review.replyEdited
+                ? context.tr('商戶回覆（已編輯）', 'Merchant reply (edited)')
+                : context.tr('商戶回覆', 'Merchant reply'),
+            if (repliedAt != null) reviewLocalDate(repliedAt),
+          ].join(' · '), style: theme.textTheme.labelLarge),
+          const SizedBox(height: CgTheme.space4),
+          Text(review.replyText),
+        ],
+      ),
     );
+  }
+
+  Widget? _verifiedUse(Review review) {
+    final coupon = review.couponName?.trim();
+    final redeemedAt = review.redeemedAt;
+    if ((coupon == null || coupon.isEmpty) && redeemedAt == null) return null;
+    return Text([
+      context.tr('已核銷', 'Redeemed'),
+      if (coupon != null && coupon.isNotEmpty) coupon,
+      if (redeemedAt != null) reviewLocalDate(redeemedAt),
+    ].join(' · '), style: Theme.of(context).textTheme.bodySmall);
   }
 
   @override
@@ -417,7 +444,7 @@ class _ShopReviewsScreenState extends State<ShopReviewsScreen> {
     // Gap 9: distribution is server-side over ALL visible reviews.
     final distTotal = dist.values.fold<int>(0, (a, b) => a + b);
     return Scaffold(
-      appBar: AppBar(title: Text('${widget.shop.name} · 評價')),
+      appBar: AppBar(title: Text(context.tr('${widget.shop.name} · 評價', '${widget.shop.name} · Reviews'))),
       body: Column(
         children: [
           Card(
@@ -427,25 +454,31 @@ class _ShopReviewsScreenState extends State<ShopReviewsScreen> {
               child: _loading && r == null
                   ? const SkeletonBox(height: 64)
                   : r == null || r.reviewCount == 0
-                      ? const Text('暫無計入星級的評價。')
+                      ? Text(context.tr('暫無計入星級的評價。', 'No reviews count toward the rating yet.'))
                       : Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             Text(
-                                '${r.overall?.toStringAsFixed(1) ?? '-'} 分 · ${r.reviewCount} 條計入星級的評價',
+                                context.tr(
+                                  '${r.overall?.toStringAsFixed(1) ?? '-'} 分 · ${r.reviewCount} 條計入星級的評價',
+                                  '${r.overall?.toStringAsFixed(1) ?? '-'} / 5 · ${r.reviewCount} rated reviews',
+                                ),
                                 style: const TextStyle(
                                     fontSize: 18,
                                     fontWeight: FontWeight.bold)),
                             const SizedBox(height: 4),
                             Text(
-                                '口味 ${r.taste?.toStringAsFixed(1) ?? '-'}　環境 ${r.ambience?.toStringAsFixed(1) ?? '-'}　服務 ${r.service?.toStringAsFixed(1) ?? '-'}'),
+                                context.tr(
+                                  '口味 ${r.taste?.toStringAsFixed(1) ?? '-'}　環境 ${r.ambience?.toStringAsFixed(1) ?? '-'}　服務 ${r.service?.toStringAsFixed(1) ?? '-'}',
+                                  'Taste ${r.taste?.toStringAsFixed(1) ?? '-'} · Ambience ${r.ambience?.toStringAsFixed(1) ?? '-'} · Service ${r.service?.toStringAsFixed(1) ?? '-'}',
+                                )),
                             const SizedBox(height: 8),
                             ...[5, 4, 3, 2, 1].map((s) =>
                                 _distributionBar(
                                     s, dist[s] ?? 0, distTotal)),
                             const SizedBox(height: 4),
-                            const Text('只有已核銷的用戶可以寫評價。',
-                                style: TextStyle(
+                            Text(context.tr('只有已核銷的用戶可以寫評價。', 'Only customers who redeemed an offer can write a review.'),
+                                style: const TextStyle(
                                     color: CgColors.textSecondary,
                                     fontSize: 12)),
                           ],
@@ -454,21 +487,22 @@ class _ShopReviewsScreenState extends State<ShopReviewsScreen> {
           ),
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 12),
-            child: Row(
+            child: Wrap(
+              spacing: CgTheme.space8,
+              runSpacing: CgTheme.space4,
+              crossAxisAlignment: WrapCrossAlignment.center,
               children: [
-                Text('評價列表（共 $_total 條）'),
-                const Spacer(),
+                Text(context.tr('評價列表（共 $_total 條）', 'Reviews ($_total)')),
                 ChoiceChip(
-                  label: const Text('最新'),
+                  label: Text(context.tr('最新', 'Latest')),
                   selected: _sort == 'latest',
                   onSelected: (_) {
                     setState(() => _sort = 'latest');
                     _load();
                   },
                 ),
-                const SizedBox(width: 6),
                 ChoiceChip(
-                  label: const Text('最有用'),
+                  label: Text(context.tr('最有用', 'Most helpful')),
                   selected: _sort == 'helpful',
                   onSelected: (_) {
                     // Gap 9: server sort by helpful_count.
@@ -476,9 +510,8 @@ class _ShopReviewsScreenState extends State<ShopReviewsScreen> {
                     _load();
                   },
                 ),
-                const SizedBox(width: 6),
                 FilterChip(
-                  label: const Text('只看有圖'),
+                  label: Text(context.tr('只看有圖', 'With photos')),
                   selected: _hasImagesOnly,
                   onSelected: (v) {
                     setState(() => _hasImagesOnly = v);
@@ -503,10 +536,10 @@ class _ShopReviewsScreenState extends State<ShopReviewsScreen> {
                         child: Column(
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: [
-                            const Text('網絡不穩定，請重試'),
+                            Text(context.tr('網絡不穩定，請重試', 'Could not load reviews. Try again.')),
                             const SizedBox(height: 12),
                             ElevatedButton(
-                                onPressed: _load, child: const Text('重試')),
+                                onPressed: _load, child: Text(context.tr('重試', 'Try again'))),
                           ],
                         ),
                       )
@@ -515,11 +548,11 @@ class _ShopReviewsScreenState extends State<ShopReviewsScreen> {
                             child: Column(
                               mainAxisAlignment: MainAxisAlignment.center,
                               children: [
-                                const Text('暫時沒有評價。'),
+                                Text(context.tr('暫時沒有評價。', 'No reviews yet.')),
                                 const SizedBox(height: 12),
                                 ElevatedButton(
                                     onPressed: _load,
-                                    child: const Text('重新載入')),
+                                    child: Text(context.tr('重新載入', 'Reload'))),
                               ],
                             ),
                           )
@@ -529,6 +562,7 @@ class _ShopReviewsScreenState extends State<ShopReviewsScreen> {
                               itemCount: _reviews.length,
                               itemBuilder: (_, i) {
                                 final rev = _reviews[i];
+                                final verifiedUse = _verifiedUse(rev);
                                 return Card(
                                   margin:
                                       const EdgeInsets.fromLTRB(12, 8, 12, 0),
@@ -539,12 +573,16 @@ class _ShopReviewsScreenState extends State<ShopReviewsScreen> {
                                           CrossAxisAlignment.start,
                                       children: [
                                         Text(
-                                            '${rev.userName.isEmpty ? '用戶' : rev.userName} · ${rev.overall.toStringAsFixed(1)} 分',
+                                            '${rev.userName.isEmpty ? context.tr('用戶', 'Customer') : rev.userName} · ${rev.overall.toStringAsFixed(1)}/5',
                                             style: const TextStyle(
                                                 fontWeight: FontWeight.bold)),
                                         const SizedBox(height: 4),
                                         Text(
-                                            '口味 ${_stars(rev.taste)}　環境 ${_stars(rev.ambience)}　服務 ${_stars(rev.service)}'),
+                                            context.tr(
+                                            '口味 ${_stars(rev.taste)}　環境 ${_stars(rev.ambience)}　服務 ${_stars(rev.service)}',
+                                            'Taste ${_stars(rev.taste)} · Ambience ${_stars(rev.ambience)} · Service ${_stars(rev.service)}',
+                                          )),
+                                        if (verifiedUse != null) verifiedUse,
                                         if (rev.content.isNotEmpty)
                                           Padding(
                                             padding:
@@ -594,21 +632,21 @@ class _ShopReviewsScreenState extends State<ShopReviewsScreen> {
                                                     : Icons.thumb_up_outlined,
                                                 size: 18),
                                             label: Text(_helpedByMe(rev)
-                                                ? '已投有用 (${_helpfulCount(rev)})'
-                                                : '有用 (${_helpfulCount(rev)})'),
+                                                ? context.tr('已投有用 (${_helpfulCount(rev)})', 'Marked helpful (${_helpfulCount(rev)})')
+                                                : context.tr('有用 (${_helpfulCount(rev)})', 'Helpful (${_helpfulCount(rev)})')),
                                           ),
                                         ),
                                         if (rev.tags.isNotEmpty)
                                           Text(
-                                              '標籤：${rev.tags.join('、')}'),
-                                        if (!rev.countsTowardRating)
-                                          const Text('此評價未計入星級',
-                                              style: TextStyle(
+                                              context.tr('標籤：${rev.tags.join('、')}', 'Tags: ${rev.tags.join(', ')}')),
+                                        if (!rev.countsTowardRating && rev.status != 'disputed')
+                                          Text(context.tr('此評價未計入星級', 'This review does not count toward the rating'),
+                                              style: const TextStyle(
                                                   color:
                                                       CgColors.textSecondary,
                                                   fontSize: 12)),
                                         if (rev.replyText.isNotEmpty)
-                                          _replyBox(rev.replyText),
+                                          _replyBox(rev),
                                       ],
                                     ),
                                   ),

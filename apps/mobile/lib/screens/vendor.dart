@@ -13,6 +13,7 @@ import '../theme.dart';
 import '../widgets/merchant_layout.dart';
 import '../widgets/widgets.dart';
 import 'merchant_review_shops.dart';
+import 'merchant_reviews.dart';
 import 'coupon_branch_scope.dart';
 import 'vendor_packages.dart';
 import 'vendor_coupon_workspace.dart' show confirmVendorCouponAction;
@@ -43,6 +44,7 @@ class _VendorHomeScreenState extends State<VendorHomeScreen> {
   List<Coupon> _coupons = [];
   List<Map<String, dynamic>> _shops = [];
   String? _loadError;
+  int? _pendingReviewPageCount;
   bool _loading = true;
   String? _couponStatus;
   List<Coupon> _filteredCoupons = [];
@@ -72,6 +74,7 @@ class _VendorHomeScreenState extends State<VendorHomeScreen> {
     _session = widget.api.sessionRevision;
     _filterRequest++;
     setState(() {
+      _pendingReviewPageCount = null;
       _shops = [];
       _coupons = [];
       _usage = null;
@@ -419,21 +422,37 @@ class _VendorHomeScreenState extends State<VendorHomeScreen> {
                     final admin = widget.showAdmin;
                     Navigator.of(context).push(
                       MaterialPageRoute<void>(
-                        builder: (_) => MerchantReviewShopPicker(
+                        settings: const RouteSettings(name: '/vendor/reviews'),
+                        builder: (_) => MerchantReviewsScreen(
                           api: api,
                           shopRoster: roster,
-                          sessionRevision: session,
+                          expectedSessionRevision: session,
                           canAdministerAllShops: admin,
+                          onFirstPagePending: (count) {
+                            if (!mounted || _session != session ||
+                                api.sessionRevision != session) {
+                              return;
+                            }
+                            setState(() => _pendingReviewPageCount = count);
+                          },
                         ),
                       ),
                     );
                   },
-                  icon: const Icon(Icons.reviews_outlined),
-                  label: _toolLabel(
-                    const bool.fromEnvironment('PUBLIC_TRIAL')
-                        ? context.tr('顧客評價', 'Reviews')
-                        : context.tr('評價回覆（差評）', 'Reply to reviews'),
-                  ),
+                  icon: _pendingReviewPageCount != null &&
+                          _pendingReviewPageCount! > 0
+                      ? Tooltip(
+                          message: context.tr(
+                            '已載入的評價首頁有 $_pendingReviewPageCount 條待回覆',
+                            '$_pendingReviewPageCount awaiting reply on loaded first review pages',
+                          ),
+                          child: Badge(
+                            label: Text('$_pendingReviewPageCount'),
+                            child: const Icon(Icons.reviews_outlined),
+                          ),
+                        )
+                      : const Icon(Icons.reviews_outlined),
+                  label: _toolLabel(context.tr('評價管理', 'Reviews')),
                 ),
               if (widget.showAdmin)
                 OutlinedButton(
