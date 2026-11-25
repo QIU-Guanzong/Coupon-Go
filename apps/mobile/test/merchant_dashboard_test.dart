@@ -1,10 +1,13 @@
 import 'package:coupon_go/api_client.dart';
+import 'package:coupon_go/language.dart';
 import 'package:coupon_go/screens/merchant_dashboard.dart';
+import 'package:coupon_go/theme.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 class DashboardApi extends ApiClient {
   bool fail = false;
+  final requestedRanges = <int>[];
   @override
   Future<Map<String, dynamic>> merchantBalance() async {
     if (fail) throw ApiException(503, '無法讀取餘額');
@@ -22,22 +25,26 @@ class DashboardApi extends ApiClient {
   }
 
   @override
-  Future<Map<String, dynamic>> merchantDashboard(int days) async => {
-        'period': {'from': '2026-11-01', 'to': '2026-11-22'},
-        'totals': {
-          'redemptions': 1,
-          'gross_amount': 100,
-          'commission': 10,
-          'net_amount': 90,
-          'redeemed_orders': 1,
-          'avg_order_value': 100,
-          'claims': 2,
-          'conversion_rate': 0.5
-        },
-        'shops': [
-          {'shop_id': 5, 'shop_name': '測試店'}
-        ],
-      };
+  Future<Map<String, dynamic>> merchantDashboard(int days) async {
+    requestedRanges.add(days);
+    return {
+      'period': {'from': '2026-11-01', 'to': '2026-11-22'},
+      'totals': {
+        'redemptions': 1,
+        'gross_amount': 100,
+        'commission': 10,
+        'net_amount': 90,
+        'redeemed_orders': 1,
+        'avg_order_value': 100,
+        'claims': 2,
+        'conversion_rate': 0.5
+      },
+      'shops': [
+        {'shop_id': 5, 'shop_name': '測試店'}
+      ],
+    };
+  }
+
   @override
   Future<Map<String, dynamic>> merchantShopBalance(int id) => merchantBalance();
   @override
@@ -72,6 +79,53 @@ class DashboardApi extends ApiClient {
 }
 
 void main() {
+  testWidgets('390px English at 130% shows the date filter and applies it',
+      (tester) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(390, 844);
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final language = AppLanguage()..english = true;
+    final api = DashboardApi();
+    addTearDown(language.dispose);
+    addTearDown(api.dispose);
+    await tester.pumpWidget(
+      LanguageScope(
+        language: language,
+        child: MaterialApp(
+          theme: CgTheme.light(),
+          builder: (context, child) => MediaQuery(
+            data: MediaQuery.of(context)
+                .copyWith(textScaler: const TextScaler.linear(1.3)),
+            child: child!,
+          ),
+          home: MerchantDashboardScreen(api: api),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final heading = find.text('Business overview');
+    await tester.scrollUntilVisible(heading, 240);
+    expect(tester.widget<Text>(heading).style?.fontSize, 16);
+    expect(tester.widget<Text>(heading).style?.fontWeight, FontWeight.bold);
+    expect(tester.getTopLeft(heading).dx, closeTo(16, 1));
+    final filter = find.byType(DropdownButtonFormField<int>);
+    await tester.ensureVisible(filter);
+    await tester.pumpAndSettle();
+    expect(tester.getTopLeft(filter).dx, closeTo(16, 1));
+    expect(tester.getBottomRight(filter).dx, lessThanOrEqualTo(374));
+    expect(find.text('Date range'), findsOneWidget);
+    expect(find.text('Last 30 days'), findsOneWidget);
+    await tester.tap(filter);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Last 7 days').last);
+    await tester.pumpAndSettle();
+    expect(api.requestedRanges, [30, 7]);
+    expect(find.text('Last 7 days'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('缺歷史流水和未知轉帳均清楚標示，店舖流水與統計可查看', (tester) async {
     final api = DashboardApi();
     await tester

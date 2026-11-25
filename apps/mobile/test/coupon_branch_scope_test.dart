@@ -149,7 +149,7 @@ void main() {
     expect(find.textContaining('提交結果未確認'), findsOneWidget);
     expect(api.createAttempts, 1);
     final button = tester
-        .widget<ElevatedButton>(find.widgetWithText(ElevatedButton, '檢查並提交'));
+        .widget<FilledButton>(find.widgetWithText(FilledButton, '檢查並提交'));
     expect(button.onPressed, isNull);
   });
 }

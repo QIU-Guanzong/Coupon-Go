@@ -1,4 +1,6 @@
 import 'package:coupon_go/api_client.dart';
+import 'package:coupon_go/language.dart';
+import 'package:coupon_go/widgets/merchant_layout.dart';
 import 'package:coupon_go/screens/merchant_staff.dart';
 import 'package:coupon_go/screens/guest_auth.dart';
 import 'package:flutter/material.dart';
@@ -7,6 +9,7 @@ import 'package:flutter_test/flutter_test.dart';
 const _trialMode = bool.fromEnvironment('PUBLIC_TRIAL');
 
 class StaffApi extends ApiClient {
+  String memberName = '阿明';
   int revision = 0;
   bool accepted = false;
   final calls = <Map<String, dynamic>>[];
@@ -35,7 +38,7 @@ class StaffApi extends ApiClient {
           {
             'id': 5,
             'user_id': 9,
-            'name': '阿明',
+            'name': memberName,
             'email': 'staff@example.com',
             'role': 'cashier',
             'status': 'active'
@@ -84,6 +87,33 @@ class StaffLoginApi extends StaffApi {
 }
 
 void main() {
+  testWidgets('narrow English staff list uses one email and a status pill',
+      (tester) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(390, 844);
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final language = AppLanguage()..english = true;
+    final api = StaffApi()..memberName = '';
+    await tester.pumpWidget(LanguageScope(
+      language: language,
+      child: MaterialApp(
+        builder: (context, child) => MediaQuery(
+          data: MediaQuery.of(context).copyWith(
+            textScaler: const TextScaler.linear(1.3),
+          ),
+          child: child!,
+        ),
+        home: MerchantStaffScreen(api: api, shopId: 1),
+      ),
+    ));
+    await tester.pumpAndSettle();
+    expect(find.text('staff@example.com'), findsOneWidget);
+    expect(find.text('Cashier'), findsOneWidget);
+    expect(find.widgetWithText(MerchantStatusPill, 'Active'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('已接受邀請的店員可從企業登入', (tester) async {
     final api = StaffLoginApi();
     var authed = false;

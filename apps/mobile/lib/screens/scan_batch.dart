@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 
 import '../api_client.dart';
 import '../language.dart';
+import '../theme.dart';
 
 /// Batch redemption uses the same read-only check as single scans.
 class ScanBatchScreen extends StatefulWidget {
@@ -43,7 +44,7 @@ class _ScanBatchScreenState extends State<ScanBatchScreen> {
       _pendingKey = null;
       _busy = false;
       _success = null;
-      _error = '登入狀態已變更，請重新預檢。';
+      _error = context.tr('登入狀態已變更，請重新預檢。', 'Your session changed. Check the codes again.');
     });
   }
 
@@ -66,11 +67,11 @@ class _ScanBatchScreenState extends State<ScanBatchScreen> {
     final revision = widget.api.sessionRevision;
     if (_busy || _pendingKey != null) return;
     if (!RegExp(r'^\d{6}$').hasMatch(code)) {
-      setState(() => _error = '請輸入六位兌換碼');
+      setState(() => _error = context.tr('請輸入六位兌換碼', 'Enter a six-digit redemption code'));
       return;
     }
     if (_items.any((item) => item.code == code) || _items.length >= 20) {
-      setState(() => _error = '不能加入重複兌換碼，每批最多 20 張券');
+      setState(() => _error = context.tr('不能加入重複兌換碼，每批最多 20 張券', 'Each code can be added once, up to 20 vouchers per batch'));
       return;
     }
     FocusManager.instance.primaryFocus?.unfocus();
@@ -97,8 +98,9 @@ class _ScanBatchScreenState extends State<ScanBatchScreen> {
           showDragHandle: true,
           builder: (context) => SafeArea(
               child: ListView(shrinkWrap: true, children: [
-            const ListTile(
-                title: Text('選擇核銷分店'), subtitle: Text('請選擇顧客所在的適用分店')),
+            ListTile(
+                title: Text(context.tr('選擇核銷分店', 'Choose a branch')),
+                subtitle: Text(context.tr('請選擇顧客所在的適用分店', 'Choose the branch the customer is visiting'))),
             for (final item in raw)
               ListTile(
                   title: Text(item['name'] as String),
@@ -116,7 +118,7 @@ class _ScanBatchScreenState extends State<ScanBatchScreen> {
         if (!_current(revision)) return;
       }
       if (result['can_redeem'] != true) {
-        setState(() => _error = result['reason'] as String? ?? '此券無法核銷');
+        setState(() => _error = result['reason'] as String? ?? context.tr('此券無法核銷', 'This voucher cannot be redeemed'));
         return;
       }
       final token = result['prepare_token'];
@@ -124,14 +126,14 @@ class _ScanBatchScreenState extends State<ScanBatchScreen> {
         throw const FormatException('預核銷資料不完整');
       }
       setState(() {
-        _items.add(_BatchItem(code, result['coupon_name'] as String? ?? '優惠券',
+        _items.add(_BatchItem(code, result['coupon_name'] as String? ?? context.tr('優惠券', 'Voucher'),
             token, branchId, branchName));
         _code.clear();
       });
     } on ApiException catch (e) {
       if (_current(revision)) setState(() => _error = e.message);
     } catch (_) {
-      if (_current(revision)) setState(() => _error = '未能確認券資料，請重試');
+      if (_current(revision)) setState(() => _error = context.tr('未能確認券資料，請重試', 'Could not confirm voucher details. Try again.'));
     } finally {
       if (_current(revision)) setState(() => _busy = false);
     }
@@ -144,15 +146,18 @@ class _ScanBatchScreenState extends State<ScanBatchScreen> {
       final ok = await showDialog<bool>(
           context: context,
           builder: (context) => AlertDialog(
-                  title: const Text('確認批量核銷'),
-                  content: Text('將一次核銷 ${_items.length} 張券。請確認顧客與分店資料。'),
+                  title: Text(context.tr('確認批量核銷', 'Confirm batch redemption')),
+                  content: Text(context.tr(
+                    '將一次核銷 ${_items.length} 張券。請確認顧客與分店資料。',
+                    '${_items.length} vouchers will be redeemed. Check the customer and branch details.',
+                  )),
                   actions: [
                     TextButton(
                         onPressed: () => Navigator.pop(context, false),
-                        child: const Text('取消')),
+                        child: Text(context.tr('取消', 'Cancel'))),
                     FilledButton(
                         onPressed: () => Navigator.pop(context, true),
-                        child: const Text('確認核銷'))
+                        child: Text(context.tr('確認核銷', 'Confirm redemption')))
                   ]));
       if (ok != true || !_current(revision)) return;
       final random = Random.secure();
@@ -172,7 +177,8 @@ class _ScanBatchScreenState extends State<ScanBatchScreen> {
           _pendingKey!);
       if (!_current(revision)) return;
       setState(() {
-        _success = '已完成 ${result['total'] ?? _items.length} 張券核銷';
+        final count = result['total'] ?? _items.length;
+        _success = context.tr('已完成 $count 張券核銷', 'Redeemed $count vouchers');
         _items.clear();
         _pendingKey = null;
       });
@@ -187,7 +193,7 @@ class _ScanBatchScreenState extends State<ScanBatchScreen> {
         }
       });
     } catch (_) {
-      if (_current(revision)) setState(() => _error = '未能確認結果，請用原請求重試。');
+      if (_current(revision)) setState(() => _error = context.tr('未能確認結果，請用原請求重試。', 'Could not confirm the result. Retry the original request.'));
     } finally {
       if (_current(revision)) setState(() => _busy = false);
     }
@@ -197,18 +203,18 @@ class _ScanBatchScreenState extends State<ScanBatchScreen> {
   Widget build(BuildContext context) => Scaffold(
       appBar: AppBar(
           title: Text(context.tr('批量核銷', 'Batch redemption'))),
-      body: ListView(padding: const EdgeInsets.all(20), children: [
-        const Text('逐張輸入兌換碼並核對券及分店；提交時整批核銷。'),
+      body: ListView(padding: const EdgeInsets.all(CgTheme.pageInset), children: [
+        Text(context.tr('逐張輸入兌換碼並核對券及分店；提交時整批核銷。', 'Enter each code and check the voucher and branch before redeeming the batch.')),
         if (_error != null)
           Padding(
-              padding: const EdgeInsets.only(top: 12),
+              padding: const EdgeInsets.only(top: CgTheme.space12),
               child: Text(_error!,
                   style:
                       TextStyle(color: Theme.of(context).colorScheme.error))),
         if (_success != null)
           Padding(
-              padding: const EdgeInsets.only(top: 12), child: Text(_success!)),
-        const SizedBox(height: 16),
+              padding: const EdgeInsets.only(top: CgTheme.space12), child: Text(_success!)),
+        const SizedBox(height: CgTheme.space16),
         Row(children: [
           Expanded(
               child: TextField(
@@ -219,39 +225,39 @@ class _ScanBatchScreenState extends State<ScanBatchScreen> {
                     FilteringTextInputFormatter.digitsOnly,
                     LengthLimitingTextInputFormatter(6)
                   ],
-                  decoration: const InputDecoration(labelText: '六位兌換碼'),
+                  decoration: InputDecoration(labelText: context.tr('六位兌換碼', 'Six-digit code')),
                   onSubmitted: (_) => _add())),
-          const SizedBox(width: 8),
+          const SizedBox(width: CgTheme.space8),
           FilledButton(
               onPressed: _busy || _pendingKey != null ? null : _add,
-              child: const Text('預檢加入'))
+              child: Text(context.tr('預檢加入', 'Check and add')))
         ]),
-        const SizedBox(height: 16),
-        Text('已預檢 ${_items.length} / 20'),
+        const SizedBox(height: CgTheme.space16),
+        Text(context.tr('已預檢 ${_items.length} / 20', 'Checked ${_items.length} / 20')),
         for (final item in _items)
           ListTile(
               contentPadding: EdgeInsets.zero,
               title: Text(item.name),
               subtitle: Text(item.branchName == null
-                  ? '兌換碼 ${item.code}'
-                  : '兌換碼 ${item.code} · ${item.branchName}'),
+                  ? context.tr('兌換碼 ${item.code}', 'Code ${item.code}')
+                  : context.tr('兌換碼 ${item.code} · ${item.branchName}', 'Code ${item.code} · ${item.branchName}')),
               trailing: IconButton(
-                  tooltip: '移除',
+                  tooltip: context.tr('移除', 'Remove'),
                   icon: const Icon(Icons.close),
                   onPressed: _busy || _pendingKey != null
                       ? null
                       : () => setState(() => _items.remove(item)))),
-        const SizedBox(height: 16),
+        const SizedBox(height: CgTheme.space16),
         FilledButton(
             onPressed: _busy || _items.isEmpty ? null : _submit,
             child: Text(_busy
-                ? '處理中…'
+                ? context.tr('處理中…', 'Processing…')
                 : _pendingKey == null
-                    ? '確認批量核銷'
-                    : '使用原請求重試')),
+                    ? context.tr('確認批量核銷', 'Confirm batch redemption')
+                    : context.tr('使用原請求重試', 'Retry original request'))),
         if (_pendingKey != null)
-          const Padding(
-              padding: EdgeInsets.only(top: 8),
-              child: Text('結果尚未確認，請保持此頁並使用原請求重試。')),
+          Padding(
+              padding: const EdgeInsets.only(top: CgTheme.space8),
+              child: Text(context.tr('結果尚未確認，請保持此頁並使用原請求重試。', 'The result is unconfirmed. Keep this page open and retry the original request.'))),
       ]));
 }

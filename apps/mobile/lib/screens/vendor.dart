@@ -11,6 +11,7 @@ import '../vendor_coupon_lifecycle.dart';
 import '../models.dart';
 import '../language.dart';
 import '../theme.dart';
+import '../widgets/merchant_layout.dart';
 import '../widgets/widgets.dart';
 import 'merchant_review_shops.dart';
 import 'vendor_packages.dart';
@@ -21,7 +22,6 @@ import 'merchant_account_overview.dart';
 import 'scan_batch.dart';
 import 'merchant_branches.dart';
 import 'merchant_staff.dart';
-
 
 /// Vendor home: usage summary and coupon-management entry.
 class VendorHomeScreen extends StatefulWidget {
@@ -54,7 +54,8 @@ class _VendorHomeScreenState extends State<VendorHomeScreen> {
   final _savingCoupons = <int>{};
   final _couponReceipts = <int, (int, String)>{};
   late int _session;
-  bool _allows(String permission) => widget.showAdmin || _shops.any((shop) => shop[permission] == true);
+  bool _allows(String permission) =>
+      widget.showAdmin || _shops.any((shop) => shop[permission] == true);
 
   @override
   void initState() {
@@ -101,9 +102,14 @@ class _VendorHomeScreenState extends State<VendorHomeScreen> {
     try {
       final data = await widget.api.get('/merchant/shops');
       if (!current()) return;
-      final shops = (data['shops'] as List? ?? []).whereType<Map>().map((s) => Map<String, dynamic>.from(s)).toList();
-      final isOwner = widget.showAdmin || shops.any((s) => s['is_owner'] == true);
-      final canManage = widget.showAdmin || shops.any((s) => s['can_manage_coupons'] == true);
+      final shops = (data['shops'] as List? ?? [])
+          .whereType<Map>()
+          .map((s) => Map<String, dynamic>.from(s))
+          .toList();
+      final isOwner =
+          widget.showAdmin || shops.any((s) => s['is_owner'] == true);
+      final canManage =
+          widget.showAdmin || shops.any((s) => s['can_manage_coupons'] == true);
       final usage = isOwner ? await widget.api.usageData() : null;
       if (!current()) return;
       final list = canManage ? await widget.api.vendorCoupons() : <dynamic>[];
@@ -178,31 +184,35 @@ class _VendorHomeScreenState extends State<VendorHomeScreen> {
   }
 
   String _statusLabel(BuildContext context, String status) => switch (status) {
-    'pending_review' => context.tr('待審核', 'Pending review'),
-    'active' => context.tr('已上架', 'Listed'),
-    'paused' => context.tr('已暫停', 'Paused'),
-    'draft' => context.tr('草稿', 'Draft'),
-    'rejected' => context.tr('已拒絕', 'Rejected'),
-    'scheduled' => context.tr('待上架', 'Scheduled'),
-    'sold_out' => context.tr('已售罄', 'Sold out'),
-    'expired' => context.tr('已過期', 'Expired'),
-    _ => context.tr('狀態未明', 'Unknown status'),
-  };
+        'pending_review' => context.tr('待審核', 'Pending review'),
+        'active' => context.tr('已上架', 'Listed'),
+        'paused' => context.tr('已暫停', 'Paused'),
+        'draft' => context.tr('草稿', 'Draft'),
+        'rejected' => context.tr('已拒絕', 'Rejected'),
+        'scheduled' => context.tr('待上架', 'Scheduled'),
+        'sold_out' => context.tr('已售罄', 'Sold out'),
+        'expired' => context.tr('已過期', 'Expired'),
+        _ => context.tr('狀態未明', 'Unknown status'),
+      };
 
   // Only overlay an acknowledged change on a list fetched before it.
   String? _pendingStatus(Coupon coupon) {
     final receipt = _couponReceipts[coupon.id];
-    final read = _couponStatus == null ? _overviewCouponRead : _filteredCouponRead;
+    final read =
+        _couponStatus == null ? _overviewCouponRead : _filteredCouponRead;
     return receipt != null && receipt.$1 > read ? receipt.$2 : null;
   }
 
   bool _canChangeCoupon(Coupon coupon) =>
       widget.api.isLoggedIn &&
       coupon.id > 0 &&
-      (widget.showAdmin || _shops.any((shop) =>
-          shop['id'] == coupon.shopId && shop['can_manage_coupons'] == true));
+      (widget.showAdmin ||
+          _shops.any((shop) =>
+              shop['id'] == coupon.shopId &&
+              shop['can_manage_coupons'] == true));
 
-  String _actionLabel(BuildContext context, VendorCouponAction action) => switch (action) {
+  String _actionLabel(BuildContext context, VendorCouponAction action) =>
+      switch (action) {
         VendorCouponAction.pause => context.tr('暫停', 'Pause'),
         VendorCouponAction.resume => context.tr('恢復上架', 'Resume'),
         VendorCouponAction.unlist => context.tr('下架', 'Unlist'),
@@ -213,9 +223,14 @@ class _VendorHomeScreenState extends State<VendorHomeScreen> {
     final session = _session;
     final api = widget.api;
     bool current() =>
-        mounted && identical(api, widget.api) && session == _session && session == api.sessionRevision;
+        mounted &&
+        identical(api, widget.api) &&
+        session == _session &&
+        session == api.sessionRevision;
     bool canSubmit() {
-      if (!current() || !_canChangeCoupon(coupon) || _savingCoupons.contains(coupon.id)) {
+      if (!current() ||
+          !_canChangeCoupon(coupon) ||
+          _savingCoupons.contains(coupon.id)) {
         return false;
       }
       final displayed = _couponStatus == null ? _coupons : _filteredCoupons;
@@ -227,6 +242,7 @@ class _VendorHomeScreenState extends State<VendorHomeScreen> {
       }
       return false;
     }
+
     if (!canSubmit()) return;
     if (action == VendorCouponAction.unlist) {
       final confirm = await showDialog<bool>(
@@ -238,9 +254,11 @@ class _VendorHomeScreenState extends State<VendorHomeScreen> {
             '"${coupon.name}" will return to drafts and no longer appear to customers.',
           )),
           actions: [
-            TextButton(onPressed: () => Navigator.of(dialog).pop(false),
+            TextButton(
+                onPressed: () => Navigator.of(dialog).pop(false),
                 child: Text(dialog.tr('取消', 'Cancel'))),
-            TextButton(onPressed: () => Navigator.of(dialog).pop(true),
+            TextButton(
+                onPressed: () => Navigator.of(dialog).pop(true),
                 child: Text(dialog.tr('確認下架', 'Confirm unlist'))),
           ],
         ),
@@ -259,7 +277,8 @@ class _VendorHomeScreenState extends State<VendorHomeScreen> {
         context,
         error is ApiException && error.status < 500
             ? error.message
-            : context.tr('未能確認優惠券狀態，請重新整理。', 'Could not confirm coupon status. Refresh the list.'),
+            : context.tr('未能確認優惠券狀態，請重新整理。',
+                'Could not confirm coupon status. Refresh the list.'),
       );
       await _refresh();
     } finally {
@@ -297,7 +316,7 @@ class _VendorHomeScreenState extends State<VendorHomeScreen> {
                 excludeFromSemantics: true,
                 errorBuilder: (_, __, ___) => const SizedBox.shrink(),
               ),
-              const SizedBox(width: 8),
+              const SizedBox(width: CgTheme.space8),
             ],
             Flexible(
               child: Text(
@@ -314,44 +333,46 @@ class _VendorHomeScreenState extends State<VendorHomeScreen> {
         child: LayoutBuilder(
           builder: (context, viewport) {
             const gutter = CgTheme.pageInset;
-            final side = viewport.maxWidth > 912
-                ? (viewport.maxWidth - 880) / 2
-                : gutter;
+            final side = gutter +
+                max(0.0, (viewport.maxWidth - CgTheme.listMaxWidth) / 2);
             final primary = <Widget>[
               if (_allows('can_manage_coupons'))
-                ElevatedButton.icon(
+                MerchantPrimaryAction(
                   onPressed: () => Navigator.of(context)
                       .pushNamed('/vendor/issue')
                       .then((_) async {
-                        if (mounted) await _refresh();
-                      }),
-                  icon: const Icon(Icons.add),
-                  label: Text(context.tr('發券', 'Issue coupon')),
+                    if (mounted) await _refresh();
+                  }),
+                  icon: Icons.add,
+                  label: context.tr('發券', 'Issue coupon'),
                 ),
             ];
             final operations = <Widget>[
               if (_allows('is_owner'))
                 OutlinedButton.icon(
+                  style: _toolButtonStyle,
                   onPressed: () => Navigator.of(context).push(
                     MaterialPageRoute(
                       builder: (_) => VendorPackagesScreen(api: widget.api),
                     ),
                   ),
                   icon: const Icon(Icons.restaurant_menu),
-                  label: Text(context.tr('套餐管理', 'Packages')),
+                  label: _toolLabel(context.tr('套餐管理', 'Packages')),
                 ),
               if (_allows('can_view_settlement'))
                 OutlinedButton.icon(
+                  style: _toolButtonStyle,
                   onPressed: () => Navigator.of(context).push(
                     MaterialPageRoute(
                       builder: (_) => MerchantDashboardScreen(api: widget.api),
                     ),
                   ),
                   icon: const Icon(Icons.insights_outlined),
-                  label: Text(context.tr('經營與餘額', 'Business and balance')),
+                  label: _toolLabel(context.tr('經營與餘額', 'Overview')),
                 ),
               if (_allows('is_owner'))
                 OutlinedButton.icon(
+                  style: _toolButtonStyle,
                   onPressed: () => Navigator.of(context).push(
                     MaterialPageRoute(
                       builder: (_) =>
@@ -359,9 +380,10 @@ class _VendorHomeScreenState extends State<VendorHomeScreen> {
                     ),
                   ),
                   icon: const Icon(Icons.manage_search),
-                  label: Text(context.tr('補錄核銷', 'Record redemption')),
+                  label: _toolLabel(context.tr('補錄核銷', 'Record use')),
                 ),
               OutlinedButton.icon(
+                style: _toolButtonStyle,
                 onPressed: () => Navigator.of(context).push(
                   MaterialPageRoute(
                     builder: (_) => MerchantBranchesScreen(
@@ -372,14 +394,15 @@ class _VendorHomeScreenState extends State<VendorHomeScreen> {
                   ),
                 ),
                 icon: const Icon(Icons.storefront_outlined),
-                label: Text(context.tr('店舖與分店', 'Shops and branches')),
+                label: _toolLabel(context.tr('商店與分店', 'Branches')),
               ),
               if (_allows('is_owner'))
                 OutlinedButton.icon(
+                  style: _toolButtonStyle,
                   onPressed: () =>
                       Navigator.of(context).pushNamed('/vendor/records'),
                   icon: const Icon(Icons.receipt_long_outlined),
-                  label: Text(context.tr('核銷記錄', 'Redemption history')),
+                  label: _toolLabel(context.tr('核銷記錄', 'History')),
                 ),
               if (!_loading &&
                   _loadError == null &&
@@ -388,6 +411,7 @@ class _VendorHomeScreenState extends State<VendorHomeScreen> {
                     canAdministerAllShops: widget.showAdmin,
                   ).isNotEmpty)
                 OutlinedButton.icon(
+                  style: _toolButtonStyle,
                   key: const Key('vendor-review-shops'),
                   onPressed: () {
                     final api = widget.api;
@@ -407,23 +431,25 @@ class _VendorHomeScreenState extends State<VendorHomeScreen> {
                     );
                   },
                   icon: const Icon(Icons.reviews_outlined),
-                  label: Text(
+                  label: _toolLabel(
                     const bool.fromEnvironment('PUBLIC_TRIAL')
-                        ? context.tr('顧客評價', 'Customer reviews')
-                        : context.tr('評價回覆（差評）', 'Reply to low-rated reviews'),
+                        ? context.tr('顧客評價', 'Reviews')
+                        : context.tr('評價回覆（差評）', 'Reply to reviews'),
                   ),
                 ),
               if (widget.showAdmin)
                 OutlinedButton(
+                  style: _toolButtonStyle,
                   onPressed: () => Navigator.of(context).pushNamed('/admin'),
-                  child: Text(context.tr('管理後台', 'Admin tools')),
+                  child: _toolLabel(context.tr('管理後台', 'Admin tools')),
                 ),
               if (_allows('can_view_settlement'))
                 OutlinedButton.icon(
+                  style: _toolButtonStyle,
                   onPressed: () =>
                       Navigator.of(context).pushNamed('/vendor/settlements'),
                   icon: const Icon(Icons.description_outlined),
-                  label: Text(context.tr('商家結算單', 'Settlement statements')),
+                  label: _toolLabel(context.tr('商家結算單', 'Settlements')),
                 ),
             ];
             return ListView(
@@ -447,7 +473,7 @@ class _VendorHomeScreenState extends State<VendorHomeScreen> {
                           '${_usage?['total_downloads'] ?? 0}',
                         ),
                       ),
-                      const SizedBox(width: 12),
+                      const SizedBox(width: CgTheme.space12),
                       Expanded(
                         child: _stat(
                           context.tr('總使用量', 'Total redemptions'),
@@ -457,36 +483,43 @@ class _VendorHomeScreenState extends State<VendorHomeScreen> {
                     ],
                   ),
                 if (primary.isNotEmpty) ...[
-                  const SizedBox(height: 16),
+                  const SizedBox(height: CgTheme.space16),
                   ...primary,
                 ],
                 if (operations.isNotEmpty) ...[
-                  const SizedBox(height: 20),
+                  const SizedBox(height: CgTheme.space20),
                   Text(
                     context.tr('商戶工具', 'Business tools'),
                     style: Theme.of(context).textTheme.titleMedium,
                   ),
-                  const SizedBox(height: 8),
+                  const SizedBox(height: CgTheme.space8),
                   LayoutBuilder(
                     builder: (context, grid) {
-                      final largeText =
-                          MediaQuery.textScalerOf(context).scale(14) >= 23;
-                      final two = grid.maxWidth >= 340 && !largeText;
+                      final scale =
+                          MediaQuery.textScalerOf(context).scale(14) / 14;
+                      final two = grid.maxWidth >= 340 * max(1.0, scale);
                       final width = two
-                          ? (grid.maxWidth - 8) / 2
+                          ? (grid.maxWidth - CgTheme.space8) / 2
                           : grid.maxWidth;
                       return Wrap(
                         key: const ValueKey('vendor-tools'),
-                        spacing: 8,
-                        runSpacing: 8,
+                        spacing: CgTheme.space8,
+                        runSpacing: CgTheme.space8,
                         children: [
                           for (final item in operations)
-                            SizedBox(width: width, child: item),
+                            SizedBox(
+                              width: width,
+                              height: max(
+                                CgTheme.buttonHeight,
+                                20 * scale + CgTheme.space16,
+                              ),
+                              child: item,
+                            ),
                         ],
                       );
                     },
                   ),
-                  const SizedBox(height: 20),
+                  const SizedBox(height: CgTheme.space20),
                 ],
                 if (_allows('can_manage_coupons')) ...[
                   Text(
@@ -536,8 +569,10 @@ class _VendorHomeScreenState extends State<VendorHomeScreen> {
                         ? VendorCouponAction.forStatus(status)
                         : const <VendorCouponAction>[];
                     return Card(
-                      margin: const EdgeInsets.only(top: 8),
+                      margin: const EdgeInsets.only(top: CgTheme.space8),
                       child: ListTile(
+                        contentPadding: const EdgeInsets.symmetric(
+                            horizontal: CgTheme.pageInset),
                         leading: Icon(
                           Icons.local_offer_outlined,
                           color: colors.primary,
@@ -547,10 +582,11 @@ class _VendorHomeScreenState extends State<VendorHomeScreen> {
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             if (status.isNotEmpty)
-                              Text(
-                                _statusLabel(context, status),
-                                key: ValueKey('vendor-coupon-status-${c.id}'),
-                                style: Theme.of(context).textTheme.labelLarge,
+                              MerchantStatusPill(
+                                labelKey:
+                                    ValueKey('vendor-coupon-status-${c.id}'),
+                                label: _statusLabel(context, status),
+                                active: status == 'active',
                               ),
                             Text(
                               context.tr(
@@ -627,6 +663,15 @@ class _VendorHomeScreenState extends State<VendorHomeScreen> {
     );
   }
 
+  static final _toolButtonStyle = OutlinedButton.styleFrom(
+    padding: const EdgeInsets.symmetric(horizontal: CgTheme.space8),
+  );
+
+  Widget _toolLabel(String label) => FittedBox(
+        fit: BoxFit.scaleDown,
+        child: Text(label, maxLines: 1),
+      );
+
   Widget _stat(String label, String value) {
     return Card(
       child: Padding(
@@ -659,13 +704,17 @@ class VendorAccountScreen extends StatelessWidget {
       appBar: AppBar(title: Text(context.tr('商戶帳戶', 'Merchant account'))),
       body: Center(
         child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 760),
+          constraints: const BoxConstraints(maxWidth: CgTheme.listMaxWidth),
           child: ListView(
             padding: const EdgeInsets.symmetric(horizontal: CgTheme.pageInset),
             children: [
               MerchantAccountOverview(api: api),
+              const SizedBox(height: CgTheme.space8),
               Card(
+                margin: EdgeInsets.zero,
                 child: ListTile(
+                  contentPadding:
+                      const EdgeInsets.symmetric(horizontal: CgTheme.pageInset),
                   leading: const Icon(Icons.credit_card),
                   title: Text(context.tr('訂閱方案', 'Subscription plans')),
                   trailing: const Icon(Icons.chevron_right),
@@ -705,6 +754,7 @@ class _IssueCouponScreenState extends State<IssueCouponScreen> {
     final value = int.tryParse(text);
     return value != null && value > 0 ? value : null;
   }
+
   String _type = 'Discount';
   final _percentage = TextEditingController(text: '85');
   final _cash = TextEditingController();
@@ -736,14 +786,17 @@ class _IssueCouponScreenState extends State<IssueCouponScreen> {
           .subtract(_hkOffset);
 
   String _formatHongKong(DateTime instant) => _hongKongClock(instant)
-      .toIso8601String().substring(0, 16).replaceFirst('T', ' ');
+      .toIso8601String()
+      .substring(0, 16)
+      .replaceFirst('T', ' ');
 
   double? _parseSalePrice() {
     final text = _salePrice.text.trim();
     if (!RegExp(r'^\d+(?:\.\d{1,2})?$').hasMatch(text)) return null;
     final price = double.tryParse(text);
     return price != null && price.isFinite && price > 0 && price <= 99999999.99
-        ? price : null;
+        ? price
+        : null;
   }
 
   @override
@@ -753,7 +806,16 @@ class _IssueCouponScreenState extends State<IssueCouponScreen> {
     _session = widget.api.sessionRevision;
     widget.api.addListener(_sessionChanged);
     for (final controller in [
-      _name, _nameEn, _perUserLimit, _percentage, _cash, _salePrice, _gift, _total, _minSpend, _terms,
+      _name,
+      _nameEn,
+      _perUserLimit,
+      _percentage,
+      _cash,
+      _salePrice,
+      _gift,
+      _total,
+      _minSpend,
+      _terms,
     ]) {
       controller.addListener(_markDirty);
     }
@@ -762,10 +824,11 @@ class _IssueCouponScreenState extends State<IssueCouponScreen> {
   }
 
   String _categoryLabel(Map<String, dynamic> row) => context.tr(
-    row['name'] as String,
-    row['name_en'] is String && (row['name_en'] as String).trim().isNotEmpty
-      ? row['name_en'] as String : row['name'] as String,
-  );
+        row['name'] as String,
+        row['name_en'] is String && (row['name_en'] as String).trim().isNotEmpty
+            ? row['name_en'] as String
+            : row['name'] as String,
+      );
 
   Future<void> _loadCategories() async {
     setState(() => _categoriesFailed = false);
@@ -776,8 +839,11 @@ class _IssueCouponScreenState extends State<IssueCouponScreen> {
       final ids = <int>{};
       final categories = <Map<String, dynamic>>[];
       for (final row in rows) {
-        if (row is! Map || row['id'] is! int || row['name'] is! String ||
-            (row['name'] as String).trim().isEmpty || !ids.add(row['id'] as int)) {
+        if (row is! Map ||
+            row['id'] is! int ||
+            row['name'] is! String ||
+            (row['name'] as String).trim().isEmpty ||
+            !ids.add(row['id'] as int)) {
           throw const FormatException();
         }
         categories.add(Map<String, dynamic>.from(row));
@@ -802,13 +868,16 @@ class _IssueCouponScreenState extends State<IssueCouponScreen> {
           builder: (dialogContext) => AlertDialog(
             title: Text(context.tr('放棄尚未儲存的內容？', 'Discard unsaved changes?')),
             actions: [
-              TextButton(onPressed: () => Navigator.pop(dialogContext, false),
+              TextButton(
+                  onPressed: () => Navigator.pop(dialogContext, false),
                   child: Text(context.tr('繼續編輯', 'Keep editing'))),
-              TextButton(onPressed: () => Navigator.pop(dialogContext, true),
+              TextButton(
+                  onPressed: () => Navigator.pop(dialogContext, true),
                   child: Text(context.tr('放棄', 'Discard'))),
             ],
           ),
-        ) ?? false;
+        ) ??
+        false;
   }
 
   void _sessionChanged() {
@@ -816,29 +885,47 @@ class _IssueCouponScreenState extends State<IssueCouponScreen> {
     _session = widget.api.sessionRevision;
     if (mounted) {
       setState(() {
-      _shops = null; _shopId = null; _branchIds = null; _submitting = false; _createUncertain = false;
-      _shopsError = '登入狀態已變更，請重新讀取商店。';
-    });
+        _shops = null;
+        _shopId = null;
+        _branchIds = null;
+        _submitting = false;
+        _createUncertain = false;
+        _shopsError = context.tr(
+            '登入狀態已變更，請重新讀取商店。', 'Your session changed. Reload shops.');
+      });
     }
   }
 
   Future<void> _loadShops() async {
     final session = _session;
-    setState(() { _shops = null; _shopsError = null; _shopId = null; _branchIds = null; });
+    setState(() {
+      _shops = null;
+      _shopsError = null;
+      _shopId = null;
+      _branchIds = null;
+    });
     try {
       final data = await widget.api.get('/merchant/shops');
       final rows = data['shops'];
-      if (rows is! List || rows.any((v) => v is! Map || v['id'] is! int || v['name'] is! String)) {
+      if (rows is! List ||
+          rows.any(
+              (v) => v is! Map || v['id'] is! int || v['name'] is! String)) {
         throw const FormatException();
       }
       if (!mounted || session != _session) return;
       setState(() {
-        _shops = rows.where((v) => (v as Map)['can_manage_coupons'] == true)
-            .map((v) => Map<String, dynamic>.from(v as Map)).toList();
+        _shops = rows
+            .where((v) => (v as Map)['can_manage_coupons'] == true)
+            .map((v) => Map<String, dynamic>.from(v as Map))
+            .toList();
         if (_shops!.isNotEmpty) _shopId = _shops!.first['id'] as int;
       });
     } catch (e) {
-      if (mounted && session == _session) setState(() => _shopsError = e is ApiException ? e.message : '未能讀取商店，請重試');
+      if (mounted && session == _session) {
+        setState(() => _shopsError = e is ApiException
+            ? e.message
+            : context.tr('未能讀取商店，請重試', 'Could not load shops. Try again.'));
+      }
     }
   }
 
@@ -846,7 +933,16 @@ class _IssueCouponScreenState extends State<IssueCouponScreen> {
   void dispose() {
     widget.api.removeListener(_sessionChanged);
     for (final controller in [
-      _name, _nameEn, _perUserLimit, _percentage, _cash, _salePrice, _gift, _total, _minSpend, _terms,
+      _name,
+      _nameEn,
+      _perUserLimit,
+      _percentage,
+      _cash,
+      _salePrice,
+      _gift,
+      _total,
+      _minSpend,
+      _terms,
     ]) {
       controller.dispose();
     }
@@ -901,309 +997,435 @@ class _IssueCouponScreenState extends State<IssueCouponScreen> {
   @override
   Widget build(BuildContext context) {
     return PopScope(
-      canPop: !_dirty && !_submitting,
-      onPopInvokedWithResult: (didPop, _) async {
-        if (!didPop && await _canLeave() && context.mounted) {
-          Navigator.of(context).pop();
-        }
-      },
-      child: Scaffold(
-      appBar: AppBar(
-        title: Text(context.tr('發券', 'Issue coupon')),
-      ),
-      body: Center(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 720),
-          child: ListView(
-        padding: const EdgeInsets.all(CgTheme.pageInset),
-        children: [
-          if (_shopsError != null) ...[Text(_shopsError!), TextButton(onPressed: _loadShops, child: Text(context.tr('重試', 'Retry')))],
-          if (_shops == null && _shopsError == null) const LinearProgressIndicator(),
-          if (_shops != null && _shops!.isEmpty) Text(context.tr('此帳戶尚未有可管理的商店。', 'No shops to manage yet.')),
-          if (_shops != null && _shops!.isNotEmpty) DropdownButtonFormField<int>(
-            initialValue: _shopId, decoration: InputDecoration(labelText: context.tr('商店', 'Shop')),
-            items: _shops!.map((shop) => DropdownMenuItem<int>(value: shop['id'] as int, child: Text(shop['name'] as String))).toList(),
-            onChanged: (id) => setState(() {
-              if (id != _shopId) _dirty = true;
-              _shopId = id; _branchIds = null;
-            }),
+        canPop: !_dirty && !_submitting,
+        onPopInvokedWithResult: (didPop, _) async {
+          if (!didPop && await _canLeave() && context.mounted) {
+            Navigator.of(context).pop();
+          }
+        },
+        child: Scaffold(
+          appBar: AppBar(
+            title: Text(context.tr('發券', 'Issue coupon')),
           ),
-          const SizedBox(height: 12),
-          TextField(
-              controller: _name,
-              decoration: InputDecoration(labelText: context.tr('優惠券名稱', 'Coupon name'))),
-          const SizedBox(height: 12),
-          TextField(
-            controller: _nameEn,
-            maxLength: 160,
-            decoration: InputDecoration(labelText: context.tr(
-              '優惠券英文名稱（選填）', 'English coupon name (optional)')),
-          ),
-          if (_categoriesFailed)
-            TextButton(
-              onPressed: _loadCategories,
-              child: Text(context.tr('重新讀取分類', 'Reload categories')),
-            ),
-          if (_categories?.isNotEmpty == true) ...[
-            DropdownButtonFormField<int>(
-              key: const ValueKey('issue-category'),
-              initialValue: _categoryId,
-              isExpanded: true,
-              decoration: InputDecoration(labelText: context.tr(
-                '優惠券分類（選填）', 'Coupon category (optional)')),
-              items: [
-                DropdownMenuItem<int>(
-                  child: Text(context.tr('不設定分類', 'No category')),
-                ),
-                for (final row in _categories!)
-                  DropdownMenuItem<int>(
-                    value: row['id'] as int,
-                    child: Text(_categoryLabel(row)),
+          body: Center(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: CgTheme.formMaxWidth),
+              child: ListView(
+                padding: const EdgeInsets.all(CgTheme.pageInset),
+                children: [
+                  Text(context.tr('券基本資料', 'Coupon details'),
+                      style: Theme.of(context).textTheme.titleMedium),
+                  const SizedBox(height: CgTheme.space12),
+                  if (_shopsError != null) ...[
+                    Text(_shopsError!),
+                    TextButton(
+                        onPressed: _loadShops,
+                        child: Text(context.tr('重試', 'Retry')))
+                  ],
+                  if (_shops == null && _shopsError == null)
+                    const LinearProgressIndicator(),
+                  if (_shops != null && _shops!.isEmpty)
+                    Text(
+                        context.tr('此帳戶尚未有可管理的商店。', 'No shops to manage yet.')),
+                  if (_shops != null && _shops!.isNotEmpty)
+                    DropdownButtonFormField<int>(
+                      initialValue: _shopId,
+                      decoration:
+                          InputDecoration(labelText: context.tr('商店', 'Shop')),
+                      items: _shops!
+                          .map((shop) => DropdownMenuItem<int>(
+                              value: shop['id'] as int,
+                              child: Text(shop['name'] as String)))
+                          .toList(),
+                      onChanged: (id) => setState(() {
+                        if (id != _shopId) _dirty = true;
+                        _shopId = id;
+                        _branchIds = null;
+                      }),
+                    ),
+                  const SizedBox(height: CgTheme.space12),
+                  TextField(
+                      controller: _name,
+                      decoration: InputDecoration(
+                          labelText: context.tr('優惠券名稱', 'Coupon name'))),
+                  const SizedBox(height: CgTheme.space12),
+                  TextField(
+                    controller: _nameEn,
+                    maxLength: 160,
+                    decoration: InputDecoration(
+                        labelText: context.tr(
+                            '優惠券英文名稱（選填）', 'English coupon name (optional)')),
                   ),
-              ],
-              onChanged: (value) {
-                if (value == _categoryId) return;
-                setState(() { _categoryId = value; _dirty = true; });
-              },
-            ),
-            const SizedBox(height: 12),
-          ],
-          TextField(
-            controller: _perUserLimit,
-            keyboardType: TextInputType.number,
-            onChanged: (_) => setState(() {}),
-            decoration: InputDecoration(
-              labelText: context.tr('每人限領', 'Claim limit per person'),
-              errorText: _validatedLimit == null ? context.tr(
-                '請輸入大於 0 的整數', 'Enter a positive whole number') : null,
-            ),
-          ),
-          const SizedBox(height: 12),
-          DropdownButtonFormField<String>(
-            initialValue: _type,
-            decoration: InputDecoration(labelText: context.tr('券類型', 'Coupon type')),
-            items: [
-              DropdownMenuItem(value: 'Cash', child: Text(context.tr('現金優惠券', 'Cash coupon'))),
-              DropdownMenuItem(value: 'Discount', child: Text(context.tr('折扣優惠券', 'Discount coupon'))),
-              DropdownMenuItem(value: 'Gift', child: Text(context.tr('贈品優惠券', 'Gift coupon'))),
-              DropdownMenuItem(value: 'Price', child: Text(context.tr('付費優惠券', 'Paid coupon'))),
-            ],
-            onChanged: (v) => setState(() {
-              final next = v ?? 'Discount';
-              if (next != _type) _dirty = true;
-              _type = next;
-              _salePriceError = null;
-            }),
-          ),
-          const SizedBox(height: 12),
-          if (_type == 'Discount')
-            TextField(
-                controller: _percentage,
-                keyboardType: TextInputType.number,
-                decoration: InputDecoration(labelText: context.tr(
-                    '付款百分比（85 即 8.5 折）',
-                    'Percent of regular price (85 = 15% off)'))),
-          if (_type == 'Cash')
-            TextField(
-                controller: _cash,
-                keyboardType: TextInputType.number,
-                decoration: InputDecoration(labelText: context.tr('現金金額', 'Cash amount'))),
-          if (_type == 'Price')
-            TextField(
-              key: const ValueKey('issue-sale-price'),
-              controller: _salePrice,
-              keyboardType: const TextInputType.numberWithOptions(decimal: true),
-              decoration: InputDecoration(
-                labelText: context.tr('售價（港幣）', 'Sale price (HKD)'),
-                errorText: _salePriceError,
-              ),
-              onChanged: (_) {
-                if (_salePriceError != null) setState(() => _salePriceError = null);
-              },
-            ),
-          if (_type == 'Gift')
-            TextField(
-              key: const ValueKey('issue-gift'),
-              controller: _gift,
-              decoration: InputDecoration(
-                labelText: context.tr('贈品內容', 'Gift details'),
-              ),
-            ),
-          const SizedBox(height: 12),
-          TextField(
-              controller: _total,
-              keyboardType: TextInputType.number,
-              decoration: InputDecoration(labelText: context.tr('數量', 'Quantity'))),
-          const SizedBox(height: 12),
-          TextField(
-              controller: _minSpend,
-              keyboardType: TextInputType.number,
-              decoration: InputDecoration(labelText: context.tr('需消費金額', 'Minimum spend'))),
-          const SizedBox(height: 12),
-          TextField(
-              controller: _terms,
-              decoration: InputDecoration(labelText: context.tr('條款和條件', 'Terms and conditions'))),
-          const SizedBox(height: 20),
-          if (_shopId != null) BranchScopePicker(
-            key: ValueKey(_shopId), api: widget.api, shopId: _shopId!, initial: const [],
-            onChanged: (ids) => setState(() {
-              if (_branchIds != null && !listEquals(_branchIds, ids)) _dirty = true;
-              _branchIds = ids;
-            }),
-          ),
-          const SizedBox(height: 12),
-          ListTile(
-            key: const ValueKey('issue-valid-from'),
-            title: Text(context.tr('生效時間（香港時間）', 'Start time (Hong Kong time)')),
-            subtitle: Text(_validFrom == null
-                ? context.tr('審核通過後上架', 'List after approval')
-                : _formatHongKong(_validFrom!)),
-            trailing: _validFrom == null ? const Icon(Icons.schedule) : IconButton(
-              tooltip: context.tr('取消定時上架', 'Remove scheduled start'),
-              onPressed: _submitting ? null : () => setState(() {
-                _validFrom = null;
-                _dateError = null;
-                _dirty = true;
-              }),
-              icon: const Icon(Icons.clear),
-            ),
-            onTap: _submitting ? null : _pickValidFrom,
-          ),
-          ListTile(
-            title: Text(context.tr('到期日期（香港時間）', 'Expiry date (Hong Kong time)')),
-            subtitle: Text(_formatHongKong(_validTo)),
-            trailing: const Icon(Icons.calendar_today),
-            onTap: _submitting ? null : () async {
-              final session = _session;
-              final today = _hongKongClock(_nowUtc());
-              final previous = _hongKongClock(_validTo);
-              final picked = await showDatePicker(
-                context: context,
-                initialDate: previous.isBefore(today) ? today : previous,
-                firstDate: today,
-                currentDate: today,
-                lastDate: today.add(const Duration(days: 365)),
-              );
-              if (picked != null && mounted && session == _session) {
-                setState(() {
-                  _validTo = _fromHongKong(picked, const TimeOfDay(hour: 0, minute: 0));
-                  _dateError = null;
-                  _dirty = true;
-                });
-              }
-            },
-          ),
-          if (_dateError != null)
-            Text(_dateError!, style: TextStyle(color: Theme.of(context).colorScheme.error)),
-          const SizedBox(height: 16),
-          if (_createUncertain) const Padding(
-            padding: EdgeInsets.only(bottom: 12),
-            child: Text('提交結果未確認，請返回券列表刷新核對，勿重複建立。'),
-          ),
-          ElevatedButton(
-            onPressed: _shopId == null || _branchIds == null || _submitting || _createUncertain ? null : () async {
-              final session = _session;
-              if (_validatedLimit == null) {
-                showCgToast(context, context.tr(
-                  '請輸入每人限領數量', 'Enter the claim limit per person'));
-                return;
-              }
-              final now = _nowUtc();
-              final scheduledStart = _validFrom;
-              final validFrom = scheduledStart ?? now;
-              final price = _type == 'Price' ? _parseSalePrice() : null;
-              final priceError = _type == 'Price' && price == null
-                  ? context.tr('請輸入有效售價（最少 HK\$0.01，最多兩位小數）',
-                      'Enter a valid sale price (at least HK\$0.01, up to two decimals).')
-                  : null;
-              final dateError = scheduledStart != null && !validFrom.isAfter(now)
-                  ? context.tr('定時上架時間必須晚於現在', 'Choose a start time in the future.')
-                  : !_validTo.isAfter(validFrom)
-                      ? context.tr('到期日期必須晚於生效時間', 'The expiry must be after the start time.')
-                      : null;
-              setState(() { _salePriceError = priceError; _dateError = dateError; });
-              if (priceError != null || dateError != null) return;
-              final draft = _body(validFrom, price);
-              final englishName = _nameEn.text.trim();
-              final category = _categories?.where((row) => row['id'] == _categoryId)
-                  .map(_categoryLabel).firstOrNull;
-              final branches = _branchIds!.length;
-              final scope = branches == 0
-                  ? context.tr('所有分店', 'All branches')
-                  : context.tr('指定 $branches 間分店', '$branches selected branches');
-              var creating = false;
-              setState(() => _submitting = true);
-              try {
-                final preview = await widget.api.couponPreview(draft);
-                if (!context.mounted || session != _session) return;
-                final previewAmount = price == null
-                    ? preview['amount_text']
-                    : context.tr('售價：${formatHkd(price)}', 'Sale price: ${formatHkd(price)}');
-                final ok = await showDialog<bool>(
-                  context: context,
-                  builder: (c) => AlertDialog(
-                    title: Text(context.tr('預覽優惠券', 'Review coupon')),
-                    content: Text([
-                      '${preview['coupon_name']}',
-                      '$previewAmount',
-                      context.tr('商店：${preview['shop_name']}', 'Shop: ${preview['shop_name']}'),
-                      context.tr('適用：$scope', 'Available at: $scope'),
-                      context.tr('數量：${preview['total']}', 'Quantity: ${preview['total']}'),
-                      '${context.tr('每人限領', 'Claim limit per person')}：${draft['per_user_limit']}',
-                      if (englishName.isNotEmpty) '${context.tr('英文名稱', 'English name')}：$englishName',
-                      if (category != null) '${context.tr('分類', 'Category')}：$category',
-                      if (scheduledStart != null)
-                        context.tr('生效時間：${_formatHongKong(validFrom)}（香港時間）',
-                            'Start: ${_formatHongKong(validFrom)} (Hong Kong time)'),
-                    ].join('\n')),
-                    actions: [
-                      TextButton(
-                          onPressed: () => Navigator.pop(c, false),
-                          child: Text(context.tr('取消', 'Cancel'))),
-                      TextButton(
-                          onPressed: () => Navigator.pop(c, true),
-                          child: Text(context.tr('提交審核', 'Submit for review'))),
+                  if (_categoriesFailed)
+                    TextButton(
+                      onPressed: _loadCategories,
+                      child: Text(context.tr('重新讀取分類', 'Reload categories')),
+                    ),
+                  if (_categories?.isNotEmpty == true) ...[
+                    const SizedBox(height: CgTheme.space12),
+                    DropdownButtonFormField<int>(
+                      key: const ValueKey('issue-category'),
+                      initialValue: _categoryId,
+                      isExpanded: true,
+                      decoration: InputDecoration(
+                          labelText: context.tr(
+                              '優惠券分類（選填）', 'Coupon category (optional)')),
+                      items: [
+                        DropdownMenuItem<int>(
+                          child: Text(context.tr('不設定分類', 'No category')),
+                        ),
+                        for (final row in _categories!)
+                          DropdownMenuItem<int>(
+                            value: row['id'] as int,
+                            child: Text(_categoryLabel(row)),
+                          ),
+                      ],
+                      onChanged: (value) {
+                        if (value == _categoryId) return;
+                        setState(() {
+                          _categoryId = value;
+                          _dirty = true;
+                        });
+                      },
+                    ),
+                  ],
+                  const SizedBox(height: CgTheme.space24),
+                  Text(context.tr('價格與數量', 'Price and quantity'),
+                      style: Theme.of(context).textTheme.titleMedium),
+                  const SizedBox(height: CgTheme.space12),
+                  TextField(
+                    controller: _perUserLimit,
+                    keyboardType: TextInputType.number,
+                    onChanged: (_) => setState(() {}),
+                    decoration: InputDecoration(
+                      labelText: context.tr('每人限領', 'Claim limit per person'),
+                      errorText: _validatedLimit == null
+                          ? context.tr(
+                              '請輸入大於 0 的整數', 'Enter a positive whole number')
+                          : null,
+                    ),
+                  ),
+                  const SizedBox(height: CgTheme.space12),
+                  DropdownButtonFormField<String>(
+                    initialValue: _type,
+                    decoration: InputDecoration(
+                        labelText: context.tr('券類型', 'Coupon type')),
+                    items: [
+                      DropdownMenuItem(
+                          value: 'Cash',
+                          child: Text(context.tr('現金優惠券', 'Cash coupon'))),
+                      DropdownMenuItem(
+                          value: 'Discount',
+                          child: Text(context.tr('折扣優惠券', 'Discount coupon'))),
+                      DropdownMenuItem(
+                          value: 'Gift',
+                          child: Text(context.tr('贈品優惠券', 'Gift coupon'))),
+                      DropdownMenuItem(
+                          value: 'Price',
+                          child: Text(context.tr('付費優惠券', 'Paid coupon'))),
                     ],
+                    onChanged: (v) => setState(() {
+                      final next = v ?? 'Discount';
+                      if (next != _type) _dirty = true;
+                      _type = next;
+                      _salePriceError = null;
+                    }),
                   ),
-                );
-                if (ok == true && context.mounted && session == _session) {
-                  if (scheduledStart != null && !scheduledStart.isAfter(_nowUtc())) {
-                    setState(() => _dateError = context.tr(
-                        '定時上架時間已過，請重新選擇',
-                        'The scheduled start has passed. Choose another time.'));
-                    return;
-                  }
-                  creating = true;
-                  final res = await widget.api.couponCreate(draft);
-                  if (context.mounted && session == _session) {
-                    showCgToast(context, res['message'] as String? ?? context.tr('已提交審核', 'Submitted for review'));
-                    Navigator.of(context).pop();
-                  }
-                }
-              } on ApiException catch (e) {
-                if (context.mounted && session == _session) {
-                  if (creating && e.status >= 500) {
-                    setState(() => _createUncertain = true);
-                  } else {
-                    showCgToast(context, e.message);
-                  }
-                }
-              } catch (_) {
-                if (context.mounted && session == _session) {
-                  if (creating) { setState(() => _createUncertain = true); }
-                  else { showCgToast(context, context.tr('未能連線，請重試', 'Connection failed. Try again.')); }
-                }
-              } finally {
-                if (mounted && session == _session) setState(() => _submitting = false);
-              }
-            },
-            child: Text(context.tr('檢查並提交', 'Review and submit')),
+                  const SizedBox(height: CgTheme.space12),
+                  if (_type == 'Discount')
+                    TextField(
+                        controller: _percentage,
+                        keyboardType: TextInputType.number,
+                        decoration: InputDecoration(
+                            labelText: context.tr('付款比例（85 即 8.5 折）',
+                                'Percent of regular price (85 = 15% off)'))),
+                  if (_type == 'Cash')
+                    TextField(
+                        controller: _cash,
+                        keyboardType: TextInputType.number,
+                        decoration: InputDecoration(
+                            labelText: context.tr('現金金額', 'Cash amount'))),
+                  if (_type == 'Price')
+                    TextField(
+                      key: const ValueKey('issue-sale-price'),
+                      controller: _salePrice,
+                      keyboardType:
+                          const TextInputType.numberWithOptions(decimal: true),
+                      decoration: InputDecoration(
+                        labelText: context.tr('售價（港幣）', 'Sale price (HKD)'),
+                        errorText: _salePriceError,
+                      ),
+                      onChanged: (_) {
+                        if (_salePriceError != null) {
+                          setState(() => _salePriceError = null);
+                        }
+                      },
+                    ),
+                  if (_type == 'Gift')
+                    TextField(
+                      key: const ValueKey('issue-gift'),
+                      controller: _gift,
+                      decoration: InputDecoration(
+                        labelText: context.tr('贈品內容', 'Gift details'),
+                      ),
+                    ),
+                  const SizedBox(height: CgTheme.space12),
+                  TextField(
+                      controller: _total,
+                      keyboardType: TextInputType.number,
+                      decoration: InputDecoration(
+                          labelText: context.tr('數量', 'Quantity'))),
+                  const SizedBox(height: CgTheme.space12),
+                  TextField(
+                      controller: _minSpend,
+                      keyboardType: TextInputType.number,
+                      decoration: InputDecoration(
+                          labelText: context.tr('需消費金額', 'Minimum spend'))),
+                  const SizedBox(height: CgTheme.space24),
+                  Text(context.tr('有效期與使用條款', 'Validity and terms'),
+                      style: Theme.of(context).textTheme.titleMedium),
+                  const SizedBox(height: CgTheme.space12),
+                  TextField(
+                      controller: _terms,
+                      decoration: InputDecoration(
+                          labelText:
+                              context.tr('條款和條件', 'Terms and conditions'))),
+                  if (_shopId != null) const SizedBox(height: CgTheme.space12),
+                  if (_shopId != null)
+                    BranchScopePicker(
+                      key: ValueKey(_shopId),
+                      api: widget.api,
+                      shopId: _shopId!,
+                      initial: const [],
+                      onChanged: (ids) => setState(() {
+                        if (_branchIds != null && !listEquals(_branchIds, ids)) {
+                          _dirty = true;
+                        }
+                        _branchIds = ids;
+                      }),
+                    ),
+                  const SizedBox(height: CgTheme.space12),
+                  ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    key: const ValueKey('issue-valid-from'),
+                    title: Text(context.tr(
+                        '生效時間（香港時間）', 'Start time (Hong Kong time)')),
+                    subtitle: Text(_validFrom == null
+                        ? context.tr('審核通過後上架', 'List after approval')
+                        : _formatHongKong(_validFrom!)),
+                    trailing: _validFrom == null
+                        ? const Icon(Icons.schedule)
+                        : IconButton(
+                            tooltip:
+                                context.tr('取消定時上架', 'Remove scheduled start'),
+                            onPressed: _submitting
+                                ? null
+                                : () => setState(() {
+                                      _validFrom = null;
+                                      _dateError = null;
+                                      _dirty = true;
+                                    }),
+                            icon: const Icon(Icons.clear),
+                          ),
+                    onTap: _submitting ? null : _pickValidFrom,
+                  ),
+                  const SizedBox(height: CgTheme.space12),
+                  ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    title: Text(context.tr(
+                        '到期日期（香港時間）', 'Expiry date (Hong Kong time)')),
+                    subtitle: Text(_formatHongKong(_validTo)),
+                    trailing: const Icon(Icons.calendar_today),
+                    onTap: _submitting
+                        ? null
+                        : () async {
+                            final session = _session;
+                            final today = _hongKongClock(_nowUtc());
+                            final previous = _hongKongClock(_validTo);
+                            final picked = await showDatePicker(
+                              context: context,
+                              initialDate:
+                                  previous.isBefore(today) ? today : previous,
+                              firstDate: today,
+                              currentDate: today,
+                              lastDate: today.add(const Duration(days: 365)),
+                            );
+                            if (picked != null &&
+                                mounted &&
+                                session == _session) {
+                              setState(() {
+                                _validTo = _fromHongKong(picked,
+                                    const TimeOfDay(hour: 0, minute: 0));
+                                _dateError = null;
+                                _dirty = true;
+                              });
+                            }
+                          },
+                  ),
+                  if (_dateError != null)
+                    Text(_dateError!,
+                        style: TextStyle(
+                            color: Theme.of(context).colorScheme.error)),
+                  const SizedBox(height: CgTheme.space16),
+                  if (_createUncertain)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: CgTheme.space12),
+                      child: Text(context.tr(
+                        '提交結果未確認，請重新載入優惠券列表核對。',
+                        'Refresh the coupon list to check whether the coupon was submitted.',
+                      )),
+                    ),
+                  MerchantPrimaryAction(
+                    onPressed: _shopId == null ||
+                            _branchIds == null ||
+                            _submitting ||
+                            _createUncertain
+                        ? null
+                        : () async {
+                            final session = _session;
+                            if (_validatedLimit == null) {
+                              showCgToast(
+                                  context,
+                                  context.tr('請輸入每人限領數量',
+                                      'Enter the claim limit per person'));
+                              return;
+                            }
+                            final now = _nowUtc();
+                            final scheduledStart = _validFrom;
+                            final validFrom = scheduledStart ?? now;
+                            final price =
+                                _type == 'Price' ? _parseSalePrice() : null;
+                            final priceError = _type == 'Price' && price == null
+                                ? context.tr('請輸入有效售價（最少 HK\$0.01，最多兩位小數）',
+                                    'Enter a valid sale price (at least HK\$0.01, up to two decimals).')
+                                : null;
+                            final dateError = scheduledStart != null &&
+                                    !validFrom.isAfter(now)
+                                ? context.tr('定時上架時間必須晚於現在',
+                                    'Choose a start time in the future.')
+                                : !_validTo.isAfter(validFrom)
+                                    ? context.tr('到期日期必須晚於生效時間',
+                                        'The expiry must be after the start time.')
+                                    : null;
+                            setState(() {
+                              _salePriceError = priceError;
+                              _dateError = dateError;
+                            });
+                            if (priceError != null || dateError != null) return;
+                            final draft = _body(validFrom, price);
+                            final englishName = _nameEn.text.trim();
+                            final category = _categories
+                                ?.where((row) => row['id'] == _categoryId)
+                                .map(_categoryLabel)
+                                .firstOrNull;
+                            final branches = _branchIds!.length;
+                            final scope = branches == 0
+                                ? context.tr('所有分店', 'All branches')
+                                : context.tr('指定 $branches 間分店',
+                                    '$branches selected branches');
+                            var creating = false;
+                            setState(() => _submitting = true);
+                            try {
+                              final preview =
+                                  await widget.api.couponPreview(draft);
+                              if (!context.mounted || session != _session) {
+                                return;
+                              }
+                              final previewAmount = price == null
+                                  ? preview['amount_text']
+                                  : context.tr('售價：${formatHkd(price)}',
+                                      'Sale price: ${formatHkd(price)}');
+                              final ok = await showDialog<bool>(
+                                context: context,
+                                builder: (c) => AlertDialog(
+                                  title: Text(
+                                      context.tr('預覽優惠券', 'Review coupon')),
+                                  content: Text([
+                                    '${preview['coupon_name']}',
+                                    '$previewAmount',
+                                    context.tr('商店：${preview['shop_name']}',
+                                        'Shop: ${preview['shop_name']}'),
+                                    context.tr(
+                                        '適用：$scope', 'Available at: $scope'),
+                                    context.tr('數量：${preview['total']}',
+                                        'Quantity: ${preview['total']}'),
+                                    '${context.tr('每人限領', 'Claim limit per person')}：${draft['per_user_limit']}',
+                                    if (englishName.isNotEmpty)
+                                      '${context.tr('英文名稱', 'English name')}：$englishName',
+                                    if (category != null)
+                                      '${context.tr('分類', 'Category')}：$category',
+                                    if (scheduledStart != null)
+                                      context.tr(
+                                          '生效時間：${_formatHongKong(validFrom)}（香港時間）',
+                                          'Start: ${_formatHongKong(validFrom)} (Hong Kong time)'),
+                                  ].join('\n')),
+                                  actions: [
+                                    TextButton(
+                                        onPressed: () =>
+                                            Navigator.pop(c, false),
+                                        child:
+                                            Text(context.tr('取消', 'Cancel'))),
+                                    TextButton(
+                                        onPressed: () => Navigator.pop(c, true),
+                                        child: Text(context.tr(
+                                            '提交審核', 'Submit for review'))),
+                                  ],
+                                ),
+                              );
+                              if (ok == true &&
+                                  context.mounted &&
+                                  session == _session) {
+                                if (scheduledStart != null &&
+                                    !scheduledStart.isAfter(_nowUtc())) {
+                                  setState(() => _dateError = context.tr(
+                                      '定時上架時間已過，請重新選擇',
+                                      'The scheduled start has passed. Choose another time.'));
+                                  return;
+                                }
+                                creating = true;
+                                final res =
+                                    await widget.api.couponCreate(draft);
+                                if (context.mounted && session == _session) {
+                                  showCgToast(
+                                      context,
+                                      res['message'] as String? ??
+                                          context.tr(
+                                              '已提交審核', 'Submitted for review'));
+                                  Navigator.of(context).pop();
+                                }
+                              }
+                            } on ApiException catch (e) {
+                              if (context.mounted && session == _session) {
+                                if (creating && e.status >= 500) {
+                                  setState(() => _createUncertain = true);
+                                } else {
+                                  showCgToast(context, e.message);
+                                }
+                              }
+                            } catch (_) {
+                              if (context.mounted && session == _session) {
+                                if (creating) {
+                                  setState(() => _createUncertain = true);
+                                } else {
+                                  showCgToast(
+                                      context,
+                                      context.tr('未能連線，請重試',
+                                          'Connection failed. Try again.'));
+                                }
+                              }
+                            } finally {
+                              if (mounted && session == _session) {
+                                setState(() => _submitting = false);
+                              }
+                            }
+                          },
+                    label: context.tr('檢查並提交', 'Review and submit'),
+                  ),
+                ],
+              ),
+            ),
           ),
-        ],
-      ),
-        ),
-      ),
-    ));
+        ));
   }
 }
 
@@ -1212,7 +1434,10 @@ Future<bool?> _confirmRevoke(BuildContext context, String coupon) =>
       context: context,
       builder: (c) => AlertDialog(
         title: Text(context.tr('撤銷核銷', 'Reverse redemption')),
-        content: Text('確定撤銷「$coupon」的這筆核銷？顧客的積分及相關返現會一併更新。'),
+        content: Text(c.tr(
+          '確定撤銷「$coupon」的這筆核銷？顧客的積分及相關返現會一併更新。',
+          'Reverse this redemption for “$coupon”? The customer’s points and any related cashback will be updated.',
+        )),
         actions: [
           TextButton(
               onPressed: () => Navigator.pop(c, false),
@@ -1266,7 +1491,8 @@ class _ScanScreenState extends State<ScanScreen> {
     if (raw == null || raw.isEmpty) return '—';
     final d = DateTime.tryParse(raw);
     if (d == null) return raw;
-    return '${d.year}年${d.month}月${d.day}日';
+    return context.tr('${d.year}年${d.month}月${d.day}日',
+        '${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}');
   }
 
   void _resetScan() {
@@ -1299,7 +1525,8 @@ class _ScanScreenState extends State<ScanScreen> {
     }
     code = code.trim();
     if (!RegExp(r'^[0-9]{6}$').hasMatch(code)) {
-      setState(() => _errorReason = '請輸入券上的六位兌換碼');
+      setState(() => _errorReason = context.tr(
+          '請輸入券上的六位兌換碼', 'Enter the six-digit code shown on the coupon.'));
       return;
     }
     FocusManager.instance.primaryFocus?.unfocus();
@@ -1328,11 +1555,13 @@ class _ScanScreenState extends State<ScanScreen> {
             _pendingCode = code;
             _branchError = null;
           } else {
-            _errorReason = '此券需要指定分店，但暫無可選分店，請聯絡平台。';
+            _errorReason = context.tr('此券需要指定分店，但暫無可選分店，請聯絡平台。',
+                'A branch is required for this coupon, but none are available. Contact support.');
           }
         } else {
           // Invalid / already used / other-shop code: full-screen red page.
-          _errorReason = res['reason'] as String? ?? '無法核銷';
+          _errorReason = res['reason'] as String? ??
+              context.tr('無法核銷', 'Unable to redeem');
           _prepared = null;
           _pendingCode = null;
         }
@@ -1341,7 +1570,10 @@ class _ScanScreenState extends State<ScanScreen> {
     } on ApiException catch (e) {
       if (mounted) setState(() => _errorReason = e.message);
     } catch (_) {
-      if (mounted) setState(() => _errorReason = '未能連線，請重試');
+      if (mounted) {
+        setState(() => _errorReason =
+            context.tr('未能連線，請重試', 'Connection failed. Try again.'));
+      }
     } finally {
       if (mounted) setState(() => _handled = false);
     }
@@ -1368,13 +1600,18 @@ class _ScanScreenState extends State<ScanScreen> {
                   (_) => random.nextInt(256).toRadixString(16).padLeft(2, '0'))
               .join();
         } else {
-          _branchError = result['reason'] as String? ?? '此分店未能核銷，請重新選擇。';
+          _branchError = result['reason'] as String? ??
+              context.tr('此分店未能核銷，請重新選擇。',
+                  'This branch cannot redeem the coupon. Choose another branch.');
         }
       });
     } on ApiException catch (e) {
       if (mounted) setState(() => _branchError = e.message);
     } catch (_) {
-      if (mounted) setState(() => _branchError = '未能連線，請重試');
+      if (mounted) {
+        setState(() => _branchError =
+            context.tr('未能連線，請重試', 'Connection failed. Try again.'));
+      }
     } finally {
       if (mounted) setState(() => _handled = false);
     }
@@ -1421,7 +1658,10 @@ class _ScanScreenState extends State<ScanScreen> {
       });
     } on ApiException catch (e) {
       if (mounted && e.status >= 500) {
-        showCgToast(context, '未能確認結果，請再次確認核銷');
+        showCgToast(
+            context,
+            context.tr('未能確認結果，請再次確認核銷',
+                'Could not confirm the result. Confirm the redemption again.'));
       } else if (mounted) {
         setState(() {
           _errorReason = e.message;
@@ -1430,7 +1670,12 @@ class _ScanScreenState extends State<ScanScreen> {
         });
       }
     } catch (_) {
-      if (mounted) showCgToast(context, '未能確認結果，請再次確認核銷');
+      if (mounted) {
+        showCgToast(
+            context,
+            context.tr('未能確認結果，請再次確認核銷',
+                'Could not confirm the result. Confirm the redemption again.'));
+      }
     } finally {
       if (mounted) setState(() => _handled = false);
     }
@@ -1439,7 +1684,8 @@ class _ScanScreenState extends State<ScanScreen> {
   Future<void> _revoke() async {
     final rid = _lastRedemptionId;
     if (rid == null) return;
-    final ok = await _confirmRevoke(context, _successCouponName ?? '優惠券');
+    final ok = await _confirmRevoke(
+        context, _successCouponName ?? context.tr('優惠券', 'coupon'));
     if (ok != true || !mounted || _revoking) return;
     setState(() => _revoking = true);
     try {
@@ -1453,7 +1699,12 @@ class _ScanScreenState extends State<ScanScreen> {
     } on ApiException catch (e) {
       if (mounted) showCgToast(context, e.message);
     } catch (_) {
-      if (mounted) showCgToast(context, '未能確認撤銷結果，請重試');
+      if (mounted) {
+        showCgToast(
+            context,
+            context.tr(
+                '未能確認撤銷結果，請重試', 'Could not confirm the reversal. Try again.'));
+      }
     } finally {
       if (mounted) setState(() => _revoking = false);
     }
@@ -1468,15 +1719,30 @@ class _ScanScreenState extends State<ScanScreen> {
 
   Widget _detailRow(String label, String value) {
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 2),
-      child: Row(
-        children: [
-          SizedBox(
-              width: 110,
-              child: Text(label,
-                  style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant))),
-          Expanded(child: Text(value)),
-        ],
+      padding: const EdgeInsets.symmetric(vertical: CgTheme.space4),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final textScale = MediaQuery.textScalerOf(context).scale(14) / 14;
+          final heading = Text(
+            label,
+            style: TextStyle(
+                color: Theme.of(context).colorScheme.onSurfaceVariant),
+          );
+          if (constraints.maxWidth < 300 * max(1.0, textScale)) {
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [heading, Text(value)],
+            );
+          }
+          return Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(child: heading),
+              const SizedBox(width: CgTheme.space12),
+              Expanded(child: Text(value)),
+            ],
+          );
+        },
       ),
     );
   }
@@ -1486,7 +1752,7 @@ class _ScanScreenState extends State<ScanScreen> {
     final showRevoke = _lastRedemptionId != null && left > 0;
     return Container(
       color: Theme.of(context).colorScheme.surface,
-      padding: const EdgeInsets.all(24),
+      padding: const EdgeInsets.all(CgTheme.space24),
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
@@ -1495,27 +1761,29 @@ class _ScanScreenState extends State<ScanScreen> {
               color: _revokedMessage == null
                   ? CgColors.success
                   : CgColors.textSecondary),
-          const SizedBox(height: 16),
+          const SizedBox(height: CgTheme.space16),
           Text(_revokedMessage ?? context.tr('已核銷', 'Redeemed'),
               textAlign: TextAlign.center,
-              style:
-                  const TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
-          const SizedBox(height: 8),
+              style: Theme.of(context).textTheme.titleLarge),
+          const SizedBox(height: CgTheme.space8),
           Text(_successCouponName ?? '',
               textAlign: TextAlign.center,
-              style: const TextStyle(fontSize: 18)),
-          const SizedBox(height: 24),
+              style: Theme.of(context).textTheme.titleMedium),
+          const SizedBox(height: CgTheme.space24),
           if (showRevoke)
             SizedBox(
               width: double.infinity,
               child: OutlinedButton(
                 onPressed: _revoking ? null : _revoke,
                 child: Text(_revoking
-                    ? '撤銷中…'
-                    : '撤銷核銷（剩餘 ${formatCountdown(Duration(seconds: left))}）'),
+                    ? context.tr('撤銷中…', 'Reversing…')
+                    : context.tr(
+                        '撤銷核銷（剩餘 ${formatCountdown(Duration(seconds: left))}）',
+                        'Reverse (${formatCountdown(Duration(seconds: left))} left)',
+                      )),
               ),
             ),
-          const SizedBox(height: 8),
+          const SizedBox(height: CgTheme.space8),
           SizedBox(
             width: double.infinity,
             child: ElevatedButton(
@@ -1532,19 +1800,19 @@ class _ScanScreenState extends State<ScanScreen> {
     final scheme = Theme.of(context).colorScheme;
     return Center(
       child: Padding(
-        padding: const EdgeInsets.all(24),
+        padding: const EdgeInsets.all(CgTheme.space24),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             Icon(Icons.error_outline, size: 44, color: scheme.error),
-            const SizedBox(height: 12),
+            const SizedBox(height: CgTheme.space12),
             Text(context.tr('無法核銷', 'Unable to redeem'),
                 style: Theme.of(context).textTheme.titleLarge),
             if (_errorReason != null) ...[
-              const SizedBox(height: 8),
+              const SizedBox(height: CgTheme.space8),
               Text(_errorReason!, textAlign: TextAlign.center),
             ],
-            const SizedBox(height: 16),
+            const SizedBox(height: CgTheme.space16),
             ElevatedButton(
               onPressed: _resetScan,
               child: Text(context.tr('繼續掃碼', 'Scan again')),
@@ -1565,195 +1833,233 @@ class _ScanScreenState extends State<ScanScreen> {
           ? _errorPage()
           : _successCouponName != null
               ? _successPage()
-              : ListView(
-                  children: [
-                    if (_prepared == null && _branchChoices.isEmpty)
-                      SizedBox(
-                        height: MediaQuery.sizeOf(context).height * .48,
-                        child: Stack(
-                          children: [
-                            MobileScanner(
-                              errorBuilder: (_, __, ___) => ColoredBox(
-                                color: Colors.black,
-                                child: Center(
-                                    child: Text(context.tr('相機未能使用，請手動輸入兌換碼', 'Camera unavailable. Enter the code below.'),
-                                        style: const TextStyle(color: Colors.white))),
-                              ),
-                              onDetect: (capture) {
-                                final value =
-                                    capture.barcodes.firstOrNull?.rawValue;
-                                if (value != null) {
-                                  final code = Uri.tryParse(value)
-                                          ?.queryParameters['code'] ??
-                                      value;
-                                  _prepare(code);
-                                }
-                              },
-                            ),
-                            Center(
-                              child: Image.asset(
-                                'assets/images/ic_scan_frame.png',
-                                width: 260,
-                                errorBuilder: (_, __, ___) => Container(
-                                  width: 260,
-                                  height: 260,
-                                  decoration: BoxDecoration(
-                                    border: Border.all(
-                                        color: CgColors.primary, width: 3),
-                                    borderRadius: BorderRadius.circular(12),
-                                  ),
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    if (_prepared == null && _branchChoices.isEmpty)
-                      Padding(
-                        padding: const EdgeInsets.all(8),
-                        child: Text(context.tr('請將 QR 碼放入方框中並進行掃描\n先預核銷確認券面與門店，再按確認核銷', 'Place the QR code in the frame. Check the coupon and branch before confirming.')),
-                      ),
-                    if (_prepared == null && _branchChoices.isNotEmpty)
-                      Padding(
-                        padding: const EdgeInsets.all(CgTheme.pageInset),
-                        child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(context.tr('選擇核銷分店', 'Choose redemption branch'),
-                                  style:
-                                      Theme.of(context).textTheme.titleLarge),
-                              const SizedBox(height: 8),
-                              Text(context.tr('此券只適用於以下分店，請選擇顧客所在分店。', 'Choose the branch where the customer is using this coupon.')),
-                              if (_branchError != null)
-                                Text(_branchError!,
-                                    style: TextStyle(
-                                        color: Theme.of(context)
-                                            .colorScheme
-                                            .error)),
-                              for (final branch in _branchChoices)
-                                ListTile(
-                                  title: Text(branch['name'] as String),
-                                  subtitle: branch['address'] is String &&
-                                          (branch['address'] as String)
-                                              .isNotEmpty
-                                      ? Text(branch['address'] as String)
-                                      : null,
-                                  trailing: const Icon(Icons.chevron_right),
-                                  enabled: !_handled,
-                                  onTap: () => _chooseBranch(branch),
-                                ),
-                              TextButton(
-                                  onPressed: _handled ? null : _resetScan,
-                                  child: Text(context.tr('取消', 'Cancel'))),
-                            ]),
-                      ),
-                    if (_prepared != null && _prepared!['can_redeem'] == true)
-                      Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 16),
-                        child: Card(
-                          child: Padding(
-                            padding: const EdgeInsets.all(CgTheme.pageInset),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
+              : Center(
+                  child: ConstrainedBox(
+                    constraints:
+                        const BoxConstraints(maxWidth: CgTheme.formMaxWidth),
+                    child: ListView(
+                      children: [
+                        if (_prepared == null && _branchChoices.isEmpty)
+                          SizedBox(
+                            height: MediaQuery.sizeOf(context).height * .48,
+                            child: Stack(
                               children: [
-                                Text(_prepared!['coupon_name'] as String? ?? '',
-                                    style: const TextStyle(
-                                        fontWeight: FontWeight.bold,
-                                        fontSize: 16)),
-                                const SizedBox(height: 8),
-                                _detailRow(
-                                    context.tr('門店', 'Shop'), '${_prepared!['shop_name'] ?? ''}'),
-                                if (_selectedBranchName != null)
-                                  _detailRow(context.tr('核銷分店', 'Redemption branch'), _selectedBranchName!),
-                                // Customer phone last-4 / validity come
-                                // from prepare_scan when the backend
-                                // sends them; '—' until then.
-                                _detailRow(
-                                    context.tr('顧客手機後四位', 'Last 4 digits of phone'),
-                                    _prepared!['customer_phone_last4']
-                                            as String? ??
-                                        '—'),
-                                _detailRow(
-                                    context.tr('有效期', 'Valid until'),
-                                    _dateText(
-                                        _prepared!['valid_to'] as String?)),
-                                if (_prepared!['package_quantity'] != null)
-                                  _detailRow(context.tr('整券核銷', 'Redeem whole package'),
-                                      context.tr("${_prepared!['package_quantity']} 份", "${_prepared!['package_quantity']} units")),
-                                _detailRow(context.tr('是否已使用', 'Redemption status'),
-                                    context.tr('未使用', 'Unused')),
-                                const SizedBox(height: 12),
-                                Row(
-                                  children: [
-                                    Expanded(
-                                      child: ElevatedButton(
-                                        onPressed:
-                                            _handled ? null : _confirmConsume,
-                                        child: Text(_handled ? context.tr('核銷中…', 'Redeeming…') : context.tr('確認核銷', 'Confirm redemption')),
+                                MobileScanner(
+                                  errorBuilder: (_, __, ___) => ColoredBox(
+                                    color: Colors.black,
+                                    child: Center(
+                                        child: Text(
+                                            context.tr('相機未能使用，請手動輸入兌換碼',
+                                                'Camera unavailable. Enter the code below.'),
+                                            style: const TextStyle(
+                                                color: Colors.white))),
+                                  ),
+                                  onDetect: (capture) {
+                                    final value =
+                                        capture.barcodes.firstOrNull?.rawValue;
+                                    if (value != null) {
+                                      final code = Uri.tryParse(value)
+                                              ?.queryParameters['code'] ??
+                                          value;
+                                      _prepare(code);
+                                    }
+                                  },
+                                ),
+                                Center(
+                                  child: Image.asset(
+                                    'assets/images/ic_scan_frame.png',
+                                    width: 260,
+                                    errorBuilder: (_, __, ___) => Container(
+                                      width: 260,
+                                      height: 260,
+                                      decoration: BoxDecoration(
+                                        border: Border.all(
+                                            color: CgColors.primary, width: 3),
+                                        borderRadius: BorderRadius.circular(12),
                                       ),
                                     ),
-                                    const SizedBox(width: 8),
-                                    TextButton(
-                                      onPressed: _handled
-                                          ? null
-                                          : () => setState(() {
-                                                _prepared = null;
-                                                _pendingCode = null;
-                                                _branchChoices = [];
-                                                _selectedBranchId = null;
-                                                _selectedBranchName = null;
-                                                _branchError = null;
-                                                _attemptKey = null;
-                                              }),
-                                      child: Text(context.tr('取消', 'Cancel')),
-                                    ),
-                                  ],
+                                  ),
                                 ),
                               ],
                             ),
                           ),
-                        ),
-                      ),
-                    if (_prepared == null && _branchChoices.isEmpty)
-                      Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 16),
-                        child: OutlinedButton(
-                          onPressed: _handled ? null : () => Navigator.of(context).push(
-                            MaterialPageRoute(builder: (_) => ScanBatchScreen(api: widget.api))),
-                          child: Text(context.tr('批量核銷', 'Batch redemption')),
-                        ),
-                      ),
-                    if (_prepared == null && _branchChoices.isEmpty)
-                      Padding(
-                        padding: const EdgeInsets.all(CgTheme.pageInset),
-                        child: Row(
-                          children: [
-                            Expanded(
-                              child: TextField(
-                                controller: _code,
-                                inputFormatters: [
-                                  FilteringTextInputFormatter.digitsOnly,
-                                  LengthLimitingTextInputFormatter(6)
-                                ],
-                                onSubmitted: _prepare,
-                                keyboardType: TextInputType.number,
-                                decoration:
-                                    InputDecoration(hintText: context.tr('或手動輸入兌換碼', 'Or enter the redemption code')),
+                        if (_prepared == null && _branchChoices.isEmpty)
+                          Padding(
+                            padding: const EdgeInsets.all(CgTheme.space8),
+                            child: Text(context.tr(
+                                '請將 QR 碼放入方框中並進行掃描\n先預核銷確認券面與門店，再按確認核銷',
+                                'Place the QR code in the frame. Check the coupon and branch before confirming.')),
+                          ),
+                        if (_prepared == null && _branchChoices.isNotEmpty)
+                          Padding(
+                            padding: const EdgeInsets.all(CgTheme.pageInset),
+                            child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                      context.tr(
+                                          '選擇核銷分店', 'Choose redemption branch'),
+                                      style: Theme.of(context)
+                                          .textTheme
+                                          .titleLarge),
+                                  const SizedBox(height: CgTheme.space8),
+                                  Text(context.tr('此券只適用於以下分店，請選擇顧客所在分店。',
+                                      'Choose the branch where the customer is using this coupon.')),
+                                  if (_branchError != null)
+                                    Text(_branchError!,
+                                        style: TextStyle(
+                                            color: Theme.of(context)
+                                                .colorScheme
+                                                .error)),
+                                  for (final branch in _branchChoices)
+                                    ListTile(
+                                      contentPadding: EdgeInsets.zero,
+                                      title: Text(branch['name'] as String),
+                                      subtitle: branch['address'] is String &&
+                                              (branch['address'] as String)
+                                                  .isNotEmpty
+                                          ? Text(branch['address'] as String)
+                                          : null,
+                                      trailing: const Icon(Icons.chevron_right),
+                                      enabled: !_handled,
+                                      onTap: () => _chooseBranch(branch),
+                                    ),
+                                  TextButton(
+                                      onPressed: _handled ? null : _resetScan,
+                                      child: Text(context.tr('取消', 'Cancel'))),
+                                ]),
+                          ),
+                        if (_prepared != null &&
+                            _prepared!['can_redeem'] == true)
+                          Padding(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: CgTheme.pageInset),
+                            child: Card(
+                              child: Padding(
+                                padding:
+                                    const EdgeInsets.all(CgTheme.pageInset),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                        _prepared!['coupon_name'] as String? ??
+                                            '',
+                                        style: Theme.of(context)
+                                            .textTheme
+                                            .titleMedium),
+                                    const SizedBox(height: CgTheme.space8),
+                                    _detailRow(context.tr('門店', 'Shop'),
+                                        '${_prepared!['shop_name'] ?? ''}'),
+                                    if (_selectedBranchName != null)
+                                      _detailRow(context.tr('核銷分店', 'Branch'),
+                                          _selectedBranchName!),
+                                    // Customer phone last-4 / validity come
+                                    // from prepare_scan when the backend
+                                    // sends them; '—' until then.
+                                    _detailRow(
+                                        context.tr('顧客手機後四位', 'Phone (last 4)'),
+                                        _prepared!['customer_phone_last4']
+                                                as String? ??
+                                            '—'),
+                                    _detailRow(
+                                        context.tr('有效期', 'Valid until'),
+                                        _dateText(
+                                            _prepared!['valid_to'] as String?)),
+                                    if (_prepared!['package_quantity'] != null)
+                                      _detailRow(
+                                          context.tr('整券核銷', 'Whole package'),
+                                          context.tr(
+                                              "${_prepared!['package_quantity']} 份",
+                                              "${_prepared!['package_quantity']} units")),
+                                    _detailRow(context.tr('是否已使用', 'Status'),
+                                        context.tr('未使用', 'Unused')),
+                                    const SizedBox(height: CgTheme.space12),
+                                    Row(
+                                      children: [
+                                        Expanded(
+                                          child: ElevatedButton(
+                                            onPressed: _handled
+                                                ? null
+                                                : _confirmConsume,
+                                            child: Text(_handled
+                                                ? context.tr(
+                                                    '核銷中…', 'Redeeming…')
+                                                : context.tr('確認核銷',
+                                                    'Confirm redemption')),
+                                          ),
+                                        ),
+                                        const SizedBox(width: CgTheme.space8),
+                                        TextButton(
+                                          onPressed: _handled
+                                              ? null
+                                              : () => setState(() {
+                                                    _prepared = null;
+                                                    _pendingCode = null;
+                                                    _branchChoices = [];
+                                                    _selectedBranchId = null;
+                                                    _selectedBranchName = null;
+                                                    _branchError = null;
+                                                    _attemptKey = null;
+                                                  }),
+                                          child:
+                                              Text(context.tr('取消', 'Cancel')),
+                                        ),
+                                      ],
+                                    ),
+                                  ],
+                                ),
                               ),
                             ),
-                            const SizedBox(width: 8),
-                            ElevatedButton(
-                              style: ElevatedButton.styleFrom(
-                                  minimumSize: const Size(88, 56)),
+                          ),
+                        if (_prepared == null && _branchChoices.isEmpty)
+                          Padding(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: CgTheme.pageInset),
+                            child: OutlinedButton(
                               onPressed: _handled
                                   ? null
-                                  : () => _prepare(_code.text),
-                              child: Text(context.tr('預核銷', 'Check code')),
+                                  : () => Navigator.of(context).push(
+                                      MaterialPageRoute(
+                                          builder: (_) => ScanBatchScreen(
+                                              api: widget.api))),
+                              child:
+                                  Text(context.tr('批量核銷', 'Batch redemption')),
                             ),
-                          ],
-                        ),
-                      ),
-                  ],
+                          ),
+                        if (_prepared == null && _branchChoices.isEmpty)
+                          Padding(
+                            padding: const EdgeInsets.all(CgTheme.pageInset),
+                            child: Row(
+                              children: [
+                                Expanded(
+                                  child: TextField(
+                                    controller: _code,
+                                    inputFormatters: [
+                                      FilteringTextInputFormatter.digitsOnly,
+                                      LengthLimitingTextInputFormatter(6)
+                                    ],
+                                    onSubmitted: _prepare,
+                                    keyboardType: TextInputType.number,
+                                    decoration: InputDecoration(
+                                        hintText: context.tr('或手動輸入兌換碼',
+                                            'Or enter the redemption code')),
+                                  ),
+                                ),
+                                const SizedBox(width: CgTheme.space8),
+                                ElevatedButton(
+                                  style: ElevatedButton.styleFrom(
+                                      minimumSize: const Size(88, 56)),
+                                  onPressed: _handled
+                                      ? null
+                                      : () => _prepare(_code.text),
+                                  child: Text(context.tr('預核銷', 'Check code')),
+                                ),
+                              ],
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
                 ),
     );
   }
@@ -1798,7 +2104,7 @@ class _RedemptionRecordsScreenState extends State<RedemptionRecordsScreen> {
     } on ApiException catch (_) {
       if (mounted) {
         setState(() {
-          _error = '網絡不穩定，請重試';
+          _error = context.tr('網絡不穩定，請重試', 'Network unavailable. Try again.');
           _loading = false;
         });
       }
@@ -1818,15 +2124,50 @@ class _RedemptionRecordsScreenState extends State<RedemptionRecordsScreen> {
       if (mounted) await _load();
     } catch (e) {
       if (mounted) {
-        showCgToast(context, e is ApiException ? e.message : '未能確認撤銷結果，請重試');
+        showCgToast(
+            context,
+            e is ApiException
+                ? e.message
+                : context.tr('未能確認撤銷結果，請重試',
+                    'Could not confirm the reversal. Try again.'));
       }
     } finally {
       if (mounted) setState(() => _revokingId = null);
     }
   }
 
-  String _dateLabel(DateTime? d) =>
-      d == null ? '全部' : '${d.year}-${d.month}-${d.day}';
+  String _dateLabel(DateTime? date) {
+    if (date == null) return context.tr('不限日期', 'Any date');
+    final day = date.day.toString().padLeft(2, '0');
+    final month = date.month.toString().padLeft(2, '0');
+    return '${date.year}-$month-$day';
+  }
+
+  Widget _dateFilter(bool isFrom) {
+    final label = isFrom ? context.tr('開始', 'Start') : context.tr('結束', 'End');
+    final date = _dateLabel(isFrom ? _from : _to);
+    return OutlinedButton(
+      key: ValueKey(isFrom ? 'vendor-date-start' : 'vendor-date-end'),
+      style: OutlinedButton.styleFrom(
+        padding: const EdgeInsets.symmetric(
+          horizontal: CgTheme.space8,
+          vertical: CgTheme.space8,
+        ),
+      ),
+      onPressed: () => _pickDate(isFrom),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(label, maxLines: 1),
+          FittedBox(
+            fit: BoxFit.scaleDown,
+            child: Text(date,
+                maxLines: 1, style: Theme.of(context).textTheme.bodySmall),
+          ),
+        ],
+      ),
+    );
+  }
 
   Future<void> _pickDate(bool isFrom) async {
     final picked = await showDatePicker(
@@ -1835,7 +2176,7 @@ class _RedemptionRecordsScreenState extends State<RedemptionRecordsScreen> {
       firstDate: DateTime.now().subtract(const Duration(days: 365)),
       lastDate: DateTime.now(),
     );
-    if (picked == null) return;
+    if (picked == null || !mounted) return;
     setState(() {
       if (isFrom) {
         _from = picked;
@@ -1853,7 +2194,8 @@ class _RedemptionRecordsScreenState extends State<RedemptionRecordsScreen> {
       await showDialog<void>(
         context: context,
         builder: (c) => AlertDialog(
-          title: Text('核銷記錄 CSV（共 ${_records.length} 條）'),
+          title: Text(c.tr('核銷記錄 CSV（共 ${_records.length} 條）',
+              'Redemption history CSV (${_records.length} records)')),
           content: SingleChildScrollView(
             child: SelectableText(
                 csv.length > 2000 ? '${csv.substring(0, 2000)}…' : csv),
@@ -1863,12 +2205,13 @@ class _RedemptionRecordsScreenState extends State<RedemptionRecordsScreen> {
               onPressed: () {
                 Clipboard.setData(ClipboardData(text: csv));
                 Navigator.pop(c);
-                showCgToast(context, 'CSV 已複製，可粘貼保存');
+                showCgToast(context, context.tr('已複製 CSV', 'CSV copied'));
               },
-              child: const Text('複製全部'),
+              child: Text(c.tr('複製全部', 'Copy all')),
             ),
             TextButton(
-                onPressed: () => Navigator.pop(c), child: const Text('關閉')),
+                onPressed: () => Navigator.pop(c),
+                child: Text(c.tr('關閉', 'Close'))),
           ],
         ),
       );
@@ -1884,124 +2227,145 @@ class _RedemptionRecordsScreenState extends State<RedemptionRecordsScreen> {
         title: Text(context.tr('核銷記錄', 'Redemption history')),
         actions: [
           Semantics(
-            label: '匯出 CSV',
+            label: context.tr('匯出 CSV', 'Export CSV'),
             button: true,
             child: IconButton(
               icon: const Icon(Icons.download),
-              tooltip: '匯出 CSV',
+              tooltip: context.tr('匯出 CSV', 'Export CSV'),
               onPressed: _records.isEmpty ? null : _exportCsv,
             ),
           ),
         ],
       ),
-      body: Column(
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
-            child: Row(
-              children: [
-                Expanded(
-                  child: OutlinedButton.icon(
-                    onPressed: () => _pickDate(true),
-                    icon: const Icon(Icons.calendar_today, size: 18),
-                    label: Text('開始：${_dateLabel(_from)}'),
+      body: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: CgTheme.listMaxWidth),
+          child: Column(
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(
+                  CgTheme.pageInset,
+                  CgTheme.space12,
+                  CgTheme.pageInset,
+                  0,
+                ),
+                child: Row(
+                  children: [
+                    Expanded(child: _dateFilter(true)),
+                    const SizedBox(width: CgTheme.space8),
+                    Expanded(child: _dateFilter(false)),
+                  ],
+                ),
+              ),
+              if (_from != null || _to != null)
+                Align(
+                  alignment: AlignmentDirectional.centerEnd,
+                  child: Padding(
+                    padding: const EdgeInsetsDirectional.only(
+                        end: CgTheme.pageInset),
+                    child: TextButton(
+                      key: const ValueKey('vendor-date-clear'),
+                      onPressed: () {
+                        setState(() {
+                          _from = null;
+                          _to = null;
+                        });
+                        _load();
+                      },
+                      child: Text(context.tr('清除', 'Clear')),
+                    ),
                   ),
                 ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: OutlinedButton.icon(
-                    onPressed: () => _pickDate(false),
-                    icon: const Icon(Icons.calendar_today, size: 18),
-                    label: Text('結束：${_dateLabel(_to)}'),
-                  ),
-                ),
-                if (_from != null || _to != null)
-                  TextButton(
-                    onPressed: () {
-                      setState(() {
-                        _from = null;
-                        _to = null;
-                      });
-                      _load();
-                    },
-                    child: const Text('清除'),
-                  ),
-              ],
-            ),
-          ),
-          Expanded(
-            child: _loading
-                ? ListView(
-                    padding: const EdgeInsets.all(CgTheme.pageInset),
-                    children: const [
-                      SkeletonBox(height: 72),
-                      SizedBox(height: 8),
-                      SkeletonBox(height: 72),
-                    ],
-                  )
-                : _error != null
-                    ? Center(
-                        child: Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            const Text('網絡不穩定，請重試'),
-                            const SizedBox(height: 12),
-                            ElevatedButton(
-                                onPressed: _load, child: Text(context.tr('重試', 'Retry'))),
-                          ],
-                        ),
+              Expanded(
+                child: _loading
+                    ? ListView(
+                        padding: const EdgeInsets.all(CgTheme.pageInset),
+                        children: const [
+                          SkeletonBox(height: 72),
+                          SizedBox(height: CgTheme.space8),
+                          SkeletonBox(height: 72),
+                        ],
                       )
-                    : _records.isEmpty
+                    : _error != null
                         ? Center(
                             child: Column(
                               mainAxisAlignment: MainAxisAlignment.center,
                               children: [
-                                const Text('所選日期內暫無核銷記錄。'),
-                                const SizedBox(height: 12),
+                                Text(context.tr('網絡不穩定，請重試',
+                                    'Network unavailable. Try again.')),
+                                const SizedBox(height: CgTheme.space12),
                                 ElevatedButton(
                                     onPressed: _load,
-                                    child: const Text('重新載入')),
+                                    child: Text(context.tr('重試', 'Retry'))),
                               ],
                             ),
                           )
-                        : RefreshIndicator(
-                            onRefresh: _load,
-                            child: ListView.builder(
-                              itemCount: _records.length,
-                              itemBuilder: (_, i) {
-                                final r = _records[i];
-                                final revoked = r['revoked'] == true;
-                                final deadline = DateTime.tryParse(
-                                    r['revoke_until'] as String? ?? '');
-                                final canRevoke = !revoked &&
-                                    deadline != null &&
-                                    deadline.isAfter(DateTime.now());
-                                return Card(
-                                  margin:
-                                      const EdgeInsets.fromLTRB(12, 8, 12, 0),
-                                  child: ListTile(
-                                    title: Text('${r['coupon_name'] ?? ''}'),
-                                    subtitle: Text(
-                                        '${r['shop_name'] ?? ''} · ${r['scanned_at'] ?? ''}'),
-                                    trailing: canRevoke
-                                        ? TextButton(
-                                            onPressed: _revokingId == null
-                                                ? () => _revokeRecord(r)
-                                                : null,
-                                            child: Text(context.tr('撤銷核銷', 'Reverse redemption')),
-                                          )
-                                        : Text(revoked ? '已撤銷' : '已核銷',
-                                            style: TextStyle(
-                                                color: revoked
-                                                    ? CgColors.textSecondary
-                                                    : CgColors.success)),
-                                  ),
-                                );
-                              },
-                            ),
-                          ),
+                        : _records.isEmpty
+                            ? Center(
+                                child: Column(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    Text(context.tr('所選日期內暫無核銷記錄。',
+                                        'No redemptions in this date range.')),
+                                    const SizedBox(height: CgTheme.space12),
+                                    ElevatedButton(
+                                        onPressed: _load,
+                                        child:
+                                            Text(context.tr('重新載入', 'Reload'))),
+                                  ],
+                                ),
+                              )
+                            : RefreshIndicator(
+                                onRefresh: _load,
+                                child: ListView.builder(
+                                  itemCount: _records.length,
+                                  itemBuilder: (_, i) {
+                                    final r = _records[i];
+                                    final revoked = r['revoked'] == true;
+                                    final deadline = DateTime.tryParse(
+                                        r['revoke_until'] as String? ?? '');
+                                    final canRevoke = !revoked &&
+                                        deadline != null &&
+                                        deadline.isAfter(DateTime.now());
+                                    return Card(
+                                      margin: const EdgeInsets.fromLTRB(
+                                          CgTheme.pageInset,
+                                          CgTheme.space8,
+                                          CgTheme.pageInset,
+                                          0),
+                                      child: ListTile(
+                                        contentPadding:
+                                            const EdgeInsets.symmetric(
+                                                horizontal: CgTheme.pageInset),
+                                        title:
+                                            Text('${r['coupon_name'] ?? ''}'),
+                                        subtitle: Text(
+                                            '${r['shop_name'] ?? ''} · ${r['scanned_at'] ?? ''}'),
+                                        trailing: canRevoke
+                                            ? TextButton(
+                                                onPressed: _revokingId == null
+                                                    ? () => _revokeRecord(r)
+                                                    : null,
+                                                child: Text(context.tr('撤銷核銷',
+                                                    'Reverse redemption')),
+                                              )
+                                            : MerchantStatusPill(
+                                                label: revoked
+                                                    ? context.tr(
+                                                        '已撤銷', 'Reversed')
+                                                    : context.tr(
+                                                        '已核銷', 'Redeemed'),
+                                                active: !revoked,
+                                              ),
+                                      ),
+                                    );
+                                  },
+                                ),
+                              ),
+              ),
+            ],
           ),
-        ],
+        ),
       ),
     );
   }
@@ -2017,59 +2381,66 @@ class UsageScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('使用數據'),
+        title: Text(context.tr('使用數據', 'Usage statistics')),
       ),
       body: FutureBuilder<Map<String, dynamic>>(
         future: api.usageData(),
         builder: (context, snap) {
           if (!snap.hasData) {
             return const Padding(
-              padding: EdgeInsets.all(16),
+              padding: EdgeInsets.all(CgTheme.pageInset),
               child: Column(children: [SkeletonBox(height: 120)]),
             );
           }
           final data = snap.data!;
           final coupons = (data['coupons'] as List?) ?? [];
-          return ListView(
-            padding: const EdgeInsets.all(CgTheme.pageInset),
-            children: [
-              Row(
+          return Center(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: CgTheme.listMaxWidth),
+              child: ListView(
+                padding: const EdgeInsets.all(CgTheme.pageInset),
                 children: [
-                  Expanded(
-                      child: Card(
-                          child: Padding(
-                    padding: const EdgeInsets.all(CgTheme.pageInset),
-                    child: Column(children: [
-                      Text('${data['total_downloads']}',
-                          style: const TextStyle(
-                              fontSize: 28, fontWeight: FontWeight.bold)),
-                      const Text('總下載次數'),
-                    ]),
-                  ))),
-                  const SizedBox(width: 12),
-                  Expanded(
-                      child: Card(
-                          child: Padding(
-                    padding: const EdgeInsets.all(CgTheme.pageInset),
-                    child: Column(children: [
-                      Text('${data['total_usage']}',
-                          style: const TextStyle(
-                              fontSize: 28, fontWeight: FontWeight.bold)),
-                      const Text('總使用量'),
-                    ]),
-                  ))),
+                  Row(
+                    children: [
+                      Expanded(
+                          child: Card(
+                              child: Padding(
+                        padding: const EdgeInsets.all(CgTheme.pageInset),
+                        child: Column(children: [
+                          Text('${data['total_downloads']}',
+                              style: Theme.of(context).textTheme.headlineSmall),
+                          Text(context.tr('總下載次數', 'Total downloads')),
+                        ]),
+                      ))),
+                      const SizedBox(width: CgTheme.space12),
+                      Expanded(
+                          child: Card(
+                              child: Padding(
+                        padding: const EdgeInsets.all(CgTheme.pageInset),
+                        child: Column(children: [
+                          Text('${data['total_usage']}',
+                              style: Theme.of(context).textTheme.headlineSmall),
+                          Text(context.tr('總使用量', 'Total redemptions')),
+                        ]),
+                      ))),
+                    ],
+                  ),
+                  const SizedBox(height: CgTheme.space16),
+                  ...coupons.map((c) => Card(
+                        margin: const EdgeInsets.only(top: CgTheme.space8),
+                        child: ListTile(
+                          contentPadding: const EdgeInsets.symmetric(
+                              horizontal: CgTheme.pageInset),
+                          title: Text(c['coupon_name'] as String),
+                          subtitle: Text(context.tr(
+                            '下載 ${c['downloads']} · 已用 ${c['used']} · 剩 ${c['remaining']}',
+                            '${c['downloads']} downloads · ${c['used']} used · ${c['remaining']} left',
+                          )),
+                        ),
+                      )),
                 ],
               ),
-              const SizedBox(height: 16),
-              ...coupons.map((c) => Card(
-                    margin: const EdgeInsets.only(top: 8),
-                    child: ListTile(
-                      title: Text(c['coupon_name'] as String),
-                      subtitle: Text(
-                          '下載 ${c['downloads']} · 已用 ${c['used']} · 剩 ${c['remaining']}'),
-                    ),
-                  )),
-            ],
+            ),
           );
         },
       ),
@@ -2087,41 +2458,59 @@ class SubscriptionScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('訂閱計劃'),
+        title: Text(context.tr('訂閱計劃', 'Subscription plans')),
       ),
       body: FutureBuilder<List<dynamic>>(
         future: api.subscriptionPlans(),
         builder: (context, snap) {
           if (!snap.hasData) {
             return const Padding(
-              padding: EdgeInsets.all(16),
+              padding: EdgeInsets.all(CgTheme.pageInset),
               child: Column(children: [SkeletonBox(height: 120)]),
             );
           }
-          return ListView(
-            padding: const EdgeInsets.all(CgTheme.pageInset),
-            children: [
-              Image.asset('assets/images/ic_program_card.png',
-                  height: 120,
-                  fit: BoxFit.cover,
-                  errorBuilder: (_, __, ___) => const SizedBox()),
-              const SizedBox(height: 12),
-              ...snap.data!.map((p) => Card(
-                    margin: const EdgeInsets.only(top: 8),
-                    child: ListTile(
-                      title: Text(p['name'] as String),
-                      subtitle: Text(p['description'] as String? ?? ''),
-                      trailing: Text(
-                          '\$${(p['monthly_fee'] as num).toStringAsFixed(0)}/月',
-                          style: const TextStyle(fontWeight: FontWeight.bold)),
-                    ),
-                  )),
-              const Padding(
-                padding: EdgeInsets.only(top: 12),
-                child: Text('月費計劃可隨時取消，每月從帳戶扣除，無隱藏費用。',
-                    style: TextStyle(color: CgColors.textSecondary)),
+          return Center(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: CgTheme.listMaxWidth),
+              child: ListView(
+                padding: const EdgeInsets.all(CgTheme.pageInset),
+                children: [
+                  Image.asset('assets/images/ic_program_card.png',
+                      height: 120,
+                      fit: BoxFit.cover,
+                      errorBuilder: (_, __, ___) => const SizedBox()),
+                  const SizedBox(height: CgTheme.space12),
+                  ...snap.data!.map((p) => Card(
+                        margin: const EdgeInsets.only(top: CgTheme.space8),
+                        child: ListTile(
+                          contentPadding: const EdgeInsets.symmetric(
+                              horizontal: CgTheme.pageInset),
+                          title: Text(p['name'] as String),
+                          subtitle: Text(p['description'] as String? ?? ''),
+                          trailing: Text(
+                              context.tr(
+                                '\$${(p['monthly_fee'] as num).toStringAsFixed(0)}/月',
+                                '\$${(p['monthly_fee'] as num).toStringAsFixed(0)}/mo',
+                              ),
+                              style:
+                                  const TextStyle(fontWeight: FontWeight.bold)),
+                        ),
+                      )),
+                  Padding(
+                    padding: const EdgeInsets.only(top: CgTheme.space12),
+                    child: Text(
+                        context.tr(
+                          '月費計劃可隨時取消，每月從帳戶扣除，無隱藏費用。',
+                          'Cancel anytime. Monthly fees are charged to your account, with no hidden fees.',
+                        ),
+                        style: TextStyle(
+                            color: Theme.of(context)
+                                .colorScheme
+                                .onSurfaceVariant)),
+                  ),
+                ],
               ),
-            ],
+            ),
           );
         },
       ),

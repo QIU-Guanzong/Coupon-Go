@@ -27,45 +27,43 @@ class AdminHomeScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final entries = [
-      ('入駐審核', Icons.person_add_alt, ['admin', 'auditor', 'support'],
+      (context.tr('入駐審核', 'Merchant review'), Icons.person_add_alt, ['admin', 'auditor', 'support'],
           () => MaterialPageRoute(
               builder: (_) => OnboardingReviewScreen(api: api))),
-      ('訂單', Icons.receipt_long, ['admin', 'finance', 'support'],
+      (context.tr('訂單', 'Orders'), Icons.receipt_long, ['admin', 'finance', 'support'],
           () => MaterialPageRoute(
               builder: (_) => OrdersAdminScreen(api: api))),
-      ('提現審核', Icons.account_balance_wallet_outlined, ['admin', 'finance'],
+      (context.tr('提現審核', 'Payout review'), Icons.account_balance_wallet_outlined, ['admin', 'finance'],
           () => MaterialPageRoute(builder: (_) => WithdrawalReviewScreen(api: api))),
-      ('結算單', Icons.receipt_long, ['admin', 'finance'],
+      (context.tr('結算單', 'Settlements'), Icons.receipt_long, ['admin', 'finance'],
           () => MaterialPageRoute(
               builder: (_) => SettlementsScreen(api: api))),
-      ('對賬', Icons.compare_arrows, ['admin', 'finance'],
+      (context.tr('對賬', 'Reconciliation'), Icons.compare_arrows, ['admin', 'finance'],
           () => MaterialPageRoute(
               builder: (_) => ReconciliationScreen(api: api))),
-      ('發票', Icons.request_quote, ['admin', 'finance'],
+      (context.tr('發票', 'Invoices'), Icons.request_quote, ['admin', 'finance'],
           () => MaterialPageRoute(
               builder: (_) => InvoicesScreen(api: api))),
-      ('內容管理', Icons.web, ['admin'],
+      (context.tr('內容管理', 'Content'), Icons.web, ['admin'],
           () => MaterialPageRoute(
               builder: (_) => ContentScreen(api: api))),
-      ('角色與權限', Icons.admin_panel_settings, ['admin'],
+      (context.tr('角色與權限', 'Roles and permissions'), Icons.admin_panel_settings, ['admin'],
           () => MaterialPageRoute(builder: (_) => RolesScreen(api: api))),
-      ('客服撤銷核銷', Icons.assignment_return_outlined, ['admin', 'support'],
+      (context.tr('客服撤銷核銷', 'Reverse redemption'), Icons.assignment_return_outlined, ['admin', 'support'],
           () => MaterialPageRoute(builder: (_) => ForceRevokeRedemptionScreen(api: api))),
-      ('評價申訴', Icons.rate_review, ['admin', 'support'],
+      (context.tr('評價申訴', 'Review disputes'), Icons.rate_review, ['admin', 'support'],
           () => MaterialPageRoute(
               builder: (_) => ReviewDisputesScreen(api: api))),
       // Merge note: line B's v1 dashboard (入駐審核 / 看板) lives at
       // '/admin/v1' — '/admin' itself is this v2 home (one case label only).
-      ('入駐審核 / 看板 (v1)', Icons.admin_panel_settings, ['admin'],
+      (context.tr('入駐審核 / 看板 (v1)', 'Merchant review / Dashboard (v1)'), Icons.admin_panel_settings, ['admin'],
           () => MaterialPageRoute(builder: (_) => AdminScreen(api: api))),
     ];
     final visible =
         entries.where((e) => e.$3.contains(role)).toList();
     return Scaffold(
       appBar: AppBar(
-        backgroundColor: CgColors.vendorGold,
-        foregroundColor: CgColors.textPrimary,
-        title: const Text('管理後台'),
+        title: Text(context.tr('管理後台', 'Admin console')),
       ),
       body: ListView(
         padding: const EdgeInsets.all(16),
@@ -75,11 +73,11 @@ class AdminHomeScreen extends StatelessWidget {
             builder: (context, snap) {
               if (snap.hasError) {
                 final err = snap.error;
-                final msg = err is ApiException ? err.message : '載入失敗';
+                final msg = err is ApiException ? err.message : context.tr('載入失敗', 'Could not load');
                 return Card(
                   child: Padding(
                     padding: const EdgeInsets.all(16),
-                    child: Text('總覽載入失敗：$msg（需要財務 / 審核 / 客服或管理員權限）'),
+                    child: Text(context.tr('總覽載入失敗：$msg（需要財務 / 審核 / 客服或管理員權限）', 'Could not load the overview: $msg (finance, audit, support or admin access required)')),
                   ),
                 );
               }
@@ -95,11 +93,11 @@ class AdminHomeScreen extends StatelessWidget {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const Text('總覽', style: TextStyle(fontWeight: FontWeight.bold)),
-                      Text('待審核發票：${data['invoices_pending'] ?? 0}'),
-                      Text('未處理差異：${data['discrepancies_open'] ?? 0}'),
-                      Text('申訴中評價：${data['reviews_disputed'] ?? 0}'),
-                      Text('結算單：${byStatus.entries.map((e) => '${e.key} ${e.value}').join(' · ')}'),
+                      Text(context.tr('總覽', 'Overview'), style: Theme.of(context).textTheme.titleMedium),
+                      Text(context.tr('待審核發票：${data['invoices_pending'] ?? 0}', 'Invoices to review: ${data['invoices_pending'] ?? 0}')),
+                      Text(context.tr('未處理差異：${data['discrepancies_open'] ?? 0}', 'Open discrepancies: ${data['discrepancies_open'] ?? 0}')),
+                      Text(context.tr('申訴中評價：${data['reviews_disputed'] ?? 0}', 'Reviews under appeal: ${data['reviews_disputed'] ?? 0}')),
+                      Text('${context.tr('結算單：', 'Settlements: ')}${byStatus.entries.map((e) => '${e.key} ${e.value}').join(' · ')}'),
                     ],
                   ),
                 ),
@@ -117,9 +115,9 @@ class AdminHomeScreen extends StatelessWidget {
                 ),
               )),
           if (visible.isEmpty)
-            const Padding(
-              padding: EdgeInsets.only(top: 24),
-              child: Text('目前角色沒有可用的管理功能。'),
+            Padding(
+              padding: const EdgeInsets.only(top: CgTheme.space24),
+              child: Text(context.tr('目前角色沒有可用的管理功能。', 'No admin tools are available for this role.')),
             ),
         ],
       ),

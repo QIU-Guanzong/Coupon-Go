@@ -101,7 +101,7 @@ Future<void> _chooseType(WidgetTester tester, String name) async {
 }
 
 Finder get _reviewButton =>
-    find.widgetWithText(ElevatedButton, '檢查並提交');
+    find.widgetWithText(FilledButton, '檢查並提交');
 
 Future<void> _review(WidgetTester tester) async {
   await tester.ensureVisible(_reviewButton);
