@@ -4,7 +4,7 @@ from pathlib import Path
 import secrets
 import subprocess
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from fastapi.testclient import TestClient
@@ -338,6 +338,34 @@ def test_vendor_coupon_lifecycle_and_package_operations(gateway):
             changed = client.post(route, headers=vendor)
             assert changed.status_code == 200, changed.text
         assert client.post(f'/api/v3/vendor/{namespace}/1/approve', headers=vendor, json={}).status_code == 403
+
+
+def test_real_trial_accepts_paid_coupon_actions_without_upload(gateway):
+    client = trial_browser(gateway)
+    vendor = role(client, 'vendor')
+    now = datetime.now(timezone.utc)
+    base = {
+        'shop_id': 1, 'coupon_type': 'Price', 'coupon_name': 'Local test voucher #61',
+        'sale_price': 88.5, 'regular_price': 125, 'discount_price': 105,
+        'total': 2, 'refund_policy': 'non_refundable', 'valid_from': (now - timedelta(hours=1)).isoformat(),
+        'valid_to': (now + timedelta(days=2)).isoformat(),
+    }
+    assert client.post('/api/v3/uploads/merchant-images', headers=vendor,
+                       files={'files': ('test.webp', bytes([0]), 'image/webp')}).status_code == 403
+    for suffix in ('add-coupon-preview','coupon-previewed'):
+        path = '/api/v3/' + suffix
+        assert client.post(path, headers=vendor,
+                           json=dict(base, image='/uploads/merchant-images/existing.webp')).status_code == 422
+        r = client.post(path, headers=vendor, json=dict(base, image=''))
+        assert r.status_code == 200, r.text
+    cid = r.json()['coupon']['id']
+    details = client.get(f'/api/v3/vendor/coupons/{cid}', headers=vendor)
+    assert details.status_code == 200
+    coupon = details.json()['coupon']
+    assert coupon['sale_price'] == 88.5 and coupon['regular_price'] == 125 and coupon['discount_price'] == 105
+    edited = client.patch(f'/api/v3/vendor/coupons/{cid}', headers=vendor,
+                          json={'coupon_name': 'Local updated test #61'})
+    assert edited.status_code == 200, edited.text
 
 
 @pytest.mark.parametrize('state', ['paid', 'future', 'expired', 'sold-out', 'paused'])
