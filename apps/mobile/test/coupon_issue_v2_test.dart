@@ -104,6 +104,10 @@ Finder get _reviewButton =>
     find.widgetWithText(FilledButton, '檢查並提交');
 
 Future<void> _review(WidgetTester tester) async {
+  if (_reviewButton.evaluate().isEmpty) {
+    await tester.scrollUntilVisible(_reviewButton, 260,
+        scrollable: find.byType(Scrollable).first);
+  }
   await tester.ensureVisible(_reviewButton);
   await tester.tap(_reviewButton);
   await tester.pumpAndSettle();

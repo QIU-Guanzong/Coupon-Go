@@ -8,6 +8,7 @@ import '../vendor_coupon_lifecycle.dart';
 import '../widgets/merchant_layout.dart';
 import '../widgets/widgets.dart';
 import 'coupon_branch_scope.dart';
+import 'vendor_coupon_form.dart';
 
 const couponListingStatuses = [
   'active',
@@ -342,6 +343,8 @@ class _VendorCouponWorkspaceState extends State<VendorCouponWorkspace> {
         .pushNamed<String>('/vendor/coupons/${item.coupon.id}');
     if (result != null && _current(session)) {
       _patchStatus(item.coupon.id, result);
+      // The detail screen can also return after editing names, amounts or dates.
+      await _load();
     }
   }
 
@@ -490,13 +493,14 @@ class _CouponCard extends StatelessWidget {
       required this.onAction,
       this.onDetail,
       this.onEditBranches,
+      this.onEdit,
       this.detailed = false,
       required this.busy,
       required this.verify});
   final _CouponRowData row;
   final String baseUrl;
   final ValueChanged<VendorCouponAction> onAction;
-  final VoidCallback? onDetail, onEditBranches;
+  final VoidCallback? onDetail, onEditBranches, onEdit;
   final bool detailed, busy, verify;
 
   @override
@@ -597,6 +601,11 @@ class _CouponCard extends StatelessWidget {
               if (row.json['branch_ids'] is List)
                 Text(context.tr('適用分店：', 'Branches: ') +
                     _branches(context, row.json)),
+              if (VendorCouponAction.canEditListing(c.status) && onEdit != null)
+                MerchantPrimaryAction(
+                  label: context.tr('編輯優惠券', 'Edit coupon'),
+                  onPressed: busy || verify ? null : onEdit,
+                ),
               if (VendorCouponAction.canEditListing(c.status) &&
                   onEditBranches != null)
                 TextButton(
@@ -693,6 +702,44 @@ class _VendorCouponDetailState extends State<VendorCouponDetail> {
     }
   }
 
+  Future<void> _editCoupon(_CouponRowData row) async {
+    if (!_current ||
+        _busy ||
+        _confirming ||
+        _verify ||
+        !VendorCouponAction.canEditListing(row.coupon.status)) {
+      return;
+    }
+    setState(() => _confirming = true);
+    try {
+      final saved = await Navigator.of(context).push<Map<String, dynamic>>(
+        MaterialPageRoute(
+            builder: (_) => IssueCouponScreen(
+                  api: widget.api,
+                  editCoupon: row.json,
+                )),
+      );
+      if (!mounted || !_current || saved == null) return;
+      final updated = _CouponRowData(saved);
+      if (updated.coupon.id != row.coupon.id ||
+          updated.coupon.shopId != row.coupon.shopId) {
+        throw const FormatException('Mismatched coupon receipt');
+      }
+      setState(() {
+        _row = updated;
+        _changedStatus = updated.coupon.status;
+      });
+      _success(context, updated.coupon.status);
+    } catch (error) {
+      if (mounted && _current) {
+        setState(() => _verify = true);
+        _failure(context, error);
+      }
+    } finally {
+      if (_current) setState(() => _confirming = false);
+    }
+  }
+
   Future<void> _editBranches(_CouponRowData row) async {
     if (!_current || _busy || _verify) return;
     final coupon = row.coupon;
@@ -785,8 +832,9 @@ class _VendorCouponDetailState extends State<VendorCouponDetail> {
                         baseUrl: widget.api.baseUrl,
                         onAction: _action,
                         onEditBranches: () => _editBranches(row),
+                        onEdit: () => _editCoupon(row),
                         detailed: true,
-                        busy: _busy,
+                        busy: _busy || _confirming,
                         verify: _verify)
                   else ...[
                     Text(context.tr(
