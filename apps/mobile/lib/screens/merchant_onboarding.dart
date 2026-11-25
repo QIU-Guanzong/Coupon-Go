@@ -4,6 +4,8 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../api_client.dart';
 import '../language.dart';
+import '../theme.dart';
+import '../widgets/merchant_layout.dart';
 
 const _trialMode = bool.fromEnvironment('PUBLIC_TRIAL');
 
@@ -80,7 +82,8 @@ class _PresetApplicationState extends State<_PresetApplication> {
       final rows = response['applications'] as List<dynamic>;
       if (_current) {
         setState(() {
-          _status = rows.isEmpty ? null : (rows.first as Map)['status'] as String;
+          _status =
+              rows.isEmpty ? null : (rows.first as Map)['status'] as String;
         });
       }
     } catch (_) {
@@ -92,7 +95,12 @@ class _PresetApplicationState extends State<_PresetApplication> {
 
   Future<void> _submit() async {
     final label = _choice;
-    if (!_current || _submitting || _status != null || !_choices.contains(label)) return;
+    if (!_current ||
+        _submitting ||
+        _status != null ||
+        !_choices.contains(label)) {
+      return;
+    }
     setState(() {
       _submitting = true;
       _submitFailed = false;
@@ -116,54 +124,75 @@ class _PresetApplicationState extends State<_PresetApplication> {
     final t = context.tr;
     return Scaffold(
       appBar: AppBar(title: Text(t('商戶入駐申請', 'Merchant application'))),
-      body: ListView(
-        padding: const EdgeInsets.all(16),
-        children: [
-          if (!_current || !widget.api.isLoggedIn)
-            Text(t('請從企業服務重新開啟申請。', 'Open the application from Business again.'))
-          else if (_loading)
-            const LinearProgressIndicator()
-          else if (_loadFailed) ...[
-            Text(t('未能讀取申請進度。', 'Could not load your application status.')),
-            TextButton(onPressed: _refresh, child: Text(t('重試', 'Try again'))),
-          ] else if (_status != null)
-            ListTile(
-              leading: const Icon(Icons.receipt_long_outlined),
-              title: Text(t('申請進度', 'Application status')),
-              subtitle: Text(switch (_status) {
-                'pending' => t('待審核', 'Pending review'),
-                'approved' => t('已通過', 'Approved'),
-                'rejected' => t('未通過', 'Not approved'),
-                _ => t('待確認', 'Awaiting confirmation'),
-              }),
-            )
-          else ...[
-            Text(t('選擇要登記的店舖。此步驟不需提供聯絡資料或文件。',
-                'Choose a shop to register. No contact details or documents are required.')),
-            const SizedBox(height: 16),
-            DropdownButtonFormField<String>(
-              key: const ValueKey('preset-merchant-shop'),
-              initialValue: _choice,
-              decoration: InputDecoration(labelText: t('店舖', 'Shop')),
-              items: [
-                DropdownMenuItem(value: _choices[0], child: Text(t(_choices[0], 'Harbour Shop'))),
-                DropdownMenuItem(value: _choices[1], child: Text(t(_choices[1], 'Hillside Kitchen'))),
-              ],
-              onChanged: _submitting ? null : (value) => setState(() => _choice = value),
-            ),
-            const SizedBox(height: 16),
-            if (_submitFailed)
-              Text(t('未能提交申請，請稍後重試。', 'Could not submit the application. Try again later.')),
-            FilledButton(
-              key: const ValueKey('preset-merchant-submit'),
-              onPressed: _choice == null || _submitting ? null : _submit,
-              child: Text(_submitting
-                  ? t('提交中…', 'Submitting…')
-                  : t('提交申請', 'Submit application')),
-            ),
-          ],
-        ],
-      ),
+      body: Center(
+          child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: CgTheme.formMaxWidth),
+              child: ListView(
+                padding: const EdgeInsets.all(CgTheme.pageInset),
+                children: [
+                  if (!_current || !widget.api.isLoggedIn)
+                    Text(t('請從企業服務重新開啟申請。',
+                        'Open the application from Business again.'))
+                  else if (_loading)
+                    const LinearProgressIndicator()
+                  else if (_loadFailed) ...[
+                    Text(t('未能讀取申請進度。',
+                        'Could not load your application status.')),
+                    TextButton(
+                        onPressed: _refresh, child: Text(t('重試', 'Try again'))),
+                  ] else if (_status != null)
+                    ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      leading: const Icon(Icons.receipt_long_outlined),
+                      title: Text(t('申請進度', 'Application status')),
+                      subtitle: Align(
+                        alignment: Alignment.centerLeft,
+                        child: MerchantStatusPill(
+                          label: switch (_status) {
+                            'pending' => t('待審核', 'Pending review'),
+                            'approved' => t('已通過', 'Approved'),
+                            'rejected' => t('未通過', 'Not approved'),
+                            _ => t('待確認', 'Awaiting confirmation'),
+                          },
+                          active: _status == 'approved',
+                        ),
+                      ),
+                    )
+                  else ...[
+                    Text(t('選擇要登記的店舖。此步驟不需提供聯絡資料或文件。',
+                        'Choose a shop to register. No contact details or documents are required.')),
+                    const SizedBox(height: CgTheme.space16),
+                    DropdownButtonFormField<String>(
+                      key: const ValueKey('preset-merchant-shop'),
+                      initialValue: _choice,
+                      decoration: InputDecoration(labelText: t('店舖', 'Shop')),
+                      items: [
+                        DropdownMenuItem(
+                            value: _choices[0],
+                            child: Text(t(_choices[0], 'Harbour Shop'))),
+                        DropdownMenuItem(
+                            value: _choices[1],
+                            child: Text(t(_choices[1], 'Hillside Kitchen'))),
+                      ],
+                      onChanged: _submitting
+                          ? null
+                          : (value) => setState(() => _choice = value),
+                    ),
+                    const SizedBox(height: CgTheme.space16),
+                    if (_submitFailed)
+                      Text(t('未能提交申請，請稍後重試。',
+                          'Could not submit the application. Try again later.')),
+                    FilledButton(
+                      key: const ValueKey('preset-merchant-submit'),
+                      onPressed:
+                          _choice == null || _submitting ? null : _submit,
+                      child: Text(_submitting
+                          ? t('提交中…', 'Submitting…')
+                          : t('提交申請', 'Submit application')),
+                    ),
+                  ],
+                ],
+              ))),
     );
   }
 }
@@ -223,16 +252,17 @@ class _MerchantOnboardingScreenState extends State<_MerchantApplication>
     final leave = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('放棄未提交的資料？'),
-        content: const Text('離開後，尚未提交的資料及所選文件不會保留在此頁。'),
+        title: Text(context.tr('放棄未提交的資料？', 'Discard unsent changes?')),
+        content: Text(context.tr('離開後，尚未提交的資料及所選文件不會保留在此頁。',
+            'Leaving will discard unsent information and selected files.')),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
-            child: const Text('繼續填寫'),
+            child: Text(context.tr('繼續填寫', 'Keep editing')),
           ),
           TextButton(
             onPressed: () => Navigator.pop(context, true),
-            child: const Text('離開'),
+            child: Text(context.tr('離開', 'Leave')),
           ),
         ],
       ),
@@ -268,6 +298,14 @@ class _MerchantOnboardingScreenState extends State<_MerchantApplication>
 
   Future<void> _startConnect() async {
     if (_busy || _application == null) return;
+    final badLink = context.tr(
+      '未能取得有效的收款設定連結',
+      'Could not get a valid payment setup link',
+    );
+    final unableToOpen = context.tr(
+      '無法開啟收款設定，請重試',
+      'Could not open payment setup. Try again.',
+    );
     setState(() {
       _busy = true;
       _error = null;
@@ -284,14 +322,15 @@ class _MerchantOnboardingScreenState extends State<_MerchantApplication>
               ..._application!,
               'stripe_status_source': 'simulated'
             };
-            _connectMessage = context.tr('未有可開啟的正式收款頁面。', 'No live payments page is available.');
+            _connectMessage = context.tr(
+                '未有可開啟的正式收款頁面。', 'No live payments page is available.');
           });
         }
         return;
       }
       final uri = Uri.tryParse(result['onboarding_url'] as String? ?? '');
       if (uri == null || uri.scheme != 'https' || uri.host.isEmpty) {
-        throw ApiException(502, '未能取得有效的收款設定連結');
+        throw ApiException(502, badLink);
       }
       _awaitingConnectReturn = true;
       final opened = widget.openConnectUrl != null
@@ -299,7 +338,7 @@ class _MerchantOnboardingScreenState extends State<_MerchantApplication>
           : await launchUrl(uri, mode: LaunchMode.externalApplication);
       if (!opened) {
         _awaitingConnectReturn = false;
-        throw ApiException(502, '無法開啟收款設定，請重試');
+        throw ApiException(502, unableToOpen);
       }
       if (mounted) {
         setState(() {
@@ -307,7 +346,8 @@ class _MerchantOnboardingScreenState extends State<_MerchantApplication>
             ..._application!,
             'stripe_status_source': 'stripe_test'
           };
-          _connectMessage = context.tr('已開啟收款設定；返回後請刷新收款狀態。', 'Payments setup opened. Refresh the status when you return.');
+          _connectMessage = context.tr('已開啟收款設定；返回後請刷新收款狀態。',
+              'Payments setup opened. Refresh the status when you return.');
         });
       }
     } catch (e) {
@@ -367,8 +407,9 @@ class _MerchantOnboardingScreenState extends State<_MerchantApplication>
     }
   }
 
-  String _message(Object error) =>
-      error is ApiException ? error.message : '連線失敗，請稍後重試';
+  String _message(Object error) => error is ApiException
+      ? error.message
+      : context.tr('連線失敗，請稍後重試', 'Connection failed. Try again later.');
 
   Future<void> _refresh() async {
     setState(() {
@@ -472,7 +513,8 @@ class _MerchantOnboardingScreenState extends State<_MerchantApplication>
       if (mounted) {
         setState(() {
           _uncertain = true;
-          _error = '提交結果未能確認，請先刷新申請進度。';
+          _error = context.tr('提交結果未能確認，請先刷新申請進度。',
+              'Submission unconfirmed. Refresh the application status first.');
         });
       }
     } finally {
@@ -583,10 +625,10 @@ class _MerchantOnboardingScreenState extends State<_MerchantApplication>
     final signed = app?['contract'] as Map?;
     final source = app?['stripe_status_source'];
     final statusText = switch (status) {
-      'pending' => '待審核',
-      'approved' => '審核已通過',
-      'rejected' => '未獲批准',
-      _ => '狀態待確認',
+      'pending' => context.tr('待審核', 'Pending review'),
+      'approved' => context.tr('審核已通過', 'Approved'),
+      'rejected' => context.tr('未獲批准', 'Not approved'),
+      _ => context.tr('狀態待確認', 'Awaiting confirmation'),
     };
     return PopScope(
       canPop: !_dirty || _allowExit,
@@ -597,20 +639,17 @@ class _MerchantOnboardingScreenState extends State<_MerchantApplication>
             ? const Center(child: CircularProgressIndicator())
             : Center(
                 child: ConstrainedBox(
-                  constraints: const BoxConstraints(maxWidth: 680),
+                  constraints:
+                      const BoxConstraints(maxWidth: CgTheme.formMaxWidth),
                   child: ListView(
-                    padding: const EdgeInsets.all(20),
+                    padding: const EdgeInsets.all(CgTheme.pageInset),
                     children: [
-                      const Text(
-                        '申請入駐',
-                        style: TextStyle(
-                          fontSize: 26,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      const Text('填寫商店資料、提交文件並簽署當前合約，可在此查看申請進度。'),
-                      const SizedBox(height: 20),
+                      Text(context.tr('申請入駐', 'Apply to join'),
+                          style: Theme.of(context).textTheme.titleLarge),
+                      const SizedBox(height: CgTheme.space8),
+                      Text(context.tr('填寫商店資料、提交文件並簽署當前合約，可在此查看申請進度。',
+                          'Enter your shop details, submit documents and sign the current agreement. Track your application here.')),
+                      const SizedBox(height: CgTheme.space20),
                       if (_error != null) ...[
                         Semantics(
                           liveRegion: true,
@@ -621,52 +660,64 @@ class _MerchantOnboardingScreenState extends State<_MerchantApplication>
                             ),
                           ),
                         ),
-                        const SizedBox(height: 8),
+                        const SizedBox(height: CgTheme.space8),
                         TextButton(
                           onPressed: _busy ? null : _refresh,
-                          child: const Text('刷新申請進度'),
+                          child: Text(context.tr(
+                              '刷新申請進度', 'Refresh application status')),
                         ),
                       ],
                       if (app != null) ...[
-                        Text(
-                          '${app['shop_name']} · $statusText',
-                          style: const TextStyle(
-                            fontSize: 19,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
+                        Row(children: [
+                          Expanded(
+                              child: Text(
+                            '${app['shop_name']}',
+                            style: Theme.of(context).textTheme.titleMedium,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          )),
+                          const SizedBox(width: CgTheme.space8),
+                          MerchantStatusPill(
+                              label: statusText, active: status == 'approved'),
+                        ]),
                         if (status == 'rejected' &&
                             (app['reject_reason'] as String? ?? '').isNotEmpty)
-                          Text('原因：${app['reject_reason']}'),
-                        const SizedBox(height: 8),
+                          Text(context.tr('原因：${app['reject_reason']}',
+                              'Reason: ${app['reject_reason']}')),
+                        const SizedBox(height: CgTheme.space8),
                         Text(
                           signed == null
-                              ? '合約：尚未簽署'
-                              : '合約：已簽署版本 ${signed['version']}',
+                              ? context.tr('合約：尚未簽署', 'Agreement: not signed')
+                              : context.tr('合約：已簽署版本 ${signed['version']}',
+                                  'Agreement: signed version ${signed['version']}'),
                         ),
                         Text(switch (source) {
                           'simulated' || 'stripe_test' => context.tr(
-                              '收款帳戶：未開通正式收款', 'Payments account: live payments not enabled'),
-                          'unverified' => context.tr(
-                              '收款帳戶：狀態尚未驗證', 'Payments account: status not verified'),
-                          'not_started' => context.tr(
-                              '收款帳戶：尚未開始', 'Payments account: setup not started'),
-                          _ => context.tr('收款帳戶：狀態待確認', 'Payments account: status unconfirmed'),
+                              '收款帳戶：未開通正式收款',
+                              'Payments account: live payments not enabled'),
+                          'unverified' => context.tr('收款帳戶：狀態尚未驗證',
+                              'Payments account: status not verified'),
+                          'not_started' => context.tr('收款帳戶：尚未開始',
+                              'Payments account: setup not started'),
+                          _ => context.tr('收款帳戶：狀態待確認',
+                              'Payments account: status unconfirmed'),
                         }),
-                        const SizedBox(height: 12),
+                        const SizedBox(height: CgTheme.space12),
                         if (status == 'pending') ...[
                           Align(
                             alignment: Alignment.centerLeft,
                             child: OutlinedButton(
                               onPressed: _busy ? null : _startConnect,
-                              child: Text(context.tr('開啟收款設定', 'Open payments setup')),
+                              child: Text(
+                                  context.tr('開啟收款設定', 'Open payments setup')),
                             ),
                           ),
                           Align(
                             alignment: Alignment.centerLeft,
                             child: TextButton(
                               onPressed: _busy ? null : _syncConnect,
-                              child: const Text('刷新收款狀態'),
+                              child: Text(context.tr(
+                                  '刷新收款狀態', 'Refresh payment status')),
                             ),
                           ),
                           if (_connectMessage != null)
@@ -680,7 +731,8 @@ class _MerchantOnboardingScreenState extends State<_MerchantApplication>
                             alignment: Alignment.centerLeft,
                             child: OutlinedButton(
                               onPressed: _busy ? null : _loadContract,
-                              child: const Text('查看當前合約'),
+                              child: Text(context.tr(
+                                  '查看當前合約', 'View current agreement')),
                             ),
                           ),
                         if (signed != null)
@@ -689,32 +741,39 @@ class _MerchantOnboardingScreenState extends State<_MerchantApplication>
                             child: TextButton.icon(
                               onPressed: _busy ? null : _download,
                               icon: const Icon(Icons.download),
-                              label: const Text('下載已簽合約 PDF'),
+                              label: Text(context.tr(
+                                  '下載已簽合約 PDF', 'Download signed agreement')),
                             ),
                           ),
-                        TextButton(
-                          onPressed: _busy ? null : _refresh,
-                          child: const Text('刷新進度'),
+                        const SizedBox(height: CgTheme.space8),
+                        Align(
+                          alignment: Alignment.centerLeft,
+                          child: TextButton(
+                            onPressed: _busy ? null : _refresh,
+                            child: Text(context.tr('刷新進度', 'Refresh status')),
+                          ),
                         ),
-                        const Divider(height: 32),
+                        const Divider(height: CgTheme.dividerHeight),
                       ],
                       if (_contract != null) ...[
                         Text(
-                          '${_contract!['title']} · 版本 ${_contract!['version']}',
-                          style: const TextStyle(
-                            fontSize: 19,
-                            fontWeight: FontWeight.w600,
-                          ),
+                          context.tr(
+                              '${_contract!['title']} · 版本 ${_contract!['version']}',
+                              '${_contract!['title']} · Version ${_contract!['version']}'),
+                          style: Theme.of(context).textTheme.titleMedium,
                         ),
                         if (_contract!['test_only'] == true)
-                          const Padding(
-                            padding: EdgeInsets.symmetric(vertical: 8),
+                          Padding(
+                            padding: const EdgeInsets.symmetric(
+                                vertical: CgTheme.space8),
                             child: Text(
-                              '合約內容尚待確認，未生效。',
-                              style: TextStyle(fontWeight: FontWeight.bold),
+                              context.tr('合約內容尚待確認，未生效。',
+                                  'This agreement is pending and is not in effect.'),
+                              style:
+                                  const TextStyle(fontWeight: FontWeight.bold),
                             ),
                           ),
-                        const SizedBox(height: 8),
+                        const SizedBox(height: CgTheme.space8),
                         SelectableText('${_contract!['body_text']}'),
                         CheckboxListTile(
                           contentPadding: EdgeInsets.zero,
@@ -724,11 +783,12 @@ class _MerchantOnboardingScreenState extends State<_MerchantApplication>
                               : (v) => setState(() {
                                     _accepted = v ?? false;
                                   }),
-                          title: const Text('我已閱讀並同意以上當前版本合約'),
+                          title: Text(context.tr('我已閱讀並同意以上當前版本合約',
+                              'I have read and agree to the current version of the agreement above')),
                         ),
                         FilledButton(
                           onPressed: _accepted && !_busy ? _sign : null,
-                          child: const Text('簽署此版本'),
+                          child: Text(context.tr('簽署此版本', 'Sign this version')),
                         ),
                         TextButton(
                           onPressed: _busy
@@ -737,9 +797,9 @@ class _MerchantOnboardingScreenState extends State<_MerchantApplication>
                                     _contract = null;
                                     _accepted = false;
                                   }),
-                          child: const Text('收起合約'),
+                          child: Text(context.tr('收起合約', 'Hide agreement')),
                         ),
-                        const Divider(height: 32),
+                        const Divider(height: CgTheme.dividerHeight),
                       ],
                       if (_showForm)
                         Form(
@@ -747,51 +807,52 @@ class _MerchantOnboardingScreenState extends State<_MerchantApplication>
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.stretch,
                             children: [
-                              const Text(
-                                '商店資料',
-                                style: TextStyle(
-                                  fontSize: 19,
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
-                              const SizedBox(height: 12),
+                              Text(context.tr('商店資料', 'Shop details'),
+                                  style:
+                                      Theme.of(context).textTheme.titleMedium),
+                              const SizedBox(height: CgTheme.space12),
                               TextFormField(
                                 controller: _shop,
-                                decoration: const InputDecoration(
-                                  labelText: '商店名稱 *',
+                                decoration: InputDecoration(
+                                  labelText:
+                                      context.tr('商店名稱 *', 'Shop name *'),
                                 ),
                                 validator: (v) => v == null || v.trim().isEmpty
-                                    ? '請填寫商店名稱'
+                                    ? context.tr(
+                                        '請填寫商店名稱', 'Enter the shop name')
                                     : null,
                               ),
-                              const SizedBox(height: 12),
+                              const SizedBox(height: CgTheme.space12),
                               TextFormField(
                                 controller: _contact,
-                                decoration: const InputDecoration(
-                                  labelText: '聯絡人',
+                                decoration: InputDecoration(
+                                  labelText:
+                                      context.tr('聯絡人', 'Contact person'),
                                 ),
                               ),
-                              const SizedBox(height: 12),
+                              const SizedBox(height: CgTheme.space12),
                               TextFormField(
                                 controller: _phone,
                                 keyboardType: TextInputType.phone,
-                                decoration: const InputDecoration(
-                                  labelText: '聯絡電話',
+                                decoration: InputDecoration(
+                                  labelText:
+                                      context.tr('聯絡電話', 'Contact phone'),
                                 ),
                               ),
-                              const SizedBox(height: 12),
+                              const SizedBox(height: CgTheme.space12),
                               TextFormField(
                                 controller: _address,
-                                decoration: const InputDecoration(
-                                  labelText: '商店地址',
+                                decoration: InputDecoration(
+                                  labelText: context.tr('商店地址', 'Shop address'),
                                 ),
                               ),
-                              const SizedBox(height: 12),
+                              const SizedBox(height: CgTheme.space12),
                               TextFormField(
                                 controller: _brNumber,
                                 keyboardType: TextInputType.number,
-                                decoration: const InputDecoration(
-                                  labelText: '商業登記號碼（選填）',
+                                decoration: InputDecoration(
+                                  labelText: context.tr('商業登記號碼（選填）',
+                                      'Business registration number (optional)'),
                                 ),
                                 validator: (v) {
                                   final value = (v ?? '').replaceAll(
@@ -800,24 +861,25 @@ class _MerchantOnboardingScreenState extends State<_MerchantApplication>
                                   );
                                   return value.isNotEmpty &&
                                           !RegExp(r'^\d{8}$').hasMatch(value)
-                                      ? '請輸入 8 位數字'
+                                      ? context.tr(
+                                          '請輸入 8 位數字', 'Enter 8 digits')
                                       : null;
                                 },
                               ),
-                              const SizedBox(height: 24),
-                              const Text(
-                                '入駐文件',
-                                style: TextStyle(
-                                  fontSize: 19,
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
-                              const Text('支援 PDF、JPG 或 PNG。可先提交現有文件。'),
-                              for (final entry in const {
-                                'br': '商業登記證',
-                                'ci': '公司註冊證書',
-                                'director_id': '董事身份證明',
-                                'shop_photo': '店舖照片',
+                              const SizedBox(height: CgTheme.space24),
+                              Text(context.tr('入駐文件', 'Application documents'),
+                                  style:
+                                      Theme.of(context).textTheme.titleMedium),
+                              Text(context.tr('支援 PDF、JPG 或 PNG。可先提交現有文件。',
+                                  'PDF, JPG and PNG are accepted. Submit the documents you have.')),
+                              for (final entry in {
+                                'br': context.tr('商業登記證',
+                                    'Business registration certificate'),
+                                'ci': context.tr(
+                                    '公司註冊證書', 'Certificate of incorporation'),
+                                'director_id': context.tr(
+                                    '董事身份證明', 'Director identification'),
+                                'shop_photo': context.tr('店舖照片', 'Shop photos'),
                               }.entries)
                                 ListTile(
                                   contentPadding: EdgeInsets.zero,
@@ -825,22 +887,22 @@ class _MerchantOnboardingScreenState extends State<_MerchantApplication>
                                   subtitle: Text(
                                     _files[entry.key]?['original_filename']
                                             ?.toString() ??
-                                        '尚未上傳',
+                                        context.tr('尚未上傳', 'Not uploaded'),
                                   ),
                                   trailing: OutlinedButton(
                                     onPressed:
                                         _busy ? null : () => _upload(entry.key),
                                     child: Text(
                                       _files.containsKey(entry.key)
-                                          ? '更換'
-                                          : '上傳',
+                                          ? context.tr('更換', 'Replace')
+                                          : context.tr('上傳', 'Upload'),
                                     ),
                                   ),
                                 ),
-                              const SizedBox(height: 16),
-                              FilledButton(
+                              const SizedBox(height: CgTheme.space16),
+                              MerchantPrimaryAction(
                                 onPressed: _busy || _uncertain ? null : _submit,
-                                child: const Text('提交申請'),
+                                label: context.tr('提交申請', 'Submit application'),
                               ),
                             ],
                           ),

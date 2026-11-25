@@ -4,6 +4,8 @@ import 'package:flutter/material.dart';
 
 import '../api_client.dart';
 import '../language.dart';
+import '../theme.dart';
+import '../widgets/merchant_layout.dart';
 import '../widgets/widgets.dart';
 
 class MerchantAccountOverview extends StatefulWidget {
@@ -12,7 +14,8 @@ class MerchantAccountOverview extends StatefulWidget {
   final ApiClient api;
 
   @override
-  State<MerchantAccountOverview> createState() => _MerchantAccountOverviewState();
+  State<MerchantAccountOverview> createState() =>
+      _MerchantAccountOverviewState();
 }
 
 enum _Read { loading, signedOut, denied, unavailable, ready }
@@ -36,8 +39,8 @@ class _Shop {
       if (id <= 0 || !ids.add(id)) {
         throw const FormatException('Invalid shop identity');
       }
-      shops.add(_Shop(id, row['name'] as String,
-          row['can_view_settlement'] == true));
+      shops.add(
+          _Shop(id, row['name'] as String, row['can_view_settlement'] == true));
     }
     return shops;
   }
@@ -98,8 +101,11 @@ class _MerchantAccountOverviewState extends State<MerchantAccountOverview> {
   }
 
   bool _current(ApiClient api, int request) =>
-      mounted && widget.api == api && request == _request &&
-      _session == api.sessionRevision && api.isLoggedIn;
+      mounted &&
+      widget.api == api &&
+      request == _request &&
+      _session == api.sessionRevision &&
+      api.isLoggedIn;
 
   void _clearSettlement() {
     _hasAccount = false;
@@ -119,7 +125,8 @@ class _MerchantAccountOverviewState extends State<MerchantAccountOverview> {
   Future<void> _loadAccount() async {
     final api = widget.api;
     final request = ++_request;
-    setState(() => _resetAccount(api.isLoggedIn ? _Read.loading : _Read.signedOut));
+    setState(
+        () => _resetAccount(api.isLoggedIn ? _Read.loading : _Read.signedOut));
     if (!api.isLoggedIn) return;
     try {
       final profile = await api.get('/me');
@@ -127,10 +134,12 @@ class _MerchantAccountOverviewState extends State<MerchantAccountOverview> {
       final payload = await api.get('/merchant/shops');
       if (!_current(api, request)) return;
       final shops = _Shop.parse(payload['shops']);
-      final first = shops.isEmpty ? null : shops.firstWhere(
-        (shop) => shop.canViewSettlement,
-        orElse: () => shops.first,
-      );
+      final first = shops.isEmpty
+          ? null
+          : shops.firstWhere(
+              (shop) => shop.canViewSettlement,
+              orElse: () => shops.first,
+            );
       setState(() {
         _profile = profile;
         _shops = shops;
@@ -213,10 +222,10 @@ class _MerchantAccountOverviewState extends State<MerchantAccountOverview> {
   }
 
   _Read _readError(Object error) => switch (error) {
-    ApiException(status: 401) => _Read.signedOut,
-    ApiException(status: 403) => _Read.denied,
-    _ => _Read.unavailable,
-  };
+        ApiException(status: 401) => _Read.signedOut,
+        ApiException(status: 403) => _Read.denied,
+        _ => _Read.unavailable,
+      };
 
   String _money(Object? amount, Object? currency) =>
       currency == 'HKD' && amount is num && amount.isFinite
@@ -224,32 +233,39 @@ class _MerchantAccountOverviewState extends State<MerchantAccountOverview> {
           : '—';
 
   String _ledgerTitle(BuildContext context, Object? kind) => switch (kind) {
-    'transfer' => context.tr('結算轉帳', 'Settlement transfer'),
-    'payout' => context.tr('提款紀錄', 'Payout record'),
-    _ => context.tr('交易紀錄', 'Transaction'),
-  };
+        'transfer' => context.tr('結算轉帳', 'Settlement transfer'),
+        'payout' => context.tr('提款紀錄', 'Payout record'),
+        _ => context.tr('交易紀錄', 'Transaction'),
+      };
 
-  String _ledgerStatus(BuildContext context, Object? status) => switch (status) {
-    'transferred' => context.tr('已轉帳', 'Transferred'),
-    'paid_out' => context.tr('已記帳', 'Recorded'),
-    'pending' || 'transferring' || 'processing' || 'submitted' =>
-      context.tr('處理中', 'Processing'),
-    'failed' => context.tr('未完成', 'Not completed'),
-    'reversed' => context.tr('已沖回', 'Reversed'),
-    _ => context.tr('待核對', 'Pending verification'),
-  };
+  String _ledgerStatus(BuildContext context, Object? status) =>
+      switch (status) {
+        'transferred' => context.tr('已轉帳', 'Transferred'),
+        'paid_out' => context.tr('已記帳', 'Recorded'),
+        'pending' ||
+        'transferring' ||
+        'processing' ||
+        'submitted' =>
+          context.tr('處理中', 'Processing'),
+        'failed' => context.tr('未完成', 'Not completed'),
+        'reversed' => context.tr('已沖回', 'Reversed'),
+        _ => context.tr('待核對', 'Pending verification'),
+      };
 
   Widget _readMessage(BuildContext context, _Read state, VoidCallback retry) {
     if (state == _Read.loading) {
-      return const Padding(padding: EdgeInsets.all(16),
+      return const Padding(
+          padding: EdgeInsets.all(CgTheme.pageInset),
           child: SkeletonBox(height: 64));
     }
     final message = switch (state) {
-      _Read.signedOut => context.tr('請登入查看商戶帳戶', 'Sign in to view your merchant account'),
+      _Read.signedOut =>
+        context.tr('請登入查看商戶帳戶', 'Sign in to view your merchant account'),
       _Read.denied => context.tr('沒有權限查看此資料', 'You cannot view these details'),
       _ => context.tr('未能載入帳戶資料', 'Could not load account details'),
     };
     return ListTile(
+      contentPadding: EdgeInsets.zero,
       title: Text(message),
       trailing: state == _Read.unavailable
           ? TextButton(onPressed: retry, child: Text(context.tr('重試', 'Retry')))
@@ -276,58 +292,95 @@ class _MerchantAccountOverviewState extends State<MerchantAccountOverview> {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         ListTile(
+          contentPadding: EdgeInsets.zero,
           leading: const Icon(Icons.storefront),
-          title: Text(displayName.isNotEmpty ? displayName : displayEmail.isNotEmpty
-              ? displayEmail : context.tr('未有帳戶資料', 'No account details')),
+          title: Text(displayName.isNotEmpty
+              ? displayName
+              : displayEmail.isNotEmpty
+                  ? displayEmail
+                  : context.tr('未有帳戶資料', 'No account details')),
           subtitle: displayName.isNotEmpty && displayEmail.isNotEmpty
-              ? Text(displayEmail) : null,
+              ? Text(displayEmail)
+              : null,
         ),
         if (_shops.length > 1)
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            child: DropdownButtonFormField<int>(
-              initialValue: _shop?.id,
-              isExpanded: true,
-              decoration: InputDecoration(labelText: context.tr('店舖', 'Shop')),
-              items: _shops.map((shop) => DropdownMenuItem(
-                value: shop.id,
-                child: Text(shop.name, overflow: TextOverflow.ellipsis),
-              )).toList(),
-              onChanged: (id) {
-                if (id == null || id == _shop?.id) return;
-                unawaited(_loadShop(_shops.firstWhere((shop) => shop.id == id)));
-              },
-            ),
+          DropdownButtonFormField<int>(
+            initialValue: _shop?.id,
+            isExpanded: true,
+            decoration: InputDecoration(labelText: context.tr('店舖', 'Shop')),
+            items: _shops
+                .map((shop) => DropdownMenuItem(
+                      value: shop.id,
+                      child: Text(shop.name, overflow: TextOverflow.ellipsis),
+                    ))
+                .toList(),
+            onChanged: (id) {
+              if (id == null || id == _shop?.id) return;
+              unawaited(_loadShop(_shops.firstWhere((shop) => shop.id == id)));
+            },
           )
         else if (_shop != null)
-          ListTile(title: Text(_shop!.name)),
+          ListTile(contentPadding: EdgeInsets.zero, title: Text(_shop!.name)),
         if (_shop == null)
-          ListTile(title: Text(context.tr('未有店舖', 'No shops')))
+          ListTile(
+              contentPadding: EdgeInsets.zero,
+              title: Text(context.tr('未有店舖', 'No shops')))
         else if (_settlement != _Read.ready)
           _readMessage(context, _settlement, () => _loadShop(_shop!))
         else
-          ListTile(title: Text(status)),
+          Align(
+            alignment: AlignmentDirectional.centerStart,
+            child: MerchantStatusPill(
+              label: status,
+              active:
+                  _setupStatus == 'active' && balance?['account_ready'] == true,
+            ),
+          ),
         if (balance != null) ...[
-          ListTile(title: Text(context.tr('帳面餘額', 'Ledger balance'))),
+          const SizedBox(height: CgTheme.space16),
+          Text(context.tr('帳面餘額', 'Ledger balance'),
+              style: Theme.of(context).textTheme.titleMedium),
           for (final item in [
             ('pending', context.tr('待結算', 'Pending settlement')),
             ('available', context.tr('帳面可提取', 'Ledger available')),
             ('processing', context.tr('提款處理中', 'Payout in progress')),
             ('paid_out', context.tr('已提取', 'Paid out')),
           ])
-            ListTile(title: Text(item.$2),
-                trailing: Text(_money(balance[item.$1], balance['currency']))),
-          ListTile(title: Text(context.tr('最近流水', 'Recent ledger entries'))),
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              title: Text(item.$2),
+              trailing: MerchantAmountValue(
+                  value: _money(balance[item.$1], balance['currency'])),
+            ),
+          const SizedBox(height: CgTheme.space16),
+          Text(context.tr('最近流水', 'Recent ledger entries'),
+              style: Theme.of(context).textTheme.titleMedium),
           if (_ledger.isEmpty)
-            ListTile(title: Text(context.tr('未有流水', 'No ledger entries'))),
+            ListTile(
+                contentPadding: EdgeInsets.zero,
+                title: Text(context.tr('未有流水', 'No ledger entries'))),
           for (final entry in _ledger)
             ListTile(
+              contentPadding: EdgeInsets.zero,
               title: Text(_ledgerTitle(context, entry.kind)),
-              subtitle: Text([
-                _ledgerStatus(context, entry.status),
-                if (_date(entry.createdAt) != null) _date(entry.createdAt)!,
-              ].join(' · ')),
-              trailing: Text(_money(entry.netAmount, balance['currency'])),
+              subtitle: Align(
+                alignment: AlignmentDirectional.centerStart,
+                child: Wrap(
+                  spacing: CgTheme.space8,
+                  runSpacing: CgTheme.space4,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  children: [
+                    MerchantStatusPill(
+                      label: _ledgerStatus(context, entry.status),
+                      active: entry.status == 'transferred' ||
+                          entry.status == 'paid_out',
+                    ),
+                    if (_date(entry.createdAt) case final date?) Text(date),
+                  ],
+                ),
+              ),
+              trailing: MerchantAmountValue(
+                  value: _money(entry.netAmount, balance['currency'])),
             ),
         ],
       ],

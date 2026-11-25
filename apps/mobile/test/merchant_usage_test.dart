@@ -101,7 +101,7 @@ Future<void> selectDays(WidgetTester tester, int days) async {
 }
 
 Future<void> selectExport(WidgetTester tester) async {
-  final export = find.text('Export shop CSV');
+  final export = find.byTooltip('Export shop CSV');
   await tester.ensureVisible(export);
   await tester.tap(export);
   await tester.pumpAndSettle();
@@ -158,7 +158,7 @@ void main() {
       api.answer(0, dashboard(30, empty: true));
       await tester.pumpAndSettle();
       expect(find.text('No shops to show.'), findsOneWidget);
-      expect(find.text('Export shop CSV'), findsNothing);
+      expect(find.byTooltip('Export shop CSV'), findsNothing);
       await selectDays(tester, 7);
       api.answer(1, dashboard(30));
       await tester.pumpAndSettle();
@@ -168,7 +168,7 @@ void main() {
       api.answer(2, dashboard(7, missingClaimCount: true));
       await tester.pumpAndSettle();
       expect(find.text('Could not load data for this period.'), findsOneWidget);
-      expect(find.text('Export shop CSV'), findsNothing);
+      expect(find.byTooltip('Export shop CSV'), findsNothing);
       expect(api.requests, [30, 7, 7]);
     },
   );
@@ -192,7 +192,7 @@ void main() {
       find.text('You don’t have access to this shop data.'),
       findsOneWidget,
     );
-    expect(find.text('Export shop CSV'), findsNothing);
+    expect(find.byTooltip('Export shop CSV'), findsNothing);
     expect(find.text('Legacy counts 250'), findsNothing);
     expect(openedLegacy, 0);
     await tester.tap(find.text('All-time coupon activity'));

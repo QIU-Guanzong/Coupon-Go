@@ -1,5 +1,6 @@
 import 'package:coupon_go/api_client.dart';
 import 'package:coupon_go/screens/redemption_recovery.dart';
+import 'package:coupon_go/widgets/merchant_layout.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -136,7 +137,7 @@ void main() {
     await tester.tap(find.text('確認撤銷'));
     await tester.pumpAndSettle();
     expect(api.calls.single['reason'], '顧客提供正確記錄');
-    expect(find.text('狀態：已撤銷'), findsOneWidget);
+    expect(find.widgetWithText(MerchantStatusPill, '已撤銷'), findsOneWidget);
   });
 
   testWidgets('切換帳號時清除上一帳號的查詢結果', (tester) async {

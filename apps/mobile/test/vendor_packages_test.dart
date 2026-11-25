@@ -115,7 +115,7 @@ void main() {
     expect(api.couponCalls, 0);
     expect(find.text('發券'), findsNothing);
     expect(find.text('套餐管理'), findsNothing);
-    expect(find.text('店舖與分店'), findsOneWidget);
+    expect(find.text('商店與分店'), findsOneWidget);
   });
   testWidgets('merchant navigation opens an honest empty workspace',
       (tester) async {

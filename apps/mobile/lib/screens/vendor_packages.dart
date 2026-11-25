@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../api_client.dart';
 import '../language.dart';
 import '../theme.dart';
+import '../widgets/merchant_layout.dart';
 
 
 /// Merchant package workspace. Server status is always the source of truth.
@@ -107,18 +108,18 @@ class _VendorPackagesScreenState extends State<VendorPackagesScreen> {
               ? Center(
                   child: Column(mainAxisSize: MainAxisSize.min, children: [
                   Text(t('未能載入套餐', 'Could not load packages')),
-                  const SizedBox(height: 8),
+                  const SizedBox(height: CgTheme.space8),
                   Text(_error!),
                   TextButton(onPressed: _load, child: Text(t('重試', 'Retry'))),
                 ]))
               : RefreshIndicator(
                   onRefresh: _load,
                   child: ListView(
-                    padding: const EdgeInsets.fromLTRB(16, 20, 16, 32),
+                    padding: const EdgeInsets.fromLTRB(CgTheme.pageInset, CgTheme.space12, CgTheme.pageInset, CgTheme.space16),
                     children: [
                       Center(
                           child: ConstrainedBox(
-                              constraints: const BoxConstraints(maxWidth: 760),
+                              constraints: const BoxConstraints(maxWidth: CgTheme.listMaxWidth),
                               child: Column(
                                   crossAxisAlignment:
                                       CrossAxisAlignment.stretch,
@@ -126,10 +127,8 @@ class _VendorPackagesScreenState extends State<VendorPackagesScreen> {
                                     Text(t('我的套餐', 'My packages'),
                                         style: Theme.of(context)
                                             .textTheme
-                                            .headlineSmall
-                                            ?.copyWith(
-                                                fontWeight: FontWeight.bold)),
-                                    const SizedBox(height: 4),
+                                            .titleLarge),
+                                    const SizedBox(height: CgTheme.space4),
                                     Text(
                                         t('建立套餐、調整內容及管理上架狀態。',
                                             'Create packages, update details and manage availability.'),
@@ -137,16 +136,12 @@ class _VendorPackagesScreenState extends State<VendorPackagesScreen> {
                                             color: Theme.of(context)
                                                 .colorScheme
                                                 .onSurfaceVariant)),
-                                    const SizedBox(height: 16),
-                                    Align(
-                                        alignment: Alignment.centerLeft,
-                                        child: FilledButton.icon(
-                                            onPressed: _shops.isEmpty
-                                                ? null
-                                                : () => _edit(),
-                                            icon: const Icon(Icons.add),
-                                            label: Text(
-                                                t('建立套餐', 'Create package')))),
+                                    const SizedBox(height: CgTheme.space16),
+                                    MerchantPrimaryAction(
+                                      label: t('建立套餐', 'Create package'),
+                                      onPressed: _shops.isEmpty ? null : () => _edit(),
+                                      icon: Icons.add,
+                                    ),
                                     if (_shops.isEmpty)
                                       Padding(
                                           padding:
@@ -164,15 +159,15 @@ class _VendorPackagesScreenState extends State<VendorPackagesScreen> {
                                                 color: Theme.of(context)
                                                     .colorScheme
                                                     .onSurfaceVariant),
-                                            const SizedBox(height: 12),
+                                            const SizedBox(height: CgTheme.space12),
                                             Text(
                                                 t('尚未建立套餐', 'No packages yet')),
-                                            const SizedBox(height: 4),
+                                            const SizedBox(height: CgTheme.space4),
                                             Text(t('建立後可在這裡查看上架狀態。',
                                                 'Created packages and their status appear here.')),
                                           ])),
                                     for (final item in _packages) ...[
-                                      const SizedBox(height: 12),
+                                      const SizedBox(height: CgTheme.space12),
                                       _packageTile(item)
                                     ],
                                   ])))
@@ -210,7 +205,7 @@ class _VendorPackagesScreenState extends State<VendorPackagesScreen> {
                                 .textTheme
                                 .titleMedium
                                 ?.copyWith(fontWeight: FontWeight.bold)),
-                        const SizedBox(height: 4),
+                        const SizedBox(height: CgTheme.space4),
                         Text('${item['shop_name'] ?? ''}',
                             style: TextStyle(
                                 color: Theme.of(context)
@@ -218,22 +213,12 @@ class _VendorPackagesScreenState extends State<VendorPackagesScreen> {
                                     .onSurfaceVariant)),
                       ])),
                   const SizedBox(width: 8),
-                  Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 10, vertical: 5),
-                      decoration: BoxDecoration(
-                          color: status == 'active'
-                              ? CgColors.statusActiveBg
-                              : CgColors.statusPendingBg,
-                          borderRadius: BorderRadius.circular(6)),
-                      child: Text(_status(context, status),
-                          style: TextStyle(
-                              color: status == 'active'
-                                  ? CgColors.statusActiveText
-                                  : CgColors.statusPendingText,
-                              fontWeight: FontWeight.w600))),
+                  Flexible(child: MerchantStatusPill(
+                      label: _status(context, status),
+                      active: status == 'active',
+                  )),
                 ]),
-                const SizedBox(height: 12),
+                const SizedBox(height: CgTheme.space12),
                 Wrap(spacing: 16, runSpacing: 4, children: [
                   Text(
                       formatHkd(
@@ -251,7 +236,7 @@ class _VendorPackagesScreenState extends State<VendorPackagesScreen> {
                                   .colorScheme
                                   .onSurfaceVariant))),
                 if (actions.isNotEmpty) ...[
-                  const SizedBox(height: 10),
+                  const SizedBox(height: CgTheme.space12),
                   Wrap(spacing: 8, children: [
                     for (final entry in actions.entries)
                       TextButton(
@@ -542,11 +527,11 @@ class _VendorPackageEditorState extends State<VendorPackageEditor> {
           body: Form(
               key: _form,
               child: ListView(
-                  padding: const EdgeInsets.fromLTRB(16, 20, 16, 32),
+                  padding: const EdgeInsets.fromLTRB(CgTheme.pageInset, CgTheme.space12, CgTheme.pageInset, CgTheme.space16),
                   children: [
                     Center(
                         child: ConstrainedBox(
-                            constraints: const BoxConstraints(maxWidth: 680),
+                            constraints: const BoxConstraints(maxWidth: CgTheme.formMaxWidth),
                             child: Column(
                                 crossAxisAlignment: CrossAxisAlignment.stretch,
                                 children: [
@@ -570,14 +555,14 @@ class _VendorPackageEditorState extends State<VendorPackageEditor> {
                                                   });
                                                 }
                                               }),
-                                  if (!_editing) const SizedBox(height: 16),
+                                  if (!_editing) const SizedBox(height: CgTheme.space16),
                                   Text(t('套餐內容', 'Package details'),
                                       style: Theme.of(context)
                                           .textTheme
                                           .titleMedium
                                           ?.copyWith(
                                               fontWeight: FontWeight.bold)),
-                                  const SizedBox(height: 10),
+                                  const SizedBox(height: CgTheme.space12),
                                   TextFormField(
                                       controller: _name,
                                       enabled: !_saving,
@@ -586,7 +571,7 @@ class _VendorPackageEditorState extends State<VendorPackageEditor> {
                                       decoration: InputDecoration(
                                           labelText:
                                               t('套餐名稱', 'Package name'))),
-                                  const SizedBox(height: 8),
+                                  const SizedBox(height: CgTheme.space8),
                                   TextFormField(
                                       controller: _items,
                                       enabled: !_saving,
@@ -598,14 +583,14 @@ class _VendorPackageEditorState extends State<VendorPackageEditor> {
                                               'One per line, e.g. Main course ×2'),
                                           helperText: t('可留空；數量預設為 1',
                                               'Optional; quantity defaults to 1'))),
-                                  const SizedBox(height: 16),
+                                  const SizedBox(height: CgTheme.space16),
                                   Text(t('價格與數量', 'Price and quantity'),
                                       style: Theme.of(context)
                                           .textTheme
                                           .titleMedium
                                           ?.copyWith(
                                               fontWeight: FontWeight.bold)),
-                                  const SizedBox(height: 10),
+                                  const SizedBox(height: CgTheme.space12),
                                   TextFormField(
                                       controller: _original,
                                       enabled: !_saving,
@@ -616,7 +601,7 @@ class _VendorPackageEditorState extends State<VendorPackageEditor> {
                                       decoration: InputDecoration(
                                           labelText: t('原價（HK\$）',
                                               'Original price (HK\$)'))),
-                                  const SizedBox(height: 12),
+                                  const SizedBox(height: CgTheme.space12),
                                   TextFormField(
                                       controller: _price,
                                       enabled: !_saving,
@@ -637,7 +622,7 @@ class _VendorPackageEditorState extends State<VendorPackageEditor> {
                                       decoration: InputDecoration(
                                           labelText: t('套餐價（HK\$）',
                                               'Package price (HK\$)'))),
-                                  const SizedBox(height: 12),
+                                  const SizedBox(height: CgTheme.space12),
                                   TextFormField(
                                       controller: _stock,
                                       enabled: !_saving,
@@ -647,7 +632,7 @@ class _VendorPackageEditorState extends State<VendorPackageEditor> {
                                       decoration: InputDecoration(
                                           labelText:
                                               t('總份數', 'Total quantity'))),
-                                  const SizedBox(height: 12),
+                                  const SizedBox(height: CgTheme.space12),
                                   TextFormField(
                                       controller: _people,
                                       enabled: !_saving,
@@ -655,14 +640,14 @@ class _VendorPackageEditorState extends State<VendorPackageEditor> {
                                       validator: (v) => integer(v),
                                       decoration: InputDecoration(
                                           labelText: t('適用人數', 'People'))),
-                                  const SizedBox(height: 20),
+                                  const SizedBox(height: CgTheme.space20),
                                   Text(t('有效期與退款', 'Validity and refunds'),
                                       style: Theme.of(context)
                                           .textTheme
                                           .titleMedium
                                           ?.copyWith(
                                               fontWeight: FontWeight.bold)),
-                                  const SizedBox(height: 8),
+                                  const SizedBox(height: CgTheme.space8),
                                   OutlinedButton.icon(
                                       onPressed: _saving
                                           ? null
@@ -678,7 +663,7 @@ class _VendorPackageEditorState extends State<VendorPackageEditor> {
                                       icon: const Icon(Icons.event_outlined),
                                       label: Text(
                                           '${t('結束日期', 'End date')}：${_date(_to)}')),
-                                  const SizedBox(height: 12),
+                                  const SizedBox(height: CgTheme.space12),
                                   DropdownButtonFormField<String>(
                                       initialValue: _refund,
                                       decoration: InputDecoration(
@@ -744,13 +729,13 @@ class _VendorPackageEditorState extends State<VendorPackageEditor> {
                                       child: Text(
                                           t('返回並重新載入', 'Return and refresh')),
                                     ),
-                                  FilledButton(
+                                  MerchantPrimaryAction(
                                       onPressed: _saving || _saveUncertain
                                           ? null
                                           : _save,
-                                      child: Text(_saving
+                                      label: _saving
                                           ? t('儲存中…', 'Saving…')
-                                          : t('儲存套餐', 'Save package'))),
+                                          : t('儲存套餐', 'Save package')),
                                 ])))
                   ])),
         ));

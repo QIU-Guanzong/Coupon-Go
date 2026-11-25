@@ -6,6 +6,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../api_client.dart';
 import '../language.dart';
+import '../theme.dart';
+import '../widgets/merchant_layout.dart';
 
 /// Test-mode Connect payout. A durable client request id is saved before
 /// sending, and server-side unresolved operations are loaded on every visit.
@@ -182,10 +184,14 @@ class _MerchantPayoutScreenState extends State<MerchantPayoutScreen> {
       setState(() {
         if (status == 'paid_out' || status == 'failed') _localRequest = null;
         _message = switch (status) {
-          'paid_out' => t('核對已完成，沒有轉移款項。', 'Verification complete. No funds were moved.'),
-          'failed' => t('未能完成提款核對，請重試。', 'Verification could not complete. Try again.'),
-          'submitted' || 'processing' => t('核對處理中，請稍後刷新狀態。', 'Verification in progress. Refresh the status shortly.'),
-          _ => t('結果待核對，請勿另建請求。', 'Verification pending. Do not start another request.'),
+          'paid_out' =>
+            t('核對已完成，沒有轉移款項。', 'Verification complete. No funds were moved.'),
+          'failed' =>
+            t('未能完成提款核對，請重試。', 'Verification could not complete. Try again.'),
+          'submitted' || 'processing' => t('核對處理中，請稍後刷新狀態。',
+              'Verification in progress. Refresh the status shortly.'),
+          _ => t('結果待核對，請勿另建請求。',
+              'Verification pending. Do not start another request.'),
         };
       });
       await _load();
@@ -223,12 +229,12 @@ class _MerchantPayoutScreenState extends State<MerchantPayoutScreen> {
     final confirm = await showDialog<bool>(
         context: context,
         builder: (context) => AlertDialog(
-                title: Text(context.tr('確認提款核對', 'Confirm payout verification')),
-                content: Text(
-                    context.tr(
-                      '${widget.shopName}：確認核對 HK\$$amount？不會轉移款項。',
-                      '${widget.shopName}: verify HK\$$amount? No funds will be moved.',
-                    )),
+                title:
+                    Text(context.tr('確認提款核對', 'Confirm payout verification')),
+                content: Text(context.tr(
+                  '${widget.shopName}：確認核對 HK\$$amount？不會轉移款項。',
+                  '${widget.shopName}: verify HK\$$amount? No funds will be moved.',
+                )),
                 actions: [
                   TextButton(
                       onPressed: () => Navigator.pop(context, false),
@@ -344,106 +350,144 @@ class _MerchantPayoutScreenState extends State<MerchantPayoutScreen> {
         (mode == 'simulated' || mode == 'stripe_test');
     final available = _balance?['available'];
     return Scaffold(
-        appBar: AppBar(
-            title: Text(context.tr('提款核對', 'Payout verification'))),
+        appBar: AppBar(title: Text(context.tr('提款核對', 'Payout verification'))),
         body: Center(
             child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 680),
-                child: ListView(padding: const EdgeInsets.all(20), children: [
-                  Text(widget.shopName,
-                      style: const TextStyle(
-                          fontSize: 23, fontWeight: FontWeight.bold)),
-                  const SizedBox(height: 8),
-                  Text(context.tr('此流程不會轉移款項。款項狀態以實際流水為準。',
-                      'This process does not move funds. Check the ledger for the actual status.')),
-                  if (_loading) const LinearProgressIndicator(),
-                  if (_error != null) ...[
-                    const SizedBox(height: 12),
-                    Semantics(
-                        liveRegion: true,
-                        child: Text(_error!,
-                            style: TextStyle(
-                                color: Theme.of(context).colorScheme.error))),
-                    TextButton(
-                        onPressed: _busy ? null : _load,
-                        child: Text(context.tr('刷新狀態', 'Refresh status')))
-                  ],
-                  if (_message != null) ...[
-                    const SizedBox(height: 12),
-                    Semantics(liveRegion: true, child: Text(_message!))
-                  ],
-                  if (!_loading && _error == null && _balance != null) ...[
-                    const SizedBox(height: 16),
-                    Text(switch (mode) {
-                      'simulated' || 'stripe_test' => context.tr('核對渠道已連接', 'Verification channel connected'),
-                      'unavailable' => context.tr('未連接收款渠道', 'No payout channel connected'),
-                      _ => context.tr('收款狀態待確認', 'Payout status unconfirmed'),
-                    }),
-                    Text(
-                        '已接入流水可提取：${available is num ? 'HK\$${available.toStringAsFixed(2)}' : '—'}'),
-                    if (_invalidSavedRequest) const Text('本機提款記錄無法讀取，請聯絡平台核對。'),
-                    if (_active.isNotEmpty) ...[
-                      const SizedBox(height: 16),
-                      Text(context.tr('待完成提款', 'Pending payout'),
-                          style: const TextStyle(
-                              fontSize: 18, fontWeight: FontWeight.bold)),
-                      for (final row in _active)
-                        ListTile(
-                            contentPadding: EdgeInsets.zero,
-                            title: Text(
-                                '金額：${row['amount'] is num ? 'HK\$${(row['amount'] as num).toStringAsFixed(2)}' : '待確認'}'),
-                            subtitle: Text(_payoutStatus(row['status']))),
-                    ],
-                    if (_active.length == 1 &&
-                        _localRequest == null &&
-                        !_invalidSavedRequest &&
-                        _active.first['request_id'] is String &&
-                        _active.first['amount'] is num)
-                      Align(
-                          alignment: Alignment.centerLeft,
-                          child: TextButton(
-                              onPressed:
-                                  _busy ? null : () => _restore(_active.first),
-                              child: Text(context.tr('恢復原提款請求', 'Resume payout request')))),
-                    if (_active.any((row) => row['request_id'] == null))
-                      const Text('舊提款缺少請求編號，請聯絡平台核對。'),
-                    if (_localRequest != null) ...[
-                      const SizedBox(height: 12),
-                      Text(
-                          '本機保留 HK\$${_localRequest!['amount']} 的提款請求；若上次未送達，重試將提交該請求。'),
-                      OutlinedButton(
-                          onPressed: _busy || !_localCanRetry || !ready
-                              ? null
-                              : () => _send(_localRequest!),
-                          child: Text(context.tr('用同一請求核對或重試', 'Check or retry this request'))),
-                    ],
-                    if (_active.isEmpty &&
-                        _localRequest == null &&
-                        !_invalidSavedRequest) ...[
-                      const SizedBox(height: 18),
-                      TextField(
-                          controller: _amount,
-                          keyboardType: const TextInputType.numberWithOptions(
-                              decimal: true),
-                          decoration:
-                              const InputDecoration(labelText: '提款金額（HK\$）')),
-                      const SizedBox(height: 14),
-                      FilledButton(
-                          onPressed: ready && !_busy ? _create : null,
-                          child: Text(context.tr('提交提款核對', 'Submit payout verification'))),
-                      if (!ready) const Text('收款帳戶尚未就緒，暫不能提款。'),
-                    ],
-                    const SizedBox(height: 12),
-                    TextButton(
-                        onPressed: _busy ? null : _load,
-                        child: Text(context.tr('刷新狀態', 'Refresh status'))),
-                  ],
-                ]))));
+                constraints:
+                    const BoxConstraints(maxWidth: CgTheme.formMaxWidth),
+                child: ListView(
+                    padding: const EdgeInsets.all(CgTheme.pageInset),
+                    children: [
+                      Text(widget.shopName,
+                          style: Theme.of(context).textTheme.titleLarge),
+                      const SizedBox(height: CgTheme.space8),
+                      Text(context.tr('此流程不會轉移款項。款項狀態以實際流水為準。',
+                          'This process does not move funds. Check the ledger for the actual status.')),
+                      if (_loading) const LinearProgressIndicator(),
+                      if (_error != null) ...[
+                        const SizedBox(height: CgTheme.space12),
+                        Semantics(
+                            liveRegion: true,
+                            child: Text(_error!,
+                                style: TextStyle(
+                                    color:
+                                        Theme.of(context).colorScheme.error))),
+                        TextButton(
+                            onPressed: _busy ? null : _load,
+                            child: Text(context.tr('刷新狀態', 'Refresh status')))
+                      ],
+                      if (_message != null) ...[
+                        const SizedBox(height: CgTheme.space12),
+                        Semantics(liveRegion: true, child: Text(_message!))
+                      ],
+                      if (!_loading && _error == null && _balance != null) ...[
+                        const SizedBox(height: CgTheme.space16),
+                        Text(switch (mode) {
+                          'simulated' || 'stripe_test' => context.tr(
+                              '核對渠道已連接', 'Verification channel connected'),
+                          'unavailable' => context.tr(
+                              '未連接收款渠道', 'No payout channel connected'),
+                          _ =>
+                            context.tr('收款狀態待確認', 'Payout status unconfirmed'),
+                        }),
+                        MerchantAmountRow(
+                          label:
+                              context.tr('已接入流水可提取', 'Available in the ledger'),
+                          value: available is num
+                              ? 'HK\$${available.toStringAsFixed(2)}'
+                              : '—',
+                          emphasized: true,
+                        ),
+                        if (_invalidSavedRequest)
+                          Text(context.tr('本機提款記錄無法讀取，請聯絡平台核對。',
+                              'Could not read the saved payout request. Contact support to verify it.')),
+                        if (_active.isNotEmpty) ...[
+                          const SizedBox(height: CgTheme.space16),
+                          Text(context.tr('待完成提款', 'Pending payout'),
+                              style: Theme.of(context).textTheme.titleMedium),
+                          for (final row in _active)
+                            ListTile(
+                              contentPadding: EdgeInsets.zero,
+                              title: Text(context.tr('金額', 'Amount')),
+                              trailing: MerchantAmountValue(
+                                value: row['amount'] is num
+                                    ? 'HK\$${(row['amount'] as num).toStringAsFixed(2)}'
+                                    : context.tr('待確認', 'Pending confirmation'),
+                              ),
+                              subtitle: Align(
+                                alignment: AlignmentDirectional.centerStart,
+                                child: MerchantStatusPill(
+                                  label: _payoutStatus(context, row['status']),
+                                  active: false,
+                                ),
+                              ),
+                            ),
+                        ],
+                        if (_active.length == 1 &&
+                            _localRequest == null &&
+                            !_invalidSavedRequest &&
+                            _active.first['request_id'] is String &&
+                            _active.first['amount'] is num)
+                          Align(
+                              alignment: Alignment.centerLeft,
+                              child: TextButton(
+                                  onPressed: _busy
+                                      ? null
+                                      : () => _restore(_active.first),
+                                  child: Text(context.tr(
+                                      '恢復原提款請求', 'Resume payout request')))),
+                        if (_active.any((row) => row['request_id'] == null))
+                          Text(context.tr('舊提款缺少請求編號，請聯絡平台核對。',
+                              'The previous payout has no request number. Contact support to verify it.')),
+                        if (_localRequest != null) ...[
+                          const SizedBox(height: CgTheme.space12),
+                          Text(context.tr(
+                              '本機保留 HK\$${_localRequest!['amount']} 的提款請求；若上次未送達，重試將提交該請求。',
+                              'A request for HK\$${_localRequest!['amount']} is saved. Retrying submits the same request if it was not received.')),
+                          const SizedBox(height: CgTheme.space8),
+                          OutlinedButton(
+                              onPressed: _busy || !_localCanRetry || !ready
+                                  ? null
+                                  : () => _send(_localRequest!),
+                              child: Text(context.tr('用同一請求核對或重試',
+                                  'Check or retry this request'))),
+                        ],
+                        if (_active.isEmpty &&
+                            _localRequest == null &&
+                            !_invalidSavedRequest) ...[
+                          const SizedBox(height: CgTheme.space16),
+                          TextField(
+                              controller: _amount,
+                              keyboardType:
+                                  const TextInputType.numberWithOptions(
+                                      decimal: true),
+                              decoration: InputDecoration(
+                                labelText: context.tr(
+                                    '提款金額（HK\$）', 'Payout amount (HK\$)'),
+                              )),
+                          const SizedBox(height: CgTheme.space12),
+                          MerchantPrimaryAction(
+                              onPressed: ready && !_busy ? _create : null,
+                              label: context.tr(
+                                  '提交提款核對', 'Submit payout verification')),
+                          if (!ready) ...[
+                            const SizedBox(height: CgTheme.space8),
+                            Text(context.tr('收款帳戶尚未就緒，暫不能提款。',
+                                'Payouts are unavailable until your receiving account is ready.')),
+                          ],
+                        ],
+                        const SizedBox(height: CgTheme.space12),
+                        TextButton(
+                            onPressed: _busy ? null : _load,
+                            child: Text(context.tr('刷新狀態', 'Refresh status'))),
+                      ],
+                    ]))));
   }
 }
 
-String _payoutStatus(Object? status) => switch (status) {
-      'processing' || 'submitted' => '處理中',
-      'payout_unknown' => '結果待核對，請勿重複提款',
-      _ => '狀態待確認，請聯絡平台',
+String _payoutStatus(BuildContext context, Object? status) => switch (status) {
+      'processing' || 'submitted' => context.tr('處理中', 'Processing'),
+      'payout_unknown' => context.tr('結果待核對，請勿重複提款',
+          'Result under review. Do not submit a second payout.'),
+      _ => context.tr('狀態待確認，請聯絡平台', 'Contact support to verify the status.'),
     };

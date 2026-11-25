@@ -77,7 +77,16 @@ const tabularFigures =
     TextStyle(fontFeatures: [FontFeature.tabularFigures()]);
 
 class CgTheme {
-  static const double pageInset = 16;
+  static const double space4 = 4;
+  static const double space8 = 8;
+  static const double space12 = 12;
+  static const double space16 = 16;
+  static const double space20 = 20;
+  static const double space24 = 24;
+  static const double dividerHeight = 32;
+  static const double listMaxWidth = 880;
+  static const double formMaxWidth = 720;
+  static const double pageInset = space16;
   static const double buttonHeight = 56;
   static const double buttonRadius = 12;
 
