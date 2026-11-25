@@ -373,6 +373,34 @@ void main() {
     expect(find.text('Dispute'), findsNothing);
   }, skip: !publicTrial);
 
+  test('review HK redemption calendar date does not use the viewer clock', () {
+    expect(Review.fromJson({'redeemed_on': '2026-11-12'}).redeemedOn,
+        '2026-11-12');
+    expect(Review.fromJson({'redeemed_on': '2026-02-30'}).redeemedOn, isNull);
+    expect(
+        Review.fromJson({'redeemed_on': '2026-11-12T00:30:00+08:00'})
+            .redeemedOn,
+        isNull);
+    expect(
+        Review.fromJson({'redeemed_at': '2026-11-11T16:30:00Z'}).redeemedOn,
+        isNull);
+  });
+
+  testWidgets('customer sees HK date and label as provided by review API',
+      (tester) async {
+    final api = _CalendarReviewApi();
+    await _show(
+        tester,
+        ShopReviewsScreen(
+            api: api, shop: Shop.fromJson({'id': 11, 'shop_name': 'Central'})));
+    await tester.scrollUntilVisible(
+      find.text('Redeemed · Autumn offer · 2026-11-12'),
+      180,
+    );
+    expect(find.text('Redeemed · Autumn offer · 2026-11-12'), findsOneWidget);
+    expect(find.textContaining('16:30'), findsNothing);
+  });
+
   testWidgets('customer sees server reply date, not invented metadata',
       (tester) async {
     final api = ReviewShopsApi([first])..includeNonPublicReceipt = true;
@@ -391,4 +419,20 @@ void main() {
     expect(find.textContaining('(edited)'), findsNothing);
     expect(tester.takeException(), isNull);
   });
+}
+
+class _CalendarReviewApi extends ReviewShopsApi {
+  _CalendarReviewApi() : super([first]);
+
+  @override
+  Map<String, dynamic> page(int shop, int page) => {
+        ...super.page(shop, page),
+        'reviews': [
+          {
+            ..._review(shop, 101),
+            'coupon_name': 'Autumn offer',
+            'redeemed_on': '2026-11-12',
+          },
+        ],
+      };
 }

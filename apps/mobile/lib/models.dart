@@ -251,7 +251,7 @@ class Review {
         repliedAt = _reviewInstant(j['replied_at']),
         replyEdited = j['reply_edited'] == true,
         couponName = j['coupon_name'] as String?,
-        redeemedAt = _reviewInstant(j['redeemed_at']),
+        redeemedOn = _reviewCalendarDate(j['redeemed_on']),
         createdAt = _reviewInstant(j['created_at']),
         helpfulCount = j['helpful_count'] as int? ?? 0,
         // Gap 9: whether the current user voted this review helpful.
@@ -274,7 +274,7 @@ class Review {
   final DateTime? repliedAt;
   final bool replyEdited;
   final String? couponName;
-  final DateTime? redeemedAt;
+  final String? redeemedOn;
   final DateTime? createdAt;
   final int helpfulCount; // Gap 9: server-side vote count, drives "最有用"
   final bool helpedByMe; // Gap 9: current user already voted this review
@@ -287,6 +287,17 @@ DateTime? _reviewInstant(Object? value) {
   final parsed = DateTime.tryParse(value);
   if (parsed == null) return null;
   return parsed.isUtc ? parsed : DateTime.tryParse('${value}Z');
+}
+
+/// An HK calendar date, not an instant. Preserve it in every viewer timezone.
+String? _reviewCalendarDate(Object? value) {
+  if (value is! String || !RegExp(r'^\d{4}-\d{2}-\d{2}$').hasMatch(value)) {
+    return null;
+  }
+  final parsed = DateTime.tryParse('${value}T00:00:00Z');
+  return parsed != null && parsed.toIso8601String().startsWith('${value}T')
+      ? value
+      : null;
 }
 
 String reviewLocalDate(DateTime value) {
