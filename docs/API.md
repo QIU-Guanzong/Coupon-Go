@@ -959,6 +959,15 @@ returned（退貨）`。成功響應 `{message: "返現已作廢", transaction}`
 `total` 是全部符合條件的筆數，`rating_distribution` 是授權範圍內全部可見評價
 的星級分布，均非本頁計數。申訴理由、顧客帳戶／錢包／核銷 ID 及聯絡資料不回傳。
 
+上述商戶列表及公開 `GET /shops/{id}/reviews` 的每筆評價額外包括
+`coupon_name`、`redeemed_on`（均可為 `null`）。只讀取本評價所連的核銷，
+不取同一錢包券後來的核銷。 `redeemed_on` 只回傳香港日期 `YYYY-MM-DD`
+（由資料庫的 UTC 核銷時鐘換算），精確時間不出現在任何評價列表。
+找不到同店同錢包券的原核銷則為 `null`。 `coupon_name` 是該次核銷對應券的
+**現行**名稱（沒有歷史券名快照），套餐對應券、券資料缺失或無名字時為 `null`。
+已知的核銷日期不因券名缺失而隱藏。 `replied_at` 沿用目前回覆的時間；
+現行資料不能區分第一次回覆與編輯，因此不回傳 `reply_edited`。
+
 篩選列表回傳形狀：
 
 ```json
@@ -967,7 +976,8 @@ returned（退貨）`。成功響應 `{message: "返現已作廢", transaction}`
  "reviews":[{"id":18,"shop_id":11,"status":"visible","user_name":"Chan",
  "overall":2.0,"taste":2,"ambience":2,"service":2,"content":"等候較久",
  "images":[],"tags":[],"helpful_count":0,"reply_text":"","replied_at":null,
- "created_at":"2026-11-24T12:00:00"}]}
+ "created_at":"2026-11-24T12:00:00","coupon_name":"午市優惠",
+ "redeemed_on":"2026-11-24"}]}
 ```
 
 `GET /merchant/reviews/pending-count` 跨店回傳形狀：

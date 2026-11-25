@@ -428,12 +428,12 @@ class _ShopReviewsScreenState extends State<ShopReviewsScreen> {
 
   Widget? _verifiedUse(Review review) {
     final coupon = review.couponName?.trim();
-    final redeemedAt = review.redeemedAt;
-    if ((coupon == null || coupon.isEmpty) && redeemedAt == null) return null;
+    final redeemedOn = review.redeemedOn;
+    if ((coupon == null || coupon.isEmpty) && redeemedOn == null) return null;
     return Text([
       context.tr('已核銷', 'Redeemed'),
       if (coupon != null && coupon.isNotEmpty) coupon,
-      if (redeemedAt != null) reviewLocalDate(redeemedAt),
+      if (redeemedOn != null) redeemedOn,
     ].join(' · '), style: Theme.of(context).textTheme.bodySmall);
   }
 

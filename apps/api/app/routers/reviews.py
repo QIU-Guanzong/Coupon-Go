@@ -40,6 +40,7 @@ The legacy POST /review endpoint is left untouched (points-only, no
 Review row, no rating effect).
 """
 import json
+from datetime import timedelta, timezone
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -100,14 +101,54 @@ def _rating_distribution(db: Session, shop_id: int) -> dict:
     return dist
 
 
+def _review_labels(db: Session, review_ids) -> dict:
+    """Resolve the exact redeemed item for these already-scoped review rows."""
+    if not review_ids:
+        return {}
+    redemption, coupon = models.Redemption, models.Coupon
+    rows = (db.query(Review.id, redemption.scanned_at, coupon.coupon_name)
+            .join(redemption, and_(redemption.id == Review.redemption_id,
+                                   redemption.shop_id == Review.shop_id,
+                                   redemption.wallet_item_id == Review.wallet_item_id))
+            .outerjoin(coupon, and_(coupon.id == redemption.coupon_id,
+                                    coupon.shop_id == redemption.shop_id,
+                                    coupon.kind == "coupon"))
+            .filter(Review.id.in_(review_ids)).all())
+    # Redemption.scanned_at is produced by the shared naive-UTC clock.
+    # HK is UTC+08:00 throughout the operating period of this application.
+    hkt = timezone(timedelta(hours=8), "HKT")
+
+    def day(scanned_at):
+        if scanned_at is None:
+            return None
+        if scanned_at.tzinfo is None:
+            scanned_at = scanned_at.replace(tzinfo=timezone.utc)
+        return scanned_at.astimezone(hkt).date().isoformat()
+
+    return {rid: {"coupon_name": (name or "").strip() or None,
+                  "redeemed_on": day(scanned_at)}
+            for rid, scanned_at, name in rows}
+
+
+def _review_user_names(db: Session, rows) -> dict:
+    if not rows:
+        return {}
+    return dict(db.query(models.User.id, models.User.name)
+                .filter(models.User.id.in_({row.user_id for row in rows})).all())
+
+
 def review_out(db: Session, r: Review, helpful_counts=None,
-               helped_ids=None) -> dict:
-    user = db.query(models.User).filter(models.User.id == r.user_id).first()
+               helped_ids=None, *, user_names=None) -> dict:
+    if user_names is None:
+        user = db.query(models.User).filter(models.User.id == r.user_id).first()
+        user_name = user.name if user else ""
+    else:
+        user_name = user_names.get(r.user_id, "")
     if helpful_counts is None:
         helpful_counts = _helpful_counts(db, [r.id])
     return {
         "id": r.id, "user_id": r.user_id,
-        "user_name": user.name if user else "",
+        "user_name": user_name,
         "shop_id": r.shop_id, "redemption_id": r.redemption_id,
         "wallet_item_id": r.wallet_item_id,
         "taste": r.taste, "ambience": r.ambience, "service": r.service,
@@ -309,10 +350,16 @@ def list_shop_reviews(shop_id: int, page: int = Query(1, ge=1),
     ids = [r.id for r in page_items]
     counts = _helpful_counts(db, ids)
     helped = _helped_ids(db, ids, user.id if user else None)
+    user_names = _review_user_names(db, page_items)
+    labels = _review_labels(db, ids)
     return {"shop_id": shop_id, "current_page": out["current_page"],
             "total_pages": out["total_pages"], "total": out["total"],
             "rating_distribution": _rating_distribution(db, shop_id),
-            "reviews": [review_out(db, r, counts, helped) for r in page_items]}
+            "reviews": [
+                {**review_out(db, r, counts, helped, user_names=user_names),
+                 **labels.get(r.id, {"coupon_name": None, "redeemed_on": None})}
+                for r in page_items
+            ]}
 
 
 def _review_management_shops(db: Session, user: models.User, shop_id: int | None):
@@ -388,10 +435,8 @@ def list_merchant_reviews(
     items = (rows.order_by(Review.created_at.desc(), Review.id.desc())
              .offset((current_page - 1) * page_size).limit(page_size).all())
     ids = [item.id for item in items]
-    names = {}
-    if items:
-        names = dict(db.query(models.User.id, models.User.name)
-                     .filter(models.User.id.in_({item.user_id for item in items})).all())
+    names = _review_user_names(db, items)
+    labels = _review_labels(db, ids)
     counts = _helpful_counts(db, ids)
     return {"shop_id": shop_id, "current_page": current_page, "total_pages": total_pages,
             "total": total,
@@ -404,7 +449,8 @@ def list_merchant_reviews(
                  "images": item.images_list, "tags": item.tags_list,
                  "helpful_count": counts.get(item.id, 0), "status": item.status,
                  "reply_text": (item.reply_text or "").strip(),
-                 "replied_at": item.replied_at, "created_at": item.created_at}
+                 "replied_at": item.replied_at, "created_at": item.created_at,
+                 **labels.get(item.id, {"coupon_name": None, "redeemed_on": None})}
                 for item in items
             ]}
 

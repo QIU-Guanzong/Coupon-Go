@@ -1,0 +1,4 @@
+00:00 +0: loading /tmp/cg-review-r4.0rAxVt/flutter-run/test/merchant_review_shops_test.dart
+00:00 +0: review HK redemption calendar date does not use the viewer clock
+00:00 +1: customer sees HK date and label as provided by review API
+00:00 +2: All tests passed!
