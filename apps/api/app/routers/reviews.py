@@ -54,7 +54,7 @@ from ..deps import (get_current_user, get_optional_user,
                     points_balance, require_role)
 from ..shared import paginate
 from ..models_line_b import Review, ReviewHelpfulVote, ShopRating
-from ..notify import notify
+from ..notify import notify, notify_review_account
 
 router = APIRouter()
 
@@ -529,7 +529,10 @@ def vote_helpful(review_id: int, body: schemas_line_b.HelpfulVoteIn,
 def reply_review(review_id: int, body: schemas_line_b.ReviewReplyIn,
                  user: models.User = Depends(get_current_user),
                  db: Session = Depends(get_db)):
-    review = db.query(Review).filter(Review.id == review_id).first()
+    # The first-reply test and notification must be atomic across replays,
+    # including requests from different authorized accounts.
+    review = (db.query(Review).filter(Review.id == review_id)
+              .with_for_update().first())
     if review is None:
         raise HTTPException(status_code=404, detail="找不到此評價")
     shop = db.query(models.Shop).filter(models.Shop.id == review.shop_id).first()
@@ -537,9 +540,13 @@ def reply_review(review_id: int, body: schemas_line_b.ReviewReplyIn,
         raise HTTPException(status_code=403, detail="只有該商户或管理員可以回覆")
     if not body.reply.strip():
         raise HTTPException(status_code=400, detail="回覆內容不能為空")
+    first_visible_reply = review.status == "visible" and not (review.reply_text or "").strip()
     review.reply_text = body.reply.strip()
     review.replied_at = _now()
     review.replied_by = user.id
+    if first_visible_reply:
+        notify_review_account(db, review.user_id, user.id, "商戶回覆了你的評價",
+                              "可到店舖的評價頁查看商戶回覆。", "review_reply", review.shop_id)
     db.commit()
     return {"message": "回覆成功", "review": review_out(db, review)}
 

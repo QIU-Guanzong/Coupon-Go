@@ -20,3 +20,18 @@ def notify(db: Session, user_id: int, title: str, body: str,
     db.add(n)
     db.flush()
     return n
+
+
+def notify_review_account(db: Session, recipient_id: int | None, actor_id: int,
+                          title: str, body: str, notification_type: str,
+                          shop_id: int) -> None:
+    """Deliver only to a real, active recipient, within the review transaction."""
+    if recipient_id is None or recipient_id == actor_id:
+        return
+    active_id = (db.query(models.User.id)
+                 .filter(models.User.id == recipient_id,
+                         models.User.is_active.is_(True),
+                         models.User.deleted_at.is_(None)).scalar())
+    if active_id is not None:
+        notify(db, active_id, title, body, notification_type,
+               target_shop_id=shop_id)
