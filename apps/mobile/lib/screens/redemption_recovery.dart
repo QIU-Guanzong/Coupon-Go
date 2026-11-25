@@ -4,9 +4,13 @@ import 'package:flutter/material.dart';
 
 import '../api_client.dart';
 import '../language.dart';
+import '../theme.dart';
+import '../widgets/merchant_layout.dart';
 
-String _errorMessage(Object error) =>
-    error is ApiException ? error.message : '連線未完成，請稍後再試。';
+String _errorMessage(BuildContext context, Object error) =>
+    error is ApiException
+        ? error.message
+        : context.tr('連線未完成，請稍後再試。', 'Connection failed. Try again later.');
 
 String _newRequestKey() {
   final random = Random.secure();
@@ -67,7 +71,9 @@ class _MerchantRedemptionRecoveryScreenState
   Future<void> _search() async {
     final value = _query.text.trim();
     if (value.isEmpty || (_kind == 'order_id' && int.tryParse(value) == null)) {
-      setState(() => _error = _kind == 'order_id' ? '請輸入有效訂單編號。' : '請輸入查詢資料。');
+      setState(() => _error = _kind == 'order_id'
+          ? context.tr('請輸入有效訂單編號。', 'Enter a valid order number.')
+          : context.tr('請輸入查詢資料。', 'Enter a search value.'));
       return;
     }
     final session = _session;
@@ -94,7 +100,7 @@ class _MerchantRedemptionRecoveryScreenState
       );
     } catch (error) {
       if (mounted && session == _session) {
-        setState(() => _error = _errorMessage(error));
+        setState(() => _error = _errorMessage(context, error));
       }
     } finally {
       if (mounted && session == _session) setState(() => _busy = false);
@@ -120,7 +126,7 @@ class _MerchantRedemptionRecoveryScreenState
       context: context,
       builder: (context) => StatefulBuilder(
         builder: (context, updateDialog) => AlertDialog(
-          title: const Text('確認補記核銷'),
+          title: Text(context.tr('確認補記核銷', 'Confirm redemption record')),
           content: SingleChildScrollView(
             child: Column(
               mainAxisSize: MainAxisSize.min,
@@ -129,14 +135,16 @@ class _MerchantRedemptionRecoveryScreenState
                 Text(
                   '${item['coupon_name'] ?? ''} · ${item['shop_name'] ?? ''}',
                 ),
-                const SizedBox(height: 8),
-                const Text('請先與顧客核對券資料。確認後會記錄核銷及相關結算。'),
+                const SizedBox(height: CgTheme.space8),
+                Text(context.tr('請先與顧客核對券資料。確認後會記錄核銷及相關結算。',
+                    'Check the coupon with the customer. Confirmation records the redemption and its settlement.')),
                 if (requiredBranch) ...[
-                  const SizedBox(height: 12),
+                  const SizedBox(height: CgTheme.space12),
                   DropdownButtonFormField<int>(
                     initialValue: selectedBranch,
                     decoration: InputDecoration(
-                      labelText: '核銷分店（必選）',
+                      labelText: context.tr(
+                          '核銷分店（必選）', 'Redemption branch (required)'),
                       errorText: branchError,
                     ),
                     items: branches
@@ -156,13 +164,16 @@ class _MerchantRedemptionRecoveryScreenState
                       branchError = null;
                     }),
                   ),
-                  if (branches.isEmpty) const Text('此券暫無可用分店，請聯絡平台核對。'),
+                  if (branches.isEmpty)
+                    Text(context.tr('此券暫無可用分店，請聯絡平台核對。',
+                        'No branch can redeem this coupon. Contact support to check.')),
                 ],
-                const SizedBox(height: 12),
+                const SizedBox(height: CgTheme.space12),
                 TextField(
                   controller: reason,
                   maxLength: 500,
-                  decoration: const InputDecoration(labelText: '補記原因（選填）'),
+                  decoration: InputDecoration(
+                      labelText: context.tr('補記原因（選填）', 'Reason (optional)')),
                 ),
               ],
             ),
@@ -170,17 +181,18 @@ class _MerchantRedemptionRecoveryScreenState
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(context, false),
-              child: const Text('取消'),
+              child: Text(context.tr('取消', 'Cancel')),
             ),
             FilledButton(
               onPressed: () {
                 if (requiredBranch && selectedBranch == null) {
-                  updateDialog(() => branchError = '請選擇此券可使用的分店。');
+                  updateDialog(() => branchError = context.tr('請選擇此券可使用的分店。',
+                      'Choose a branch that accepts this coupon.'));
                   return;
                 }
                 Navigator.pop(context, true);
               },
-              child: const Text('確認補記'),
+              child: Text(context.tr('確認補記', 'Record redemption')),
             ),
           ],
         ),
@@ -211,11 +223,14 @@ class _MerchantRedemptionRecoveryScreenState
       if (!mounted || session != _session) return;
       setState(() {
         _items?.removeWhere((row) => row['wallet_item_id'] == id);
-        _success = '已補記核銷，記錄編號 ${response['redemption_id']}。';
+        _success = context.tr('已補記核銷，記錄編號 ${response['redemption_id']}。',
+            'Redemption ${response['redemption_id']} recorded.');
       });
     } catch (error) {
       if (mounted && session == _session) {
-        setState(() => _error = '${_errorMessage(error)} 如結果未確認，可再次補記同一張券。');
+        setState(() => _error = context.tr(
+            '${_errorMessage(context, error)} 如結果未確認，可再次補記同一張券。',
+            '${_errorMessage(context, error)} If the result is unconfirmed, retry with the same coupon.'));
       }
     } finally {
       if (mounted && session == _session) setState(() => _busy = false);
@@ -229,25 +244,32 @@ class _MerchantRedemptionRecoveryScreenState
         ),
         body: Center(
           child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 720),
+            constraints: const BoxConstraints(maxWidth: CgTheme.formMaxWidth),
             child: ListView(
-              padding: const EdgeInsets.all(20),
+              padding: const EdgeInsets.all(CgTheme.pageInset),
               children: [
-                Text('查找顧客的券', style: Theme.of(context).textTheme.titleLarge),
-                const SizedBox(height: 8),
-                const Text('以顧客提供的電話、訂單編號或出示碼尾數查詢，核對後再補記。'),
-                const SizedBox(height: 16),
+                Text(context.tr('查找顧客的券', 'Find a customer coupon'),
+                    style: Theme.of(context).textTheme.titleLarge),
+                const SizedBox(height: CgTheme.space8),
+                Text(context.tr('以顧客提供的電話、訂單編號或出示碼尾數查詢，核對後再補記。',
+                    'Search by customer phone, order number or redemption code ending. Verify before recording.')),
+                const SizedBox(height: CgTheme.space16),
                 DropdownButtonFormField<String>(
                   initialValue: _kind,
-                  decoration: const InputDecoration(
-                    labelText: '查詢方式',
-                    border: OutlineInputBorder(),
+                  decoration: InputDecoration(
+                    labelText: context.tr('查詢方式', 'Search by'),
+                    border: const OutlineInputBorder(),
                   ),
-                  items: const [
-                    DropdownMenuItem(value: 'phone', child: Text('電話號碼')),
-                    DropdownMenuItem(value: 'order_id', child: Text('訂單編號')),
+                  items: [
                     DropdownMenuItem(
-                        value: 'code_suffix', child: Text('出示碼尾數')),
+                        value: 'phone',
+                        child: Text(context.tr('電話號碼', 'Phone number'))),
+                    DropdownMenuItem(
+                        value: 'order_id',
+                        child: Text(context.tr('訂單編號', 'Order number'))),
+                    DropdownMenuItem(
+                        value: 'code_suffix',
+                        child: Text(context.tr('出示碼尾數', 'Code ending'))),
                   ],
                   onChanged: _busy
                       ? null
@@ -261,7 +283,7 @@ class _MerchantRedemptionRecoveryScreenState
                           }
                         },
                 ),
-                const SizedBox(height: 12),
+                const SizedBox(height: CgTheme.space12),
                 TextField(
                   controller: _query,
                   enabled: !_busy,
@@ -278,22 +300,21 @@ class _MerchantRedemptionRecoveryScreenState
                   onSubmitted: (_) {
                     if (!_busy) _search();
                   },
-                  decoration: const InputDecoration(
-                    labelText: '查詢資料',
-                    border: OutlineInputBorder(),
+                  decoration: InputDecoration(
+                    labelText: context.tr('查詢資料', 'Search value'),
+                    border: const OutlineInputBorder(),
                   ),
                 ),
-                const SizedBox(height: 12),
-                Align(
-                  alignment: Alignment.centerLeft,
-                  child: FilledButton(
-                    onPressed: _busy ? null : _search,
-                    child: Text(_busy ? '處理中…' : '查詢'),
-                  ),
+                const SizedBox(height: CgTheme.space12),
+                MerchantPrimaryAction(
+                  onPressed: _busy ? null : _search,
+                  label: _busy
+                      ? context.tr('處理中…', 'Working…')
+                      : context.tr('查詢', 'Search'),
                 ),
                 if (_error != null)
                   Padding(
-                    padding: const EdgeInsets.only(top: 12),
+                    padding: const EdgeInsets.only(top: CgTheme.space12),
                     child: Text(
                       _error!,
                       style:
@@ -302,21 +323,24 @@ class _MerchantRedemptionRecoveryScreenState
                   ),
                 if (_success != null)
                   Padding(
-                    padding: const EdgeInsets.only(top: 12),
+                    padding: const EdgeInsets.only(top: CgTheme.space12),
                     child: Text(_success!),
                   ),
                 if (_items != null) ...[
-                  const SizedBox(height: 24),
-                  Text('查詢結果', style: Theme.of(context).textTheme.titleMedium),
+                  const SizedBox(height: CgTheme.space24),
+                  Text(context.tr('查詢結果', 'Search results'),
+                      style: Theme.of(context).textTheme.titleMedium),
                   if (_items!.isEmpty)
-                    const Padding(
-                      padding: EdgeInsets.only(top: 12),
-                      child: Text('沒有符合條件的可用券。'),
+                    Padding(
+                      padding: const EdgeInsets.only(top: CgTheme.space12),
+                      child: Text(context.tr(
+                          '沒有符合條件的可用券。', 'No eligible coupons found.')),
                     ),
                   ..._items!.map(
                     (item) => Card(
+                      margin: const EdgeInsets.only(top: CgTheme.space12),
                       child: Padding(
-                        padding: const EdgeInsets.all(16),
+                        padding: const EdgeInsets.all(CgTheme.pageInset),
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
@@ -324,15 +348,20 @@ class _MerchantRedemptionRecoveryScreenState
                               '${item['coupon_name'] ?? ''}',
                               style: Theme.of(context).textTheme.titleMedium,
                             ),
-                            const SizedBox(height: 4),
+                            const SizedBox(height: CgTheme.space4),
                             Text(
-                              '${item['shop_name'] ?? ''} · 電話尾號 ${item['customer_phone_last4'] ?? '未提供'}',
+                              context.tr(
+                                '${item['shop_name'] ?? ''} · 電話尾號 ${item['customer_phone_last4'] ?? '未提供'}',
+                                '${item['shop_name'] ?? ''} · Phone ending ${item['customer_phone_last4'] ?? 'not provided'}',
+                              ),
                             ),
-                            Text('有效至 ${item['valid_to'] ?? '未提供'}'),
-                            const SizedBox(height: 8),
+                            Text(context.tr('有效至 ${item['valid_to'] ?? '未提供'}',
+                                'Valid until ${item['valid_to'] ?? 'not provided'}')),
+                            const SizedBox(height: CgTheme.space8),
                             OutlinedButton(
                               onPressed: _busy ? null : () => _confirm(item),
-                              child: const Text('補記這張券'),
+                              child: Text(context.tr(
+                                  '補記這張券', 'Record this redemption')),
                             ),
                           ],
                         ),
@@ -400,7 +429,8 @@ class _ForceRevokeRedemptionScreenState
   Future<void> _lookup() async {
     final id = int.tryParse(_id.text.trim());
     if (id == null || id <= 0) {
-      setState(() => _error = '請輸入有效核銷編號。');
+      setState(() => _error =
+          context.tr('請輸入有效核銷編號。', 'Enter a valid redemption number.'));
       return;
     }
     final session = _session;
@@ -417,7 +447,7 @@ class _ForceRevokeRedemptionScreenState
       if (mounted && session == _session) setState(() => _record = record);
     } catch (error) {
       if (mounted && session == _session) {
-        setState(() => _error = _errorMessage(error));
+        setState(() => _error = _errorMessage(context, error));
       }
     } finally {
       if (mounted && session == _session) setState(() => _busy = false);
@@ -431,24 +461,28 @@ class _ForceRevokeRedemptionScreenState
     final reason = _reason.text.trim();
     if (id is! int || record?['revoked'] == true) return;
     if (reason.isEmpty) {
-      setState(() => _error = '請填寫撤銷原因。');
+      setState(() =>
+          _error = context.tr('請填寫撤銷原因。', 'Enter a reason for reversal.'));
       return;
     }
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('確認撤銷核銷'),
+        title: Text(context.tr('確認撤銷核銷', 'Confirm reversal')),
         content: Text(
-          '核銷 #$id · ${record?['coupon_name'] ?? ''}\n\n撤銷會同步調整顧客券、積分、返現及商戶結算。',
+          context.tr(
+            '核銷 #$id · ${record?['coupon_name'] ?? ''}\n\n撤銷會同步調整顧客券、積分、返現及商戶結算。',
+            'Redemption #$id · ${record?['coupon_name'] ?? ''}\n\nReversing updates the customer coupon, points, cashback and merchant settlement.',
+          ),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
-            child: const Text('取消'),
+            child: Text(context.tr('取消', 'Cancel')),
           ),
           FilledButton(
             onPressed: () => Navigator.pop(context, true),
-            child: const Text('確認撤銷'),
+            child: Text(context.tr('確認撤銷', 'Reverse redemption')),
           ),
         ],
       ),
@@ -467,11 +501,13 @@ class _ForceRevokeRedemptionScreenState
       if (!mounted || session != _session) return;
       setState(() {
         _record = {...?record, 'revoked': true};
-        _success = '已撤銷核銷 #$id。';
+        _success = context.tr('已撤銷核銷 #$id。', 'Redemption #$id reversed.');
       });
     } catch (error) {
       if (mounted && session == _session) {
-        setState(() => _error = '${_errorMessage(error)} 如結果未確認，請重新查詢狀態。');
+        setState(() => _error = context.tr(
+            '${_errorMessage(context, error)} 如結果未確認，請重新查詢狀態。',
+            '${_errorMessage(context, error)} If the result is unconfirmed, look up the status again.'));
       }
     } finally {
       if (mounted && session == _session) setState(() => _busy = false);
@@ -485,14 +521,16 @@ class _ForceRevokeRedemptionScreenState
         ),
         body: Center(
           child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 720),
+            constraints: const BoxConstraints(maxWidth: CgTheme.formMaxWidth),
             child: ListView(
-              padding: const EdgeInsets.all(20),
+              padding: const EdgeInsets.all(CgTheme.pageInset),
               children: [
-                Text('查找核銷記錄', style: Theme.of(context).textTheme.titleLarge),
-                const SizedBox(height: 8),
-                const Text('請先核對券、店舖及核銷時間，再填寫撤銷原因。'),
-                const SizedBox(height: 16),
+                Text(context.tr('查找核銷記錄', 'Find a redemption'),
+                    style: Theme.of(context).textTheme.titleLarge),
+                const SizedBox(height: CgTheme.space8),
+                Text(context.tr('請先核對券、店舖及核銷時間，再填寫撤銷原因。',
+                    'Check the coupon, shop and redemption time, then enter the reason for reversal.')),
+                const SizedBox(height: CgTheme.space16),
                 TextField(
                   controller: _id,
                   enabled: !_busy,
@@ -508,22 +546,21 @@ class _ForceRevokeRedemptionScreenState
                   onSubmitted: (_) {
                     if (!_busy) _lookup();
                   },
-                  decoration: const InputDecoration(
-                    labelText: '核銷編號',
-                    border: OutlineInputBorder(),
+                  decoration: InputDecoration(
+                    labelText: context.tr('核銷編號', 'Redemption number'),
+                    border: const OutlineInputBorder(),
                   ),
                 ),
-                const SizedBox(height: 12),
-                Align(
-                  alignment: Alignment.centerLeft,
-                  child: FilledButton(
-                    onPressed: _busy ? null : _lookup,
-                    child: Text(_busy ? '處理中…' : '查詢'),
-                  ),
+                const SizedBox(height: CgTheme.space12),
+                MerchantPrimaryAction(
+                  onPressed: _busy ? null : _lookup,
+                  label: _busy
+                      ? context.tr('處理中…', 'Working…')
+                      : context.tr('查詢', 'Search'),
                 ),
                 if (_error != null)
                   Padding(
-                    padding: const EdgeInsets.only(top: 12),
+                    padding: const EdgeInsets.only(top: CgTheme.space12),
                     child: Text(
                       _error!,
                       style:
@@ -532,35 +569,46 @@ class _ForceRevokeRedemptionScreenState
                   ),
                 if (_success != null)
                   Padding(
-                    padding: const EdgeInsets.only(top: 12),
+                    padding: const EdgeInsets.only(top: CgTheme.space12),
                     child: Text(_success!),
                   ),
                 if (_record != null) ...[
-                  const SizedBox(height: 20),
+                  const SizedBox(height: CgTheme.space20),
                   Text(
                     '${_record!['coupon_name'] ?? ''}',
                     style: Theme.of(context).textTheme.titleMedium,
                   ),
-                  Text('店舖：${_record!['shop_name'] ?? ''}'),
-                  Text('核銷時間：${_record!['scanned_at'] ?? '未提供'}'),
-                  Text(_record!['revoked'] == true ? '狀態：已撤銷' : '狀態：已核銷'),
+                  Text(context.tr('店舖：${_record!['shop_name'] ?? ''}',
+                      'Shop: ${_record!['shop_name'] ?? ''}')),
+                  Text(context.tr('核銷時間：${_record!['scanned_at'] ?? '未提供'}',
+                      'Redeemed at: ${_record!['scanned_at'] ?? 'not provided'}')),
+                  const SizedBox(height: CgTheme.space8),
+                  Align(
+                      alignment: Alignment.centerLeft,
+                      child: MerchantStatusPill(
+                        active: _record!['revoked'] != true,
+                        label: _record!['revoked'] == true
+                            ? context.tr('已撤銷', 'Reversed')
+                            : context.tr('已核銷', 'Redeemed'),
+                      )),
                   if (_record!['revoked'] != true) ...[
-                    const SizedBox(height: 16),
+                    const SizedBox(height: CgTheme.space16),
                     TextField(
                       controller: _reason,
                       enabled: !_busy,
                       maxLength: 500,
                       maxLines: 3,
-                      decoration: const InputDecoration(
-                        labelText: '撤銷原因（必填）',
-                        border: OutlineInputBorder(),
+                      decoration: InputDecoration(
+                        labelText: context.tr(
+                            '撤銷原因（必填）', 'Reason for reversal (required)'),
+                        border: const OutlineInputBorder(),
                       ),
                     ),
                     Align(
                       alignment: Alignment.centerLeft,
                       child: FilledButton(
                         onPressed: _busy ? null : _submit,
-                        child: const Text('繼續撤銷'),
+                        child: Text(context.tr('繼續撤銷', 'Continue to reversal')),
                       ),
                     ),
                   ],

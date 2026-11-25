@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 
 import '../api_client.dart';
 import '../language.dart';
+import '../theme.dart';
+import '../widgets/merchant_layout.dart';
 
 /// null means the selection has not loaded or is incomplete; [] means all branches.
 class BranchScopePicker extends StatefulWidget {
@@ -68,7 +70,9 @@ class _BranchScopePickerState extends State<BranchScopePicker> {
           session != widget.api.sessionRevision) {
         return;
       }
-      setState(() => _error = e is ApiException ? e.message : '未能讀取分店，請重試');
+      setState(() => _error = e is ApiException
+          ? e.message
+          : context.tr('未能讀取分店，請重試', 'Could not load branches. Try again.'));
       widget.onChanged(null);
     }
   }
@@ -79,20 +83,25 @@ class _BranchScopePickerState extends State<BranchScopePicker> {
   @override
   Widget build(BuildContext context) =>
       Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Text('適用分店', style: Theme.of(context).textTheme.titleMedium),
+        Text(context.tr('適用分店', 'Available at'),
+            style: Theme.of(context).textTheme.titleMedium),
         if (_branches == null && _error == null)
           const Padding(
               padding: EdgeInsets.all(12), child: LinearProgressIndicator()),
         if (_error != null) ...[
           Text(_error!),
-          TextButton(onPressed: _load, child: const Text('重試'))
+          TextButton(onPressed: _load, child: Text(context.tr('重試', 'Retry')))
         ],
         if (_branches != null) ...[
           SegmentedButton<bool>(
             segments: [
-              const ButtonSegment(value: false, label: Text('所有分店')),
+              ButtonSegment(
+                  value: false,
+                  label: Text(context.tr('所有分店', 'All branches'))),
               if (_branches!.isNotEmpty)
-                const ButtonSegment(value: true, label: Text('指定分店')),
+                ButtonSegment(
+                    value: true,
+                    label: Text(context.tr('指定分店', 'Selected branches'))),
             ],
             selected: {_limited},
             onSelectionChanged: (values) {
@@ -106,6 +115,7 @@ class _BranchScopePickerState extends State<BranchScopePicker> {
           if (_limited)
             for (final branch in _branches!)
               CheckboxListTile(
+                  contentPadding: EdgeInsets.zero,
                   title: Text(branch['name'] as String),
                   subtitle: branch['address'] is String &&
                           (branch['address'] as String).isNotEmpty
@@ -122,8 +132,11 @@ class _BranchScopePickerState extends State<BranchScopePicker> {
                     });
                     _report();
                   }),
-          if (_limited && _selected.isEmpty) const Text('請至少選擇一間分店。'),
-          if (_branches!.isEmpty) const Text('此商店暫無分店；新增分店後可指定適用範圍。'),
+          if (_limited && _selected.isEmpty)
+            Text(context.tr('請至少選擇一間分店。', 'Select at least one branch.')),
+          if (_branches!.isEmpty)
+            Text(context.tr('此商店暫無分店；新增分店後可指定適用範圍。',
+                'Add a branch first to choose where this voucher can be used.')),
         ],
       ]);
 }
@@ -163,7 +176,8 @@ class _CouponBranchEditScreenState extends State<CouponBranchEditScreen> {
         _initial = null;
         _selection = null;
         _busy = false;
-        _error = '登入狀態已變更，請重新讀取優惠券。';
+        _error = context.tr(
+            '登入狀態已變更，請重新讀取優惠券。', 'Your session changed. Reload the voucher.');
       });
     }
   }
@@ -197,7 +211,10 @@ class _CouponBranchEditScreenState extends State<CouponBranchEditScreen> {
       });
     } catch (e) {
       if (mounted && session == _session) {
-        setState(() => _error = e is ApiException ? e.message : '未能讀取優惠券，請重試');
+        setState(() => _error = e is ApiException
+            ? e.message
+            : context.tr(
+                '未能讀取優惠券，請重試', 'Could not load the voucher. Try again.'));
       }
     }
   }
@@ -217,7 +234,10 @@ class _CouponBranchEditScreenState extends State<CouponBranchEditScreen> {
     } on ApiException catch (e) {
       if (mounted && session == _session) setState(() => _error = e.message);
     } catch (_) {
-      if (mounted && session == _session) setState(() => _error = '未能保存，請重試');
+      if (mounted && session == _session) {
+        setState(() =>
+            _error = context.tr('未能保存，請重試', 'Could not save. Try again.'));
+      }
     } finally {
       if (mounted && session == _session) setState(() => _busy = false);
     }
@@ -225,31 +245,46 @@ class _CouponBranchEditScreenState extends State<CouponBranchEditScreen> {
 
   @override
   Widget build(BuildContext context) => Scaffold(
-      appBar: AppBar(
-          title: Text(context.tr('編輯適用分店', 'Edit applicable branches'))),
-      body: ListView(padding: const EdgeInsets.all(20), children: [
-        Text(widget.couponName, style: Theme.of(context).textTheme.titleLarge),
-        const SizedBox(height: 8),
-        const Text('已有訂單的優惠券不能更改適用分店。'),
-        if (_error != null) ...[
-          const SizedBox(height: 12),
-          Text(_error!,
-              style: TextStyle(color: Theme.of(context).colorScheme.error)),
-          if (_initial == null)
-            TextButton(onPressed: _load, child: const Text('重試'))
-        ],
-        if (_initial == null && _error == null) const LinearProgressIndicator(),
-        if (_initial != null) ...[
-          const SizedBox(height: 20),
-          BranchScopePicker(
-              api: widget.api,
-              shopId: widget.shopId,
-              initial: _initial!,
-              onChanged: (ids) => setState(() => _selection = ids)),
-          const SizedBox(height: 12),
-          FilledButton(
-              onPressed: _busy || _selection == null ? null : _save,
-              child: Text(_busy ? '保存中…' : '保存')),
-        ],
-      ]));
+      appBar:
+          AppBar(title: Text(context.tr('編輯適用分店', 'Edit applicable branches'))),
+      body: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: CgTheme.formMaxWidth),
+          child: ListView(
+              padding: const EdgeInsets.all(CgTheme.pageInset),
+              children: [
+                Text(widget.couponName,
+                    style: Theme.of(context).textTheme.titleLarge),
+                const SizedBox(height: CgTheme.space8),
+                Text(context.tr('已有訂單的優惠券不能更改適用分店。',
+                    'Branches cannot be changed once orders exist for the voucher.')),
+                if (_error != null) ...[
+                  const SizedBox(height: CgTheme.space12),
+                  Text(_error!,
+                      style: TextStyle(
+                          color: Theme.of(context).colorScheme.error)),
+                  if (_initial == null)
+                    TextButton(
+                        onPressed: _load,
+                        child: Text(context.tr('重試', 'Retry')))
+                ],
+                if (_initial == null && _error == null)
+                  const LinearProgressIndicator(),
+                if (_initial != null) ...[
+                  const SizedBox(height: CgTheme.space20),
+                  BranchScopePicker(
+                      api: widget.api,
+                      shopId: widget.shopId,
+                      initial: _initial!,
+                      onChanged: (ids) => setState(() => _selection = ids)),
+                  const SizedBox(height: CgTheme.space12),
+                  MerchantPrimaryAction(
+                      onPressed: _busy || _selection == null ? null : _save,
+                      label: _busy
+                          ? context.tr('保存中…', 'Saving…')
+                          : context.tr('保存', 'Save')),
+                ],
+              ]),
+        ),
+      ));
 }

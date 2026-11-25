@@ -945,7 +945,7 @@ class _HomeShellState extends State<HomeShell> {
                     builder: (_) => AdminHomeScreen(api: widget.api, role: role)));
               },
             ),
-          ListTile(leading: const Icon(Icons.chat_outlined), title: const Text('Q仔'),
+          ListTile(leading: const Icon(Icons.chat_outlined, color: CgColors.primary), title: const Text('Q仔'),
             onTap: () { Navigator.of(context).pop(); Navigator.of(context).pushNamed('/qbot'); }),
           ListTile(
             leading: const Icon(Icons.help_outline, color: CgColors.primary),

@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 
 import '../api_client.dart';
 import '../language.dart';
+import '../theme.dart';
+import '../widgets/merchant_layout.dart';
 
 const _trialMode = bool.fromEnvironment('PUBLIC_TRIAL');
 
@@ -142,8 +144,9 @@ class _MerchantBranchesScreenState extends State<MerchantBranchesScreen> {
     }
   }
 
-  String _message(Object error) =>
-      error is ApiException ? error.message : '連線未完成，請重試。';
+  String _message(Object error) => error is ApiException
+      ? error.message
+      : context.tr('連線未完成，請重試。', 'Connection failed. Try again.');
 
   bool get _canEditShop => !_trialMode && _shop?['is_owner'] == true;
 
@@ -160,14 +163,14 @@ class _MerchantBranchesScreenState extends State<MerchantBranchesScreen> {
         _shopId == shopId &&
         _canEditShop;
     final path = '/merchant/shops/$shopId';
-    final loadFailure = context.tr('未能讀取店舖資料，請重試。',
-        'Could not load shop details. Try again.');
+    final loadFailure =
+        context.tr('未能讀取店舖資料，請重試。', 'Could not load shop details. Try again.');
     final saveFailure = context.tr('未能確認儲存結果，請重新載入核對。',
         'Could not confirm the save. Reload to check the shop details.');
-    final invalidDetails = context.tr('請核對店舖資料後再儲存。',
-        'Check the shop details and try again.');
-    final denied = context.tr('你沒有權限修改此店舖。',
-        'You do not have permission to edit this shop.');
+    final invalidDetails =
+        context.tr('請核對店舖資料後再儲存。', 'Check the shop details and try again.');
+    final denied = context.tr(
+        '你沒有權限修改此店舖。', 'You do not have permission to edit this shop.');
     final saved = context.tr('店舖資料已更新。', 'Shop details updated.');
     setState(() {
       _busy = true;
@@ -202,7 +205,8 @@ class _MerchantBranchesScreenState extends State<MerchantBranchesScreen> {
           final updated = await api.patch(path, body: changes);
           if (!current()) return;
           final confirmed = updated['shop'];
-          if (confirmed is! Map || confirmed['id'] != shopId ||
+          if (confirmed is! Map ||
+              confirmed['id'] != shopId ||
               confirmed['shop_name'] is! String ||
               (changes.containsKey('category_id') &&
                   confirmed['category_id'] != changes['category_id'])) {
@@ -223,7 +227,8 @@ class _MerchantBranchesScreenState extends State<MerchantBranchesScreen> {
         }
         if (!mounted || !current()) return;
         setState(() => _requiresRefresh = true);
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(saved)));
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(saved)));
         await _loadShops();
         return;
       }
@@ -257,11 +262,14 @@ class _MerchantBranchesScreenState extends State<MerchantBranchesScreen> {
       if (!mounted) return;
       final values = await showDialog<Map<String, String>>(
         context: context,
-        builder: (_) => _BranchEditor(
-            branch: branch, draft: draft, error: editorError),
+        builder: (_) =>
+            _BranchEditor(branch: branch, draft: draft, error: editorError),
       );
-      if (!mounted || session != _session || shopId != _shopId ||
-          values == null || _busy) {
+      if (!mounted ||
+          session != _session ||
+          shopId != _shopId ||
+          values == null ||
+          _busy) {
         return;
       }
       setState(() {
@@ -270,7 +278,8 @@ class _MerchantBranchesScreenState extends State<MerchantBranchesScreen> {
       });
       try {
         if (branch == null) {
-          await widget.api.post('/merchant/shops/$shopId/branches', body: values);
+          await widget.api
+              .post('/merchant/shops/$shopId/branches', body: values);
         } else {
           await widget.api.post(
             '/update-branch-profile',
@@ -280,7 +289,10 @@ class _MerchantBranchesScreenState extends State<MerchantBranchesScreen> {
         if (!mounted || session != _session || shopId != _shopId) return;
         setState(() => _requiresRefresh = true);
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(branch == null ? '分店已建立' : '分店資料已更新')),
+          SnackBar(
+              content: Text(branch == null
+                  ? context.tr('分店已建立', 'Branch added')
+                  : context.tr('分店資料已更新', 'Branch updated'))),
         );
         await _loadBranches(shopId);
         return;
@@ -289,14 +301,17 @@ class _MerchantBranchesScreenState extends State<MerchantBranchesScreen> {
           // A validation or authorization response explicitly rejects the
           // operation. Keep the draft so it can be corrected or copied.
           if (error is ApiException &&
-              (error.status == 400 || error.status == 403 || error.status == 422)) {
+              (error.status == 400 ||
+                  error.status == 403 ||
+                  error.status == 422)) {
             draft = values;
             editorError = error.message;
             continue;
           }
           setState(() {
             _requiresRefresh = true;
-            _error = '${_message(error)} 如結果未確認，請先重新載入核對。';
+            _error = context.tr('${_message(error)} 如結果未確認，請先重新載入核對。',
+                '${_message(error)} If the result is unconfirmed, reload to check.');
           });
         }
         return;
@@ -309,27 +324,29 @@ class _MerchantBranchesScreenState extends State<MerchantBranchesScreen> {
   @override
   Widget build(BuildContext context) => Scaffold(
         appBar: AppBar(
-          title: Text(context.tr('店舖與分店', 'Shops and branches')),
+          title: Text(context.tr('商店與分店', 'Shops and branches')),
         ),
         body: Center(
           child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 720),
+            constraints: const BoxConstraints(maxWidth: CgTheme.listMaxWidth),
             child: RefreshIndicator(
               onRefresh: _loadShops,
               child: ListView(
                 physics: const AlwaysScrollableScrollPhysics(),
-                padding: const EdgeInsets.all(20),
+                padding: const EdgeInsets.all(CgTheme.pageInset),
                 children: [
                   Text(_trialMode
-                      ? context.tr('選擇店舖，查看其分店資料。', 'Choose a shop to view its branches.')
-                      : context.tr('選擇店舖，查看或更新其分店資料。', 'Choose a shop to view or update its branches.')),
+                      ? context.tr('選擇店舖，查看其分店資料。',
+                          'Choose a shop to view its branches.')
+                      : context.tr('選擇店舖，查看或更新其分店資料。',
+                          'Choose a shop to view or update its branches.')),
                   if (_shops.isNotEmpty) ...[
-                    const SizedBox(height: 16),
+                    const SizedBox(height: CgTheme.space16),
                     DropdownButtonFormField<int>(
                       initialValue: _shopId,
-                      decoration: const InputDecoration(
-                        labelText: '店舖',
-                        border: OutlineInputBorder(),
+                      decoration: InputDecoration(
+                        labelText: context.tr('店舖', 'Shop'),
+                        border: const OutlineInputBorder(),
                       ),
                       items: _shops
                           .map(
@@ -350,7 +367,7 @@ class _MerchantBranchesScreenState extends State<MerchantBranchesScreen> {
                     ),
                   ],
                   if (_error != null) ...[
-                    const SizedBox(height: 16),
+                    const SizedBox(height: CgTheme.space16),
                     Text(
                       _error!,
                       style:
@@ -367,13 +384,14 @@ class _MerchantBranchesScreenState extends State<MerchantBranchesScreen> {
                       child: Center(child: CircularProgressIndicator()),
                     ),
                   if (!_loading && _error == null && _shops.isEmpty)
-                    const Padding(
-                      padding: EdgeInsets.only(top: 24),
-                      child: Text('目前沒有可管理的店舖。'),
+                    Padding(
+                      padding: const EdgeInsets.only(top: CgTheme.space24),
+                      child: Text(
+                          context.tr('目前沒有可管理的店舖。', 'No shops to manage.')),
                     ),
                   if (!_loading && _shopId != null) ...[
                     if (_canEditShop) ...[
-                      const SizedBox(height: 16),
+                      const SizedBox(height: CgTheme.space16),
                       OutlinedButton.icon(
                         key: const ValueKey('edit-shop-details'),
                         onPressed: _busy || _requiresRefresh ? null : _editShop,
@@ -381,29 +399,23 @@ class _MerchantBranchesScreenState extends State<MerchantBranchesScreen> {
                         label: Text(context.tr('編輯店舖資料', 'Edit shop details')),
                       ),
                     ],
-                    const SizedBox(height: 20),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Text(
-                            '分店',
-                            style: Theme.of(context).textTheme.titleLarge,
-                          ),
-                        ),
-                        if (!_trialMode && _shop?['can_manage_branches'] == true)
-                          FilledButton.icon(
-                            onPressed: _busy || _requiresRefresh
-                                ? null
-                                : () => _edit(),
-                            icon: const Icon(Icons.add),
-                            label: Text(context.tr('新增分店', 'Add branch')),
-                          ),
-                      ],
-                    ),
+                    const SizedBox(height: CgTheme.space20),
+                    Text(context.tr('分店', 'Branches'),
+                        style: Theme.of(context).textTheme.titleMedium),
+                    if (!_trialMode &&
+                        _shop?['can_manage_branches'] == true) ...[
+                      const SizedBox(height: CgTheme.space12),
+                      MerchantPrimaryAction(
+                          onPressed:
+                              _busy || _requiresRefresh ? null : () => _edit(),
+                          icon: Icons.add,
+                          label: context.tr('新增分店', 'Add branch')),
+                    ],
                     if (_branches.isEmpty && _error == null)
-                      const Padding(
-                        padding: EdgeInsets.symmetric(vertical: 18),
-                        child: Text('尚未新增分店。'),
+                      Padding(
+                        padding: const EdgeInsets.symmetric(
+                            vertical: CgTheme.space16),
+                        child: Text(context.tr('尚未新增分店。', 'No branches yet.')),
                       ),
                     for (final branch in _branches)
                       ListTile(
@@ -417,20 +429,22 @@ class _MerchantBranchesScreenState extends State<MerchantBranchesScreen> {
                               .where((v) => v is String && v.isNotEmpty)
                               .join(' · '),
                         ),
-                        trailing: !_trialMode && _shop?['can_manage_branches'] == true
-                            ? TextButton(
-                                onPressed: _busy || _requiresRefresh
-                                    ? null
-                                    : () => _edit(branch),
-                                child: Text(context.tr('編輯', 'Edit')),
-                              )
-                            : null,
+                        trailing:
+                            !_trialMode && _shop?['can_manage_branches'] == true
+                                ? TextButton(
+                                    onPressed: _busy || _requiresRefresh
+                                        ? null
+                                        : () => _edit(branch),
+                                    child: Text(context.tr('編輯', 'Edit')),
+                                  )
+                                : null,
                       ),
                     if (_shop?['can_manage_branches'] != true)
-                      Text(context.tr('你可以查看分店；如需修改，請聯絡店主。', 'Contact the shop owner to edit branch details.')),
+                      Text(context.tr('你可以查看分店；如需修改，請聯絡店主。',
+                          'Contact the shop owner to edit branch details.')),
                     if (_shop?['can_manage_members'] == true &&
                         widget.staffBuilder != null) ...[
-                      const SizedBox(height: 20),
+                      const SizedBox(height: CgTheme.space20),
                       OutlinedButton.icon(
                         onPressed: _busy
                             ? null
@@ -472,7 +486,9 @@ class _BranchEditorState extends State<_BranchEditor> {
       text: widget.draft?['name'] ?? widget.branch?['name'] as String? ?? '',
     );
     _address = TextEditingController(
-      text: widget.draft?['address'] ?? widget.branch?['address'] as String? ?? '',
+      text: widget.draft?['address'] ??
+          widget.branch?['address'] as String? ??
+          '',
     );
     _phone = TextEditingController(
       text: widget.draft?['phone'] ?? widget.branch?['phone'] as String? ?? '',
@@ -489,7 +505,9 @@ class _BranchEditorState extends State<_BranchEditor> {
 
   @override
   Widget build(BuildContext context) => AlertDialog(
-        title: Text(widget.branch == null ? '新增分店' : '編輯分店'),
+        title: Text(widget.branch == null
+            ? context.tr('新增分店', 'Add branch')
+            : context.tr('編輯分店', 'Edit branch')),
         content: SingleChildScrollView(
           child: Form(
             key: _form,
@@ -497,23 +515,32 @@ class _BranchEditorState extends State<_BranchEditor> {
               mainAxisSize: MainAxisSize.min,
               children: [
                 if (widget.error != null) ...[
-                  Text(widget.error!, style: TextStyle(color: Theme.of(context).colorScheme.error)),
-                  const SizedBox(height: 12),
+                  Text(widget.error!,
+                      style: TextStyle(
+                          color: Theme.of(context).colorScheme.error)),
+                  const SizedBox(height: CgTheme.space12),
                 ],
                 TextFormField(
                   controller: _name,
-                  decoration: const InputDecoration(labelText: '分店名稱（必填）'),
-                  validator: (value) =>
-                      (value?.trim().isEmpty ?? true) ? '請輸入分店名稱' : null,
+                  decoration: InputDecoration(
+                      labelText:
+                          context.tr('分店名稱（必填）', 'Branch name (required)')),
+                  validator: (value) => (value?.trim().isEmpty ?? true)
+                      ? context.tr('請輸入分店名稱', 'Enter the branch name')
+                      : null,
                 ),
+                const SizedBox(height: CgTheme.space12),
                 TextFormField(
                   controller: _address,
-                  decoration: const InputDecoration(labelText: '地址'),
+                  decoration:
+                      InputDecoration(labelText: context.tr('地址', 'Address')),
                 ),
+                const SizedBox(height: CgTheme.space12),
                 TextFormField(
                   controller: _phone,
                   keyboardType: TextInputType.phone,
-                  decoration: const InputDecoration(labelText: '電話'),
+                  decoration:
+                      InputDecoration(labelText: context.tr('電話', 'Phone')),
                 ),
               ],
             ),
@@ -539,7 +566,6 @@ class _BranchEditorState extends State<_BranchEditor> {
         ],
       );
 }
-
 
 class _ShopCategory {
   const _ShopCategory(this.id, this.name, this.nameEn);
@@ -600,8 +626,11 @@ class _ShopTextEditorState extends State<_ShopTextEditor> {
       if (row is! Map) continue;
       final id = row['id'];
       final name = row['name'];
-      if (id is! int || id <= 0 || name is! String ||
-          name.trim().isEmpty || !ids.add(id)) {
+      if (id is! int ||
+          id <= 0 ||
+          name is! String ||
+          name.trim().isEmpty ||
+          !ids.add(id)) {
         throw const FormatException('Invalid category');
       }
       final english = row['name_en'];
@@ -616,7 +645,9 @@ class _ShopTextEditorState extends State<_ShopTextEditor> {
     super.initState();
     _original = {
       for (final (key, readKey, _, _) in fields)
-        key: widget.shop[readKey] is String ? widget.shop[readKey] as String : '',
+        key: widget.shop[readKey] is String
+            ? widget.shop[readKey] as String
+            : '',
     };
     _controllers = {
       for (final key in _original.keys)
@@ -671,9 +702,10 @@ class _ShopTextEditorState extends State<_ShopTextEditor> {
     final categories = _categories ?? const <_ShopCategory>[];
     final name = widget.shop['category_name'];
     final hint = name is String && name.trim().isNotEmpty
-        ? name : context.tr('選擇分類', 'Choose a category');
+        ? name
+        : context.tr('選擇分類', 'Choose a category');
     return Padding(
-      padding: const EdgeInsets.only(top: 12),
+      padding: const EdgeInsets.only(top: CgTheme.space12),
       child: InputDecorator(
         decoration: InputDecoration(labelText: context.tr('分類', 'Category')),
         child: DropdownButtonHideUnderline(
@@ -695,9 +727,11 @@ class _ShopTextEditorState extends State<_ShopTextEditor> {
                       overflow: TextOverflow.ellipsis),
                 ),
             ],
-            onChanged: categories.isEmpty ? null : (selected) {
-              if (selected != null) setState(() => _category = selected);
-            },
+            onChanged: categories.isEmpty
+                ? null
+                : (selected) {
+                    if (selected != null) setState(() => _category = selected);
+                  },
           ),
         ),
       ),
@@ -715,17 +749,22 @@ class _ShopTextEditorState extends State<_ShopTextEditor> {
             children: [
               if (widget.error != null)
                 Text(widget.error!,
-                    style: TextStyle(color: Theme.of(context).colorScheme.error)),
+                    style:
+                        TextStyle(color: Theme.of(context).colorScheme.error)),
               _categoryField(context),
               for (final (key, _, chinese, english) in fields)
                 Padding(
-                  padding: const EdgeInsets.only(top: 12),
+                  padding: const EdgeInsets.only(top: CgTheme.space12),
                   child: TextFormField(
                     key: ValueKey('edit-shop-$key'),
                     controller: _controllers[key],
-                    decoration: InputDecoration(labelText: context.tr(chinese, english)),
+                    decoration: InputDecoration(
+                        labelText: context.tr(chinese, english)),
                     keyboardType: key == 'phone' ? TextInputType.phone : null,
-                    maxLines: const {'description', 'announcement'}.contains(key) ? 3 : 1,
+                    maxLines:
+                        const {'description', 'announcement'}.contains(key)
+                            ? 3
+                            : 1,
                     onChanged: (_) => setState(() {}),
                     validator: key != 'name'
                         ? null

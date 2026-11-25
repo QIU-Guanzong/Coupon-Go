@@ -908,7 +908,7 @@ class _MerchantApplicationFormScreenState
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('商戶入駐申請')),
+      appBar: AppBar(title: Text(context.tr('商戶入駐申請', 'Merchant application'))),
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
@@ -1019,7 +1019,7 @@ class _AdminScreenState extends State<AdminScreen>
             builder: (c) {
               final ctrl = TextEditingController();
               return AlertDialog(
-                title: const Text('拒絕原因'),
+                title: Text(c.tr('拒絕原因', 'Reason for rejection')),
                 content: TextField(
                     controller: ctrl,
                     decoration:
@@ -1151,13 +1151,13 @@ class _AdminScreenState extends State<AdminScreen>
   Widget build(BuildContext context) {
     if (_error != null) {
       return Scaffold(
-        appBar: AppBar(title: const Text('管理後台')),
+        appBar: AppBar(title: Text(context.tr('管理後台', 'Admin console'))),
         body: Center(child: Text(_error!)),
       );
     }
     return Scaffold(
       appBar: AppBar(
-        title: const Text('管理後台'),
+        title: Text(context.tr('管理後台', 'Admin console')),
         bottom: TabBar(
           controller: _tab,
           isScrollable: true,
