@@ -1,3 +1,4 @@
+import 'screens/vendor_coupon_workspace.dart';
 import 'screens/merchant_onboarding.dart';
 import 'screens/merchant_usage.dart';
 import 'screens/trial_banner.dart';
@@ -196,6 +197,14 @@ class _CouponGoAppState extends State<CouponGoApp> {
             body: Center(child: Text(c.tr('找不到此頁面。', 'Page not found.'))),
           ));
         }
+        final couponPath = RegExp(r'^/vendor/coupons/([1-9][0-9]*)$').firstMatch(route);
+        final couponId = couponPath == null ? null : int.tryParse(couponPath[1]!);
+        if (couponId != null) {
+          return MaterialPageRoute<String>(
+            settings: settings,
+            builder: (_) => VendorCouponDetail(api: _api, couponId: couponId),
+          );
+        }
         switch (settings.name) {
           case '/notifications':
             return MaterialPageRoute(
@@ -253,6 +262,11 @@ class _CouponGoAppState extends State<CouponGoApp> {
                               builder: (_) =>
                                   CouponDetailScreen(api: _api, coupon: c))),
                     ));
+          case '/vendor/coupons':
+            return MaterialPageRoute<void>(
+              settings: settings,
+              builder: (_) => VendorCouponWorkspace(api: _api),
+            );
           case '/vendor/issue':
             return MaterialPageRoute(
                 builder: (_) => IssueCouponScreen(api: _api));

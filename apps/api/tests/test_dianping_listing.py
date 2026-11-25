@@ -12,8 +12,10 @@ import io
 import os
 import sys
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 
 import pytest
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -27,6 +29,7 @@ from app import config, models  # noqa: E402
 from app.database import Base, get_db  # noqa: E402
 from app.main import app  # noqa: E402
 from app.models_packages import Package  # noqa: E402
+from app.routers.coupons import ensure_redeemable  # noqa: E402
 from app.seed import seed  # noqa: E402
 from tests.db_isolation import sqlite_test_path  # noqa: E402
 
@@ -1100,3 +1103,65 @@ def test_listing_dates_with_offsets_are_normalized_on_create_and_edit(client):
     with TestingSession() as db:
         saved = db.get(Package, package_id)
         assert saved.valid_from == expected_start and saved.valid_to == expected_later
+
+
+MERCHANT_COUPON_PAGE = "/api/v3/get-vendor-coupon-list"
+
+
+def test_merchant_coupon_page_search_limits_and_legacy_shape(client):
+    headers = _vendor_headers(client)
+    first = _create_coupon(client, coupon_name="百分號%晚市", name_en="Latte 100%")
+    second = _create_coupon(client, coupon_name="普通午市", name_en="Latte 100X")
+    legacy = client.get(MERCHANT_COUPON_PAGE, headers=headers).json()
+    assert set(legacy) == {"coupons"}
+    response = client.get(MERCHANT_COUPON_PAGE, headers=headers, params={
+        "page": 1, "page_size": 1, "q": "LATTE 100",
+    })
+    assert response.status_code == 200, response.text
+    data = response.json()
+    assert data["total"] == 2
+    assert data["coupons"][0]["id"] == second["id"]
+    p2 = client.get(MERCHANT_COUPON_PAGE, headers=headers, params={
+        "page": 2, "page_size": 1, "q": "LATTE 100",
+    }).json()
+    assert p2["coupons"][0]["id"] == first["id"]
+    literal = client.get(MERCHANT_COUPON_PAGE, headers=headers, params={
+        "page": 1, "q": "%晚市",
+    }).json()
+    assert [row["id"] for row in literal["coupons"]] == [first["id"]]
+    assert client.get(MERCHANT_COUPON_PAGE, headers=headers, params={"page": 0}).status_code == 422
+    assert client.get(MERCHANT_COUPON_PAGE, headers=headers, params={"page_size": 101}).status_code == 422
+
+
+def test_merchant_detail_rejection_reason_not_exposed_on_legacy_or_other_account(client):
+    row = _create_coupon(client, coupon_name="待核對標題")
+    cid = row["id"]
+    assert _approve_coupon(client, cid, False, "名稱需與店招一致").status_code == 200
+    headers = _vendor_headers(client)
+    details_url = f"/api/v3/vendor/coupons/{cid}"
+    data = client.get(details_url, headers=headers)
+    assert data.status_code == 200, data.text
+    assert data.json()["coupon"]["rejection_reason"] == "名稱需與店招一致"
+    listing = client.get(MERCHANT_COUPON_PAGE, headers=headers, params={
+        "page": 1, "status": "rejected", "q": "待核對標題",
+    }).json()
+    assert listing["coupons"][0]["rejection_reason"] == "名稱需與店招一致"
+    old = client.get(MERCHANT_COUPON_PAGE, headers=headers, params={"status": "rejected"}).json()["coupons"]
+    assert next(row for row in old if row["id"] == cid).get("rejection_reason") is None
+    assert client.get(f"/api/v3/vendor/coupons/{cid + 100000}", headers=headers).status_code == 404
+    customer = _register_and_login(client, "workspace-scope@example.com")
+    assert client.get(details_url, headers=customer).status_code == 403
+    assert client.get(MERCHANT_COUPON_PAGE, params={"page": 1}, headers=customer).status_code == 403
+
+
+@pytest.mark.parametrize("status", ["paused", "draft", "pending_review"])
+def test_c3_redeemability_differs_by_acquisition_and_still_checks_expiry(status):
+    now = _now()
+    coupon = SimpleNamespace(status=status, valid_from=now - timedelta(days=1),
+                             valid_to=now + timedelta(days=1))
+    with pytest.raises(HTTPException):
+        ensure_redeemable(coupon, purchased_order=False)
+    ensure_redeemable(coupon, purchased_order=True)
+    coupon.valid_to = now - timedelta(days=1)
+    with pytest.raises(HTTPException):
+        ensure_redeemable(coupon, purchased_order=True)

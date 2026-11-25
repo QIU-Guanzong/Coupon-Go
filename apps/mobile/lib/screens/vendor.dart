@@ -15,6 +15,7 @@ import '../widgets/merchant_layout.dart';
 import '../widgets/widgets.dart';
 import 'merchant_review_shops.dart';
 import 'vendor_packages.dart';
+import 'vendor_coupon_workspace.dart' show confirmVendorCouponAction;
 import 'coupon_branch_scope.dart';
 import 'redemption_recovery.dart';
 import 'merchant_dashboard.dart';
@@ -227,10 +228,10 @@ class _VendorHomeScreenState extends State<VendorHomeScreen> {
         identical(api, widget.api) &&
         session == _session &&
         session == api.sessionRevision;
-    bool canSubmit() {
+    bool canSubmit({bool afterConfirmation = false}) {
       if (!current() ||
           !_canChangeCoupon(coupon) ||
-          _savingCoupons.contains(coupon.id)) {
+          (!afterConfirmation && _savingCoupons.contains(coupon.id))) {
         return false;
       }
       final displayed = _couponStatus == null ? _coupons : _filteredCoupons;
@@ -238,35 +239,16 @@ class _VendorHomeScreenState extends State<VendorHomeScreen> {
         if (item.id != coupon.id || item.shopId != coupon.shopId) continue;
         final status = _pendingStatus(item) ?? item.status;
         return (_couponStatus == null || status == _couponStatus) &&
-            VendorCouponAction.forStatus(status).contains(action);
+            VendorCouponAction.forManagementStatus(status).contains(action);
       }
       return false;
     }
 
     if (!canSubmit()) return;
-    if (action == VendorCouponAction.unlist) {
-      final confirm = await showDialog<bool>(
-        context: context,
-        builder: (dialog) => AlertDialog(
-          title: Text(dialog.tr('下架優惠券？', 'Unlist coupon?')),
-          content: Text(dialog.tr(
-            '「${coupon.name}」會移回草稿，顧客將看不到這張券。',
-            '"${coupon.name}" will return to drafts and no longer appear to customers.',
-          )),
-          actions: [
-            TextButton(
-                onPressed: () => Navigator.of(dialog).pop(false),
-                child: Text(dialog.tr('取消', 'Cancel'))),
-            TextButton(
-                onPressed: () => Navigator.of(dialog).pop(true),
-                child: Text(dialog.tr('確認下架', 'Confirm unlist'))),
-          ],
-        ),
-      );
-      if (confirm != true || !canSubmit()) return;
-    }
     setState(() => _savingCoupons.add(coupon.id));
     try {
+      final confirmed = await confirmVendorCouponAction(context, coupon.name, action);
+      if (!confirmed || !canSubmit(afterConfirmation: true)) return;
       final status = await api.updateVendorCouponStatus(coupon.id, action);
       if (!current()) return;
       setState(() => _couponReceipts[coupon.id] = (++_couponChange, status));
@@ -283,6 +265,14 @@ class _VendorHomeScreenState extends State<VendorHomeScreen> {
       await _refresh();
     } finally {
       if (current()) setState(() => _savingCoupons.remove(coupon.id));
+    }
+  }
+
+  Future<void> _openCouponWorkspace() async {
+    final session = _session;
+    await Navigator.of(context).pushNamed('/vendor/coupons');
+    if (mounted && session == _session && widget.api.sessionRevision == session) {
+      await _refresh();
     }
   }
 
@@ -348,6 +338,13 @@ class _VendorHomeScreenState extends State<VendorHomeScreen> {
                 ),
             ];
             final operations = <Widget>[
+              if (_allows('can_manage_coupons'))
+                OutlinedButton.icon(
+                  style: _toolButtonStyle,
+                  onPressed: _openCouponWorkspace,
+                  icon: const Icon(Icons.local_offer_outlined),
+                  label: _toolLabel(context.tr('券管理', 'Manage coupons')),
+                ),
               if (_allows('is_owner'))
                 OutlinedButton.icon(
                   style: _toolButtonStyle,
@@ -522,9 +519,16 @@ class _VendorHomeScreenState extends State<VendorHomeScreen> {
                   const SizedBox(height: CgTheme.space20),
                 ],
                 if (_allows('can_manage_coupons')) ...[
-                  Text(
-                    context.tr('我的優惠券', 'My coupons'),
-                    style: Theme.of(context).textTheme.titleMedium,
+                  InkWell(
+                    onTap: _openCouponWorkspace,
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(vertical: CgTheme.space8),
+                      child: Row(children: [
+                        Expanded(child: Text(context.tr('我的優惠券', 'My coupons'),
+                          style: Theme.of(context).textTheme.titleMedium)),
+                        const Icon(Icons.chevron_right),
+                      ]),
+                    ),
                   ),
                   DropdownButton<String>(
                     key: const ValueKey('vendor-coupon-status-filter'),
@@ -566,7 +570,7 @@ class _VendorHomeScreenState extends State<VendorHomeScreen> {
                   ...shownCoupons.map((c) {
                     final status = _pendingStatus(c) ?? c.status;
                     final actions = _canChangeCoupon(c)
-                        ? VendorCouponAction.forStatus(status)
+                        ? VendorCouponAction.forManagementStatus(status)
                         : const <VendorCouponAction>[];
                     return Card(
                       margin: const EdgeInsets.only(top: CgTheme.space8),

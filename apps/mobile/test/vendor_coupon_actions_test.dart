@@ -157,8 +157,12 @@ void main() {
       final api = _LifecycleApi();
       await _open(tester, api, english: true);
       await _select(tester, 'Pause');
+      await tester.tap(find.text('Confirm'));
+      await tester.pumpAndSettle();
       expect(_status(tester), 'Paused');
       await _select(tester, 'Resume');
+      await tester.tap(find.text('Confirm'));
+      await tester.pumpAndSettle();
       expect(_status(tester), 'Scheduled');
       await _select(tester, 'Unlist');
       expect(find.text('Unlist coupon?'), findsOneWidget);
@@ -172,6 +176,8 @@ void main() {
       await tester.pumpAndSettle();
       expect(_status(tester), 'Draft');
       await _select(tester, 'Submit for review');
+      await tester.tap(find.text('Confirm'));
+      await tester.pumpAndSettle();
       expect(_status(tester), 'Pending review');
       expect(api.requests, [
         '/vendor/coupons/3/pause',
@@ -209,7 +215,10 @@ void main() {
       final item = tester.widget<PopupMenuButton<VendorCouponAction>>(buttons);
       item.onSelected!(VendorCouponAction.pause);
       item.onSelected!(VendorCouponAction.pause);
-      await tester.pump();
+      await tester.pumpAndSettle();
+      expect(api.requests, isEmpty);
+      await tester.tap(find.text('確認'));
+      await tester.pumpAndSettle();
       expect(api.requests, ['/vendor/coupons/3/pause']);
       expect(_status(tester), '已上架');
       api.waitForList = Completer<void>();
@@ -241,6 +250,8 @@ void main() {
     await tester.pumpAndSettle();
     expect(_status(tester), 'Listed');
     await _select(tester, 'Pause');
+    await tester.tap(find.text('Confirm'));
+    await tester.pumpAndSettle();
     expect(find.byKey(_statusKey), findsNothing);
     expect(find.text('No coupons with this status.'), findsOneWidget);
     expect(api.requests, ['/vendor/coupons/3/pause']);

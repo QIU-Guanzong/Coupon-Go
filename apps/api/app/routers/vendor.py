@@ -19,12 +19,13 @@ from typing import Any, Dict, List, Optional, Union
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, ValidationError
-from sqlalchemy import or_
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
 from .. import listing, models, schemas
 from ..database import get_db
 from ..deps import get_current_user, require_role
+from ..models_line_b import AdminAuditLog
 from ..models_packages import Order, REFUND_POLICIES
 from ..notify import notify
 from ..permissions_line_f import (
@@ -228,20 +229,80 @@ class ShopPatchIn(BaseModel):
 
 @router.get("/get-vendor-coupon-list")
 def vendor_coupons(status: str = Query(None),
+                   page: int | None = Query(None, ge=1, le=100_000),
+                   page_size: int = Query(20, ge=1, le=100),
+                   q: str | None = Query(None, max_length=160),
                    vendor: models.User = Depends(get_current_user),
                    db: Session = Depends(get_db)):
     _require_any_coupon_manager(db, vendor)
-    q = db.query(models.Coupon)
+    query = db.query(models.Coupon)
     if vendor.role != "admin":
         ids = {row.id for row in db.query(models.Shop.id).filter_by(vendor_id=vendor.id)}
         ids.update(row.shop_id for row in db.query(models.ShopMember.shop_id).filter(
             models.ShopMember.user_id == vendor.id, models.ShopMember.status == "active",
             models.ShopMember.role.in_(("merchant-admin", "manager"))))
-        q = q.filter(models.Coupon.shop_id.in_(ids))
+        query = query.filter(models.Coupon.shop_id.in_(ids))
     if status:
-        q = q.filter(models.Coupon.status == status)
-    coupons = q.order_by(models.Coupon.id.desc()).all()
-    return {"coupons": [coupon_out(db, c) for c in coupons]}
+        query = query.filter(models.Coupon.status == status)
+    if page is None:
+        coupons = query.order_by(models.Coupon.id.desc()).all()
+        return {"coupons": [coupon_out(db, c) for c in coupons]}
+    # Mirror rows belong to the package workspace, not to coupon management.
+    query = query.filter(models.Coupon.kind != "package")
+    term = (q or "").strip()
+    if term:
+        query = query.filter(or_(
+            models.Coupon.coupon_name.icontains(term, autoescape=True),
+            models.Coupon.name_en.icontains(term, autoescape=True),
+        ))
+    total = query.count()
+    coupons = (query.order_by(models.Coupon.id.desc())
+               .offset((page - 1) * page_size).limit(page_size).all())
+    reasons = _coupon_rejection_reasons(db, coupons)
+    return {"coupons": [_managed_coupon_out(db, c, reasons) for c in coupons],
+            "page": page, "page_size": page_size, "total": total}
+
+
+def _coupon_rejection_reasons(db: Session, coupons: list[models.Coupon]) -> dict:
+    ids = [coupon.id for coupon in coupons if coupon.status == "rejected"]
+    if not ids:
+        return {}
+    # An approval newer than a rejection must not expose stale feedback.
+    latest_ids = db.query(func.max(AdminAuditLog.id)).filter(
+        AdminAuditLog.target_id.in_(ids), AdminAuditLog.target_type == "coupon",
+        AdminAuditLog.action.in_(("coupon.approve", "coupon.reject")),
+    ).group_by(AdminAuditLog.target_id)
+    logs = db.query(AdminAuditLog).filter(
+        AdminAuditLog.id.in_(latest_ids.statement),
+        AdminAuditLog.action == "coupon.reject",
+    ).all()
+    return {log.target_id: log.detail for log in logs if (log.detail or "").strip()}
+
+
+def _managed_coupon_out(db: Session, coupon: models.Coupon, reasons: dict) -> dict:
+    row = coupon_out(db, coupon)
+    if coupon.id in reasons:
+        row["rejection_reason"] = reasons[coupon.id]
+    return row
+
+
+@router.get("/vendor/coupons/{coupon_id}")
+def vendor_coupon_details(coupon_id: int,
+                          vendor: models.User = Depends(get_current_user),
+                          db: Session = Depends(get_db)):
+    _require_any_coupon_manager(db, vendor)
+    try:
+        coupon = _get_vendor_coupon(db, coupon_id, vendor)
+    except HTTPException as exc:
+        if exc.status_code != 403:
+            raise
+        # The same 404 as a missing record: coupon IDs are not discoverable
+        # across shops by someone who can manage a different shop.
+        raise HTTPException(status_code=404, detail="找不到此優惠券") from None
+    if coupon.kind == "package":
+        raise HTTPException(status_code=404, detail="找不到此優惠券")
+    return {"coupon": _managed_coupon_out(
+        db, coupon, _coupon_rejection_reasons(db, [coupon]))}
 
 
 @router.get("/coupon-templates")

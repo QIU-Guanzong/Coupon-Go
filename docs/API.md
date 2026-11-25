@@ -180,9 +180,11 @@ reviewed_by, reviewed_at, created_at}`。P1-D 新增：`br_number, documents{br,
 | 方法 | 路徑 | 說明 |
 |---|---|---|
 | GET | `/get-vendor-coupon-list?status=` | 商戶的券（`status` 篩選：draft / pending_review / active / paused / scheduled / rejected / expired / sold_out） |
+| GET | `/get-vendor-coupon-list?page=1&page_size=20&status=&q=` | 新券管理頁：中／英文券名不分大小寫子字串搜尋，按 ID 倒序；回傳 `coupons, page, page_size, total`，每頁最多 100。套餐對應券由套餐管理處理。未傳 `page` 保留原未分頁回應。 |
+| GET | `/vendor/coupons/{id}` | 店主、有效且有 `manage_coupons` 的店員及管理員可查詳情。無券管理權限回 403；其他商戶的券和套餐對應券回 404。分頁列表／詳情有有效拒絕記錄才回傳 `rejection_reason` 原文。 |
 | POST | `/add-coupon-preview` | 發券預覽（第一步，不寫庫） |
 | POST | `/coupon-previewed` | 發券建立（第二步，狀態 pending_review；請求新增 `sale_price`（空/0=免費，>0=付費，P1-A 口徑）、`refund_policy`（anytime/expiry_only/non_refundable，默認 anytime）、`per_user_limit`（默認 1）） |
-| POST | `/vendor/coupons/{id}/approve?approve=&reason=` | 管理員審核通過/拒絕（通過時 `valid_from` 未到 → `scheduled`，到點自動上架；駁回帶 `reason`，寫 `admin_audit_logs`） |
+| POST | `/vendor/coupons/{id}/approve?approve=&reason=` | 管理員審核通過/拒絕（通過時 `valid_from` 未到 → `scheduled`；由上架檢查在符合條件時轉為上架；駁回帶 `reason`，寫 `admin_audit_logs`） |
 | PATCH | `/vendor/coupons/{id}` | 商戶編輯券（改已上架/已暫停/已排期 → 回 pending_review 重審；草稿/被駁回 → 草稿；`total` 改動同步 `remaining`） |
 | POST | `/vendor/coupons/{id}/pause`、`/resume`、`/unlist`、`/submit` | 暫停 / 恢復上架 / 下架回草稿 / 提交審核（上架生命週期，見 `DIANPING_LISTING_API.md`） |
 | POST | `/vendor/coupons/bulk` | 批量建券（1–20 張，逐項報錯，全部進 pending_review） |
@@ -203,6 +205,13 @@ reviewed_by, reviewed_at, created_at}`。P1-D 新增：`br_number, documents{br,
 | POST | `/uploads/merchant-images` | 商戶圖片上傳（vendor/admin，jpg/png/webp/gif，≤5MB，最多 9 張） |
 | PATCH | `/admin/merchant-applications/{id}` | 修改待審核的入駐申請（dianping §1.6，admin） |
 | PATCH | `/admin/shops/{shop_id}/members/{user_id}` | 改店員角色（dianping §1.3，店主/admin） |
+
+券在暫停（`paused`）、下架（回 `draft`）、商戶編輯後重審（`pending_review`）
+期間均不出現在公開列表，不能新領／購買。上述三種狀態下，非購買取得的券不可核銷；
+已付款購買且符合付款、退款、有效期、分店與兌換碼等核驗的未用券仍可核銷。
+準備和提交均經 `routers/coupons.py: ensure_redeemable`；資格另見
+`ensure_paid_voucher`、`routers/redemption.py: _check_item`。商戶編輯已存在
+非取消訂單的券維持 409 保護，本期未改任何價格、付款或核銷規則。
 
 **dianping 商家管理（§1）字段變更**（詳見 `docs/DIANPING_MERCHANT_API.md`）：
 

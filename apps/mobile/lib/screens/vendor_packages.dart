@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../api_client.dart';
 import '../language.dart';
 import '../theme.dart';
+import '../vendor_coupon_lifecycle.dart';
 import '../widgets/merchant_layout.dart';
 
 
@@ -181,13 +182,14 @@ class _VendorPackagesScreenState extends State<VendorPackagesScreen> {
     final status = '${item['status'] ?? ''}';
     final id = item['id'] as int;
     final actions = <String, String>{
-      if (!['expired', 'sold_out'].contains(status)) 'edit': t('編輯', 'Edit'),
-      if (status == 'active') 'pause': t('暫停上架', 'Pause'),
-      if (status == 'paused') 'resume': t('恢復上架', 'Resume'),
-      if (['active', 'paused', 'scheduled', 'pending_review', 'rejected']
-          .contains(status))
-        'unlist': t('下架', 'Unlist'),
-      if (['draft', 'rejected'].contains(status)) 'submit': t('提交上架', 'Submit'),
+      if (VendorCouponAction.canEditListing(status)) 'edit': t('編輯', 'Edit'),
+      for (final action in VendorCouponAction.forManagementStatus(status))
+        action.endpoint: switch (action) {
+          VendorCouponAction.pause => t('暫停上架', 'Pause'),
+          VendorCouponAction.resume => t('恢復上架', 'Resume'),
+          VendorCouponAction.unlist => t('下架', 'Unlist'),
+          VendorCouponAction.submit => t('提交上架', 'Submit'),
+        },
     };
     return Card(
         child: Padding(
@@ -216,6 +218,7 @@ class _VendorPackagesScreenState extends State<VendorPackagesScreen> {
                   Flexible(child: MerchantStatusPill(
                       label: _status(context, status),
                       active: status == 'active',
+                      listingStatus: status,
                   )),
                 ]),
                 const SizedBox(height: CgTheme.space12),
