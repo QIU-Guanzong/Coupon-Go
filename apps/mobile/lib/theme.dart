@@ -88,7 +88,12 @@ class CgTheme {
         : CgColors.primary;
     return base.copyWith(
       bottomNavigationBarTheme: base.bottomNavigationBarTheme.copyWith(
+        backgroundColor: base.colorScheme.surface,
         selectedItemColor: action,
+        unselectedItemColor: base.colorScheme.onSurfaceVariant,
+        selectedLabelStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700),
+        unselectedLabelStyle: const TextStyle(fontSize: 12),
+        showUnselectedLabels: true,
       ),
       outlinedButtonTheme: OutlinedButtonThemeData(
         style: OutlinedButton.styleFrom(
