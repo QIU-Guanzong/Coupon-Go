@@ -1,0 +1,312 @@
+00:00 +0: loading /tmp/coupon-c7c8-61.pXkI8X/test/merchant_review_shops_test.dart
+00:00 +0: /tmp/coupon-c7c8-61.pXkI8X/test/merchant_review_shops_test.dart: vendor home only enters authorized stores; switch in one screen
+00:01 +1: /tmp/coupon-c7c8-61.pXkI8X/test/vendor_coupon_form_test.dart: 390 edit active coupon from merchant detail and confirm only changed fields: zh
+00:01 +2: /tmp/coupon-c7c8-61.pXkI8X/test/vendor_coupon_form_test.dart: 390 edit active coupon from merchant detail and confirm only changed fields: zh
+00:02 +3: /tmp/coupon-c7c8-61.pXkI8X/test/vendor_coupon_form_test.dart: 390 edit active coupon from merchant detail and confirm only changed fields: zh
+00:02 +4: /tmp/coupon-c7c8-61.pXkI8X/test/vendor_coupon_form_test.dart: 390 edit active coupon from merchant detail and confirm only changed fields: zh
+00:02 +5: /tmp/coupon-c7c8-61.pXkI8X/test/vendor_coupon_form_test.dart: 390 edit active coupon from merchant detail and confirm only changed fields: zh
+00:02 +6: /tmp/coupon-c7c8-61.pXkI8X/test/vendor_coupon_form_test.dart: 390 edit active coupon from merchant detail and confirm only changed fields: zh
+00:02 +7: /tmp/coupon-c7c8-61.pXkI8X/test/merchant_review_shops_test.dart: successful reply replaces this row without reload; edit survives failure
+00:03 +8: /tmp/coupon-c7c8-61.pXkI8X/test/vendor_coupon_form_test.dart: 390 conflict preserves 409 and copy asks for fresh stock: zh
+00:03 +9: /tmp/coupon-c7c8-61.pXkI8X/test/vendor_coupon_form_test.dart: 390 conflict preserves 409 and copy asks for fresh stock: zh
+00:03 +10: /tmp/coupon-c7c8-61.pXkI8X/test/vendor_coupon_form_test.dart: 390 conflict preserves 409 and copy asks for fresh stock: zh
+00:03 +11: /tmp/coupon-c7c8-61.pXkI8X/test/merchant_review_shops_test.dart: session change closes write affordances and removes old draft
+00:03 +12: /tmp/coupon-c7c8-61.pXkI8X/test/vendor_coupon_form_test.dart: 390 paid create field values stay separate and are confirmed once: zh
+00:03 +12 ~1: /tmp/coupon-c7c8-61.pXkI8X/test/vendor_coupon_form_test.dart: 390 paid create field values stay separate and are confirmed once: zh
+00:04 +13 ~1: /tmp/coupon-c7c8-61.pXkI8X/test/vendor_coupon_form_test.dart: 390 paid create field values stay separate and are confirmed once: zh
+00:04 +14 ~1: /tmp/coupon-c7c8-61.pXkI8X/test/vendor_coupon_form_test.dart: 390 paid create field values stay separate and are confirmed once: zh
+00:05 +15 ~1: /tmp/coupon-c7c8-61.pXkI8X/test/vendor_coupon_workspace_test.dart: merchant home opens paged list, eight state cards, and detail (false)
+00:06 +16 ~1: /tmp/coupon-c7c8-61.pXkI8X/test/vendor_coupon_workspace_test.dart: merchant home opens paged list, eight state cards, and detail (false)
+00:06 +17 ~1: /tmp/coupon-c7c8-61.pXkI8X/test/vendor_coupon_form_test.dart: 390 conflict preserves 409 and copy asks for fresh stock: en
+00:06 +18 ~1: /tmp/coupon-c7c8-61.pXkI8X/test/vendor_coupon_workspace_test.dart: merchant home opens paged list, eight state cards, and detail (true)
+00:07 +19 ~1: /tmp/coupon-c7c8-61.pXkI8X/test/vendor_coupon_form_test.dart: 390 paid create field values stay separate and are confirmed once: en
+00:08 +20 ~1: /tmp/coupon-c7c8-61.pXkI8X/test/vendor_coupon_workspace_test.dart: four actions confirm and update acknowledged state without loading a new list (false)
+00:08 +21 ~1: /tmp/coupon-c7c8-61.pXkI8X/test/vendor_coupon_form_test.dart: account switch during review sends zero PATCH requests
+00:08 +22 ~1: /tmp/coupon-c7c8-61.pXkI8X/test/vendor_coupon_workspace_test.dart: four actions confirm and update acknowledged state without loading a new list (true)
+00:08 +23 ~1: /tmp/coupon-c7c8-61.pXkI8X/test/vendor_coupon_workspace_test.dart: four actions confirm and update acknowledged state without loading a new list (true)
+00:08 +24 ~1: /tmp/coupon-c7c8-61.pXkI8X/test/vendor_coupon_form_test.dart: legacy Price coupon without a sale price can be renamed without making it paid
+00:09 +25 ~1: /tmp/coupon-c7c8-61.pXkI8X/test/vendor_coupon_workspace_test.dart: account change while confirming never posts and clears rows
+00:09 +26 ~1: /tmp/coupon-c7c8-61.pXkI8X/test/vendor_coupon_form_test.dart: an inherited expiry farther than one year opens the HK picker without crashing
+00:09 +27 ~1: /tmp/coupon-c7c8-61.pXkI8X/test/vendor_coupon_form_test.dart: an inherited expiry farther than one year opens the HK picker without crashing
+00:09 +28 ~1: /tmp/coupon-c7c8-61.pXkI8X/test/vendor_coupon_workspace_test.dart: new filter wins a late reply; search resets page
+00:09 +29 ~1: /tmp/coupon-c7c8-61.pXkI8X/test/vendor_coupon_workspace_test.dart: stale filter result does not replace the later filter
+00:09 +30 ~1: /tmp/coupon-c7c8-61.pXkI8X/test/vendor_coupon_workspace_test.dart: detail change returns an acknowledged state without losing list context
+00:10 +31 ~1: /tmp/coupon-c7c8-61.pXkI8X/test/vendor_packages_test.dart: cashier home does not call or show owner-only functions
+00:10 +32 ~1: /tmp/coupon-c7c8-61.pXkI8X/test/vendor_packages_test.dart: merchant navigation opens an honest empty workspace
+00:10 +33 ~1: /tmp/coupon-c7c8-61.pXkI8X/test/merchant_account_overview_test.dart: 390px English at 130% aligns account headings and ledger rows
+00:11 +34 ~1: /tmp/coupon-c7c8-61.pXkI8X/test/vendor_packages_test.dart: creation displays authoritative active status
+00:11 +35 ~1: /tmp/coupon-c7c8-61.pXkI8X/test/vendor_packages_test.dart: creation displays authoritative active status
+00:11 +36 ~1: /tmp/coupon-c7c8-61.pXkI8X/test/vendor_packages_test.dart: creation displays authoritative active status
+00:11 +37 ~1: /tmp/coupon-c7c8-61.pXkI8X/test/vendor_packages_test.dart: creation displays authoritative active status
+00:11 +38 ~1: /tmp/coupon-c7c8-61.pXkI8X/test/vendor_packages_test.dart: creation displays authoritative active status
+00:11 +39 ~1: /tmp/coupon-c7c8-61.pXkI8X/test/vendor_packages_test.dart: creation displays authoritative active status
+00:11 +40 ~1: /tmp/coupon-c7c8-61.pXkI8X/test/vendor_packages_test.dart: creation displays authoritative active status
+00:11 +41 ~1: /tmp/coupon-c7c8-61.pXkI8X/test/vendor_packages_test.dart: creation displays authoritative active status
+00:11 +42 ~1: /tmp/coupon-c7c8-61.pXkI8X/test/merchant_account_overview_test.dart: switching shops fences old balances; signing out clears results
+00:11 +43 ~1: /tmp/coupon-c7c8-61.pXkI8X/test/vendor_packages_test.dart: creation displays authoritative pending_review status
+00:12 +44 ~1: /tmp/coupon-c7c8-61.pXkI8X/test/vendor_packages_test.dart: uncertain create cannot be blindly repeated
+00:13 +45 ~1: /tmp/coupon-c7c8-61.pXkI8X/test/merchant_vendor_layout_test.dart: 390px date controls stay aligned, false and scale 1.0
+00:13 +46 ~1: /tmp/coupon-c7c8-61.pXkI8X/test/merchant_vendor_layout_test.dart: 390px date controls stay aligned, false and scale 1.0
+00:13 +47 ~1: /tmp/coupon-c7c8-61.pXkI8X/test/merchant_vendor_layout_test.dart: 390px date controls stay aligned, false and scale 1.0
+00:14 +48 ~1: /tmp/coupon-c7c8-61.pXkI8X/test/vendor_packages_test.dart: pause uses server status and draft is protected on back
+00:14 +49 ~1: /tmp/coupon-c7c8-61.pXkI8X/test/merchant_vendor_layout_test.dart: 390px date controls stay aligned, false and scale 1.3
+00:14 +50 ~1: /tmp/coupon-c7c8-61.pXkI8X/test/vendor_packages_test.dart: merchant selects the correct store
+00:14 +51 ~1: /tmp/coupon-c7c8-61.pXkI8X/test/vendor_packages_test.dart: merchant selects the correct store
+00:14 +52 ~1: /tmp/coupon-c7c8-61.pXkI8X/test/merchant_vendor_layout_test.dart: 390px date controls stay aligned, true and scale 1.3
+00:15 +53 ~1: /tmp/coupon-c7c8-61.pXkI8X/test/vendor_packages_test.dart: keyboard opens creation with reduced motion
+00:15 +54 ~1: /tmp/coupon-c7c8-61.pXkI8X/test/merchant_vendor_layout_test.dart: 390px home tool labels are untruncated in two equal columns
+00:15 +55 ~1: /tmp/coupon-c7c8-61.pXkI8X/test/merchant_vendor_layout_test.dart: 390px scanner lines align after selecting branch, no write
+00:15 +56 ~1: /tmp/coupon-c7c8-61.pXkI8X/test/merchant_vendor_layout_test.dart: 390px coupon keeps three sections and an aligned submit
+00:20 +57 ~1: /tmp/coupon-c7c8-61.pXkI8X/test/local_desktop_identity_test.dart: trial only permits the exact same-origin gateway prefix
+00:20 +58 ~1: /tmp/coupon-c7c8-61.pXkI8X/test/local_desktop_identity_test.dart: public home starts a real isolated customer and My has no login wall
+00:20 +58 ~2: /tmp/coupon-c7c8-61.pXkI8X/test/local_desktop_identity_test.dart: corporate entry and return use scoped roles without a login sheet
+00:20 +58 ~3: /tmp/coupon-c7c8-61.pXkI8X/test/local_desktop_identity_test.dart: desktop My opens Q Wallet and Business services without signing in
+00:20 +58 ~4: /tmp/coupon-c7c8-61.pXkI8X/test/local_desktop_identity_test.dart: an existing isolated merchant is restored without a new role request
+00:20 +58 ~5: /tmp/coupon-c7c8-61.pXkI8X/test/local_desktop_identity_test.dart: ordinary mode retains email login and never starts a trial
+00:21 +59 ~5: /tmp/coupon-c7c8-61.pXkI8X/test/local_desktop_wallet_test.dart: My uses real profile, counts each relevant state and opens separate lists
+00:21 +60 ~5: /tmp/coupon-c7c8-61.pXkI8X/test/local_desktop_wallet_test.dart: nested Q Wallet activity and usage display sorted persisted records
+00:22 +61 ~5: /tmp/coupon-c7c8-61.pXkI8X/test/wallet_qbot_test.dart: the original receipt changes after reversal even if the coupon is used again
+00:22 +61 ~6: /tmp/coupon-c7c8-61.pXkI8X/test/wallet_qbot_test.dart: the original receipt changes after reversal even if the coupon is used again
+00:22 +62 ~6: /tmp/coupon-c7c8-61.pXkI8X/test/local_desktop_wallet_test.dart: a submitted review leaves the pending list and credits the server points
+00:23 +63 ~6: /tmp/coupon-c7c8-61.pXkI8X/test/wallet_qbot_test.dart: cleared conversation ignores a pending reply
+00:23 +64 ~6: /tmp/coupon-c7c8-61.pXkI8X/test/wallet_qbot_test.dart: cleared conversation ignores a pending reply
+00:23 +65 ~6: /tmp/coupon-c7c8-61.pXkI8X/test/wallet_qbot_test.dart: cleared conversation ignores a pending reply
+00:23 +66 ~6: /tmp/coupon-c7c8-61.pXkI8X/test/wallet_qbot_test.dart: wallet can present a coupon when balances are unavailable
+00:23 +67 ~6: /tmp/coupon-c7c8-61.pXkI8X/test/wallet_qbot_test.dart: wallet respects the status bar with or without an app bar
+00:23 +68 ~6: /tmp/coupon-c7c8-61.pXkI8X/test/wallet_qbot_test.dart: cashback entry is interactive only for signed-in wallets
+00:24 +69 ~6: /tmp/coupon-c7c8-61.pXkI8X/test/vendor_stale_requests_test.dart: disposed merchant page does not request usage after shops completes
+00:25 +70 ~6: /tmp/coupon-c7c8-61.pXkI8X/test/vendor_stack_integration_test.dart: brand survives and coupon filters never change review shop scope
+00:25 +71 ~6: /tmp/coupon-c7c8-61.pXkI8X/test/vendor_stack_integration_test.dart: brand survives and coupon filters never change review shop scope
+00:25 +72 ~6: /tmp/coupon-c7c8-61.pXkI8X/test/vendor_stack_integration_test.dart: brand survives and coupon filters never change review shop scope
+00:25 +73 ~6: /tmp/coupon-c7c8-61.pXkI8X/test/vendor_stack_integration_test.dart: brand survives and coupon filters never change review shop scope
+00:26 +74 ~6: /tmp/coupon-c7c8-61.pXkI8X/test/vendor_shared_theme_test.dart: light theme shares button sizes, typography and AppBar treatment
+00:26 +75 ~6: /tmp/coupon-c7c8-61.pXkI8X/test/vendor_shared_theme_test.dart: dark theme shares button sizes, typography and AppBar treatment
+00:26 +76 ~6: /tmp/coupon-c7c8-61.pXkI8X/test/vendor_shared_theme_test.dart: shared AppBar and outlined buttons fit inside a narrow wrap
+00:27 +77 ~6: /tmp/coupon-c7c8-61.pXkI8X/test/vendor_notifications_entry_test.dart: merchant opens existing notifications, one entry and no badge
+00:27 +78 ~6: /tmp/coupon-c7c8-61.pXkI8X/test/vendor_notifications_entry_test.dart: merchant opens existing notifications, one entry and no badge
+00:27 +79 ~6: /tmp/coupon-c7c8-61.pXkI8X/test/vendor_notifications_entry_test.dart: merchant opens existing notifications, one entry and no badge
+00:27 +80 ~6: /tmp/coupon-c7c8-61.pXkI8X/test/vendor_notifications_entry_test.dart: merchant opens existing notifications, one entry and no badge
+00:27 +81 ~6: /tmp/coupon-c7c8-61.pXkI8X/test/vendor_notifications_entry_test.dart: merchant opens existing notifications, one entry and no badge
+00:27 +82 ~6: /tmp/coupon-c7c8-61.pXkI8X/test/vendor_notifications_entry_test.dart: merchant opens existing notifications, one entry and no badge
+00:28 +83 ~6: /tmp/coupon-c7c8-61.pXkI8X/test/vendor_notifications_entry_test.dart: merchant opens existing notifications, one entry and no badge
+00:28 +84 ~6: /tmp/coupon-c7c8-61.pXkI8X/test/vendor_notifications_entry_test.dart: merchant-admin entry uses Traditional Chinese when selected
+00:28 +85 ~6: /tmp/coupon-c7c8-61.pXkI8X/test/vendor_notifications_entry_test.dart: enterprise drawer hides merchant entry for guest
+00:28 +86 ~6: /tmp/coupon-c7c8-61.pXkI8X/test/vendor_notifications_entry_test.dart: enterprise drawer hides merchant entry for customer
+00:28 +87 ~6: /tmp/coupon-c7c8-61.pXkI8X/test/vendor_coupon_status_test.dart: shows bilingual backend statuses and sends exact pending filter
+00:28 +88 ~6: /tmp/coupon-c7c8-61.pXkI8X/test/vendor_coupon_status_test.dart: shows bilingual backend statuses and sends exact pending filter
+00:28 +89 ~6: /tmp/coupon-c7c8-61.pXkI8X/test/vendor_coupon_status_test.dart: shows bilingual backend statuses and sends exact pending filter
+00:29 +90 ~6: /tmp/coupon-c7c8-61.pXkI8X/test/vendor_coupon_status_test.dart: shows bilingual backend statuses and sends exact pending filter
+00:29 +91 ~6: /tmp/coupon-c7c8-61.pXkI8X/test/vendor_coupon_status_test.dart: shows bilingual backend statuses and sends exact pending filter
+00:29 +92 ~6: /tmp/coupon-c7c8-61.pXkI8X/test/vendor_coupon_status_test.dart: shows bilingual backend statuses and sends exact pending filter
+00:29 +93 ~6: /tmp/coupon-c7c8-61.pXkI8X/test/vendor_coupon_status_test.dart: late status response cannot replace a newer filter; reset shows all
+00:30 +94 ~6: /tmp/coupon-c7c8-61.pXkI8X/test/vendor_coupon_status_test.dart: role switch clears filter and late prior-account data cannot render
+00:30 +95 ~6: /tmp/coupon-c7c8-61.pXkI8X/test/vendor_coupon_status_test.dart: filter error stays in the coupon section and can be retried
+00:30 +96 ~6: /tmp/coupon-c7c8-61.pXkI8X/test/vendor_coupon_actions_test.dart: menu limits actions to known listing states and API requires a scoped receipt
+00:30 +97 ~6: /tmp/coupon-c7c8-61.pXkI8X/test/vendor_coupon_actions_test.dart: pause, resume and submit reflect authoritative response states
+00:30 +97 ~7: /tmp/coupon-c7c8-61.pXkI8X/test/vendor_coupon_actions_test.dart: pause, resume and submit reflect authoritative response states
+00:30 +97 ~8: /tmp/coupon-c7c8-61.pXkI8X/test/vendor_coupon_actions_test.dart: pause, resume and submit reflect authoritative response states
+00:32 +98 ~8: /tmp/coupon-c7c8-61.pXkI8X/test/trial_banner_test.dart: identity dialog can be cancelled without changing the session
+00:32 +99 ~8: /tmp/coupon-c7c8-61.pXkI8X/test/vendor_coupon_actions_test.dart: unlist confirmation does not write after switching accounts
+00:32 +100 ~8: /tmp/coupon-c7c8-61.pXkI8X/test/trial_banner_test.dart: failed route transition restores the previous identity
+00:32 +101 ~8: /tmp/coupon-c7c8-61.pXkI8X/test/vendor_coupon_actions_test.dart: pause acknowledgement replaces stale status before refresh completes
+00:32 +102 ~8: /tmp/coupon-c7c8-61.pXkI8X/test/vendor_coupon_actions_test.dart: pause acknowledgement replaces stale status before refresh completes
+00:32 +103 ~8: /tmp/coupon-c7c8-61.pXkI8X/test/trial_banner_test.dart: old route is removed before the new identity becomes active
+00:32 +104 ~8: /tmp/coupon-c7c8-61.pXkI8X/test/vendor_coupon_actions_test.dart: confirmation clears the item from its previous status filter
+00:32 +105 ~8: /tmp/coupon-c7c8-61.pXkI8X/test/vendor_coupon_actions_test.dart: confirmation clears the item from its previous status filter
+00:32 +106 ~8: /tmp/coupon-c7c8-61.pXkI8X/test/vendor_coupon_actions_test.dart: confirmation clears the item from its previous status filter
+00:32 +107 ~8: /tmp/coupon-c7c8-61.pXkI8X/test/trial_banner_test.dart: identity controls fit a narrow screen
+00:32 +108 ~8: /tmp/coupon-c7c8-61.pXkI8X/test/trial_banner_test.dart: Q仔 has no read-only promotional banner
+00:33 +108 ~9: /tmp/coupon-c7c8-61.pXkI8X/test/subpages_d5_test.dart: shop error retries, dial and map launch only valid links
+00:34 +109 ~9: /tmp/coupon-c7c8-61.pXkI8X/test/stripe_web_checkout_test.dart: paid coupon purchases via server and cancel keeps same order reference
+00:34 +110 ~9: /tmp/coupon-c7c8-61.pXkI8X/test/subpages_d5_test.dart: guest can open guide and about but cannot log out or delete
+00:35 +111 ~9: /tmp/coupon-c7c8-61.pXkI8X/test/subpages_d5_test.dart: guest can open guide and about but cannot log out or delete
+00:35 +112 ~9: /tmp/coupon-c7c8-61.pXkI8X/test/shell_tab_back_test.dart: merchant home menu exposes trial identity switching
+00:36 +113 ~9: /tmp/coupon-c7c8-61.pXkI8X/test/shell_tab_back_test.dart: merchant home menu exposes trial identity switching
+00:36 +114 ~9: /tmp/coupon-c7c8-61.pXkI8X/test/scan_branch_choice_test.dart: 受限券須選擇分店，確認提交使用相同分店
+00:37 +115 ~9: /tmp/coupon-c7c8-61.pXkI8X/test/shell_tab_back_test.dart: consumer back returns the selected tab to home only once
+00:37 +116 ~9: /tmp/coupon-c7c8-61.pXkI8X/test/shell_tab_back_test.dart: consumer back returns the selected tab to home only once
+00:37 +117 ~9: /tmp/coupon-c7c8-61.pXkI8X/test/shell_tab_back_test.dart: consumer back returns the selected tab to home only once
+00:37 +118 ~9: /tmp/coupon-c7c8-61.pXkI8X/test/shell_tab_back_test.dart: an inner route and drawer close before returning the tab home
+00:37 +119 ~9: /tmp/coupon-c7c8-61.pXkI8X/test/shell_tab_back_test.dart: merchant tab back returns to merchant home
+00:37 +120 ~9: /tmp/coupon-c7c8-61.pXkI8X/test/scan_batch_test.dart: 批量逐券預檢，含受限分店，超時沿用原批次編號
+00:38 +121 ~9: /tmp/coupon-c7c8-61.pXkI8X/test/scan_batch_test.dart: 批量逐券預檢，含受限分店，超時沿用原批次編號
+00:38 +122 ~9: /tmp/coupon-c7c8-61.pXkI8X/test/scan_batch_test.dart: 批量逐券預檢，含受限分店，超時沿用原批次編號
+00:39 +123 ~9: /tmp/coupon-c7c8-61.pXkI8X/test/refund_disclosure_test.dart: refunds open directly on three actual statuses and keep orders unfiltered at the API
+00:39 +124 ~9: /tmp/coupon-c7c8-61.pXkI8X/test/refund_disclosure_test.dart: refunds open directly on three actual statuses and keep orders unfiltered at the API
+00:39 +125 ~9: /tmp/coupon-c7c8-61.pXkI8X/test/refund_disclosure_test.dart: bargain refund displays pending truthfully
+00:39 +126 ~9: /tmp/coupon-c7c8-61.pXkI8X/test/redemption_recovery_test.dart: 補錄失聯後使用同一請求編號重試
+00:40 +127 ~9: /tmp/coupon-c7c8-61.pXkI8X/test/redemption_recovery_test.dart: 補錄失聯後使用同一請求編號重試
+00:40 +128 ~9: /tmp/coupon-c7c8-61.pXkI8X/test/redemption_recovery_test.dart: 補錄失聯後使用同一請求編號重試
+00:40 +129 ~9: /tmp/coupon-c7c8-61.pXkI8X/test/redemption_recovery_test.dart: 補錄失聯後使用同一請求編號重試
+00:40 +130 ~9: /tmp/coupon-c7c8-61.pXkI8X/test/redemption_recovery_test.dart: 補錄失聯後使用同一請求編號重試
+00:40 +131 ~9: /tmp/coupon-c7c8-61.pXkI8X/test/redemption_recovery_test.dart: 補錄失聯後使用同一請求編號重試
+00:41 +132 ~9: /tmp/coupon-c7c8-61.pXkI8X/test/qbot_quick_questions_test.dart: quick questions require consent before their first send
+00:42 +133 ~9: /tmp/coupon-c7c8-61.pXkI8X/test/qbot_quick_questions_test.dart: quick questions require consent before their first send
+00:42 +134 ~9: /tmp/coupon-c7c8-61.pXkI8X/test/qbot_quick_questions_test.dart: quick questions require consent before their first send
+00:43 +135 ~9: /tmp/coupon-c7c8-61.pXkI8X/test/redemption_recovery_test.dart: 切換帳號時清除上一帳號的查詢結果
+00:43 +136 ~9: /tmp/coupon-c7c8-61.pXkI8X/test/qbot_quick_questions_test.dart: English typed send uses the same first-send consent
+00:43 +137 ~9: /tmp/coupon-c7c8-61.pXkI8X/test/redemption_recovery_test.dart: 確認補錄期間切換帳號不會提交舊券
+00:43 +138 ~9: /tmp/coupon-c7c8-61.pXkI8X/test/qbot_quick_questions_test.dart: rate limit offers retry without sending duplicate history
+00:43 +139 ~9: /tmp/coupon-c7c8-61.pXkI8X/test/qbot_quick_questions_test.dart: rate limit offers retry without sending duplicate history
+00:43 +140 ~9: /tmp/coupon-c7c8-61.pXkI8X/test/qbot_quick_questions_test.dart: invalid input restores the draft for editing
+00:43 +141 ~9: /tmp/coupon-c7c8-61.pXkI8X/test/qbot_quick_questions_test.dart: formats common bullets and bold without losing plain or unfinished text
+00:43 +142 ~9: /tmp/coupon-c7c8-61.pXkI8X/test/qbot_quick_questions_test.dart: formatted answer is selectable while history retains original Markdown
+00:44 +143 ~9: /tmp/coupon-c7c8-61.pXkI8X/test/qbot_offers_test.dart: only bounded typed entries are accepted, deduplicated by type and id
+00:44 +144 ~9: /tmp/coupon-c7c8-61.pXkI8X/test/qbot_offers_test.dart: three cards navigate using exact types and IDs without buying or starting
+00:46 +145 ~9: /tmp/coupon-c7c8-61.pXkI8X/test/qbot_offers_test.dart: three cards navigate using exact types and IDs without buying or starting
+00:46 +146 ~9: /tmp/coupon-c7c8-61.pXkI8X/test/qbot_offers_test.dart: three cards navigate using exact types and IDs without buying or starting
+00:46 +147 ~9: /tmp/coupon-c7c8-61.pXkI8X/test/qbot_offers_test.dart: opening in-stock offers shows available actions without sending writes
+00:47 +148 ~9: /tmp/coupon-c7c8-61.pXkI8X/test/qbot_offers_test.dart: opening in-stock offers shows available actions without sending writes
+00:47 +148 ~10: /tmp/coupon-c7c8-61.pXkI8X/test/qbot_offers_test.dart: opening in-stock offers shows available actions without sending writes
+00:47 +148 ~11: /tmp/coupon-c7c8-61.pXkI8X/test/qbot_offers_test.dart: opening in-stock offers shows available actions without sending writes
+00:47 +148 ~12: /tmp/coupon-c7c8-61.pXkI8X/test/qbot_offers_test.dart: opening in-stock offers shows available actions without sending writes
+00:48 +149 ~12: /tmp/coupon-c7c8-61.pXkI8X/test/public_preview_identity_test.dart: ordinary mode retains email login and never starts a trial
+00:48 +150 ~12: /tmp/coupon-c7c8-61.pXkI8X/test/qbot_offers_test.dart: guest home opens Q仔 and reads an offer without a login wall
+00:48 +151 ~12: /tmp/coupon-c7c8-61.pXkI8X/test/qbot_offers_test.dart: missing and malformed offers preserve plain reply
+00:48 +152 ~12: /tmp/coupon-c7c8-61.pXkI8X/test/qbot_offers_test.dart: missing and malformed offers preserve plain reply
+00:49 +153 ~12: /tmp/coupon-c7c8-61.pXkI8X/test/qbot_offers_test.dart: expired bargain does not open or start anything
+00:49 +154 ~12: /tmp/coupon-c7c8-61.pXkI8X/test/qbot_offers_test.dart: clearing a chat cancels pending card navigation
+00:49 +155 ~12: /tmp/coupon-c7c8-61.pXkI8X/test/personal_activity_test.dart: history is bounded, de-duplicated and does not mix account keys
+00:49 +156 ~12: /tmp/coupon-c7c8-61.pXkI8X/test/personal_activity_test.dart: history follows a visited item and hides itself on role change
+00:50 +157 ~12: /tmp/coupon-c7c8-61.pXkI8X/test/package_payment_test.dart: expired order shows voucher and automatic refund state
+00:50 +158 ~12: /tmp/coupon-c7c8-61.pXkI8X/test/package_payment_test.dart: expired order shows voucher and automatic refund state
+00:50 +159 ~12: /tmp/coupon-c7c8-61.pXkI8X/test/package_payment_test.dart: expired and failed wallet refund states stay distinct
+00:50 +160 ~12: /tmp/coupon-c7c8-61.pXkI8X/test/package_payment_test.dart: paid result and order detail use the same server receipt
+00:51 +161 ~12: /tmp/coupon-c7c8-61.pXkI8X/test/package_payment_test.dart: paid result and order detail use the same server receipt
+00:51 +162 ~12: /tmp/coupon-c7c8-61.pXkI8X/test/order_refund_contract_test.dart: wallet warns about the whole order and reports server rejection
+00:52 +163 ~12: /tmp/coupon-c7c8-61.pXkI8X/test/order_refund_contract_test.dart: partial use and abnormal historical quantity do not permit refund
+00:52 +164 ~12: /tmp/coupon-c7c8-61.pXkI8X/test/nearby_request_race_test.dart: late area result cannot replace the latest area
+00:52 +165 ~12: /tmp/coupon-c7c8-61.pXkI8X/test/nearby_request_race_test.dart: late area result cannot replace the latest area
+00:52 +166 ~12: /tmp/coupon-c7c8-61.pXkI8X/test/nearby_request_race_test.dart: late area result cannot replace the latest area
+00:53 +167 ~12: /tmp/coupon-c7c8-61.pXkI8X/test/navigation_d4_test.dart: 掃碼前刷新店舖權限，已撤銷時不切換頁面
+00:54 +168 ~12: /tmp/coupon-c7c8-61.pXkI8X/test/navigation_d4_test.dart: 掃碼前刷新店舖權限，已撤銷時不切換頁面
+00:54 +169 ~12: /tmp/coupon-c7c8-61.pXkI8X/test/navigation_d4_test.dart: 掃碼前刷新店舖權限，已撤銷時不切換頁面
+00:54 +170 ~12: /tmp/coupon-c7c8-61.pXkI8X/test/navigation_d4_test.dart: 掃碼前刷新店舖權限，已撤銷時不切換頁面
+00:54 +171 ~12: /tmp/coupon-c7c8-61.pXkI8X/test/navigation_d4_test.dart: 掃碼前刷新店舖權限，已撤銷時不切換頁面
+00:54 +172 ~12: /tmp/coupon-c7c8-61.pXkI8X/test/navigation_d4_test.dart: 掃碼前刷新店舖權限，已撤銷時不切換頁面
+00:54 +173 ~12: /tmp/coupon-c7c8-61.pXkI8X/test/navigation_d4_test.dart: 權限查詢途中改選首頁，不會跳回掃碼
+00:54 +174 ~12: /tmp/coupon-c7c8-61.pXkI8X/test/navigation_d4_test.dart: cashback is hidden by default and can be explicitly enabled
+00:54 +175 ~12: /tmp/coupon-c7c8-61.pXkI8X/test/navigation_d4_test.dart: only a verified admin sees Administration; the application remains
+00:55 +176 ~12: /tmp/coupon-c7c8-61.pXkI8X/test/navigation_d4_test.dart: merchant tabs select Account and put its subscription link there
+00:55 +177 ~12: /tmp/coupon-c7c8-61.pXkI8X/test/my_wallet_profile_test.dart: My uses real profile, counts each relevant state and opens separate lists
+00:56 +178 ~12: /tmp/coupon-c7c8-61.pXkI8X/test/my_wallet_profile_test.dart: My uses real profile, counts each relevant state and opens separate lists
+00:56 +179 ~12: /tmp/coupon-c7c8-61.pXkI8X/test/my_wallet_profile_test.dart: My uses real profile, counts each relevant state and opens separate lists
+00:56 +180 ~12: /tmp/coupon-c7c8-61.pXkI8X/test/my_wallet_profile_test.dart: My uses real profile, counts each relevant state and opens separate lists
+00:56 +181 ~12: /tmp/coupon-c7c8-61.pXkI8X/test/my_wallet_profile_test.dart: My uses real profile, counts each relevant state and opens separate lists
+00:56 +182 ~12: /tmp/coupon-c7c8-61.pXkI8X/test/my_wallet_profile_test.dart: nested Q Wallet activity and usage display sorted persisted records
+00:57 +183 ~12: /tmp/coupon-c7c8-61.pXkI8X/test/merchant_usage_test.dart: exact 7, 30 and 90-day queries update shop counts and UTC period
+00:57 +183 ~13: /tmp/coupon-c7c8-61.pXkI8X/test/merchant_usage_test.dart: exact 7, 30 and 90-day queries update shop counts and UTC period
+00:58 +184 ~13: /tmp/coupon-c7c8-61.pXkI8X/test/my_wallet_profile_test.dart: a submitted review leaves the pending list and credits the server points
+00:58 +185 ~13: /tmp/coupon-c7c8-61.pXkI8X/test/merchant_usage_test.dart: late older window never reappears under the current period
+00:58 +186 ~13: /tmp/coupon-c7c8-61.pXkI8X/test/merchant_usage_test.dart: late older window never reappears under the current period
+00:58 +187 ~13: /tmp/coupon-c7c8-61.pXkI8X/test/my_wallet_profile_test.dart: late previous-account points cannot appear after session change
+00:58 +188 ~13: /tmp/coupon-c7c8-61.pXkI8X/test/merchant_usage_test.dart: empty and invalid responses never invent data or enable export
+00:58 +189 ~13: /tmp/coupon-c7c8-61.pXkI8X/test/merchant_usage_test.dart: permission denial cannot use all-time numbers as date data
+00:58 +190 ~13: /tmp/coupon-c7c8-61.pXkI8X/test/merchant_usage_test.dart: CSV contains displayed shop/date counts, escaped shop names only
+00:58 +191 ~13: /tmp/coupon-c7c8-61.pXkI8X/test/merchant_usage_test.dart: account change clears old results and open CSV before new fetch
+00:58 +192 ~13: /tmp/coupon-c7c8-61.pXkI8X/test/merchant_trial_capabilities_test.dart: trial hides branch contact and staff mutations
+00:58 +192 ~14: /tmp/coupon-c7c8-61.pXkI8X/test/merchant_trial_capabilities_test.dart: trial reads and exposes package mutation controls
+00:58 +192 ~15: /tmp/coupon-c7c8-61.pXkI8X/test/merchant_trial_capabilities_test.dart: trial application has preset shop only and displays gateway status
+00:58 +192 ~16: /tmp/coupon-c7c8-61.pXkI8X/test/merchant_trial_capabilities_test.dart: late application receipt cannot be shown to a different identity
+00:58 +192 ~17: /tmp/coupon-c7c8-61.pXkI8X/test/merchant_trial_capabilities_test.dart: coupon draft survives back cancellation
+01:00 +193 ~17: /tmp/coupon-c7c8-61.pXkI8X/test/merchant_trial_capabilities_test.dart: coupon draft survives back cancellation
+01:00 +194 ~17: /tmp/coupon-c7c8-61.pXkI8X/test/merchant_staff_test.dart: 已接受邀請的店員可從企業登入
+01:00 +195 ~17: /tmp/coupon-c7c8-61.pXkI8X/test/merchant_staff_test.dart: 店主使用電郵與角色發送邀請
+01:01 +196 ~17: /tmp/coupon-c7c8-61.pXkI8X/test/merchant_shop_text_editor_test.dart: owner sends only changed text to the exact selected shop
+01:01 +197 ~17: /tmp/coupon-c7c8-61.pXkI8X/test/merchant_shop_text_editor_test.dart: owner sends only changed text to the exact selected shop
+01:01 +198 ~17: /tmp/coupon-c7c8-61.pXkI8X/test/merchant_shop_text_editor_test.dart: owner sends only changed text to the exact selected shop
+01:01 +199 ~17: /tmp/coupon-c7c8-61.pXkI8X/test/merchant_shop_text_editor_test.dart: owner sends only changed text to the exact selected shop
+01:02 +200 ~17: /tmp/coupon-c7c8-61.pXkI8X/test/merchant_payout_test.dart: 斷線後重新進入並重試，使用同一請求編號
+01:02 +201 ~17: /tmp/coupon-c7c8-61.pXkI8X/test/merchant_payout_test.dart: 斷線後重新進入並重試，使用同一請求編號
+01:03 +202 ~17: /tmp/coupon-c7c8-61.pXkI8X/test/merchant_payout_test.dart: 斷線後重新進入並重試，使用同一請求編號
+01:03 +203 ~17: /tmp/coupon-c7c8-61.pXkI8X/test/merchant_payout_test.dart: 斷線後重新進入並重試，使用同一請求編號
+01:03 +204 ~17: /tmp/coupon-c7c8-61.pXkI8X/test/merchant_shop_text_editor_test.dart: rejecting validation retains the owner draft
+01:03 +205 ~17: /tmp/coupon-c7c8-61.pXkI8X/test/merchant_shop_text_editor_test.dart: rejecting validation retains the owner draft
+01:03 +206 ~17: /tmp/coupon-c7c8-61.pXkI8X/test/merchant_shop_text_editor_test.dart: rejecting validation retains the owner draft
+01:03 +207 ~17: /tmp/coupon-c7c8-61.pXkI8X/test/merchant_payout_test.dart: 確認框打開時切換帳號不提交舊請求
+01:03 +208 ~17: /tmp/coupon-c7c8-61.pXkI8X/test/merchant_shop_text_editor_test.dart: uncertain save requires reload and never auto-retries
+01:03 +209 ~17: /tmp/coupon-c7c8-61.pXkI8X/test/merchant_shop_text_editor_test.dart: uncertain save requires reload and never auto-retries
+01:03 +210 ~17: /tmp/coupon-c7c8-61.pXkI8X/test/merchant_payout_test.dart: 確認前發現其他設備有待處理提款時停止
+01:03 +211 ~17: /tmp/coupon-c7c8-61.pXkI8X/test/merchant_shop_text_editor_test.dart: session transition dismisses editor and cannot submit stale text
+01:03 +212 ~17: /tmp/coupon-c7c8-61.pXkI8X/test/merchant_shop_text_editor_test.dart: trial does not expose the shop editor
+01:04 +212 ~18: /tmp/coupon-c7c8-61.pXkI8X/test/merchant_onboarding_test.dart: production application flow 申請使用香港欄位並顯示服務端待審進度
+01:05 +213 ~18: /tmp/coupon-c7c8-61.pXkI8X/test/merchant_branches_test.dart: 建立分店前校驗名稱，成功後重新讀取
+01:05 +214 ~18: /tmp/coupon-c7c8-61.pXkI8X/test/merchant_branches_test.dart: 建立分店前校驗名稱，成功後重新讀取
+01:05 +215 ~18: /tmp/coupon-c7c8-61.pXkI8X/test/merchant_onboarding_test.dart: production application flow 讀取進度失敗時不提供重複申請
+01:05 +216 ~18: /tmp/coupon-c7c8-61.pXkI8X/test/merchant_branches_test.dart: 修改資料發往真實接口，失敗時保留伺服器內容
+01:05 +217 ~18: /tmp/coupon-c7c8-61.pXkI8X/test/merchant_branches_test.dart: 修改資料發往真實接口，失敗時保留伺服器內容
+01:06 +218 ~18: /tmp/coupon-c7c8-61.pXkI8X/test/merchant_branches_test.dart: 修改資料發往真實接口，失敗時保留伺服器內容
+01:06 +219 ~18: /tmp/coupon-c7c8-61.pXkI8X/test/merchant_onboarding_test.dart: production application flow Stripe 測試頁返回後同步實際能力
+01:06 +220 ~18: /tmp/coupon-c7c8-61.pXkI8X/test/merchant_branches_test.dart: 店主從選中的店舖打開員工頁
+01:06 +221 ~18: /tmp/coupon-c7c8-61.pXkI8X/test/merchant_branches_test.dart: 只有查看權限時不展示新增或編輯
+01:06 +222 ~18: /tmp/coupon-c7c8-61.pXkI8X/test/merchant_branches_test.dart: 編輯期間切換帳號不提交上一帳號的操作
+01:06 +223 ~18: /tmp/coupon-c7c8-61.pXkI8X/test/merchant_branches_test.dart: 明確拒絕時保留輸入並允許修正重試
+01:06 +224 ~18: /tmp/coupon-c7c8-61.pXkI8X/test/merchant_dashboard_test.dart: 390px English at 130% shows the date filter and applies it
+01:07 +225 ~18: /tmp/coupon-c7c8-61.pXkI8X/test/invoice_dialog_test.dart: invoice dialog keeps input alive until it closes
+01:08 +226 ~18: /tmp/coupon-c7c8-61.pXkI8X/test/invoice_dialog_test.dart: invoice dialog keeps input alive until it closes
+01:08 +227 ~18: /tmp/coupon-c7c8-61.pXkI8X/test/invoice_dialog_test.dart: invoice dialog keeps input alive until it closes
+01:08 +228 ~18: /tmp/coupon-c7c8-61.pXkI8X/test/guest_journeys_test.dart: guests can browse collection and wallet without private requests
+01:08 +228 ~19: /tmp/coupon-c7c8-61.pXkI8X/test/guest_journeys_test.dart: guests can browse collection and wallet without private requests
+01:08 +228 ~20: /tmp/coupon-c7c8-61.pXkI8X/test/guest_journeys_test.dart: guests can browse collection and wallet without private requests
+01:08 +228 ~21: /tmp/coupon-c7c8-61.pXkI8X/test/guest_journeys_test.dart: guests can browse collection and wallet without private requests
+01:10 +229 ~21: /tmp/coupon-c7c8-61.pXkI8X/test/guest_journeys_test.dart: guests can browse collection and wallet without private requests
+01:10 +230 ~21: /tmp/coupon-c7c8-61.pXkI8X/test/guest_journeys_test.dart: filters recover and cancellation keeps the applied query
+01:10 +231 ~21: /tmp/coupon-c7c8-61.pXkI8X/test/guest_journeys_test.dart: branch suggestion opens branch list then selected branch
+01:11 +232 ~21: /tmp/coupon-c7c8-61.pXkI8X/test/favorites_test.dart: shared heart updates optimistically; duplicate and failed writes are safe
+01:11 +233 ~21: /tmp/coupon-c7c8-61.pXkI8X/test/favorites_test.dart: shared heart updates optimistically; duplicate and failed writes are safe
+01:11 +234 ~21: /tmp/coupon-c7c8-61.pXkI8X/test/favorites_test.dart: saved store opens detail and removing it refreshes the list
+01:11 +235 ~21: /tmp/coupon-c7c8-61.pXkI8X/test/delete_account_r1_test.dart: isolated identities do not expose real account deletion or logout
+01:11 +235 ~22: /tmp/coupon-c7c8-61.pXkI8X/test/delete_account_r1_test.dart: delete entry follows log out for signed-in accounts, not guests
+01:12 +236 ~22: /tmp/coupon-c7c8-61.pXkI8X/test/coupon_terms_test.dart: hides terms section for missing terms
+01:12 +237 ~22: /tmp/coupon-c7c8-61.pXkI8X/test/coupon_terms_test.dart: hides terms section for missing terms
+01:12 +238 ~22: /tmp/coupon-c7c8-61.pXkI8X/test/delete_account_r1_test.dart: withdrawable cashback offers withdrawal and does not delete
+01:13 +239 ~22: /tmp/coupon-c7c8-61.pXkI8X/test/delete_account_r1_test.dart: withdrawable cashback offers withdrawal and does not delete
+01:13 +240 ~22: /tmp/coupon-c7c8-61.pXkI8X/test/coupon_terms_test.dart: hides terms section for whitespace terms
+01:13 +241 ~22: /tmp/coupon-c7c8-61.pXkI8X/test/delete_account_r1_test.dart: below minimum and unavailable balances are not treated as zero
+01:13 +242 ~22: /tmp/coupon-c7c8-61.pXkI8X/test/delete_account_r1_test.dart: below minimum and unavailable balances are not treated as zero
+01:13 +243 ~22: /tmp/coupon-c7c8-61.pXkI8X/test/delete_account_r1_test.dart: paid-voucher blocker offers refund or use and opens orders
+01:13 +244 ~22: /tmp/coupon-c7c8-61.pXkI8X/test/delete_account_r1_test.dart: a failed confirmed request preserves the session
+01:13 +245 ~22: /tmp/coupon-c7c8-61.pXkI8X/test/coupon_issue_v2_test.dart: Price blocks invalid sale prices; preview and create use the exact paid draft
+01:15 +246 ~22: /tmp/coupon-c7c8-61.pXkI8X/test/coupon_issue_v2_test.dart: Price blocks invalid sale prices; preview and create use the exact paid draft
+01:16 +247 ~22: /tmp/coupon-c7c8-61.pXkI8X/test/coupon_issue_v2_test.dart: Price blocks invalid sale prices; preview and create use the exact paid draft
+01:16 +248 ~22: /tmp/coupon-c7c8-61.pXkI8X/test/coupon_issue_v2_test.dart: Gift keeps the entered gift and does not inherit stale paid price
+01:17 +249 ~22: /tmp/coupon-c7c8-61.pXkI8X/test/coupon_branch_scope_test.dart: 發券選真實商店與指定分店，預覽與提交一致
+01:18 +250 ~22: /tmp/coupon-c7c8-61.pXkI8X/test/coupon_branch_scope_test.dart: 發券選真實商店與指定分店，預覽與提交一致
+01:18 +251 ~22: /tmp/coupon-c7c8-61.pXkI8X/test/coupon_branch_scope_test.dart: 發券選真實商店與指定分店，預覽與提交一致
+01:18 +252 ~22: /tmp/coupon-c7c8-61.pXkI8X/test/coupon_branch_scope_test.dart: 已有訂單不可改分店時顯示伺服器原因
+01:18 +253 ~22: /tmp/coupon-c7c8-61.pXkI8X/test/coupon_branch_scope_test.dart: 切換帳號清除原商戶的編輯資料
+01:18 +254 ~22: /tmp/coupon-c7c8-61.pXkI8X/test/coupon_branch_scope_test.dart: 提交後斷線保留不確定狀態並阻止重複建立
+01:19 +255 ~22: /tmp/coupon-c7c8-61.pXkI8X/test/coupon_branch_scope_test.dart: 提交後斷線保留不確定狀態並阻止重複建立
+01:19 +256 ~22: /tmp/coupon-c7c8-61.pXkI8X/test/coupon_branch_scope_test.dart: 提交後斷線保留不確定狀態並阻止重複建立
+01:19 +257 ~22: /tmp/coupon-c7c8-61.pXkI8X/test/coupon_branch_scope_test.dart: 提交後斷線保留不確定狀態並阻止重複建立
+01:19 +258 ~22: /tmp/coupon-c7c8-61.pXkI8X/test/coupon_amount_and_grid_test.dart: paid Price shows HKD on results and detail, english=false
+01:19 +259 ~22: /tmp/coupon-c7c8-61.pXkI8X/test/copy_d6_test.dart: QR countdown is withheld until the server supplies expiry
+01:19 +260 ~22: /tmp/coupon-c7c8-61.pXkI8X/test/copy_d6_test.dart: QR countdown is withheld until the server supplies expiry
+01:19 +261 ~22: /tmp/coupon-c7c8-61.pXkI8X/test/copy_d6_test.dart: QR countdown is withheld until the server supplies expiry
+01:20 +262 ~22: /tmp/coupon-c7c8-61.pXkI8X/test/copy_d6_test.dart: QR countdown is withheld until the server supplies expiry
+01:20 +263 ~22: /tmp/coupon-c7c8-61.pXkI8X/test/copy_d6_test.dart: QR countdown is withheld until the server supplies expiry
+01:20 +264 ~22: /tmp/coupon-c7c8-61.pXkI8X/test/copy_d6_test.dart: QR countdown is withheld until the server supplies expiry
+01:20 +265 ~22: /tmp/coupon-c7c8-61.pXkI8X/test/copy_d6_test.dart: QR countdown is withheld until the server supplies expiry
+01:20 +266 ~22: /tmp/coupon-c7c8-61.pXkI8X/test/copy_d6_test.dart: QR countdown is withheld until the server supplies expiry
+01:20 +267 ~22: /tmp/coupon-c7c8-61.pXkI8X/test/copy_d6_test.dart: QR countdown is withheld until the server supplies expiry
+01:20 +268 ~22: /tmp/coupon-c7c8-61.pXkI8X/test/copy_d6_test.dart: QR countdown is withheld until the server supplies expiry
+01:20 +269 ~22: /tmp/coupon-c7c8-61.pXkI8X/test/copy_d6_test.dart: QR countdown is withheld until the server supplies expiry
+01:20 +270 ~22: /tmp/coupon-c7c8-61.pXkI8X/test/copy_d6_test.dart: QR countdown is withheld until the server supplies expiry
+01:20 +271 ~22: /tmp/coupon-c7c8-61.pXkI8X/test/copy_d6_test.dart: QR countdown is withheld until the server supplies expiry
+01:20 +272 ~22: /tmp/coupon-c7c8-61.pXkI8X/test/coupon_amount_and_grid_test.dart: coupon grid fits 768.0 px, text scale 2.0, english=false
+01:20 +273 ~22: /tmp/coupon-c7c8-61.pXkI8X/test/copy_d6_test.dart: FAQ avoids hard-coded points and QR duration
+01:20 +274 ~22: /tmp/coupon-c7c8-61.pXkI8X/test/copy_d6_test.dart: FAQ avoids hard-coded points and QR duration
+01:20 +275 ~22: /tmp/coupon-c7c8-61.pXkI8X/test/copy_d6_test.dart: FAQ avoids hard-coded points and QR duration
+01:20 +276 ~22: /tmp/coupon-c7c8-61.pXkI8X/test/copy_d6_test.dart: FAQ avoids hard-coded points and QR duration
+01:20 +277 ~22: /tmp/coupon-c7c8-61.pXkI8X/test/copy_d6_test.dart: FAQ avoids hard-coded points and QR duration
+01:20 +278 ~22: /tmp/coupon-c7c8-61.pXkI8X/test/copy_d6_test.dart: FAQ avoids hard-coded points and QR duration
+01:20 +279 ~22: /tmp/coupon-c7c8-61.pXkI8X/test/copy_d6_test.dart: percentage offer uses the same payable fraction in either locale
+01:21 +280 ~22: /tmp/coupon-c7c8-61.pXkI8X/test/catalog_photo_test.dart: API base preserves a public deployment path
+01:21 +281 ~22: /tmp/coupon-c7c8-61.pXkI8X/test/catalog_photo_test.dart: catalogue photos support bundled, absolute and upload paths
+01:21 +282 ~22: /tmp/coupon-c7c8-61.pXkI8X/test/bargain_trial_test.dart: bargain start stays actionable for in-stock offers
+01:22 +283 ~22: /tmp/coupon-c7c8-61.pXkI8X/test/app_config_integration_test.dart: FAQ renders cached live rules but not exchange cost
+01:22 +284 ~22: /tmp/coupon-c7c8-61.pXkI8X/test/app_config_integration_test.dart: FAQ renders cached live rules but not exchange cost
+01:23 +285 ~22: /tmp/coupon-c7c8-61.pXkI8X/test/app_config_integration_test.dart: old API failure leaves guide usable with no guessed values
+01:23 +286 ~22: /tmp/coupon-c7c8-61.pXkI8X/test/app_config_integration_test.dart: retry recovers without defaults and keeps valid partial fields
+01:23 +287 ~22: /tmp/coupon-c7c8-61.pXkI8X/test/app_config_integration_test.dart: claim toast adds points only when rule is available
+01:23 +288 ~22: All tests passed!

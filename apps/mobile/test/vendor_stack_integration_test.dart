@@ -43,7 +43,7 @@ void main() {
       'brand survives and coupon filters never change review shop scope',
       (tester) async {
     final api = StackApi();
-    await reviews.showHome(tester, api);
+    await reviews.showReviewHome(tester, api);
     final appBar = tester.widget<AppBar>(find.byType(AppBar).first);
     final logo = find.descendant(
       of: find.byWidget(appBar),
@@ -64,12 +64,13 @@ void main() {
     expect(find.byKey(const ValueKey('vendor-coupon-status-91')), findsNothing);
     expect(
         find.byKey(const ValueKey('vendor-coupon-status-92')), findsOneWidget);
-    await reviews.openPicker(tester);
+    await reviews.openReviewCenter(tester);
     expect(find.text('Central'), findsOneWidget);
-    expect(find.text('Mong Kok'), findsOneWidget);
-    await tester.tap(find.text('Mong Kok'));
+    await tester.tap(find.text('Central'));
     await tester.pumpAndSettle();
-    expect(api.shopReads, [22]);
+    await tester.tap(find.text('Mong Kok').last);
+    await tester.pumpAndSettle();
+    expect(api.shopReads, [(11, 1, 'latest'), (22, 1, 'latest')]);
     expect(api.replies, isEmpty);
     expect(tester.takeException(), isNull);
   });

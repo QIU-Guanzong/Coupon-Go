@@ -1,5 +1,6 @@
 import 'screens/vendor_coupon_workspace.dart';
 import 'screens/merchant_onboarding.dart';
+import 'screens/merchant_reviews.dart';
 import 'screens/merchant_usage.dart';
 import 'screens/trial_banner.dart';
 import 'dart:async';
@@ -272,6 +273,10 @@ class _CouponGoAppState extends State<CouponGoApp> {
                 builder: (_) => IssueCouponScreen(api: _api));
           case '/vendor/settlements':
             return MaterialPageRoute(builder: (_) => SettlementsScreen(api: _api, merchant: true));
+          case '/vendor/reviews':
+            return MaterialPageRoute(
+                settings: settings,
+                builder: (_) => MerchantReviewsScreen(api: _api));
           case '/vendor/records':
             return MaterialPageRoute(builder: (_) => RedemptionRecordsScreen(api: _api));
           case '/vendor/scan':

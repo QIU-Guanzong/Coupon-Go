@@ -248,7 +248,11 @@ class Review {
         countsTowardRating = j['counts_toward_rating'] as bool? ?? false,
         status = j['status'] as String? ?? '',
         replyText = j['reply_text'] as String? ?? '',
-        createdAt = DateTime.tryParse(j['created_at'] as String? ?? ''),
+        repliedAt = _reviewInstant(j['replied_at']),
+        replyEdited = j['reply_edited'] == true,
+        couponName = j['coupon_name'] as String?,
+        redeemedAt = _reviewInstant(j['redeemed_at']),
+        createdAt = _reviewInstant(j['created_at']),
         helpfulCount = j['helpful_count'] as int? ?? 0,
         // Gap 9: whether the current user voted this review helpful.
         helpedByMe = j['helped_by_me'] as bool? ?? false;
@@ -267,9 +271,29 @@ class Review {
   final bool countsTowardRating;
   final String status;
   final String replyText;
+  final DateTime? repliedAt;
+  final bool replyEdited;
+  final String? couponName;
+  final DateTime? redeemedAt;
   final DateTime? createdAt;
   final int helpfulCount; // Gap 9: server-side vote count, drives "最有用"
   final bool helpedByMe; // Gap 9: current user already voted this review
+}
+
+/// FastAPI's legacy review timestamps are UTC even when their ISO strings
+/// omit a zone suffix. Keep no-zone parsing explicit at the receipt boundary.
+DateTime? _reviewInstant(Object? value) {
+  if (value is! String || value.isEmpty) return null;
+  final parsed = DateTime.tryParse(value);
+  if (parsed == null) return null;
+  return parsed.isUtc ? parsed : DateTime.tryParse('${value}Z');
+}
+
+String reviewLocalDate(DateTime value) {
+  final local = value.toLocal();
+  return '${local.year.toString().padLeft(4, '0')}-'
+      '${local.month.toString().padLeft(2, '0')}-'
+      '${local.day.toString().padLeft(2, '0')}';
 }
 
 /// Line B: aggregated shop rating; overall is null while no review

@@ -1,0 +1,16 @@
+00:00 +0: loading /tmp/coupon-c7c8-61.pXkI8X/test/merchant_review_shops_test.dart
+00:00 +0: /tmp/coupon-c7c8-61.pXkI8X/test/merchant_review_shops_test.dart: vendor home only enters authorized stores; switch in one screen
+00:01 +1: /tmp/coupon-c7c8-61.pXkI8X/test/merchant_review_shops_test.dart: membership alone does not make the entry or deep route eligible
+00:01 +2: /tmp/coupon-c7c8-61.pXkI8X/test/merchant_review_shops_test.dart: admin roster is available, title localizes and expired view clears
+00:02 +3: /tmp/coupon-c7c8-61.pXkI8X/test/merchant_review_shops_test.dart: 390px actual page, honest pending, and filters false
+00:02 +4: /tmp/coupon-c7c8-61.pXkI8X/test/merchant_review_shops_test.dart: 390px actual page, honest pending, and filters true
+00:02 +5: /tmp/coupon-c7c8-61.pXkI8X/test/merchant_review_shops_test.dart: old shop response cannot repopulate the next shop list
+00:02 +6: /tmp/coupon-c7c8-61.pXkI8X/test/merchant_review_shops_test.dart: successful reply replaces this row without reload; edit survives failure
+00:02 +6 ~1: /tmp/coupon-c7c8-61.pXkI8X/test/merchant_review_shops_test.dart: successful dispute receipt exits public filters and shows disabled dispute
+00:02 +6 ~2: /tmp/coupon-c7c8-61.pXkI8X/test/merchant_review_shops_test.dart: wrong-store reply receipt does not show success or remove original
+00:02 +6 ~3: /tmp/coupon-c7c8-61.pXkI8X/test/merchant_review_shops_test.dart: session change closes write affordances and removes old draft
+00:02 +6 ~4: /tmp/coupon-c7c8-61.pXkI8X/test/merchant_review_shops_test.dart: isolated review surface is read only
+00:02 +7 ~4: /tmp/coupon-c7c8-61.pXkI8X/test/merchant_review_shops_test.dart: customer sees server reply date, not invented metadata
+00:02 +8 ~4: loading /tmp/coupon-c7c8-61.pXkI8X/test/vendor_stack_integration_test.dart
+00:03 +8 ~4: /tmp/coupon-c7c8-61.pXkI8X/test/vendor_stack_integration_test.dart: brand survives and coupon filters never change review shop scope
+00:04 +9 ~4: All tests passed!
