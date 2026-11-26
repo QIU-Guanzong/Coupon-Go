@@ -1254,7 +1254,7 @@ class _ScanScreenState extends State<ScanScreen> {
                                       height: 260,
                                       decoration: BoxDecoration(
                                         border: Border.all(
-                                            color: CgColors.primary, width: 3),
+                                            color: Theme.of(context).colorScheme.primary, width: 3),
                                         borderRadius: BorderRadius.circular(12),
                                       ),
                                     ),

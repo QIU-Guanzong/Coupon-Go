@@ -158,7 +158,7 @@ class _FavoriteControlState extends State<FavoriteControl> {
                     ? context.tr('取消收藏', 'Remove from favorites')
                     : context.tr('加入收藏', 'Add to favorites'),
                 onPressed: onTap,
-                icon: Icon(favorite ? Icons.favorite : Icons.favorite_border),
+                icon: FavoriteGlyph(saved: favorite),
               );
         },
       );

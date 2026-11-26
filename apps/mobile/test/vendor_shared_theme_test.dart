@@ -67,6 +67,23 @@ void main() {
     });
   }
 
+  test('merchant gold is used for surfaces and readable ink for actions', () {
+    final theme = CgTheme.light(merchant: true);
+    final filled = theme.filledButtonTheme.style!;
+    expect(theme.appBarTheme.backgroundColor, CgColors.vendorGold);
+    expect(filled.backgroundColor!.resolve({}), CgColors.vendorGold);
+    expect(theme.appBarTheme.foregroundColor, CgColors.vendorInk);
+    expect(filled.foregroundColor!.resolve({}), CgColors.vendorInk);
+    expect(theme.bottomNavigationBarTheme.selectedItemColor, CgColors.vendorLink);
+    for (final (bg, fg) in [
+      (CgColors.vendorGold, CgColors.vendorInk),
+      (theme.colorScheme.surface, CgColors.vendorLink),
+    ]) {
+      expect((bg.computeLuminance() + .05) / (fg.computeLuminance() + .05),
+          greaterThanOrEqualTo(4.5));
+    }
+  });
+
   testWidgets('shared AppBar and outlined buttons fit inside a narrow wrap',
       (tester) async {
     tester.view.devicePixelRatio = 1;
