@@ -1456,38 +1456,91 @@ class RedemptionRecordsScreen extends StatefulWidget {
       _RedemptionRecordsScreenState();
 }
 
+typedef _RedemptionDateRange = ({DateTime? from, DateTime? to});
+
 class _RedemptionRecordsScreenState extends State<RedemptionRecordsScreen> {
   List<Map<String, dynamic>> _records = [];
   bool _loading = false;
+  bool _exporting = false;
   String? _error;
-  DateTime? _from;
-  DateTime? _to;
+  _RedemptionDateRange _range = (from: null, to: null);
+  late final ApiClient _ownerApi;
+  late final int _session;
+  int _request = 0;
+  int _exportRequest = 0;
+  DialogRoute<void>? _csvDialog;
+
+  bool get _sameSession =>
+      mounted &&
+      identical(widget.api, _ownerApi) &&
+      _ownerApi.sessionRevision == _session;
 
   @override
   void initState() {
     super.initState();
+    _ownerApi = widget.api;
+    _session = _ownerApi.sessionRevision;
+    _ownerApi.addListener(_clearExpiredSession);
     _load();
   }
 
+  void _clearExpiredSession() {
+    if (!mounted || _sameSession) return;
+    ++_request;
+    ++_exportRequest;
+    final dialog = _csvDialog;
+    _csvDialog = null;
+    if (dialog != null) {
+      // Dismiss only this screen's CSV, never an unrelated route.
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (dialog.isActive) dialog.navigator?.removeRoute(dialog);
+      });
+    }
+    setState(() {
+      _records = [];
+      _loading = false;
+      _exporting = false;
+      _error = 'session';
+    });
+  }
+
+  @override
+  void didUpdateWidget(covariant RedemptionRecordsScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    _clearExpiredSession();
+  }
+
+  @override
+  void dispose() {
+    _ownerApi.removeListener(_clearExpiredSession);
+    super.dispose();
+  }
+
   Future<void> _load() async {
+    if (!_sameSession) return;
+    final range = _range;
+    final request = ++_request;
+    ++_exportRequest;
     setState(() {
       _loading = true;
+      _exporting = false;
       _error = null;
     });
     try {
-      final records = await widget.api.vendorRedemptions(from: _from, to: _to);
-      if (!mounted) return;
+      final records =
+          await widget.api.vendorRedemptions(from: range.from, to: range.to);
+      if (!_sameSession || request != _request) return;
       setState(() {
         _records = records;
         _loading = false;
       });
-    } on ApiException catch (_) {
-      if (mounted) {
-        setState(() {
-          _error = context.tr('網絡不穩定，請重試', 'Network unavailable. Try again.');
-          _loading = false;
-        });
-      }
+    } catch (_) {
+      if (!_sameSession || request != _request) return;
+      setState(() {
+        _records = [];
+        _error = 'load';
+        _loading = false;
+      });
     }
   }
 
@@ -1525,7 +1578,7 @@ class _RedemptionRecordsScreenState extends State<RedemptionRecordsScreen> {
 
   Widget _dateFilter(bool isFrom) {
     final label = isFrom ? context.tr('開始', 'Start') : context.tr('結束', 'End');
-    final date = _dateLabel(isFrom ? _from : _to);
+    final date = _dateLabel(isFrom ? _range.from : _range.to);
     return OutlinedButton(
       key: ValueKey(isFrom ? 'vendor-date-start' : 'vendor-date-end'),
       style: OutlinedButton.styleFrom(
@@ -1534,7 +1587,7 @@ class _RedemptionRecordsScreenState extends State<RedemptionRecordsScreen> {
           vertical: CgTheme.space8,
         ),
       ),
-      onPressed: () => _pickDate(isFrom),
+      onPressed: _sameSession ? () => _pickDate(isFrom) : null,
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
@@ -1550,39 +1603,74 @@ class _RedemptionRecordsScreenState extends State<RedemptionRecordsScreen> {
   }
 
   Future<void> _pickDate(bool isFrom) async {
+    if (!_sameSession) return;
+    final range = _range;
+    final now = DateTime.now();
     final picked = await showDatePicker(
       context: context,
-      initialDate: (isFrom ? _from : _to) ?? DateTime.now(),
-      firstDate: DateTime.now().subtract(const Duration(days: 365)),
-      lastDate: DateTime.now(),
+      initialDate:
+          (isFrom ? range.from ?? range.to : range.to ?? range.from) ?? now,
+      firstDate: isFrom
+          ? now.subtract(const Duration(days: 365))
+          : range.from ?? now.subtract(const Duration(days: 365)),
+      lastDate: isFrom ? range.to ?? now : now,
     );
-    if (picked == null || !mounted) return;
+    if (picked == null || !_sameSession || _range != range) return;
     setState(() {
-      if (isFrom) {
-        _from = picked;
-      } else {
-        _to = picked;
-      }
+      _range = isFrom
+          ? (from: picked, to: range.to)
+          : (from: range.from, to: picked);
     });
     _load();
   }
 
   Future<void> _exportCsv() async {
+    if (!_sameSession ||
+        _loading ||
+        _exporting ||
+        _error != null ||
+        _records.isEmpty) {
+      return;
+    }
+    final range = _range;
+    final request = ++_exportRequest;
+    bool current() => _sameSession && request == _exportRequest;
+    final scope = switch (range) {
+      (from: final from?, to: final to?) => context.tr(
+          '${_dateLabel(from)} 至 ${_dateLabel(to)}',
+          '${_dateLabel(from)} to ${_dateLabel(to)}'),
+      (from: final from?, to: null) =>
+        context.tr('由 ${_dateLabel(from)} 起', 'From ${_dateLabel(from)}'),
+      (from: null, to: final to?) =>
+        context.tr('截至 ${_dateLabel(to)}', 'Through ${_dateLabel(to)}'),
+      _ => context.tr('不限日期', 'All dates'),
+    };
+    setState(() => _exporting = true);
     try {
-      final csv = await widget.api.vendorRedemptionsCsv();
-      if (!mounted) return;
-      await showDialog<void>(
+      final csv =
+          await widget.api.vendorRedemptionsCsv(from: range.from, to: range.to);
+      if (!mounted || !current()) return;
+      final navigator = Navigator.of(context, rootNavigator: true);
+      final dialog = DialogRoute<void>(
         context: context,
+        themes: InheritedTheme.capture(from: context, to: navigator.context),
         builder: (c) => AlertDialog(
-          title: Text(c.tr('核銷記錄 CSV（共 ${_records.length} 條）',
-              'Redemption history CSV (${_records.length} records)')),
+          title: Text(c.tr('核銷記錄 CSV', 'Redemption history CSV')),
           content: SingleChildScrollView(
-            child: SelectableText(
-                csv.length > 2000 ? '${csv.substring(0, 2000)}…' : csv),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(scope),
+                SelectableText(
+                    csv.length > 2000 ? '${csv.substring(0, 2000)}…' : csv),
+              ],
+            ),
           ),
           actions: [
             TextButton(
               onPressed: () {
+                if (!current()) return;
                 Clipboard.setData(ClipboardData(text: csv));
                 Navigator.pop(c);
                 showCgToast(context, context.tr('已複製 CSV', 'CSV copied'));
@@ -1595,8 +1683,16 @@ class _RedemptionRecordsScreenState extends State<RedemptionRecordsScreen> {
           ],
         ),
       );
-    } on ApiException catch (e) {
-      if (mounted) showCgToast(context, e.message);
+      _csvDialog = dialog;
+      await navigator.push(dialog);
+      if (identical(_csvDialog, dialog)) _csvDialog = null;
+    } catch (_) {
+      if (mounted && current()) {
+        showCgToast(
+            context, context.tr('無法匯出，請重試', 'Could not export. Try again.'));
+      }
+    } finally {
+      if (current()) setState(() => _exporting = false);
     }
   }
 
@@ -1612,7 +1708,10 @@ class _RedemptionRecordsScreenState extends State<RedemptionRecordsScreen> {
             child: IconButton(
               icon: const Icon(Icons.download),
               tooltip: context.tr('匯出 CSV', 'Export CSV'),
-              onPressed: _records.isEmpty ? null : _exportCsv,
+              onPressed:
+                  _loading || _exporting || _error != null || _records.isEmpty
+                      ? null
+                      : _exportCsv,
             ),
           ),
         ],
@@ -1637,7 +1736,7 @@ class _RedemptionRecordsScreenState extends State<RedemptionRecordsScreen> {
                   ],
                 ),
               ),
-              if (_from != null || _to != null)
+              if (_sameSession && (_range.from != null || _range.to != null))
                 Align(
                   alignment: AlignmentDirectional.centerEnd,
                   child: Padding(
@@ -1647,8 +1746,7 @@ class _RedemptionRecordsScreenState extends State<RedemptionRecordsScreen> {
                       key: const ValueKey('vendor-date-clear'),
                       onPressed: () {
                         setState(() {
-                          _from = null;
-                          _to = null;
+                          _range = (from: null, to: null);
                         });
                         _load();
                       },
@@ -1671,12 +1769,17 @@ class _RedemptionRecordsScreenState extends State<RedemptionRecordsScreen> {
                             child: Column(
                               mainAxisAlignment: MainAxisAlignment.center,
                               children: [
-                                Text(context.tr('網絡不穩定，請重試',
-                                    'Network unavailable. Try again.')),
-                                const SizedBox(height: CgTheme.space12),
-                                ElevatedButton(
-                                    onPressed: _load,
-                                    child: Text(context.tr('重試', 'Retry'))),
+                                Text(_error == 'session'
+                                    ? context.tr('請重新開啟核銷記錄',
+                                        'Reopen redemption history.')
+                                    : context.tr('網絡不穩定，請重試',
+                                        'Network unavailable. Try again.')),
+                                if (_sameSession)
+                                  const SizedBox(height: CgTheme.space12),
+                                if (_sameSession)
+                                  ElevatedButton(
+                                      onPressed: _load,
+                                      child: Text(context.tr('重試', 'Retry'))),
                               ],
                             ),
                           )
