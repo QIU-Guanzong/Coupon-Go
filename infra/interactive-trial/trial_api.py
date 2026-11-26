@@ -45,6 +45,7 @@ from app import config, connect_gateway, connect_service, models, security
 from app.database import get_db
 from app.main import app as backend
 from app.models_line_b import Review
+from app.routers import qbot
 
 ROOT = Path(os.environ['TRIAL_STATE_DIR']).resolve()
 TEMPLATE = ROOT / 'template.db'
@@ -219,6 +220,16 @@ def _new_session():
 def _db(path):
     engine = create_engine(f'sqlite:///{path}', connect_args={'check_same_thread': False, 'timeout': 15}, poolclass=NullPool)
     return engine, Session(engine)
+
+
+def _session_comparison(path, question, comparison):
+    engine, db = _db(path)
+    try:
+        offers = qbot.catalog(db, question.message, comparison)
+        return qbot.comparison_answer(offers, question.language, preview=True)
+    finally:
+        db.close()
+        engine.dispose()
 
 
 def _trial_get_db(request: Request):
@@ -601,6 +612,13 @@ class TrialGateway:
                     result = await client.post(QBOT_URL, content=bytes(body),
                                                headers={'Content-Type': 'application/json'})
                 data = result.json()
+                # Only after the existing shared gateway admitted this request.
+                # The browser's own demo shop may have changed price or stock.
+                if result.status_code == 200:
+                    question = qbot.Question.model_validate_json(bytes(body))
+                    comparison = qbot.comparison_request(question.message)
+                    if comparison:
+                        data = await asyncio.to_thread(_session_comparison, session_path, question, comparison)
                 return await JSONResponse(data, result.status_code,
                                           headers={'Cache-Control': 'no-store'})(scope, receive, send)
             except (httpx.HTTPError, ValueError):

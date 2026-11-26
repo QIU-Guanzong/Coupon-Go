@@ -3,6 +3,7 @@ import json
 import os
 import re
 from datetime import datetime, timezone
+from decimal import Decimal, ROUND_HALF_UP
 from ipaddress import ip_address
 from typing import Annotated, Literal
 
@@ -18,6 +19,7 @@ from ..deps import get_optional_user, points_balance
 from ..models_packages import Package
 from ..models_bargain import BargainCampaign
 from ..qbot_budget import admit
+from ..serializers_packages import REFUND_POLICY_TEXT
 
 router = APIRouter()
 MessageText = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=1200)]
@@ -34,7 +36,29 @@ class Question(BaseModel):
     language: Literal["zh-Hant", "en"] = "zh-Hant"
 
 
-def catalog(db, question):
+# Only parse a whole, unambiguous request. Per-person budgets, ranges and
+# additional preferences stay in the ordinary catalog-grounded conversation.
+_PARTY = r"(?P<people>[1-9][0-9]?)"
+_AMOUNT = r"(?P<budget>[0-9]{1,8}(?:\.[0-9]{1,2})?)"
+_COMPARE_ZH = re.compile(
+    rf"(?:比較|比较|對比|对比)\s*{_PARTY}\s*人套餐"
+    rf"(?:[，, ]*總預算\s*(?:HK\$|HKD|港幣)?\s*{_AMOUNT}\s*(?:港元|元)?)?[。？?]?", re.I)
+_COMPARE_EN = re.compile(
+    rf"compare (?:packages|set meals) for {_PARTY}(?: people)?"
+    rf"(?:[, ]+total budget (?:HK\$|HKD)\s*{_AMOUNT})?[.?]?", re.I)
+
+
+def comparison_request(message):
+    text = (message.strip().replace("总预算", "總預算").replace("港币", "港幣")
+            .replace("雙人套餐", "2人套餐").replace("双人套餐", "2人套餐"))
+    match = _COMPARE_ZH.fullmatch(text) or _COMPARE_EN.fullmatch(text)
+    if match:
+        budget = match["budget"]
+        return int(match["people"]), Decimal(budget) if budget is not None else None
+    return None
+
+
+def catalog(db, question, comparison=None):
     now = datetime.now(timezone.utc).replace(tzinfo=None)
     c, p, b, shop = models.Coupon, Package, BargainCampaign, models.Shop
     sources = {
@@ -51,6 +75,8 @@ def catalog(db, question):
     terms = list(dict.fromkeys(terms))[:24] + re.findall(r"[A-Za-z0-9]{2,}", question)[:8]
     results = []
     for kind, (model, name, name_en, expires, extra, filters) in sources.items():
+        if comparison and kind != "package":
+            continue
         if ("限時" in question or "限时" in question):
             if kind != "coupon":
                 continue
@@ -58,20 +84,44 @@ def catalog(db, question):
         rows = db.query(model.id, name, name_en, shop.name, expires, extra).join(
             shop, model.shop_id == shop.id).filter(
             shop.is_approved.is_(True), model.status == "active", expires > now, *filters)
-        if terms:
+        if kind == "package":
+            rows = rows.add_columns(p.person_count, p.refund_policy, p.usage_rules)
+        if comparison:
+            people, budget = comparison
+            rows = rows.filter(p.person_count == people)
+            if budget is not None:
+                rows = rows.filter(p.package_price <= budget)
+            rows = rows.order_by(p.package_price)
+        elif terms:
             matches = [col.contains(term, autoescape=True) for term in terms
                        for col in (name, name_en, shop.name)]
             rows = rows.order_by(case((or_(*matches), 0), else_=1))
-        for oid, title, english, shop_name, date, value in rows.order_by(model.id).limit(8):
+        for oid, title, english, shop_name, date, value, *details in rows.order_by(model.id).limit(8):
             record = dict(type=kind, id=oid, name=title[:120], name_en=(english or "")[:120],
                           shop=shop_name[:100], valid_to=date.date().isoformat())
             if kind == "coupon":
                 record["terms"] = (value or "")[:180]
             elif kind == "package":
+                people, policy, raw_rules = details
                 record["price_hkd"] = str(value)
+                if people and people > 0:
+                    record["person_count"] = people
+                    record["per_person_hkd"] = str((value / people).quantize(
+                        Decimal("0.01"), rounding=ROUND_HALF_UP))
+                if policy in REFUND_POLICY_TEXT:
+                    record["refund_policy"] = policy
+                try:
+                    rules = json.loads(raw_rules or "{}")
+                except (ValueError, TypeError):
+                    rules = {}
+                if isinstance(rules, dict) and isinstance(rules.get("need_booking"), bool):
+                    record["need_booking"] = rules["need_booking"]
             else:
                 record["floor_price_hkd"] = str(value)
             results.append(record)
+
+    if comparison:
+        return results
 
     def order(item):
         fields = (item["name"], item["name_en"], item["shop"])
@@ -119,6 +169,36 @@ def mentioned_offers(answer, public, language):
     return matches
 
 
+def comparison_answer(public, language, preview):
+    en = language == "en"
+    lines = []
+    if preview:
+        lines.append("These are demo packages." if en else "以下為示例套餐。")
+    offers = []
+    if public:
+        lines.append("From the catalog, lowest total price first:" if en else "按目錄內整份套餐售價，由低至高排列。")
+    for item in public[:3]:
+        name = (item["name_en"] or item["name"]) if en else item["name"]
+        offers.append(dict(type="package", id=item["id"], name=name, shop=item["shop"]))
+        price, average = item["price_hkd"], item["per_person_hkd"]
+        booking = item.get("need_booking")
+        if en:
+            terms = {"anytime": "Refundable before use; automatic refund at expiry",
+                     "expiry_only": "Automatic refund at expiry only",
+                     "non_refundable": "Non-refundable"}
+            reserve = {True: "Booking required", False: "No booking required"}.get(booking, "Booking terms unlisted")
+            refund = terms.get(item.get("refund_policy"), "Refund terms unlisted")
+            lines.append(f"{name} ({item['shop']}) · HK${price} total, about HK${average} per person. {reserve}. {refund}.")
+        else:
+            reserve = {True: "須預約", False: "毋須預約"}.get(booking, "預約要求未列明")
+            refund = REFUND_POLICY_TEXT.get(item.get("refund_policy"), "退款條款未列明")
+            lines.append(f"{name}（{item['shop']}）· 全份 HK${price}，人均約 HK${average}。{reserve}。{refund}。")
+    if not offers:
+        lines.append("No available package matches. Try another party size or total budget."
+                     if en else "暫時沒有符合條件的套餐。可試試其他人數或總預算。")
+    return {"answer": "\n\n".join(lines), "points_balance": None, "offers": offers}
+
+
 @router.post("/qbot/chat")
 def chat(body: Question, request: Request, db: Session = Depends(get_db),
          user: models.User | None = Depends(get_optional_user)):
@@ -143,6 +223,10 @@ def chat(body: Question, request: Request, db: Session = Depends(get_db),
     # optional account result separately from the model's public advice.
     asks_points = bool(re.search(r"積分|积分|幾多分|多少分|points?", body.message, re.I))
     balance = points_balance(db, user.id) if asks_points and user is not None else None
+    comparison = comparison_request(body.message)
+    if comparison:
+        public = catalog(db, body.message, comparison)
+        return comparison_answer(public, body.language, request.scope.get("state", {}).get("qbot_preview"))
     public = catalog(db, body.message)
     db.close()  # do not hold a database connection during provider I/O
     instructions = (
@@ -151,7 +235,12 @@ def chat(body: Question, request: Request, db: Session = Depends(get_db),
         "若沒有合適樣本，引導到 Let's Go!。個人積分由 App 在你的回覆下方另行顯示，未登入可提示登入。回答積分問題時毋須聲稱看不到餘額或叫用戶離開對話。"
         "領券後存入 Q Wallet 未使用，打開券出示 QR 或六位兌換碼，店員在商家端按「預核銷」，核對店名和券名後同一位店員按「確認核銷」。顧客只出示，毋須按確認。"
         f"兌換碼最長 {config.QR_TTL_SECONDS // 60} 分鐘，重新出示會換碼。"
-        f"免費領券 +{config.POINTS_CLAIM} 分，核銷 +{config.POINTS_REDEEM} 分；符合資格的評價 +{config.POINTS_REVIEW} 分。"
+        f"免費領券 +{config.POINTS_CLAIM} 分，免費券核銷 +{config.POINTS_REDEEM} 分；符合資格的評價 +{config.POINTS_REVIEW} 分。"
+        f"付費券及套餐在核銷時按該張券分攤的實付港元乘以 {config.POINTS_PER_HKD} 後向下取整計分。"
+        "比較套餐時可引用樣本內的套餐總價、人數、約計人均價和預約要求；缺少資料須說明未列明。"
+        "不能由有限樣本斷言全平台最抵；遇到未指定按全份或人均的預算，請先問清楚。"
+        "如想按總預算找最平套餐，可輸入「比較2人套餐，總預算HK$200」或 Compare packages for 2, total budget HK$200。"
+        "退款條款 anytime 為未使用隨時退及過期自動退，expiry_only 僅過期自動退，non_refundable 不設退款。"
         "套餐退款以商品條款及訂單狀態為準；已核銷不可退，不承諾退款結果。砍價活動以頁面所列價格及條款為準，不承諾成交。"
         "僅在被問及歷史返現時解釋：舊版堂食返現須於有效期內再次在同一商戶消費才可解鎖；待確認的金額不可提現。"
         f"舊版堂食解鎖期限 {config.CASHBACK_DINEIN_UNLOCK_DAYS} 天。不要主動推廣返現或聲稱可操作。"

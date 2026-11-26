@@ -198,11 +198,28 @@ def test_qbot_uses_only_the_existing_local_quota_gateway(gateway, monkeypatch):
             return Response()
     monkeypatch.setattr(gateway, 'QBOT_URL', 'http://127.0.0.1:18760/api/v3/qbot/chat')
     monkeypatch.setattr(gateway.httpx, 'AsyncClient', LocalProxy)
-    for _ in range(5):
+    from app.models_packages import Package
+    _, path = gateway._session_file(client.cookies.get(gateway.COOKIE))
+    engine, db = gateway._db(path)
+    try:
+        package = db.query(Package).filter_by(person_count=2, status="active").first()
+        package.package_price = 0.73
+        package_id = package.id
+        db.commit()
+    finally:
+        db.close()
+        engine.dispose()
+    prompt = {"message": "比較雙人套餐，總預算HK$1"}
+    match = client.post("/api/v3/qbot/chat", json=prompt).json()
+    assert [offer["id"] for offer in match["offers"]] == [package_id]
+    assert "HK$0.73" in match["answer"]
+    other = trial_browser(gateway)
+    assert other.post("/api/v3/qbot/chat", json=prompt).json()["offers"] == []
+    for _ in range(4):
         result = client.post('/api/v3/qbot/chat', json={'message': '優惠'})
         assert result.status_code == 200 and result.json()['reply'] == '來自現有服務'
     assert client.post('/api/v3/qbot/chat', json={'message': '優惠'}).status_code == 429
-    assert len(calls) == 5
+    assert len(calls) == 6
     assert all(url == gateway.QBOT_URL and headers == {'Content-Type': 'application/json'}
                for url, headers, _ in calls)
 
