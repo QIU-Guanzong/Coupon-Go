@@ -14,6 +14,7 @@ import '../models.dart';
 import '../theme.dart';
 import '../widgets/widgets.dart';
 import '../widgets/favorite_control.dart';
+import 'account.dart' show openClaimedCouponWallet;
 import 'bargain.dart';
 import 'packages.dart';
 import 'reviews_admin.dart';
@@ -45,6 +46,9 @@ class _HomeScreenState extends State<HomeScreen> {
   String _area = '全部地區';
   bool _loading = true;
   bool _error = false;
+  bool _packagesPending = false;
+  int _homeLoad = 0;
+  int _areaLoad = 0;
   static const _qbotHintSeen = 'home_qbot_hint_seen_v1';
   final _qbotHint = GlobalKey<TooltipState>();
   Timer? _qbotHintTimer;
@@ -87,8 +91,14 @@ class _HomeScreenState extends State<HomeScreen> {
     super.dispose();
   }
 
+  bool _isCurrentHomeLoad(ApiClient api, int load) =>
+      mounted && identical(widget.api, api) && load == _homeLoad;
+
   Future<void> _load() async {
-    if (mounted) setState(() => _loading = true);
+    if (!mounted) return;
+    final api = widget.api;
+    final load = ++_homeLoad;
+    setState(() => _loading = true);
     try {
       // Gap 10: best-effort last-known position only — no permission
       // prompt on the home page. When the OS has no cached position
@@ -109,52 +119,71 @@ class _HomeScreenState extends State<HomeScreen> {
         lat = null;
         lng = null;
       }
-      final data = await widget.api.home(lat: lat, lng: lng);
-      // Packages + bargain campaigns are best-effort: a failure here
-      // must not blank the whole home page.
-      var packages = <Package>[];
-      var campaigns = <BargainCampaign>[];
-      try {
-        packages = (await widget.api.packages())
-            .map((e) => Package.fromJson(e as Map<String, dynamic>))
-            .toList();
-      } on ApiException {
-        packages = <Package>[];
-      }
-      try {
-        campaigns = (await widget.api.bargainCampaigns())
-            .map((e) => BargainCampaign.fromJson(e as Map<String, dynamic>))
-            .toList();
-      } on ApiException {
-        campaigns = <BargainCampaign>[];
-      }
-      if (!mounted) return;
+      if (!_isCurrentHomeLoad(api, load)) return;
+      final data = await api.home(lat: lat, lng: lng);
+      if (!_isCurrentHomeLoad(api, load)) return;
       setState(() {
         _home = data;
-        _packages = packages;
-        _campaigns = campaigns;
+        _packagesPending = true;
         _loading = false;
         _error = false;
       });
-      _loadAreaCoupons();
+      // Secondary sections are independent: never hold the home result for either.
+      unawaited(_loadPackages(api, load));
+      unawaited(_loadCampaigns(api, load));
+      unawaited(_loadAreaCoupons());
     } catch (_) {
-      if (mounted) {
-        setState(() {
-          _loading = false;
-          _error = true;
-        });
-      }
+      if (!_isCurrentHomeLoad(api, load)) return;
+      setState(() {
+        _loading = false;
+        _error = true;
+      });
     }
   }
 
-  Future<void> _loadAreaCoupons() async {
+  Future<void> _loadPackages(ApiClient api, int load) async {
+    var packages = <Package>[];
     try {
-      final list = _area == '全部地區'
+      packages = (await api.packages())
+          .map((row) => Package.fromJson(row as Map<String, dynamic>))
+          .toList();
+    } catch (_) {
+      // Optional content should not change the main home result.
+    }
+    if (!_isCurrentHomeLoad(api, load)) return;
+    setState(() {
+      _packages = packages;
+      _packagesPending = false;
+    });
+  }
+
+  Future<void> _loadCampaigns(ApiClient api, int load) async {
+    var campaigns = <BargainCampaign>[];
+    try {
+      campaigns = (await api.bargainCampaigns())
+          .map((row) => BargainCampaign.fromJson(row as Map<String, dynamic>))
+          .toList();
+    } catch (_) {
+      // Optional content should not change the main home result.
+    }
+    if (!_isCurrentHomeLoad(api, load)) return;
+    setState(() => _campaigns = campaigns);
+  }
+
+  Future<void> _loadAreaCoupons() async {
+    final api = widget.api;
+    final homeLoad = _homeLoad;
+    final areaLoad = ++_areaLoad;
+    final area = _area;
+    try {
+      final list = area == '全部地區'
           ? _coupons('popular_coupons')
-          : (await widget.api.classification(area: _area))
+          : (await api.classification(area: area))
               .map((e) => Coupon.fromJson(e as Map<String, dynamic>))
               .toList();
-      if (mounted) setState(() => _areaCoupons = list);
+      if (_isCurrentHomeLoad(api, homeLoad) && areaLoad == _areaLoad) {
+        setState(() => _areaCoupons = list);
+      }
     } on ApiException {
       // Keep the previous list; area filtering must not blank the page.
     }
@@ -472,7 +501,12 @@ class _HomeScreenState extends State<HomeScreen> {
                   ],
                   // 热门套餐：2 列网格
                   SectionHeader(title: context.tr('熱門套餐','Popular packages'), onViewAll: _openPackageList),
-                  if (_packages.isEmpty)
+                  if (_packages.isEmpty && _packagesPending)
+                    const Padding(
+                      padding: EdgeInsets.symmetric(horizontal: 16),
+                      child: SkeletonBox(height: 40),
+                    )
+                  else if (_packages.isEmpty)
                     Padding(
                       padding: const EdgeInsets.symmetric(horizontal: 16),
                       child: Text(context.tr('暫時沒有熱門套餐。','No popular packages yet.'),
@@ -913,20 +947,42 @@ class CouponDetailScreen extends StatefulWidget {
 class _CouponDetailScreenState extends State<CouponDetailScreen> {
   bool _claimed = false;
   bool _claiming = false;
-  int? _remaining;
+  int? _remaining, _claimedWalletItemId;
+  late int _session;
   late String _purchaseRef;
 
   @override
   void initState() {
     super.initState();
     _purchaseRef = 'coupon-${widget.coupon.id}-${DateTime.now().microsecondsSinceEpoch}';
+    _session = widget.api.sessionRevision;
+    widget.api.addListener(_sessionChanged);
     if (widget.api.isLoggedIn && widget.coupon.packageId == null) _readClaim();
   }
 
+  @override
+  void dispose() {
+    widget.api.removeListener(_sessionChanged);
+    super.dispose();
+  }
+
+  void _sessionChanged() {
+    if (_session == widget.api.sessionRevision) return;
+    _session = widget.api.sessionRevision;
+    setState(() {
+      _claimed = false;
+      _claimedWalletItemId = _remaining = null;
+    });
+    if (widget.api.isLoggedIn && widget.coupon.packageId == null) {
+      unawaited(_readClaim());
+    }
+  }
+
   Future<void> _readClaim() async {
+    final session = _session;
     try {
       final detail = await widget.api.couponDetails(widget.coupon.id);
-      if (!mounted || _claiming || _claimed) return;
+      if (!mounted || session != _session || _claiming || _claimed) return;
       setState(() {
         _claimed = detail['is_claimed'] == true;
         _remaining = detail['coupon']?['remaining'] as int?;
@@ -1007,11 +1063,21 @@ class _CouponDetailScreenState extends State<CouponDetailScreen> {
       bottomNavigationBar: Padding(
         padding: const EdgeInsets.all(16),
         child: ElevatedButton(
-          onPressed: (!c.isPaid && _claimed) || _claiming || (c.isPaid && remaining <= 0) ||
+          onPressed: _claiming || (c.isPaid && remaining <= 0) ||
                   (c.isPaid && (c.salePrice == null || c.salePrice! <= 0))
               ? null
               : () async {
                   if (_claiming) return;
+                  if (!c.isPaid && _claimed) {
+                    await openClaimedCouponWallet(
+                      context,
+                      widget.api,
+                      couponId: c.id,
+                      walletItemId: _claimedWalletItemId,
+                    );
+                    return;
+                  }
+                  var claimSession = _session;
                   setState(() => _claiming = true);
                   try {
                     if (!widget.api.isLoggedIn) {
@@ -1031,10 +1097,13 @@ class _CouponDetailScreenState extends State<CouponDetailScreen> {
                       }
                       return;
                     }
+                    claimSession = _session;
                     final result = await widget.api.claimCoupon(c.id);
-                    if (!mounted) return;
+                    if (!mounted || claimSession != _session) return;
                     setState(() {
                       _claimed = true;
+                      final item = result['wallet_item_id'];
+                      _claimedWalletItemId = item is int && item > 0 ? item : null;
                       _remaining = result['coupon']?['remaining'] as int?;
                     });
                     if (context.mounted) {
@@ -1045,13 +1114,20 @@ class _CouponDetailScreenState extends State<CouponDetailScreen> {
                           : context.tr('已存入 Q Wallet', 'Saved to Q Wallet'));
                     }
                   } on ApiException catch (e) {
-                    if (!context.mounted) return;
-                    if (!c.isPaid && e.status == 409) setState(() => _claimed = true);
+                    if (!context.mounted || (!c.isPaid && claimSession != _session)) return;
+                    if (!c.isPaid && e.status == 409 && e.code == 'coupon_already_claimed') {
+                      setState(() => _claimed = true);
+                    }
                     showCgToast(context, e.message);
                   } catch (_) {
                     if (context.mounted) showCgToast(context, context.tr('未能確認領券結果，請重試', 'Could not confirm the claim. Try again.'));
                   } finally {
-                    if (mounted) setState(() => _claiming = false);
+                    if (mounted) {
+                      setState(() => _claiming = false);
+                      if (claimSession != _session && widget.api.isLoggedIn) {
+                        unawaited(_readClaim());
+                      }
+                    }
                   }
                 },
           child: Text(c.isPaid && remaining <= 0
@@ -1059,7 +1135,7 @@ class _CouponDetailScreenState extends State<CouponDetailScreen> {
               : c.isPaid && (c.salePrice == null || c.salePrice! <= 0)
               ? context.tr('價格暫不可用', 'Price unavailable')
               : !c.isPaid && _claimed
-              ? context.tr('已領取', 'Claimed')
+              ? context.tr('去錢包出示', 'Show in wallet')
               : _claiming
                   ? context.tr('處理中…', 'Processing…')
                   : c.isPaid

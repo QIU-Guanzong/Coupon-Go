@@ -32,6 +32,8 @@ class WalletScreen extends StatefulWidget {
     this.showPoints = true,
     this.initialStatus = 1,
     this.initialPendingReviews = false,
+    this.focusCouponId,
+    this.focusWalletItemId,
     this.onOpenCorporate,
     this.onOpenMyReviews,
     this.onOpenBrowsingHistory,
@@ -51,6 +53,7 @@ class WalletScreen extends StatefulWidget {
       onOpenRefunds;
   final bool showProfile, showPoints, initialPendingReviews;
   final int initialStatus;
+  final int? focusCouponId, focusWalletItemId;
 
   @override
   State<WalletScreen> createState() => _WalletScreenState();
@@ -137,7 +140,11 @@ class _WalletScreenState extends State<WalletScreen> with WalletUpdates<WalletSc
 
   Future<void> _refresh({bool quiet = false}) async {
     if (widget.guest) return;
-    await Future.wait([_load(quiet: quiet), _loadOverview()]);
+    if (widget.focusCouponId != null) {
+      await _load(quiet: quiet);
+    } else {
+      await Future.wait([_load(quiet: quiet), _loadOverview()]);
+    }
   }
 
   Future<void> _loadOverview() async {
@@ -242,12 +249,24 @@ class _WalletScreenState extends State<WalletScreen> with WalletUpdates<WalletSc
       final wallet = await api.wallet(status: status);
       if (!current()) return;
       final pages = wallet['total_pages'] as int? ?? 1;
-      final last = (quiet ? _page : 1).clamp(1, pages);
-      final items = _walletRows(wallet, status);
+      final focus = widget.focusCouponId;
+      final last = focus != null ? pages : (quiet ? _page : 1).clamp(1, pages);
+      List<WalletItem> matching(Map<String, dynamic> data) {
+        final items = _walletRows(data, status);
+        if (focus == null) return items;
+        return items.where((item) =>
+          !item.isPackage &&
+          item.couponId == focus &&
+          (widget.focusWalletItemId == null || item.id == widget.focusWalletItemId)
+        ).toList();
+      }
+
+      final items = matching(wallet);
       for (var page = 2; page <= last; page++) {
+        if (focus != null && items.isNotEmpty) break;
         final more = await api.wallet(status: status, page: page);
         if (!current()) return;
-        items.addAll(_walletRows(more, status));
+        items.addAll(matching(more));
       }
       setState(() {
         final seen = <int>{};
@@ -963,6 +982,29 @@ class _WalletScreenState extends State<WalletScreen> with WalletUpdates<WalletSc
 
   @override
   Widget build(BuildContext context) {
+    if (widget.focusCouponId != null) {
+      return RefreshIndicator(
+        onRefresh: _refresh,
+        child: ListView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          padding: const EdgeInsets.all(16),
+          children: [
+            if (_loading)
+              const Center(child: CircularProgressIndicator())
+            else if (_error) ...[
+              Text(context.tr('未能載入優惠券', 'Could not load the coupon')),
+              TextButton(
+                onPressed: _refresh,
+                child: Text(context.tr('重試', 'Retry')),
+              ),
+            ] else if (_items.isEmpty)
+              Text(context.tr('錢包內沒有可出示的此款優惠券', 'This coupon is not available to show'))
+            else
+              for (final item in _items) _couponTile(context, item),
+          ],
+        ),
+      );
+    }
     if (widget.showProfile) {
       return Center(
         child: ConstrainedBox(
@@ -1113,6 +1155,49 @@ class _WalletScreenState extends State<WalletScreen> with WalletUpdates<WalletSc
       ),
     );
   }
+}
+
+Future<void> openClaimedCouponWallet(
+  BuildContext context,
+  ApiClient api, {
+  required int couponId,
+  int? walletItemId,
+}) async {
+  if (!api.isLoggedIn) return;
+  final session = api.sessionRevision;
+  final navigator = Navigator.of(context);
+  await navigator.push<void>(
+    MaterialPageRoute(
+      builder: (_) => _ProfileWalletRoute(
+        api: api,
+        session: session,
+        title: 'Q Wallet',
+        child: WalletScreen(
+          api: api,
+          showPoints: false,
+          focusCouponId: couponId,
+          focusWalletItemId: walletItemId,
+          onShowQr: (item) async {
+            if (!api.isLoggedIn || api.sessionRevision != session) return;
+            await navigator.push<void>(MaterialPageRoute(
+              builder: (_) => ListenableBuilder(
+                listenable: api,
+                builder: (context, _) => api.sessionRevision == session
+                    ? QrShowScreen(api: api, item: item)
+                    : Scaffold(
+                        appBar: AppBar(title: const Text('Q Wallet')),
+                        body: Center(child: Text(context.tr(
+                          '帳戶已切換，請返回。',
+                          'The account changed. Go back.',
+                        ))),
+                      ),
+              ),
+            ));
+          },
+        ),
+      ),
+    ),
+  );
 }
 
 class _ProfileWalletRoute extends StatelessWidget {
