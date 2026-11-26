@@ -726,6 +726,14 @@ class ApiClient extends ChangeNotifier {
   Future<Map<String, dynamic>> packageDetails(int id) async =>
       (await get('/package-details', query: {'package_id': '$id'}))['package']
           as Map<String, dynamic>;
+  // Public trial projection is deliberately independent of account headers.
+  Future<Map<String, dynamic>> publicTrialPackage(String slug) async {
+    final uri = Uri.parse('$baseUrl/api/v3/trial/public-packages/')
+        .resolve(Uri.encodeComponent(slug));
+    return _decode(
+        await http.get(uri, headers: {'Accept': 'application/json'}));
+  }
+
   Future<Map<String, dynamic>> purchasePackage(int id, String method,
           {String clientRef = '', int quantity = 1}) async =>
       post('/packages/$id/purchase', body: {

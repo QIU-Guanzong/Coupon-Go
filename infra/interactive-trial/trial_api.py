@@ -5,11 +5,13 @@ provide Stripe / AI credentials. Demo state is private to one browser and is
 intentionally reset on process restart or after inactivity.
 """
 import asyncio
+from contextlib import closing
 from contextvars import ContextVar
 from datetime import datetime, timedelta, timezone
 import fcntl
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -421,6 +423,80 @@ async def _upload_coupon_image(scope, receive, sid, path, request):
         IMAGE_SLOTS.release()
 
 
+# Only a reviewed fixture from the immutable trial template is shareable.
+# Slugs are not session IDs and never resolve against a browser's private DB.
+PUBLIC_PACKAGES_PATH = '/api/v3/trial/public-packages/'
+PUBLIC_PACKAGE_FIXTURES = {
+    'shu-xiang-hotpot-for-four': ('麻辣火鍋四人特價套餐', '蜀香麻辣火鍋城'),
+}
+
+
+def _public_package(slug: str, *, now: datetime | None = None):
+    identity = PUBLIC_PACKAGE_FIXTURES.get(slug)
+    if identity is None:
+        return None
+    with closing(sqlite3.connect(f'{TEMPLATE.as_uri()}?mode=ro', uri=True)) as db:
+        db.row_factory = sqlite3.Row
+        rows = db.execute("""
+            SELECT p.name, s.name AS shop_name, p.shop_id, p.package_price,
+                   p.original_price, p.person_count, p.valid_from, p.valid_to,
+                   p.status, p.stock_left, p.refund_policy, p.items, p.usage_rules
+            FROM packages p JOIN shops s ON p.shop_id=s.id
+            WHERE p.name=? AND s.name=? AND s.is_approved=1 LIMIT 2
+        """, identity).fetchall()
+        if len(rows) != 1 or rows[0]['status'] not in ('active', 'sold_out', 'expired'):
+            return None
+        row = rows[0]
+        branches = db.execute(
+            'SELECT name AS branch_name, address FROM branches WHERE shop_id=? ORDER BY id',
+            (row['shop_id'],),
+        ).fetchall()
+    try:
+        def utc(value):
+            dt = datetime.fromisoformat(value)
+            return dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt.astimezone(timezone.utc)
+
+        start, end = utc(row['valid_from']), utc(row['valid_to'])
+        now = now or datetime.now(timezone.utc)
+        price, original = float(row['package_price']), float(row['original_price'])
+        raw_items, raw_rules = json.loads(row['items']), json.loads(row['usage_rules'])
+        if (start > now or end <= start or not math.isfinite(original) or
+                not 0 < price <= original or type(row['stock_left']) is not int or
+                type(row['person_count']) is not int or row['person_count'] <= 0 or
+                row['refund_policy'] not in ('anytime', 'expiry_only', 'non_refundable') or
+                not isinstance(raw_items, list) or not isinstance(raw_rules, dict)):
+            return None
+        if not raw_items or any(
+            not isinstance(item, dict) or not isinstance(item.get('name'), str) or
+            type(item.get('qty')) is not int or item['qty'] <= 0 for item in raw_items
+        ):
+            return None
+    except (TypeError, ValueError, OverflowError):
+        return None
+    # Explicit field projection: no generic package serializer, database IDs,
+    # contact data, order counts, customer reviews or account-derived values.
+    rules = {key: raw_rules[key] for key in ('need_booking', 'stackable', 'weekday_only', 'holiday')
+             if type(raw_rules.get(key)) is bool}
+    for key in ('time_slots', 'includes', 'excludes'):
+        value = raw_rules.get(key)
+        if isinstance(value, list) and all(isinstance(entry, str) for entry in value):
+            rules[key] = value
+    status = ('expired' if row['status'] == 'expired' or end <= now else
+              'sold_out' if row['status'] == 'sold_out' or row['stock_left'] <= 0 else 'active')
+    return {
+        'slug': slug,
+        'package': {
+            'name': row['name'], 'shop_name': row['shop_name'],
+            'package_price': price, 'original_price': original,
+            'person_count': row['person_count'], 'status': status,
+            'valid_from': start.isoformat(), 'valid_to': end.isoformat(),
+            'refund_policy': row['refund_policy'], 'usage_rules': rules,
+            'items': [{'name': item['name'], 'qty': item['qty']} for item in raw_items],
+            'branches': [dict(branch) for branch in branches],
+        },
+    }
+
+
 class TrialGateway:
     async def __call__(self, scope, receive, send):
         if scope['type'] != 'http':
@@ -432,6 +508,22 @@ class TrialGateway:
         origin = request.headers.get('origin')
         if origin and origin.rstrip('/') != PUBLIC_ORIGIN:
             return await JSONResponse({'detail': '來源不符'}, 403)(scope, receive, send)
+        if path.startswith(PUBLIC_PACKAGES_PATH):
+            headers = {'Cache-Control': 'no-store'}
+            if method != 'GET':
+                return await JSONResponse({'detail': '此操作不可用'}, 405, headers={
+                    **headers, 'Allow': 'GET',
+                })(scope, receive, send)
+            slug = path[len(PUBLIC_PACKAGES_PATH):]
+            if slug not in PUBLIC_PACKAGE_FIXTURES or request.query_params:
+                return await JSONResponse({'detail': '此連結已失效'}, 404, headers=headers)(scope, receive, send)
+            try:
+                package = await asyncio.to_thread(_public_package, slug)
+            except sqlite3.Error:
+                return await JSONResponse({'detail': '暫時無法顯示套餐'}, 503, headers=headers)(scope, receive, send)
+            if package is None:
+                return await JSONResponse({'detail': '此連結已失效'}, 404, headers=headers)(scope, receive, send)
+            return await JSONResponse(package, headers=headers)(scope, receive, send)
         if path == coupon_images.ROUTE or coupon_images.PATH.fullmatch(path):
             found_image_session = _session_file(request.cookies.get(COOKIE))
             if method == 'POST' and path == coupon_images.ROUTE:

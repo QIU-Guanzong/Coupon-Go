@@ -188,6 +188,15 @@ class _CouponGoAppState extends State<CouponGoApp> {
             ),
       onGenerateRoute: (settings) {
         final route = settings.name ?? '';
+        if (publicTrial && route.startsWith('/p/') && route.indexOf('/', 3) < 0) {
+          return MaterialPageRoute<void>(
+            settings: settings,
+            builder: (_) => PackageDetailScreen.publicTrial(
+              api: _api,
+              publicSlug: publicTrialPackageSlug(route) ?? '',
+            ),
+          );
+        }
         // Public roles use the isolated customer/merchant gateway. Do not
         // expose administrative surfaces by URL; the application is distinct.
         if (publicTrial &&

@@ -132,3 +132,21 @@ before serving the new package at /coupongo/.
   and review status still apply. Shared image uploads, package cover
   reuse, review photos and merchant-document uploads remain unchanged.
   This is a trial-only SQLite table, not a production migration or route.
+
+### Public package link (read-only)
+
+- Open `/coupongo/#/p/shu-xiang-hotpot-for-four` in the PUBLIC_TRIAL Web
+  build. The existing detail screen displays the reviewed seeded offer.
+- `GET /api/v3/trial/public-packages/{slug}` takes no query parameters
+  and does not create, read or update a browser session. It resolves one
+  allowlisted identity against the dedicated trial template in read-only
+  mode. The response has public terms, availability and branch names and
+  addresses only; it contains no numeric identities or account fields.
+- An unknown, unpublished or out-of-scope identity yields the same 404.
+  A previously published sold-out or ended offer may still show its
+  terms. Availability and dates refer to the shared template, not to a
+  private browser's copied inventory.
+- This link does not purchase, link identities after login, or publish
+  new merchant-created offers. A shared business catalog and checkout
+  handoff require a separate contract. The parent app still initializes
+  its existing sandbox session when opened.
