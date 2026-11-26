@@ -1,4 +1,5 @@
 """Run with Python 3.10 and requirements.lock from any working directory."""
+import json
 import os
 from datetime import datetime as real_datetime, timezone
 from pathlib import Path
@@ -160,6 +161,11 @@ class PublicPreviewTest(unittest.TestCase):
         def provider(_url, **kwargs):
             instructions = kwargs["json"]["messages"][0]["content"]
             self.assertIn("都是示例", instructions)
+            self.assertIn("分攤的實付港元", instructions)
+            catalog = json.loads(kwargs["json"]["messages"][1]["content"])["public_offers"]
+            package = next(item for item in catalog if item["type"] == "package")
+            for field in ["price_hkd", "person_count", "per_person_hkd", "refund_policy"]:
+                self.assertIn(field, package)
             self.assertNotIn("synthetic-test-key", str(kwargs["json"]))
             return ProviderResponse()
         with patch.object(qbot.httpx, "post", side_effect=provider) as send:
@@ -184,6 +190,40 @@ class PublicPreviewTest(unittest.TestCase):
         self.assertNotIn("找一張餐飲券".encode(), quota.read_bytes())
         os.environ["PUBLIC_QBOT_ENABLED"] = "0"
         self.assertEqual(self.client.post("/api/v3/qbot/chat", json=payload).status_code, 503)
+
+    def test_guest_compares_packages_against_detail_without_calling_provider(self):
+        from decimal import Decimal
+        from app.routers import qbot
+
+        env = dict(PUBLIC_QBOT_ENABLED="1", PUBLIC_QBOT_QUOTA_DB=str(directory / "compare.sqlite"),
+                   DEEPSEEK_API_KEY="synthetic-test-key")
+        with patch.dict(os.environ, env), patch.object(qbot.httpx, "post") as provider:
+            for question, lang, marker in [
+                ("比较 2 人套餐，总预算 HK$298", "zh-Hant", "示例套餐"),
+                ("Compare packages for 2, total budget HK$298", "en", "demo packages"),
+            ]:
+                result = self.client.post("/api/v3/qbot/chat", json={"message": question, "language": lang})
+                self.assertEqual(result.status_code, 200, result.text)
+                data = result.json()
+                self.assertIn(marker, data["answer"])
+                self.assertIsNone(data["points_balance"])
+                prices = []
+                self.assertTrue(1 <= len(data["offers"]) <= 3)
+                for offer in data["offers"]:
+                    self.assertEqual(offer["type"], "package")
+                    detail = self.client.get("/api/v3/package-details", params={"package_id": offer["id"]}).json()
+                    pkg = detail["package"]
+                    self.assertEqual(pkg["person_count"], 2)
+                    price = Decimal(str(pkg["package_price"]))
+                    self.assertLessEqual(price, 298)
+                    self.assertIn(f"HK${price:.2f}", data["answer"])
+                    self.assertIn(offer["name"], data["answer"])
+                    prices.append(price)
+                self.assertEqual(prices, sorted(prices))
+            empty = self.client.post("/api/v3/qbot/chat", json={"message": "比較2人套餐，總預算HK$0"})
+            self.assertEqual(empty.json()["offers"], [])
+            self.assertIn("沒有符合條件", empty.json()["answer"])
+            provider.assert_not_called()
 
     def test_qbot_concurrency_guard(self):
         os.environ.update(PUBLIC_QBOT_ENABLED="1", PUBLIC_QBOT_QUOTA_DB=str(directory / "concurrency.sqlite"))
