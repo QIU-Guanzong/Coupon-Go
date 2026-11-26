@@ -251,6 +251,18 @@ reviewed_by, reviewed_at, created_at}`。P1-D 新增：`br_number, documents{br,
 是兩期轉化率的百分點差，任一期無分母時為 `null`。不包含客人、訂單、券碼、付款或
 模型生成資料。
 
+可選短摘要：`POST /merchant/shops/{shop_id}/weekly-report/summary`，沿用相同店舖權限，
+接受 `{"language":"zh-Hant","summary_revision":"<數字 GET 返回的值>"}`（另支援 `zh-Hans`、
+`en`）。數字 GET 新增布林值 `summary_available`（開關、密鑰及資料就緒才為 true），以及
+就緒時的 `summary_revision`（否則為 `null`）；GET 不會呼叫模型。只有使用者主動取摘要
+才 POST；若期間或數字已變、版本已過期，直接返回 `null`，不呼叫模型。只返回 `{"summary": string | null}`，
+禁止快取。摘要預設關閉；只有明確啟用 `MERCHANT_WEEKLY_SUMMARY_ENABLED` 且已配置既有
+`DEEPSEEK_API_KEY` 才使用同一服務的限額。傳給模型的只有該店兩個完整週的日期、指標值及可比較性；
+沒有店名、店 ID、帳戶、訂單、條款、券碼、聊天或地址。模型只選 1–2 個已存在的指標，
+服務端以週報原數字及 HKD 編排短句，拒收自行添加的數字、時段或文案。無可用資料、
+未啟用、限額、供應商故障、格式不符均回 `null`；前端省略摘要，保留數字與原有報表入口。
+獨立試用網關不開放摘要寫入路徑。
+
 ## 砍價 2C（分享助力，線 E）
 
 分享助力砍價（不是荷蘭式降價）：發起 → 分享 → 好友助力降價 → 到底價 / 成團 → 低價拿套餐券進 Q Wallet。金額為港幣（HKD）。發起時記錄一筆模擬預付（原價，未收真錢）；未成團 / 超時全額退款、成團後退回砍價差價，退款走支付網關（見下），不發生真實轉賬。
