@@ -347,10 +347,16 @@ def test_role_change_and_permission_matrix(client):
     r = client.post(f"/api/v3/admin/users/{uid}/role",
                     json={"role": "finance"}, headers=fh)
     assert r.status_code == 403
-    # promote to finance: the user gains settlement read/write
+    # promote to finance: prior token is revoked on role change (S-H1);
+    # after re-login the user gains settlement read/write
     r = client.post(f"/api/v3/admin/users/{uid}/role",
                     json={"role": "finance"}, headers=ah)
     assert r.status_code == 200 and r.json()["user"]["role"] == "finance"
+    assert client.get("/api/v3/admin/overview", headers=h).status_code == 401
+    relogin = client.post("/api/v3/login", json={
+        "email": "f-role@example.com", "password": "Demo123!"})
+    assert relogin.status_code == 200
+    h = {"Authorization": f"Bearer {relogin.json()['access_token']}"}
     r = client.get("/api/v3/admin/overview", headers=h)
     assert r.status_code == 200
     assert "settlements_by_status" in r.json()

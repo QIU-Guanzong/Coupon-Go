@@ -141,6 +141,18 @@ def strip_exif(data: bytes, ext: str) -> bytes:
     return data
 
 
+def _has_valid_image_magic(data: bytes, ext: str) -> bool:
+    if ext in ("jpg", "jpeg"):
+        return data.startswith(b"\xff\xd8\xff")
+    if ext == "png":
+        return data.startswith(b"\x89PNG\r\n\x1a\n")
+    if ext == "webp":
+        return len(data) >= 12 and data[0:4] == b"RIFF" and data[8:12] == b"WEBP"
+    if ext == "gif":
+        return data.startswith((b"GIF87a", b"GIF89a"))
+    return False
+
+
 def _save_file(upload: UploadFile, subdir: str = "review-images",
                allowed_exts=None) -> str:
     ext = (upload.filename or "").rsplit(".", 1)[-1].lower()
@@ -159,6 +171,8 @@ def _save_file(upload: UploadFile, subdir: str = "review-images",
             detail="圖片過大，上限 %d KB" % (config.UPLOAD_MAX_BYTES // 1024))
     if not data:
         raise HTTPException(status_code=400, detail="空檔案")
+    if not _has_valid_image_magic(data, ext):
+        raise HTTPException(status_code=400, detail="檔案內容不是有效的圖片")
     subdir_path = Path(config.UPLOAD_DIR) / subdir
     subdir_path.mkdir(parents=True, exist_ok=True)
     name = f"{uuid.uuid4().hex}.{ext}"
@@ -169,6 +183,8 @@ def _save_file(upload: UploadFile, subdir: str = "review-images",
 @router.post("/uploads/review-images", status_code=201)
 def upload_review_images(files: list[UploadFile] = File(...),
                          user=Depends(get_current_user)):
+    from ..merchant_upload_limits import check_upload_rate_limit
+    check_upload_rate_limit(user.id)
     if not files:
         raise HTTPException(status_code=400, detail="請選擇圖片")
     if len(files) > MAX_FILES:
@@ -186,7 +202,9 @@ def upload_merchant_images(files: list[UploadFile] = File(...),
     pass as Coupon.image / Shop.image. No object storage yet — same
     local-disk placeholder as review images (see module docstring)."""
     from .vendor import _require_any_coupon_manager
+    from ..merchant_upload_limits import check_upload_rate_limit
     _require_any_coupon_manager(db, user)
+    check_upload_rate_limit(user.id)
     if not files:
         raise HTTPException(status_code=400, detail="請選擇圖片")
     if len(files) > MAX_FILES:

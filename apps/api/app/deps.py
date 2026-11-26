@@ -30,7 +30,13 @@ def _identity(creds, db, *, lock_for_write=False):
         except (KeyError, TypeError, ValueError):
             user = None
         if user is not None and user.is_active and user.deleted_at is None:
-            return user, payload
+            current_tv = int(getattr(user, "token_version", 1) or 1)
+            raw_tv = payload.get("tv")
+            # Legacy tokens minted before token_version rollout lack `tv`;
+            # treat them as version 1 until natural expiry or first revocation.
+            token_tv = 1 if raw_tv is None else raw_tv
+            if isinstance(token_tv, int) and not isinstance(token_tv, bool) and token_tv == current_tv:
+                return user, payload
     return None, {}
 
 

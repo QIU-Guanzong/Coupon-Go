@@ -103,6 +103,16 @@ def audit_log(db: Session, admin_id: int, action: str, target_type: str,
     db.flush()
 
 
+_CSV_FORMULA_PREFIXES = ("=", "+", "-", "@", "\t", "\r")
+
+
+def sanitize_csv_cell(value):
+    """Neutralize spreadsheet formula injection on string cells."""
+    if isinstance(value, str) and value and value[0] in _CSV_FORMULA_PREFIXES:
+        return "'" + value
+    return value
+
+
 def csv_response(filename: str, headers: list, rows: list) -> PlainTextResponse:
     """One CSV writer for every export (GAP §5.9).
 
@@ -114,7 +124,7 @@ def csv_response(filename: str, headers: list, rows: list) -> PlainTextResponse:
     buf = io.StringIO(newline="")
     writer = csv.writer(buf, lineterminator="\n")
     writer.writerow(headers)
-    writer.writerows(rows)
+    writer.writerows([sanitize_csv_cell(cell) for cell in row] for row in rows)
     return PlainTextResponse(buf.getvalue(),
                              media_type="text/csv; charset=utf-8",
                              headers={"Content-Disposition":

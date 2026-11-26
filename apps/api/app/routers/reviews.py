@@ -555,7 +555,8 @@ def reply_review(review_id: int, body: schemas_line_b.ReviewReplyIn,
 def dispute_review(review_id: int, body: schemas_line_b.ReviewDisputeIn,
                    user: models.User = Depends(get_current_user),
                    db: Session = Depends(get_db)):
-    review = db.query(Review).filter(Review.id == review_id).first()
+    review = (db.query(Review).filter(Review.id == review_id)
+              .with_for_update().first())
     if review is None:
         raise HTTPException(status_code=404, detail="找不到此評價")
     shop = db.query(models.Shop).filter(models.Shop.id == review.shop_id).first()
