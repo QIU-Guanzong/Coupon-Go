@@ -133,8 +133,11 @@ def test_native_list_filters_role_and_eligibility_then_issues_exact_wallet_item(
         assert (coupon.remaining, coupon.downloads) == (0, 1)
         received = db.get(models.WalletItem, item_id)
         assert (received.user_id, received.status, received.order_id) == (buyer, 1, None)
-        # Scheduler may transition inventory status after the last unit goes.
-        coupon.status = "sold_out"
+        assert coupon.status == "sold_out"
+    sold = client.get("/api/v3/get-vendor-coupon-list", headers=auth(vendor_id, "vendor"),
+                      params={"status": "sold_out", "page": 1})
+    assert sold.status_code == 200
+    assert good in [row["id"] for row in sold.json()["coupons"]]
     qr = client.post("/api/v3/store-scaned-qr-values", headers=auth(buyer),
                      params={"wallet_item_id": item_id})
     assert qr.status_code == 200, qr.text
@@ -160,7 +163,8 @@ def test_failure_after_debit_flush_rolls_back_stock_wallet_and_points(sqlite_api
     failed = client.post("/api/v3/points/exchange", headers=auth(buyer), params={"coupon_id": cid})
     assert failed.status_code == 500
     with sessions() as db:
-        assert (db.get(models.Coupon, cid).remaining, db.get(models.Coupon, cid).downloads) == (1, 0)
+        coupon = db.get(models.Coupon, cid)
+        assert (coupon.remaining, coupon.downloads, coupon.status) == (1, 0, "active")
         assert db.query(models.WalletItem).filter_by(coupon_id=cid).count() == 0
         assert db.query(models.PointTransaction).filter_by(reason="exchange", ref_id=cid).count() == 0
         assert points_balance(db, buyer) == config.POINTS_EXCHANGE_COST + 1
@@ -255,7 +259,7 @@ def test_postgres_parallel_exchange_serializes(same_account, postgres_sessions, 
         assert db.query(models.PointTransaction).filter_by(reason="exchange").count() == 1
         assert db.query(models.WalletItem).filter_by(source="exchange").count() == 1
         first_coupon = db.get(models.Coupon, reward_id)
-        assert (first_coupon.remaining, first_coupon.downloads) == (0, 1)
+        assert (first_coupon.remaining, first_coupon.downloads, first_coupon.status) == (0, 1, "sold_out")
         if same_account:
             second_coupon = db.get(models.Coupon, second_reward_id)
             assert (second_coupon.remaining, second_coupon.downloads) == (1, 0)

@@ -2,7 +2,7 @@
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, Query, Response
-from sqlalchemy import func, select
+from sqlalchemy import case, func, select
 from sqlalchemy.orm import Session
 
 from .. import config, errors, models, points, points_service, schemas
@@ -185,7 +185,9 @@ def exchange_points(coupon_id: int = Query(..., ge=1, le=2_147_483_647),
                     .filter(coupon.id == coupon_id,
                             *_exchange_eligibility(user_id, utcnow()))
                     .update({coupon.remaining: coupon.remaining - 1,
-                             coupon.downloads: func.coalesce(coupon.downloads, 0) + 1},
+                             coupon.downloads: func.coalesce(coupon.downloads, 0) + 1,
+                             coupon.status: case((coupon.remaining == 1, "sold_out"),
+                                                 else_=coupon.status)},
                             synchronize_session=False))
         if not reserved:
             listing = db.get(coupon, coupon_id)
