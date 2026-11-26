@@ -1426,7 +1426,8 @@ def change_user_role(user_id: int, body: schemas_line_f.RoleChangeIn,
     if body.role not in ALL_ROLES:
         raise HTTPException(status_code=400,
                             detail="未知角色：%s" % body.role)
-    target = db.query(models.User).filter(models.User.id == user_id).first()
+    target = (db.query(models.User).filter(models.User.id == user_id)
+              .with_for_update().first())
     if target is None:
         raise HTTPException(status_code=404, detail="找不到此用戶")
     if target.id == user.id:
@@ -1438,11 +1439,10 @@ def change_user_role(user_id: int, body: schemas_line_f.RoleChangeIn,
             raise HTTPException(status_code=400, detail="不能停用最後一位管理員")
     old_role = target.role
     target.role = body.role
+    target.token_version = int(getattr(target, "token_version", 1) or 1) + 1
     _log(db, user.id, "user.role.change", "user", target.id,
          f"{old_role} -> {body.role}")
     db.commit()
-    from .. import rate_limit
-    rate_limit.revoke_user_tokens(target.id)
     return {"message": "角色已更新",
             "user": {"id": target.id, "email": target.email,
                      "role": target.role}}

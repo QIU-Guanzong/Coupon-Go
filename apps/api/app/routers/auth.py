@@ -92,8 +92,12 @@ def _token_for(user: models.User, db: Session, docs=None):
     status = legal.status(db, user.id, docs)
     return {
         **status,
-        "access_token": security.create_access_token(str(user.id), user.role,
-                                                     consent_only=status["consent_required"]),
+        "access_token": security.create_access_token(
+            str(user.id),
+            user.role,
+            consent_only=status["consent_required"],
+            token_version=int(getattr(user, "token_version", 1) or 1),
+        ),
         "token_type": "Bearer",
         "user_id": user.id,
         "role": user.role,
@@ -149,7 +153,7 @@ def verify_otp(body: schemas.OtpVerifyIn, db: Session = Depends(get_db)):
     otp.used = True
     if body.purpose == "forgot" and body.new_password:
         user.password_hash = security.hash_password(body.new_password)
-        rate_limit.revoke_user_tokens(user.id)
+        user.token_version = int(getattr(user, "token_version", 1) or 1) + 1
     db.commit()
     return _token_for(user, db, docs)
 
@@ -205,8 +209,13 @@ def login(body: schemas.LoginIn, request: Request, db: Session = Depends(get_db)
 
 
 @router.post("/logout")
-def logout(user: models.User = Depends(get_identity_user)):
-    rate_limit.revoke_user_tokens(user.id)
+def logout(user: models.User = Depends(get_identity_user),
+           db: Session = Depends(get_db)):
+    db.query(models.User).filter(models.User.id == user.id).update(
+        {models.User.token_version: models.User.token_version + 1},
+        synchronize_session="fetch",
+    )
+    db.commit()
     return {"message": "已登出"}
 
 
@@ -257,8 +266,8 @@ def reset(body: schemas.ResetIn, db: Session = Depends(get_db)):
     otp = _check_otp(db, body.email, body.code, "forgot")
     otp.used = True
     user.password_hash = security.hash_password(body.new_password)
+    user.token_version = int(getattr(user, "token_version", 1) or 1) + 1
     db.commit()
-    rate_limit.revoke_user_tokens(user.id)
     return {"message": "密碼已重設，請重新登錄"}
 
 

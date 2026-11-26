@@ -5,7 +5,7 @@ from fastapi import Depends, HTTPException, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.orm import Session
 
-from . import config, legal, models, rate_limit, security
+from . import config, legal, models, security
 from .database import get_db
 
 bearer = HTTPBearer(auto_error=False)
@@ -16,8 +16,6 @@ def _identity(creds, db, *, lock_for_write=False):
     if payload is not None and payload.get("purpose") in (None, "legal-consent"):
         try:
             user_id = int(payload["sub"])
-            if rate_limit.is_token_revoked(user_id, payload.get("issued_us")):
-                return None, {}
             if lock_for_write:
                 # Serialize authenticated writes with account deletion.
                 # SQLite ignores SELECT FOR UPDATE, so acquire its write lock
@@ -32,7 +30,13 @@ def _identity(creds, db, *, lock_for_write=False):
         except (KeyError, TypeError, ValueError):
             user = None
         if user is not None and user.is_active and user.deleted_at is None:
-            return user, payload
+            current_tv = int(getattr(user, "token_version", 1) or 1)
+            raw_tv = payload.get("tv")
+            # Legacy tokens minted before token_version rollout lack `tv`;
+            # treat them as version 1 until natural expiry or first revocation.
+            token_tv = 1 if raw_tv is None else raw_tv
+            if isinstance(token_tv, int) and not isinstance(token_tv, bool) and token_tv == current_tv:
+                return user, payload
     return None, {}
 
 

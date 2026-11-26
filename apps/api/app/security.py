@@ -8,7 +8,6 @@ Token library is PyJWT (stage-0 security baseline, queue §I: python-jose
 so tokens issued by the old library still decode.
 """
 from datetime import datetime, timedelta, timezone
-from time import time_ns
 
 import bcrypt
 import jwt
@@ -52,12 +51,24 @@ def validate_password(password: str) -> None:
         raise ValueError("密碼過於常見，請換一個更難猜的密碼")
 
 
-def create_access_token(subject: str, role: str, *, consent_only: bool = False) -> str:
+def create_access_token(
+    subject: str,
+    role: str,
+    *,
+    consent_only: bool = False,
+    token_version: int = 1,
+) -> str:
     now = datetime.now(timezone.utc)
     expire = now + timedelta(
         minutes=config.ACCESS_TOKEN_EXPIRE_MINUTES
     )
-    claims = {"sub": subject, "role": role, "iat": int(now.timestamp()), "issued_us": time_ns() // 1000, "exp": expire}
+    claims = {
+        "sub": subject,
+        "role": role,
+        "tv": int(token_version),
+        "iat": int(now.timestamp()),
+        "exp": expire,
+    }
     if consent_only:
         claims["purpose"] = "legal-consent"
         claims["exp"] = min(expire, now + timedelta(minutes=15))

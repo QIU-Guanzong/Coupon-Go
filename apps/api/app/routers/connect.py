@@ -8,13 +8,9 @@ reconciliation record; Connect ledger entries are a separate book.
 
 Roles (queue §F item 4): request bodies are Pydantic models, never
 bare dicts. Payouts and transfer retries are limited to the shop
-OWNER (role ``vendor`` — the seed vendor owns the shop — plus
-``admin``). The finer staff roles (``merchant-admin`` / ``manager`` /
-``cashier`` / ``finance``) do not exist in this codebase yet (#17
-merchant-mgmt is unmerged): a cashier or manager cannot exist as a
-user today, so there is nothing further to exclude. When #17 lands,
-narrow the payout / retry endpoints to ``merchant-admin`` + ``finance``
-only — see docs/P1B_API.md §F4 for the handover note.
+OWNER (role ``vendor``), platform ``admin``, or shop staff with
+``merchant-admin`` / ``finance`` roles (excluding ``manager`` and
+``cashier``).
 """
 from decimal import Decimal
 from typing import Annotated
