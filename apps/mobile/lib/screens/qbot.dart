@@ -60,7 +60,13 @@ class _QBotScreenState extends State<QBotScreen> {
   void _scrollDown() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted && _scroll.hasClients) {
-        _scroll.jumpTo(_scroll.position.maxScrollExtent);
+        final end = _scroll.position.maxScrollExtent;
+        if (MediaQuery.disableAnimationsOf(context)) {
+          _scroll.jumpTo(end);
+        } else {
+          _scroll.animateTo(end, duration: const Duration(milliseconds: 180),
+              curve: Curves.easeOutCubic);
+        }
       }
     });
   }
@@ -152,8 +158,9 @@ class _QBotScreenState extends State<QBotScreen> {
       }
     } finally {
       if (mounted && id == _conversation) {
+        final following = !_scroll.hasClients || _scroll.position.extentAfter < 80;
         setState(() => _sending = false);
-        _scrollDown();
+        if (following) _scrollDown();
       }
     }
   }
@@ -245,17 +252,25 @@ class _QBotScreenState extends State<QBotScreen> {
                     })),
       ]),
       body: SafeArea(
+          child: Center(child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 720),
           child: Column(children: [
         Expanded(
             child: ListView(
                 controller: _scroll,
                 padding: const EdgeInsets.all(16),
                 children: [
-              Text(widget.api.isLoggedIn
+              Row(crossAxisAlignment: CrossAxisAlignment.center, children: [
+                Image.asset('assets/images/img_logo_cropped.png',
+                    height: 48, width: 56, excludeFromSemantics: true),
+                const SizedBox(width: 12),
+                Expanded(child: Text(widget.api.isLoggedIn
                   ? t('我係 Q仔，可以幫你搵優惠券、查積分，或者講解點用券。',
                       'I can help you find coupons, check points, and redeem offers.')
                   : t('我係 Q仔，可以幫你搵優惠券，或者講解點用券。',
-                      'I can help you find coupons and explain how to use them.')),
+                      'I can help you find coupons and explain how to use them.'),
+                    style: Theme.of(context).textTheme.titleMedium)),
+              ]),
               const SizedBox(height: 8),
               Text(
                   t('由 DeepSeek AI 回答，內容可能有誤，請以優惠詳情為準。請勿輸入個人資料或兌換碼。',
@@ -291,7 +306,7 @@ class _QBotScreenState extends State<QBotScreen> {
                       margin: const EdgeInsets.symmetric(vertical: 6),
                       padding: const EdgeInsets.all(12),
                       constraints: BoxConstraints(
-                          maxWidth: MediaQuery.sizeOf(context).width * .82),
+                          maxWidth: (MediaQuery.sizeOf(context).width * .82).clamp(0.0, 540.0).toDouble()),
                       decoration: BoxDecoration(
                           color: m.$1 == 'user'
                               ? CgColors.primary
@@ -353,7 +368,7 @@ class _QBotScreenState extends State<QBotScreen> {
                           : () => _ask(value.text),
                       icon: const Icon(Icons.send))),
             ])),
-      ])),
+      ])))),
     );
   }
 }

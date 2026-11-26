@@ -1,6 +1,7 @@
 import 'package:coupon_go/api_client.dart';
 import 'package:coupon_go/feature_flags.dart';
 import 'package:coupon_go/main.dart';
+import 'package:coupon_go/theme.dart';
 import 'package:coupon_go/screens/account.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -124,6 +125,8 @@ void main() {
     await frame(tester);
     final shell = tester.widget<HomeShell>(find.byType(HomeShell));
     expect(shell.vendorMode, isTrue);
+    expect(Theme.of(tester.element(find.byType(HomeShell))).appBarTheme.backgroundColor,
+        CgColors.vendorGold);
     expect(api.roles, ['customer', 'vendor']);
     expect(api.paymentAccessToken, 'vendor-token');
     expect(find.byType(AuthScreen), findsNothing);
@@ -145,6 +148,8 @@ void main() {
     await frame(tester);
     await frame(tester);
     expect(tester.widget<HomeShell>(find.byType(HomeShell)).vendorMode, isFalse);
+    expect(Theme.of(tester.element(find.byType(HomeShell))).appBarTheme.backgroundColor,
+        CgColors.primary);
     expect(api.roles, ['customer', 'vendor', 'customer']);
     expect(api.writes, isNot(contains('/login')));
     expect((await SharedPreferences.getInstance()).getString('access_token'),

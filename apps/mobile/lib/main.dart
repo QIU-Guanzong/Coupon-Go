@@ -171,7 +171,7 @@ class _CouponGoAppState extends State<CouponGoApp> {
               TrialBanner(key: _trialRoleKey, api: _api, messengerKey: _messengerKey, onRoleChanging: _trialRoleChanging,
                   onRoleChangeFailed: _trialRoleChangeFailed, onRoleChanged: _trialRoleChanged)])
           : (child ?? const SizedBox.shrink()),
-      theme: CgTheme.light(),
+      theme: CgTheme.light(merchant: _vendorMode),
       home: HomeShell(
               api: _api,
               authed: _authed,
@@ -333,20 +333,14 @@ class SplashScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ColoredBox(
-      color: CgColors.primary,
+    return const ColoredBox(
+      color: CgColors.pageBg,
       child: Center(
-        child: Image.asset(
-          'assets/images/splash.gif',
-          fit: BoxFit.cover,
-          errorBuilder: (_, __, ___) => Image.asset(
-            'assets/images/img_logo.png',
-            height: 200,
-            errorBuilder: (_, __, ___) =>
-                const Text('COUPON GO!',
-                    style: TextStyle(color: Colors.white, fontSize: 32)),
-          ),
-        ),
+        child: Text('Coupon GO!', style: TextStyle(
+          inherit: false, fontFamily: 'Roboto', color: CgColors.primary,
+          fontSize: 32, fontWeight: FontWeight.w800,
+          fontStyle: FontStyle.italic, letterSpacing: -1,
+        )),
       ),
     );
   }
@@ -837,12 +831,13 @@ class _HomeShellState extends State<HomeShell> {
       (_role == 'vendor' || _role == 'merchant-admin');
 
   Drawer _drawer() {
+    final theme = Theme.of(context);
     return Drawer(
       child: ListView(
         padding: EdgeInsets.zero,
         children: [
           DrawerHeader(
-            decoration: const BoxDecoration(color: CgColors.primary),
+            decoration: BoxDecoration(color: theme.appBarTheme.backgroundColor),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -850,8 +845,8 @@ class _HomeShellState extends State<HomeShell> {
                     errorBuilder: (_, __, ___) => const SizedBox()),
                 const SizedBox(height: 8),
                 Text(context.tr('更多','More'),
-                    style: const TextStyle(
-                        color: Colors.white,
+                    style: TextStyle(
+                        color: theme.appBarTheme.foregroundColor,
                         fontSize: 20,
                         fontWeight: FontWeight.bold)),
               ],
@@ -859,7 +854,7 @@ class _HomeShellState extends State<HomeShell> {
           ),
           if (widget.onTrialRoleSwitch != null)
             ListTile(
-              leading: const Icon(Icons.switch_account, color: CgColors.primary),
+              leading: Icon(Icons.switch_account, color: theme.colorScheme.primary),
               title: Text(context.tr('切換身份', 'Switch identity')),
               onTap: () {
                 Navigator.of(context).pop();
@@ -867,7 +862,7 @@ class _HomeShellState extends State<HomeShell> {
               },
             ),
           ListTile(
-            leading: const Icon(Icons.person, color: CgColors.primary),
+            leading: Icon(Icons.person, color: theme.colorScheme.primary),
             title: Text(widget.api.isLoggedIn ? context.tr('我的帳戶','Account') : context.tr('登錄','Login')),
             onTap: () {
               Navigator.of(context).pop();
@@ -881,8 +876,8 @@ class _HomeShellState extends State<HomeShell> {
           if (_showVendorNotifications)
             ListTile(
               key: const Key('vendor-notifications'),
-              leading: const Icon(Icons.notifications_outlined,
-                  color: CgColors.primary),
+              leading: Icon(Icons.notifications_outlined,
+                  color: theme.colorScheme.primary),
               title: Text(context.tr('通知', 'Notifications')),
               onTap: () {
                 if (!_showVendorNotifications) return;
@@ -893,7 +888,7 @@ class _HomeShellState extends State<HomeShell> {
             ),
           if (!widget.vendorMode) ...[
             ListTile(
-              leading: const Icon(Icons.content_cut, color: CgColors.primary),
+              leading: Icon(Icons.content_cut, color: theme.colorScheme.primary),
               title: Text(context.tr('砍價', 'Bargains')),
               onTap: () {
                 Navigator.of(context).pop();
@@ -901,7 +896,7 @@ class _HomeShellState extends State<HomeShell> {
               },
             ),
             ListTile(
-              leading: const Icon(Icons.restaurant_menu, color: CgColors.primary),
+              leading: Icon(Icons.restaurant_menu, color: theme.colorScheme.primary),
               title: Text(context.tr('套餐', 'Packages')),
               onTap: () {
                 Navigator.of(context).pop();
@@ -910,7 +905,7 @@ class _HomeShellState extends State<HomeShell> {
             ),
           ],
           ListTile(
-            leading: const Icon(Icons.receipt_long, color: CgColors.primary),
+            leading: Icon(Icons.receipt_long, color: theme.colorScheme.primary),
             title: Text(context.tr('我的訂單', 'My orders')),
             onTap: () {
               Navigator.of(context).pop();
@@ -918,7 +913,7 @@ class _HomeShellState extends State<HomeShell> {
             },
           ),
           ListTile(
-            leading: const Icon(Icons.card_giftcard, color: CgColors.primary),
+            leading: Icon(Icons.card_giftcard, color: theme.colorScheme.primary),
             title: Text(context.tr('邀請好友', 'Invite friends')),
             onTap: () {
               Navigator.of(context).pop();
@@ -926,7 +921,7 @@ class _HomeShellState extends State<HomeShell> {
             },
           ),
           ListTile(
-            leading: const Icon(Icons.settings, color: CgColors.primary),
+            leading: Icon(Icons.settings, color: theme.colorScheme.primary),
             title: Text(context.tr('設置','Settings')),
             onTap: () {
               Navigator.of(context).pop();
@@ -934,7 +929,7 @@ class _HomeShellState extends State<HomeShell> {
             },
           ),
           ListTile(
-            leading: const Icon(Icons.store, color: CgColors.primary),
+            leading: Icon(Icons.store, color: theme.colorScheme.primary),
             title: Text(widget.vendorMode ? context.tr('切換到用戶版','Consumer') : context.tr('企業服務','Corporate')),
             onTap: () {
               Navigator.of(context).pop();
@@ -944,7 +939,7 @@ class _HomeShellState extends State<HomeShell> {
           if (!publicTrial || !widget.vendorMode)
           ListTile(
             leading:
-                const Icon(Icons.storefront, color: CgColors.primary),
+                Icon(Icons.storefront, color: theme.colorScheme.primary),
             title: Text(context.tr('商戶入駐申請','Merchant application')),
             onTap: () {
               Navigator.of(context).pop();
@@ -953,8 +948,8 @@ class _HomeShellState extends State<HomeShell> {
           ),
           if (!publicTrial && (_role == 'admin' || _role == 'support'))
             ListTile(
-              leading: const Icon(Icons.admin_panel_settings,
-                  color: CgColors.primary),
+              leading: Icon(Icons.admin_panel_settings,
+                  color: theme.colorScheme.primary),
               title: Text(context.tr('管理後台','Administration')),
               onTap: () {
                 final role = _role;
@@ -964,10 +959,10 @@ class _HomeShellState extends State<HomeShell> {
                     builder: (_) => AdminHomeScreen(api: widget.api, role: role)));
               },
             ),
-          ListTile(leading: const Icon(Icons.chat_outlined, color: CgColors.primary), title: const Text('Q仔'),
+          ListTile(leading: Icon(Icons.chat_outlined, color: theme.colorScheme.primary), title: const Text('Q仔'),
             onTap: () { Navigator.of(context).pop(); Navigator.of(context).pushNamed('/qbot'); }),
           ListTile(
-            leading: const Icon(Icons.help_outline, color: CgColors.primary),
+            leading: Icon(Icons.help_outline, color: theme.colorScheme.primary),
             title: Text(context.tr('新手指南','Guide')),
             onTap: () {
               Navigator.of(context).pop();
