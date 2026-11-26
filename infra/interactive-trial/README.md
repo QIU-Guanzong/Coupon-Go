@@ -47,6 +47,7 @@ Q仔 is unavailable unless `TRIAL_QBOT_PROXY_URL` is set to exactly
 the existing separately controlled Q仔 gateway, subject to its quota and an
 additional trial-session rate limit; it never exposes or loads the model key.
 Enable only after confirming that its recommendation IDs match the trial seed.
+For an exact party-size package comparison, after the shared gateway admits the request, the trial regenerates the quoted prices and cards from the current browser's catalog. Free-form answers still use the separate preview catalog.
 When unconfigured or unavailable the API returns an explicit unavailable error.
 
 The acceptance tests are `pytest -q infra/interactive-trial/test_trial_api.py infra/interactive-trial/test_trial_coupon_images.py`
