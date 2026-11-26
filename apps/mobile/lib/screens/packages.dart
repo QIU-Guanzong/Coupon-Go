@@ -1,6 +1,8 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show Clipboard, ClipboardData;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -154,14 +156,42 @@ class _PackageListScreenState extends State<PackageListScreen> {
   }
 }
 
+final _publicPackageRoute = RegExp(r'^/p/([a-z][a-z0-9-]{2,63})$');
+
+String? publicTrialPackageSlug(String route) =>
+    _publicPackageRoute.firstMatch(route)?.group(1);
+
+Uri? publicTrialPackageShareUri(Uri current, String slug) {
+  final route = '/p/$slug';
+  if (publicTrialPackageSlug(route) == null ||
+      !const {'http', 'https'}.contains(current.scheme) ||
+      !current.hasAuthority ||
+      current.userInfo.isNotEmpty) {
+    return null;
+  }
+  // Keep the existing deployment subdirectory; never forward query strings.
+  final path = current.path.endsWith('/')
+      ? current.path
+      : current.path.endsWith('/index.html')
+          ? current.resolve('.').path
+          : '${current.path}/';
+  return Uri.parse(current.origin).replace(path: path, fragment: route);
+}
+
 /// Package detail (UI_SPEC §3.1): image carousel, price area + refund
 /// rule line, contents, usage rules, stores, reviews, fixed bottom bar.
 class PackageDetailScreen extends StatefulWidget {
   const PackageDetailScreen(
-      {super.key, required this.api, required this.packageId});
+      {super.key, required this.api, required int this.packageId})
+      : publicSlug = null;
+
+  const PackageDetailScreen.publicTrial(
+      {super.key, required this.api, required String this.publicSlug})
+      : packageId = null;
 
   final ApiClient api;
-  final int packageId;
+  final int? packageId;
+  final String? publicSlug;
 
   @override
   State<PackageDetailScreen> createState() => _PackageDetailScreenState();
@@ -172,6 +202,8 @@ class _PackageDetailScreenState extends State<PackageDetailScreen> {
   bool _loading = true;
   bool _error = false;
   int _page = 0;
+  bool _publicUnavailable = false;
+  bool get _shared => widget.publicSlug != null;
 
   @override
   void initState() {
@@ -182,22 +214,49 @@ class _PackageDetailScreenState extends State<PackageDetailScreen> {
   Future<void> _load() async {
     if (mounted) setState(() => _loading = true);
     try {
-      final data = await widget.api.packageDetails(widget.packageId);
+      final slug = widget.publicSlug;
+      late final Map<String, dynamic> data;
+      if (slug == null) {
+        data = await widget.api.packageDetails(widget.packageId!);
+      } else {
+        if (slug.isEmpty) throw ApiException(404, 'Invalid package link');
+        final response = await widget.api.publicTrialPackage(slug);
+        final projected = response['package'];
+        if (response['slug'] != slug ||
+            projected is! Map<String, dynamic> ||
+            !const {'active', 'sold_out', 'expired'}
+                .contains(projected['status']) ||
+            projected['name'] is! String ||
+            projected['shop_name'] is! String ||
+            projected['package_price'] is! num ||
+            projected['original_price'] is! num ||
+            projected['person_count'] is! int ||
+            projected['branches'] is! List ||
+            projected['usage_rules'] is! Map ||
+            !const {'non_refundable', 'anytime', 'expiry_only'}
+                .contains(projected['refund_policy'])) {
+          throw const FormatException('Invalid shared package');
+        }
+        data = projected;
+      }
       if (!mounted) return;
       final pkg = Package.fromJson(data);
-      if (pkg.id != widget.packageId || pkg.id <= 0) {
+      if (!_shared && (pkg.id != widget.packageId || pkg.id <= 0)) {
         throw const FormatException('invalid package');
       }
       setState(() {
         _pkg = pkg;
         _loading = false;
         _error = false;
+        _publicUnavailable = false;
       });
-    } catch (_) {
+    } catch (error) {
       if (mounted) {
         setState(() {
           _loading = false;
           _error = true;
+          _publicUnavailable =
+              _shared && error is ApiException && error.status == 404;
         });
       }
     }
@@ -205,12 +264,11 @@ class _PackageDetailScreenState extends State<PackageDetailScreen> {
 
   Future<void> _buy() async {
     final pkg = _pkg;
-    if (pkg == null || pkg.stockLeft <= 0 || pkg.isOffShelf) return;
+    if (_shared || pkg == null || pkg.stockLeft <= 0 || pkg.isOffShelf) return;
     final ok = await requirePackageLogin(context, widget.api);
     if (!ok || !mounted) return;
     await Navigator.of(context).push(MaterialPageRoute(
-        builder: (_) =>
-            PackageCheckoutScreen(api: widget.api, package: pkg)));
+        builder: (_) => PackageCheckoutScreen(api: widget.api, package: pkg)));
     if (mounted) _load();
   }
 
@@ -237,18 +295,44 @@ class _PackageDetailScreenState extends State<PackageDetailScreen> {
     Navigator.of(context).push(MaterialPageRoute(
         builder: (_) => ShopReviewsScreen(
               api: widget.api,
-              shop: Shop.fromJson(
-                  {'shop_id': p.shopId, 'shop_name': p.shopName}),
+              shop:
+                  Shop.fromJson({'shop_id': p.shopId, 'shop_name': p.shopName}),
             )));
+  }
+
+  Future<void> _copyPublicLink() async {
+    final slug = widget.publicSlug;
+    final link =
+        slug == null ? null : publicTrialPackageShareUri(Uri.base, slug);
+    if (!kIsWeb || link == null) return;
+    try {
+      await Clipboard.setData(ClipboardData(text: link.toString()));
+      if (!mounted) return;
+      showCgToast(context, context.tr('已複製套餐連結', 'Package link copied'));
+    } catch (_) {
+      if (!mounted) return;
+      showCgToast(context, context.tr('未能複製連結', 'Could not copy the link'));
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     final p = _pkg;
+    String sharedText(String zh, String en) =>
+        _shared ? context.tr(zh, en) : zh;
     if (_loading) {
       return Scaffold(
         appBar: AppBar(title: const Text('套餐詳情')),
         body: const _LoadingList(),
+      );
+    }
+    if (_publicUnavailable) {
+      return Scaffold(
+        appBar: AppBar(title: Text(context.tr('套餐詳情', 'Package details'))),
+        body: Center(
+          child:
+              Text(context.tr('此套餐連結已失效', 'This package link is unavailable')),
+        ),
       );
     }
     if (_error || p == null) {
@@ -274,7 +358,8 @@ class _PackageDetailScreenState extends State<PackageDetailScreen> {
                     style:
                         TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
                 const SizedBox(height: 8),
-                Text(p.name, textAlign: TextAlign.center,
+                Text(p.name,
+                    textAlign: TextAlign.center,
                     style: const TextStyle(color: CgColors.textSecondary)),
                 const SizedBox(height: 24),
                 ElevatedButton(
@@ -290,65 +375,86 @@ class _PackageDetailScreenState extends State<PackageDetailScreen> {
       );
     }
     final images = p.carouselImages;
-    final soldOut = p.stockLeft <= 0;
+    final soldOut = _shared ? p.status == 'sold_out' : p.stockLeft <= 0;
+    final ended = _shared && p.status == 'expired';
+    final refundRule = _shared && p.isNonRefundable
+        ? context.tr('該套餐售出後不可退', 'Non-refundable')
+        : _displayRefundRule(context, p);
     return Scaffold(
-      appBar: AppBar(title: const Text('套餐詳情')),
+      appBar: AppBar(
+        title: Text(_shared ? context.tr('套餐詳情', 'Package details') : '套餐詳情'),
+        actions: [
+          if (_shared && kIsWeb)
+            IconButton(
+              onPressed: _copyPublicLink,
+              icon: const Icon(Icons.link),
+              tooltip: context.tr('複製套餐連結', 'Copy package link'),
+            ),
+        ],
+      ),
       body: ListView(
         padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
         children: [
-          // 顶部轮播图（≤ 6 张）
-          ClipRRect(
-            borderRadius: BorderRadius.circular(12),
-            child: SizedBox(
-              height: 220,
-              child: images.isEmpty
-                  ? const CatalogPhoto(url: '')
-                  : Stack(
-                      children: [
-                        PageView.builder(
-                          itemCount: images.length,
-                          onPageChanged: (i) => setState(() => _page = i),
-                          itemBuilder: (_, i) => CatalogPhoto(url: images[i]),
-                        ),
-                        if (images.length > 1)
-                          Positioned(
-                            bottom: 8,
-                            left: 0,
-                            right: 0,
-                            child: Row(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: List.generate(
-                                images.length,
-                                (i) => Container(
-                                  width: 8,
-                                  height: 8,
-                                  margin: const EdgeInsets.symmetric(
-                                      horizontal: 3),
-                                  decoration: BoxDecoration(
-                                    shape: BoxShape.circle,
-                                    color: i == _page
-                                        ? Colors.white
-                                        : Colors.white.withValues(alpha: 0.5),
+          // Shared preview only shows source-provided fields.
+          if (!_shared || images.isNotEmpty)
+            ClipRRect(
+              borderRadius: BorderRadius.circular(12),
+              child: SizedBox(
+                height: 220,
+                child: images.isEmpty
+                    ? const CatalogPhoto(url: '')
+                    : Stack(
+                        children: [
+                          PageView.builder(
+                            itemCount: images.length,
+                            onPageChanged: (i) => setState(() => _page = i),
+                            itemBuilder: (_, i) => CatalogPhoto(url: images[i]),
+                          ),
+                          if (images.length > 1)
+                            Positioned(
+                              bottom: 8,
+                              left: 0,
+                              right: 0,
+                              child: Row(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: List.generate(
+                                  images.length,
+                                  (i) => Container(
+                                    width: 8,
+                                    height: 8,
+                                    margin: const EdgeInsets.symmetric(
+                                        horizontal: 3),
+                                    decoration: BoxDecoration(
+                                      shape: BoxShape.circle,
+                                      color: i == _page
+                                          ? Colors.white
+                                          : Colors.white.withValues(alpha: 0.5),
+                                    ),
                                   ),
                                 ),
                               ),
                             ),
-                          ),
-                      ],
-                    ),
+                        ],
+                      ),
+              ),
             ),
-          ),
           const SizedBox(height: 16),
           Text(p.name,
               style:
                   const TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
           const SizedBox(height: 6),
-          Text('${p.shopName} · ${p.personCount} 人用',
+          Text(
+              _shared
+                  ? context.tr('${p.shopName} · ${p.personCount} 人用',
+                      '${p.shopName} · Serves ${p.personCount}')
+                  : '${p.shopName} · ${p.personCount} 人用',
               style: const TextStyle(color: CgColors.textSecondary)),
           const SizedBox(height: 12),
           // 价格区
           Wrap(
-            spacing: 8, runSpacing: 4, crossAxisAlignment: WrapCrossAlignment.center,
+            spacing: 8,
+            runSpacing: 4,
+            crossAxisAlignment: WrapCrossAlignment.center,
             children: [
               Text(formatHkd(p.packagePrice),
                   style: const TextStyle(
@@ -370,11 +476,12 @@ class _PackageDetailScreenState extends State<PackageDetailScreen> {
                       label: Text('省 ${formatHkd(p.saveAmount)}'),
                       visualDensity: VisualDensity.compact),
                 ),
-              Padding(
-                padding: const EdgeInsets.only(bottom: 4),
-                child: Text('已售 ${p.soldCount}',
-                    style: const TextStyle(color: CgColors.textSecondary)),
-              ),
+              if (!_shared)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 4),
+                  child: Text('已售 ${p.soldCount}',
+                      style: const TextStyle(color: CgColors.textSecondary)),
+                ),
             ],
           ),
           const SizedBox(height: 8),
@@ -387,12 +494,16 @@ class _PackageDetailScreenState extends State<PackageDetailScreen> {
                   : const Color(0xFFFFF3CD),
               borderRadius: BorderRadius.circular(8),
             ),
-            child: Text('退款規則：${_displayRefundRule(context, p)}',
+            child: Text(
+                _shared
+                    ? context.tr('退款規則：$refundRule', 'Refunds: $refundRule')
+                    : '退款規則：$refundRule',
                 style: const TextStyle(fontWeight: FontWeight.bold)),
           ),
           const SizedBox(height: 16),
           // 套餐内容
-          const Text('套餐內容', style: TextStyle(fontWeight: FontWeight.bold)),
+          Text(sharedText('套餐內容', 'Included in the package'),
+              style: const TextStyle(fontWeight: FontWeight.bold)),
           const SizedBox(height: 4),
           if (p.itemLines.isNotEmpty)
             ...p.itemLines.map((line) {
@@ -429,7 +540,8 @@ class _PackageDetailScreenState extends State<PackageDetailScreen> {
           const Divider(height: 24),
           Row(
             children: [
-              const Text('合計', style: TextStyle(fontWeight: FontWeight.bold)),
+              Text(sharedText('合計', 'Total'),
+                  style: const TextStyle(fontWeight: FontWeight.bold)),
               const Spacer(),
               Text(formatHkd(p.packagePrice),
                   style: const TextStyle(
@@ -439,34 +551,59 @@ class _PackageDetailScreenState extends State<PackageDetailScreen> {
           ),
           const SizedBox(height: 16),
           // 使用规则
-          const Text('使用規則', style: TextStyle(fontWeight: FontWeight.bold)),
+          Text(sharedText('使用規則', 'Usage terms'),
+              style: const TextStyle(fontWeight: FontWeight.bold)),
           const SizedBox(height: 4),
           _RuleRow(
-              label: '有效期',
+              label: sharedText('有效期', 'Valid dates'),
               value: p.validTo == null
                   ? ''
                   : p.validFrom == null
                       ? '至 ${formatDateYmd(p.validTo)}'
                       : '${formatDateYmd(p.validFrom)} 至 ${formatDateYmd(p.validTo)}'),
-          if (p.includes.isNotEmpty) _RuleRow(label: '已包括', value: p.includes.join('、')),
-          if (p.excludes.isNotEmpty) _RuleRow(label: '另收費', value: p.excludes.join('、')),
+          if (p.includes.isNotEmpty)
+            _RuleRow(
+                label: sharedText('已包括', 'Included'),
+                value: p.includes.join('、')),
+          if (p.excludes.isNotEmpty)
+            _RuleRow(
+                label: sharedText('另收費', 'Not included'),
+                value: p.excludes.join('、')),
           if (p.timeSlots.isNotEmpty)
-            _RuleRow(label: '可用時段', value: p.timeSlots.join('、')),
-          _RuleRow(label: '是否需預約', value: p.needBooking ? '需提前預約' : '無需預約'),
+            _RuleRow(
+                label: sharedText('可用時段', 'Use times'),
+                value: p.timeSlots.join('、')),
+          if (!_shared || p.usageRules['need_booking'] is bool)
+            _RuleRow(
+              label: sharedText('是否需預約', 'Booking'),
+              value: p.needBooking
+                  ? sharedText('需提前預約', 'Advance booking required')
+                  : sharedText('無需預約', 'No booking required'),
+            ),
+          if (_shared && p.usageRules['weekday_only'] == true)
+            _RuleRow(
+                label: context.tr('使用日期', 'Use days'),
+                value: context.tr('只限平日', 'Weekdays only')),
+          if (_shared && p.usageRules['holiday'] == false)
+            _RuleRow(
+                label: context.tr('公眾假期', 'Public holidays'),
+                value: context.tr('不適用', 'Not valid')),
           if (p.perUserLimit != null)
             _RuleRow(label: '每人限購', value: '每人限購 ${p.perUserLimit} 份'),
           if (p.stackable != null)
             _RuleRow(
-                label: '是否可疊加',
-                value: p.stackable! ? '可與其他優惠疊加' : '不可與其他優惠疊加'),
-          const Text('· 到店出示 QR 碼核銷，整張一次核銷，不可拆分',
-              style: TextStyle(color: CgColors.textSecondary)),
+                label: '是否可疊加', value: p.stackable! ? '可與其他優惠疊加' : '不可與其他優惠疊加'),
+          if (!_shared)
+            const Text('· 到店出示 QR 碼核銷，整張一次核銷，不可拆分',
+                style: TextStyle(color: CgColors.textSecondary)),
           const SizedBox(height: 16),
           // 适用门店
           if (p.branches.isNotEmpty) ...[
             ExpansionTile(
               tilePadding: EdgeInsets.zero,
-              title: Text('適用門店（${p.branches.length} 家）',
+              title: Text(
+                  sharedText('適用門店（${p.branches.length} 家）',
+                      'Branches (${p.branches.length})'),
                   style: const TextStyle(fontWeight: FontWeight.bold)),
               children: p.branches.map((b) {
                 final name =
@@ -474,41 +611,42 @@ class _PackageDetailScreenState extends State<PackageDetailScreen> {
                 final address = (b['address'] ?? '') as String;
                 return ListTile(
                   contentPadding: EdgeInsets.zero,
-                  leading:
-                      const Icon(Icons.store, color: CgColors.primary),
+                  leading: const Icon(Icons.store, color: CgColors.primary),
                   title: Text(name),
                   subtitle: address.isEmpty ? null : Text(address),
-                  trailing: SizedBox(
-                    height: 44,
-                    child: TextButton.icon(
-                      onPressed: () => _openMap(b),
-                      icon: const Icon(Icons.map, size: 18),
-                      label: const Text('地圖'),
-                    ),
-                  ),
+                  trailing: _shared
+                      ? null
+                      : SizedBox(
+                          height: 44,
+                          child: TextButton.icon(
+                            onPressed: () => _openMap(b),
+                            icon: const Icon(Icons.map, size: 18),
+                            label: const Text('地圖'),
+                          ),
+                        ),
                 );
               }).toList(),
             ),
             const SizedBox(height: 8),
           ],
           // 评价
-          ListTile(
-            contentPadding: EdgeInsets.zero,
-            leading: const Icon(Icons.star, color: CgColors.amber),
-            title: const Text('評價',
-                style: TextStyle(fontWeight: FontWeight.bold)),
-            subtitle: p.rating == null
-                ? Text(context.tr('暫無評分', 'No ratings yet'))
-                : Text(
-                    '總分 ${p.rating!.overall?.toStringAsFixed(1) ?? '-'} · '
-                    '口味 ${p.rating!.taste?.toStringAsFixed(1) ?? '-'} · '
-                    '環境 ${p.rating!.ambience?.toStringAsFixed(1) ?? '-'} · '
-                    '服務 ${p.rating!.service?.toStringAsFixed(1) ?? '-'} '
-                    '（${p.rating!.reviewCount} 條）'),
-            trailing: const Icon(Icons.chevron_right),
-            onTap: _openReviews,
-          ),
-          if (p.reviews.isNotEmpty)
+          if (!_shared)
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: const Icon(Icons.star, color: CgColors.amber),
+              title: const Text('評價',
+                  style: TextStyle(fontWeight: FontWeight.bold)),
+              subtitle: p.rating == null
+                  ? Text(context.tr('暫無評分', 'No ratings yet'))
+                  : Text('總分 ${p.rating!.overall?.toStringAsFixed(1) ?? '-'} · '
+                      '口味 ${p.rating!.taste?.toStringAsFixed(1) ?? '-'} · '
+                      '環境 ${p.rating!.ambience?.toStringAsFixed(1) ?? '-'} · '
+                      '服務 ${p.rating!.service?.toStringAsFixed(1) ?? '-'} '
+                      '（${p.rating!.reviewCount} 條）'),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: _openReviews,
+            ),
+          if (!_shared && p.reviews.isNotEmpty)
             ...p.reviews.take(3).map((r) => Padding(
                   padding: const EdgeInsets.only(top: 8),
                   child: Column(
@@ -517,8 +655,8 @@ class _PackageDetailScreenState extends State<PackageDetailScreen> {
                       Row(
                         children: [
                           Text(r.userName.isEmpty ? '用戶' : r.userName,
-                              style: const TextStyle(
-                                  fontWeight: FontWeight.w600)),
+                              style:
+                                  const TextStyle(fontWeight: FontWeight.w600)),
                           const SizedBox(width: 8),
                           _Stars(value: r.overall),
                         ],
@@ -526,50 +664,67 @@ class _PackageDetailScreenState extends State<PackageDetailScreen> {
                       if (r.content.isNotEmpty)
                         Padding(
                           padding: const EdgeInsets.only(top: 2),
-                          child: Text(r.content, maxLines: 3,
-                              overflow: TextOverflow.ellipsis),
+                          child: Text(r.content,
+                              maxLines: 3, overflow: TextOverflow.ellipsis),
                         ),
                     ],
                   ),
                 )),
         ],
       ),
-      bottomNavigationBar: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
-          child: Row(
-            children: [
-              Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(formatHkd(p.packagePrice),
-                      style: const TextStyle(
-                          color: CgColors.primary,
-                          fontSize: 22,
-                          fontWeight: FontWeight.bold,
-                          fontFeatures: [FontFeature.tabularFigures()])),
-                  Text(formatHkd(p.originalPrice),
-                      style: const TextStyle(
-                          decoration: TextDecoration.lineThrough,
-                          color: CgColors.textSecondary,
-                          fontSize: 12)),
-                ],
-              ),
-              const SizedBox(width: 16),
-              Expanded(
-                child: SizedBox(
-                  height: 48,
-                  child: ElevatedButton(
-                    onPressed: soldOut ? null : _buy,
-                    child: Text(soldOut ? context.tr('已售罄', 'Sold out') : context.tr('立即搶購', 'Buy now')),
-                  ),
+      bottomNavigationBar: _shared
+          ? SafeArea(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+                child: Text(
+                  soldOut
+                      ? context.tr('已售罄', 'Sold out')
+                      : ended
+                          ? context.tr('優惠已結束', 'Offer ended')
+                          : context.tr('此連結只供查看套餐',
+                              'This link is for viewing package details'),
+                  textAlign: TextAlign.center,
                 ),
               ),
-            ],
-          ),
-        ),
-      ),
+            )
+          : SafeArea(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+                child: Row(
+                  children: [
+                    Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(formatHkd(p.packagePrice),
+                            style: const TextStyle(
+                                color: CgColors.primary,
+                                fontSize: 22,
+                                fontWeight: FontWeight.bold,
+                                fontFeatures: [FontFeature.tabularFigures()])),
+                        Text(formatHkd(p.originalPrice),
+                            style: const TextStyle(
+                                decoration: TextDecoration.lineThrough,
+                                color: CgColors.textSecondary,
+                                fontSize: 12)),
+                      ],
+                    ),
+                    const SizedBox(width: 16),
+                    Expanded(
+                      child: SizedBox(
+                        height: 48,
+                        child: ElevatedButton(
+                          onPressed: soldOut ? null : _buy,
+                          child: Text(soldOut
+                              ? context.tr('已售罄', 'Sold out')
+                              : context.tr('立即搶購', 'Buy now')),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
     );
   }
 }
