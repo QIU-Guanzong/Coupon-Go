@@ -35,6 +35,29 @@ class CatalogPhoto extends StatelessWidget {
   }
 }
 
+/// Keeps the target fixed while the heart settles into its new state.
+class FavoriteGlyph extends StatelessWidget {
+  const FavoriteGlyph({super.key, required this.saved, this.size, this.color});
+  final bool saved;
+  final double? size;
+  final Color? color;
+
+  @override
+  Widget build(BuildContext context) {
+    final icon = Icon(saved ? Icons.favorite : Icons.favorite_border,
+        size: size, color: color);
+    if (MediaQuery.disableAnimationsOf(context)) return icon;
+    return TweenAnimationBuilder<double>(
+      tween: Tween(begin: saved ? 1.0 : 0.0, end: saved ? 1.0 : 0.0),
+      duration: const Duration(milliseconds: 180),
+      curve: Curves.easeOutCubic,
+      builder: (_, t, child) =>
+          Transform.scale(scale: 1 + 0.48 * t * (1 - t), child: child),
+      child: icon,
+    );
+  }
+}
+
 /// Two-column coupon card (home grid / lists). Photo on top, name, price row
 /// (discount large, original struck through), orange CTA, heart top-right.
 class CouponCard extends StatelessWidget {
@@ -74,7 +97,7 @@ class CouponCard extends StatelessWidget {
                       disabledBackgroundColor: Colors.white,
                       minimumSize: const Size(44, 44),
                     ),
-                    icon: Icon(favorite ? Icons.favorite : Icons.favorite_border,
+                    icon: FavoriteGlyph(saved: favorite,
                         size: 18, color: CgColors.primary),
                   ),
                 ),

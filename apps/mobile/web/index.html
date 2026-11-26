@@ -29,11 +29,35 @@
   <!-- Favicon -->
   <link rel="icon" type="image/png" href="assets/assets/images/img_logo_cropped.png"/>
 
+  <link rel="preload" href="main.dart.js" as="script">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    #launch { position: fixed; inset: 0; display: grid; place-content: center;
+      margin: 0; background: #f5f5f6; color: #ce2e39; text-align: center;
+      font: italic 800 32px/1.2 system-ui, sans-serif; letter-spacing: -1px; }
+    #launch small, #launch a { font: 15px/1.6 system-ui, sans-serif;
+      color: #353535; letter-spacing: normal; }
+  </style>
   <title>Coupon GO!</title>
   <link rel="manifest" href="manifest.json">
 </head>
 <body>
-  <noscript>請啟用 JavaScript 以開啟 Coupon GO 網頁版。</noscript>
+  <div id="launch" role="status">Coupon GO!
+    <noscript><small>請啟用 JavaScript 以開啟網頁版。</small></noscript>
+  </div>
+  <script>
+    const launch = document.getElementById('launch');
+    window.addEventListener('flutter-first-frame', () => launch.remove(), {once: true});
+    window.addEventListener('error', event => {
+      if (event.target instanceof HTMLScriptElement && launch.isConnected &&
+          !launch.querySelector('a')) {
+        const retry = document.createElement('a');
+        retry.href = location.href;
+        retry.textContent = '未能載入，重新整理';
+        launch.append(retry);
+      }
+    }, true);
+  </script>
   <script src="flutter_bootstrap.js" async></script>
 </body>
 </html>

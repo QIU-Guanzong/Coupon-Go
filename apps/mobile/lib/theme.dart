@@ -9,6 +9,8 @@ class CgColors {
   static const orange = Color(0xFFFF6C22);
   static const amber = Color(0xFFFFB025);
   static const vendorGold = Color(0xFFFFB025);
+  static const vendorInk = Color(0xFF30200A);
+  static const vendorLink = Color(0xFF805000);
   static const pageBg = Color(0xFFF5F5F6);
   static const cardBorder = Color(0xFFE0E0E0);
   static const textPrimary = Color(0xFF1A1A1A);
@@ -94,7 +96,7 @@ class CgTheme {
     final text = base.textTheme;
     final action = base.brightness == Brightness.dark
         ? CgColors.primaryOnDark
-        : CgColors.primary;
+        : base.colorScheme.primary;
     return base.copyWith(
       bottomNavigationBarTheme: base.bottomNavigationBarTheme.copyWith(
         backgroundColor: base.colorScheme.surface,
@@ -133,26 +135,33 @@ class CgTheme {
     );
   }
 
-  static ThemeData light() {
+  static ThemeData light({bool merchant = false}) {
+    final bar = merchant ? CgColors.vendorGold : CgColors.primary;
+    final ink = merchant ? CgColors.vendorInk : Colors.white;
+    final action = merchant ? CgColors.vendorLink : CgColors.primary;
     return _withSharedSurface(ThemeData(
       useMaterial3: true,
       fontFamily: 'Roboto',
       fontFamilyFallback: const ['Coupon UI Fallback', 'Coupon UI Supplemental'],
       colorScheme: ColorScheme.fromSeed(
-        seedColor: CgColors.primary,
-        primary: CgColors.primary,
+        seedColor: bar,
+        primary: action,
       ),
       scaffoldBackgroundColor: CgColors.pageBg,
-      appBarTheme: const AppBarTheme(
-        backgroundColor: CgColors.primary,
-        foregroundColor: Colors.white,
+      appBarTheme: AppBarTheme(
+        backgroundColor: bar,
+        foregroundColor: ink,
         elevation: 0,
         centerTitle: true,
       ),
+      filledButtonTheme: merchant
+          ? FilledButtonThemeData(style: FilledButton.styleFrom(
+              backgroundColor: bar, foregroundColor: ink))
+          : null,
       elevatedButtonTheme: ElevatedButtonThemeData(
         style: ElevatedButton.styleFrom(
-          backgroundColor: CgColors.primary,
-          foregroundColor: Colors.white,
+          backgroundColor: bar,
+          foregroundColor: ink,
           minimumSize: const Size.fromHeight(buttonHeight),
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(buttonRadius),
