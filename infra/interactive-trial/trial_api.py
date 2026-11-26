@@ -276,40 +276,6 @@ TEXT_REVIEW_KEYS = {'wallet_item_id', 'redemption_id', 'taste', 'ambience', 'ser
                     'content', 'images', 'tags', 'claim_points'}
 
 
-def _exchange_rows(db, user_id):
-    now = datetime.now(timezone.utc).replace(tzinfo=None)
-    acquired = (db.query(models.WalletItem.id).filter(
-        models.WalletItem.coupon_id == models.Coupon.id,
-        models.WalletItem.user_id == user_id).exists())
-    return (db.query(models.Coupon.id, models.Coupon.coupon_name, models.Shop.name)
-            .join(models.Shop, models.Shop.id == models.Coupon.shop_id)
-            .filter(models.Coupon.is_points_exchange.is_(True),
-                    (models.Coupon.sale_price.is_(None)) | (models.Coupon.sale_price == 0),
-                    models.Coupon.status == 'active', models.Coupon.remaining > 0,
-                    models.Coupon.valid_from <= now, models.Coupon.valid_to > now,
-                    ~acquired))
-
-
-def _exchange_options(path, user_id):
-    engine, db = _db(path)
-    try:
-        return [{'id': cid, 'coupon_name': name, 'shop_name': shop}
-                for cid, name, shop in _exchange_rows(db, user_id)
-                .order_by(models.Coupon.id).limit(100)]
-    finally:
-        db.close()
-        engine.dispose()
-
-
-def _exchange_available(path, user_id, coupon_id):
-    engine, db = _db(path)
-    try:
-        return _exchange_rows(db, user_id).filter(models.Coupon.id == coupon_id).first() is not None
-    finally:
-        db.close()
-        engine.dispose()
-
-
 def _my_reviews(path, user_id):
     engine, db = _db(path)
     try:
@@ -680,16 +646,13 @@ class TrialGateway:
         if is_my_reviews:
             rows = await asyncio.to_thread(_my_reviews, session_path, int(payload['sub']))
             return await JSONResponse({'reviews': rows}, headers={'Cache-Control': 'no-store'})(scope, receive, send)
-        if is_exchange_list:
-            coupons = await asyncio.to_thread(_exchange_options, session_path, int(payload['sub']))
-            return await JSONResponse({'cost': config.POINTS_EXCHANGE_COST, 'coupons': coupons},
-                                      headers={'Cache-Control': 'no-store'})(scope, receive, send)
+        # Native points routes share one eligibility predicate and execute
+        # against this browser's scoped trial DB. Keep the gateway role and
+        # session checks above; validation here only rejects duplicate params.
         if method == 'POST' and path == '/api/v3/points/exchange':
             coupons = request.query_params.getlist('coupon_id')
             if len(coupons) != 1 or not re.fullmatch(r'[0-9]{1,18}', coupons[0]):
                 return await JSONResponse({'detail': '請選擇優惠券'}, 422)(scope, receive, send)
-            if not await asyncio.to_thread(_exchange_available, session_path, int(payload['sub']), int(coupons[0])):
-                return await JSONResponse({'detail': '此優惠券現時不可兌換'}, 400)(scope, receive, send)
         if (method == 'POST' and path in (APPLICATION, '/api/v3/reviews', '/api/v3/add-coupon-preview',
                                          '/api/v3/coupon-previewed')
                 or method == 'PATCH' and re.fullmatch(r'/api/v3/vendor/coupons/[0-9]+', path)):

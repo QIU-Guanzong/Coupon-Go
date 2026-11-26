@@ -1,16 +1,17 @@
 """Q Wallet, points, records, reviews."""
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, Query
-from sqlalchemy import func
+from fastapi import APIRouter, Depends, Query, Response
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from .. import config, errors, models, points, points_service, schemas
 from ..database import get_db
-from ..deps import get_current_user, points_balance
+from ..deps import get_current_user, points_balance, require_role
 from ..models_cashback import WithdrawalEvent
 from ..serializers import wallet_out
 from ..shared import issue_wallet_item, paginate
+from ..timeutil import utcnow
 from .packages import sweep_expired_packages
 from .coupons import _refresh_expiry
 
@@ -103,6 +104,7 @@ def get_points(user: models.User = Depends(get_current_user),
             "expiring_soon_days": config.POINTS_EXPIRE_SOON_DAYS,
             "transactions": [{"id": t.id, "delta": t.delta, "reason": t.reason,
                               "created_at": t.created_at.isoformat(),
+                              "ref_id": t.ref_id if t.reason == "exchange" else None,
                               "expires_at": t.expires_at.isoformat() if t.expires_at else None} for t in txs]}
 
 
@@ -129,25 +131,78 @@ def review(wallet_item_id: int, rating: int = Query(5, ge=1, le=5),
             "balance": points_balance(db, user.id)}
 
 
+# A single predicate serves the customer listing and the atomic stock reservation.
+# Ordinary claim/purchase routes keep their existing, separate policies.
+def _already_acquired(user_id):
+    return (select(models.WalletItem.id)
+            .where(models.WalletItem.user_id == user_id,
+                   models.WalletItem.coupon_id == models.Coupon.id)
+            .correlate(models.Coupon).exists())
+
+
+def _exchange_eligibility(user_id, now):
+    coupon = models.Coupon
+    approved_shop = (select(models.Shop.id)
+                     .where(models.Shop.id == coupon.shop_id,
+                            models.Shop.is_approved.is_(True))
+                     .correlate(coupon).exists())
+    return (coupon.kind == "coupon", coupon.is_points_exchange.is_(True),
+            (coupon.sale_price.is_(None) | (coupon.sale_price == 0)),
+            coupon.status == "active", coupon.remaining > 0,
+            coupon.valid_from <= now, coupon.valid_to > now,
+            approved_shop, ~_already_acquired(user_id))
+
+
+@router.get("/points/exchange-options")
+def get_exchange_options(response: Response,
+                         user: models.User = Depends(require_role("customer")),
+                         db: Session = Depends(get_db)):
+    rows = (db.query(models.Coupon.id, models.Coupon.coupon_name,
+                     models.Shop.name.label("shop_name"))
+            .join(models.Shop, models.Shop.id == models.Coupon.shop_id)
+            .filter(*_exchange_eligibility(user.id, utcnow()))
+            .order_by(models.Coupon.id).limit(100))
+    response.headers["Cache-Control"] = "no-store"
+    return {"cost": config.POINTS_EXCHANGE_COST,
+            "coupons": [{"id": cid, "coupon_name": name, "shop_name": shop}
+                        for cid, name, shop in rows]}
+
+
 @router.post("/points/exchange")
-def exchange_points(coupon_id: int, user: models.User = Depends(get_current_user),
+def exchange_points(coupon_id: int = Query(..., ge=1, le=2_147_483_647),
+                    user: models.User = Depends(require_role("customer")),
                     db: Session = Depends(get_db)):
-    coupon = db.query(models.Coupon).filter(models.Coupon.id == coupon_id).first()
-    if coupon is None or not coupon.is_points_exchange:
-        raise errors.points_coupon_not_found()
-    points_service.require_spendable_balance(db, user.id)
-    if coupon.sale_price is not None and coupon.sale_price > 0:
-        raise errors.bad_request("付費券請購買，不可用積分兌換")
-    if points_balance(db, user.id) < config.POINTS_EXCHANGE_COST:
-        raise errors.points_insufficient()
-    existing = db.query(models.WalletItem).filter(
-        models.WalletItem.user_id == user.id,
-        models.WalletItem.coupon_id == coupon_id).first()
-    if existing:
-        raise errors.points_coupon_already_exchanged()
-    issue_wallet_item(db, user.id, coupon.id, "exchange")
-    points.spend_points(db, user.id, config.POINTS_EXCHANGE_COST, "exchange",
-                        coupon.id)
-    db.commit()
+    coupon = models.Coupon
+    cost = config.POINTS_EXCHANGE_COST
+    try:
+        # Points transfers/refunds/sweeps serialize on the same account lock.
+        # Acquire it before touching coupon inventory, even in direct callers.
+        user_id = user.id
+        balance = points_service.require_spendable_balance(db, user_id)
+        if balance < cost:
+            raise errors.points_insufficient()
+        reserved = (db.query(coupon)
+                    .filter(coupon.id == coupon_id,
+                            *_exchange_eligibility(user_id, utcnow()))
+                    .update({coupon.remaining: coupon.remaining - 1,
+                             coupon.downloads: func.coalesce(coupon.downloads, 0) + 1},
+                            synchronize_session=False))
+        if not reserved:
+            listing = db.get(coupon, coupon_id)
+            if listing is None or not listing.is_points_exchange:
+                raise errors.points_coupon_not_found()
+            if db.query(models.WalletItem.id).filter_by(
+                    user_id=user_id, coupon_id=coupon_id).first():
+                raise errors.points_coupon_already_exchanged()
+            if listing.sale_price not in (None, 0):
+                raise errors.bad_request("付費券請購買，不可用積分兌換")
+            raise errors.points_coupon_unavailable()
+        item = issue_wallet_item(db, user_id, coupon_id, "exchange")
+        points.spend_points(db, user_id, cost, "exchange", coupon_id)
+        item_id = item.id
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
     return {"message": "兌換成功，已存入 Q Wallet",
-            "balance": points_balance(db, user.id)}
+            "balance": balance - cost, "wallet_item_id": item_id}
