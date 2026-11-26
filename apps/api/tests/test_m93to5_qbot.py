@@ -112,6 +112,25 @@ def test_public_offer_limit_and_catalog_visibility(tmp_path):
         assert len(public) == 8
         assert {row["type"] for row in public} == {"coupon", "package", "bargain"}
         assert next(row for row in public if row["id"] == 51)["price_hkd"] == "99.00"
+        # Filtering and price ordering must precede sampling the first eight IDs.
+        for i in range(10):
+            db.add(Package(id=100+i, shop_id=1, name=f"二人餐{i}", original_price=200,
+                           person_count=2, package_price=105-i, stock_left=1, **window))
+        db.add(Package(id=111, shop_id=1, name="限定套餐", original_price=200,
+                       person_count=2, package_price=95.01, stock_left=1,
+                       refund_policy="expiry_only", usage_rules='{"need_booking":true}', **window))
+        db.add(Package(id=112, shop_id=1, name="多人餐", original_price=200,
+                       person_count=4, package_price=40, stock_left=1, **window))
+        db.commit()
+        hits = qbot.catalog(db, "", qbot.comparison_request("比較2人套餐，總預算HK$99"))
+        assert [x["id"] for x in hits] == [111, 109, 108, 107, 51, 106]
+        assert hits[0]["per_person_hkd"] == "47.51"
+        assert hits[0]["need_booking"] is True
+        assert "need_booking" not in hits[1]
+        reply = qbot.comparison_answer(hits, "zh-Hant", False)
+        assert [x["id"] for x in reply["offers"]] == [111, 109, 108]
+        assert "須預約" in reply["answer"] and "僅過期自動退" in reply["answer"]
+        assert "預約要求未列明" in reply["answer"]
         assert {58, 89}.isdisjoint({row["id"] for row in public})
         assert qbot.mentioned_offers("Try Chicken feast and imaginary offer 89.", public, "en") == [
             {"type": "package", "id": 51, "name": "Chicken feast", "shop": "好味餐廳"}]
@@ -145,3 +164,11 @@ def test_redis_limits_are_atomic_and_keys_expire(monkeypatch):
     keys = list(client.scan_iter(match="coupon-go:{qbot}:10:*"))
     assert len(keys) == 2
     assert all(1 <= client.ttl(key) <= 60 for key in keys)
+
+
+@pytest.mark.parametrize("question", [
+    "比較2人套餐，每人預算HK$100", "比較2至4人套餐", "compare packages for 2 under USD 50",
+    "compare packages for 2, total budget HK$100 near Central",
+])
+def test_ambiguous_conditions_use_normal_conversation(question):
+    assert qbot.comparison_request(question) is None
