@@ -1168,7 +1168,9 @@ class _ScanScreenState extends State<ScanScreen> {
             width: double.infinity,
             child: ElevatedButton(
               onPressed: _resetScan,
-              child: Text(context.tr('繼續掃碼', 'Scan again')),
+              child: Text(_revokedMessage == null
+                  ? context.tr('繼續掃下一張', 'Scan next voucher')
+                  : context.tr('繼續掃碼', 'Scan again')),
             ),
           ),
         ],

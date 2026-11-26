@@ -31,9 +31,13 @@ class _ScanBatchScreenState extends State<ScanBatchScreen> {
   String? _success;
   String? _pendingKey;
   bool _busy = false;
+  bool _confirming = false;
   late int _sessionRevision;
 
-  bool _current(int revision) => mounted && widget.api.sessionRevision == revision;
+  bool get _canEdit => mounted && !_busy && !_confirming && _pendingKey == null;
+
+  bool _current(int revision) =>
+      mounted && widget.api.sessionRevision == revision;
 
   void _sessionChanged() {
     if (!mounted || _sessionRevision == widget.api.sessionRevision) return;
@@ -43,8 +47,10 @@ class _ScanBatchScreenState extends State<ScanBatchScreen> {
       _code.clear();
       _pendingKey = null;
       _busy = false;
+      _confirming = false;
       _success = null;
-      _error = context.tr('登入狀態已變更，請重新預檢。', 'Your session changed. Check the codes again.');
+      _error = context.tr(
+          '登入狀態已變更，請重新預檢。', 'Your session changed. Check the codes again.');
     });
   }
 
@@ -65,7 +71,7 @@ class _ScanBatchScreenState extends State<ScanBatchScreen> {
   Future<void> _add() async {
     final code = _code.text.trim();
     final revision = widget.api.sessionRevision;
-    if (_busy || _pendingKey != null) return;
+    if (!_canEdit) return;
     if (!RegExp(r'^\d{6}$').hasMatch(code)) {
       setState(() => _error = context.tr('請輸入六位兌換碼', 'Enter a six-digit redemption code'));
       return;
@@ -139,26 +145,54 @@ class _ScanBatchScreenState extends State<ScanBatchScreen> {
     }
   }
 
+  void _remove(_BatchItem item) {
+    if (!_canEdit) return;
+    setState(() => _items.remove(item));
+  }
+
   Future<void> _submit() async {
-    if (_busy || _items.isEmpty) return;
+    if (!mounted || _busy || _confirming || _items.isEmpty) return;
     final revision = widget.api.sessionRevision;
+    // Freeze the exact order of codes, tokens and branches the merchant sees.
+    final submitted = List<_BatchItem>.unmodifiable(_items);
     if (_pendingKey == null) {
-      final ok = await showDialog<bool>(
+      bool? ok;
+      var answered = false;
+      setState(() => _confirming = true);
+      try {
+        ok = await showDialog<bool>(
           context: context,
-          builder: (context) => AlertDialog(
-                  title: Text(context.tr('確認批量核銷', 'Confirm batch redemption')),
-                  content: Text(context.tr(
-                    '將一次核銷 ${_items.length} 張券。請確認顧客與分店資料。',
-                    '${_items.length} vouchers will be redeemed. Check the customer and branch details.',
-                  )),
-                  actions: [
-                    TextButton(
-                        onPressed: () => Navigator.pop(context, false),
-                        child: Text(context.tr('取消', 'Cancel'))),
-                    FilledButton(
-                        onPressed: () => Navigator.pop(context, true),
-                        child: Text(context.tr('確認核銷', 'Confirm redemption')))
-                  ]));
+          builder: (context) {
+            void answer(bool accepted) {
+              if (answered || ModalRoute.of(context)?.isCurrent != true) {
+                return;
+              }
+              answered = true;
+              Navigator.pop(context, accepted);
+            }
+
+            return AlertDialog(
+              title: Text(context.tr('確認批量核銷', 'Confirm batch redemption')),
+              content: Text(context.tr(
+                '將一次核銷 ${submitted.length} 張券。請確認顧客與分店資料。',
+                '${submitted.length} vouchers will be redeemed. Check the customer and branch details.',
+              )),
+              actions: [
+                TextButton(
+                  onPressed: () => answer(false),
+                  child: Text(context.tr('取消', 'Cancel')),
+                ),
+                FilledButton(
+                  onPressed: () => answer(true),
+                  child: Text(context.tr('確認核銷', 'Confirm redemption')),
+                ),
+              ],
+            );
+          },
+        );
+      } finally {
+        if (_current(revision)) setState(() => _confirming = false);
+      }
       if (ok != true || !_current(revision)) return;
       final random = Random.secure();
       _pendingKey = List.generate(
@@ -171,13 +205,13 @@ class _ScanBatchScreenState extends State<ScanBatchScreen> {
     });
     try {
       final result = await widget.api.scanBatch(
-          _items.map((v) => v.code).toList(),
-          _items.map((v) => v.token).toList(),
-          _items.map((v) => v.branchId).toList(),
+          submitted.map((v) => v.code).toList(),
+          submitted.map((v) => v.token).toList(),
+          submitted.map((v) => v.branchId).toList(),
           _pendingKey!);
       if (!_current(revision)) return;
       setState(() {
-        final count = result['total'] ?? _items.length;
+        final count = result['total'] ?? submitted.length;
         _success = context.tr('已完成 $count 張券核銷', 'Redeemed $count vouchers');
         _items.clear();
         _pendingKey = null;
@@ -193,7 +227,10 @@ class _ScanBatchScreenState extends State<ScanBatchScreen> {
         }
       });
     } catch (_) {
-      if (_current(revision)) setState(() => _error = context.tr('未能確認結果，請用原請求重試。', 'Could not confirm the result. Retry the original request.'));
+      if (_current(revision)) {
+        setState(() => _error = context.tr('未能確認結果，請用原請求重試。',
+            'Could not confirm the result. Retry the original request.'));
+      }
     } finally {
       if (_current(revision)) setState(() => _busy = false);
     }
@@ -219,7 +256,7 @@ class _ScanBatchScreenState extends State<ScanBatchScreen> {
           Expanded(
               child: TextField(
                   controller: _code,
-                  enabled: !_busy && _pendingKey == null,
+                  enabled: _canEdit,
                   keyboardType: TextInputType.number,
                   inputFormatters: [
                     FilteringTextInputFormatter.digitsOnly,
@@ -229,7 +266,7 @@ class _ScanBatchScreenState extends State<ScanBatchScreen> {
                   onSubmitted: (_) => _add())),
           const SizedBox(width: CgTheme.space8),
           FilledButton(
-              onPressed: _busy || _pendingKey != null ? null : _add,
+              onPressed: _canEdit ? _add : null,
               child: Text(context.tr('預檢加入', 'Check and add')))
         ]),
         const SizedBox(height: CgTheme.space16),
@@ -244,12 +281,11 @@ class _ScanBatchScreenState extends State<ScanBatchScreen> {
               trailing: IconButton(
                   tooltip: context.tr('移除', 'Remove'),
                   icon: const Icon(Icons.close),
-                  onPressed: _busy || _pendingKey != null
-                      ? null
-                      : () => setState(() => _items.remove(item)))),
+                  onPressed: _canEdit ? () => _remove(item) : null)),
         const SizedBox(height: CgTheme.space16),
         FilledButton(
-            onPressed: _busy || _items.isEmpty ? null : _submit,
+            onPressed:
+                _busy || _confirming || _items.isEmpty ? null : _submit,
             child: Text(_busy
                 ? context.tr('處理中…', 'Processing…')
                 : _pendingKey == null
