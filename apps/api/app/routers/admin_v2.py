@@ -1441,6 +1441,8 @@ def change_user_role(user_id: int, body: schemas_line_f.RoleChangeIn,
     _log(db, user.id, "user.role.change", "user", target.id,
          f"{old_role} -> {body.role}")
     db.commit()
+    from .. import rate_limit
+    rate_limit.revoke_user_tokens(target.id)
     return {"message": "角色已更新",
             "user": {"id": target.id, "email": target.email,
                      "role": target.role}}

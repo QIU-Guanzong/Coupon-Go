@@ -284,11 +284,16 @@ def merchant_file_download(file_id: int, exp: int = Query(None),
         raise HTTPException(status_code=404, detail="找不到此文件")
     media_type = storage.detect_content_type(data) \
         or "application/octet-stream"
+    import re
+    raw_name = (f.original_filename or f.stored_name).replace("\\", "/").rsplit("/", 1)[-1]
+    safe_name = re.sub(r"[^A-Za-z0-9._-]", "_", raw_name).strip("._") or f.stored_name
     from fastapi.responses import Response
     return Response(
         content=data, media_type=media_type,
-        headers={"Content-Disposition":
-                 f'attachment; filename="{f.original_filename or f.stored_name}"'})
+        headers={
+            "Content-Disposition": f'attachment; filename="{safe_name}"',
+            "X-Content-Type-Options": "nosniff",
+        })
 
 
 # ---------- e-contracts ----------

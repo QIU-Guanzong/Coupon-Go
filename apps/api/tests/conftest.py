@@ -16,3 +16,15 @@ if not (os.environ.get("APP_ENV") or os.environ.get("COUPON_GO_ENV")):
 
 if not os.environ.get("CASHBACK_ENABLED"):
     os.environ["CASHBACK_ENABLED"] = "1"
+
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def isolate_security_counters():
+    from app import merchant_upload_limits, rate_limit
+    rate_limit.reset_local_state()
+    merchant_upload_limits.reset_for_tests()
+    yield
+    rate_limit.reset_local_state()
+    merchant_upload_limits.reset_for_tests()

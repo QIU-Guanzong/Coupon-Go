@@ -57,6 +57,14 @@ os.makedirs(config.UPLOAD_DIR, exist_ok=True)
 app.mount("/uploads", StaticFiles(directory=config.UPLOAD_DIR), name="uploads")
 
 
+@app.middleware("http")
+async def _uploads_security_headers(request, call_next):
+    response = await call_next(request)
+    if request.url.path.startswith("/uploads/"):
+        response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    return response
+
+
 @app.get("/health")
 def health():
     return {"status": "ok", "env": config.ENV,

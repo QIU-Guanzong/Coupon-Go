@@ -526,29 +526,33 @@ def settlements_csv(rows) -> "PlainTextResponse":
     """Settlement-list CSV (same ?format=csv pattern as the redemption
     export). `rows` are _settlement_out dicts."""
     from fastapi.responses import PlainTextResponse
+    from .shared import sanitize_csv_cell
     buf = io.StringIO()
     w = csv.writer(buf)
     w.writerow(["id", "shop_id", "shop_name", "period", "redemption_count",
                 "gross_amount", "commission", "net_amount",
                 "transferred_net", "outstanding_net", "status"])
     for s in rows:
-        w.writerow([s["id"], s["shop_id"], s["shop_name"], s["period"],
+        w.writerow([sanitize_csv_cell(v) for v in (
+                    s["id"], s["shop_id"], s["shop_name"], s["period"],
                     s["redemption_count"], s["gross_amount"], s["commission"],
                     s["net_amount"], s["transferred_net"],
-                    s["outstanding_net"], s["status"]])
+                    s["outstanding_net"], s["status"])])
     return PlainTextResponse(buf.getvalue(), media_type="text/csv; charset=utf-8")
 
 
 def settlement_items_csv(settlement_id: int, period: str, items) -> "PlainTextResponse":
     """Per-line CSV for one settlement (basis_note included, §2.5)."""
     from fastapi.responses import PlainTextResponse
+    from .shared import sanitize_csv_cell
     buf = io.StringIO()
     w = csv.writer(buf)
     w.writerow(["settlement_id", "period", "redemption_id", "coupon_id",
                 "coupon_name", "amount", "commission", "basis_note"])
     for item in items:
-        w.writerow([settlement_id, period, item["redemption_id"],
+        w.writerow([sanitize_csv_cell(v) for v in (
+                    settlement_id, period, item["redemption_id"],
                     item["coupon_id"], item.get("coupon_name", ""),
                     item["amount"], item["commission"],
-                    item.get("basis_note", "")])
+                    item.get("basis_note", ""))])
     return PlainTextResponse(buf.getvalue(), media_type="text/csv; charset=utf-8")

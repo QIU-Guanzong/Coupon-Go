@@ -15,7 +15,7 @@ import hashlib
 import logging
 from functools import lru_cache
 from threading import Lock
-from time import monotonic
+from time import monotonic, time_ns
 
 from fastapi import HTTPException, Request
 import redis
@@ -35,6 +35,8 @@ RESEND_MAX_PER_WINDOW = 5
 RESEND_WINDOW_SECONDS = 900       # 15 minutes
 FORGOT_MAX_PER_WINDOW = 5
 FORGOT_WINDOW_SECONDS = 900       # 15 minutes
+REGISTER_MAX_PER_WINDOW = 10
+REGISTER_WINDOW_SECONDS = 900     # 15 minutes
 
 _INCR_WITH_TTL = """
 local c = redis.call('INCR', KEYS[1])
@@ -230,3 +232,26 @@ def is_otp_locked(email: str, purpose: str) -> bool:
 def clear_otp_attempts(email: str, purpose: str) -> None:
     _store_delete(_otp_fail_key(email, purpose))
     _store_delete(_otp_lock_key(email, purpose))
+
+
+# --- JWT revocation (logout / password reset / role change) ---
+
+def _token_revoked_key(user_id: int) -> str:
+    return _key("token-revoked-before", str(user_id))
+
+
+def revoke_user_tokens(user_id: int) -> int:
+    """Invalidate tokens issued up to this point, including within this second."""
+    cutoff = time_ns() // 1000
+    ttl = max(60, int(config.ACCESS_TOKEN_EXPIRE_MINUTES) * 60 + 1)
+    _store_set(_token_revoked_key(user_id), cutoff, ttl)
+    return cutoff
+
+
+def is_token_revoked(user_id: int, issued_us: int | None) -> bool:
+    cutoff = _store_get(_token_revoked_key(user_id))
+    if cutoff is None:
+        return False
+    if not isinstance(issued_us, int) or isinstance(issued_us, bool):
+        return True
+    return issued_us <= cutoff
