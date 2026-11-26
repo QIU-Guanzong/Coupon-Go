@@ -574,34 +574,41 @@ class ApiClient extends ChangeNotifier {
           query: {'acknowledge_existing': 'true'});
   Future<Map<String, dynamic>> vendorRedemptionsExport() async =>
       get('/vendor/redemptions/export');
-  // UI_SPEC §8 — vendor redemption records with a client-side date
-  // filter (the export endpoint takes no date params yet; scanned_at
-  // is filtered here) and a raw CSV download.
-  Future<List<Map<String, dynamic>>> vendorRedemptions(
-      {DateTime? from, DateTime? to}) async {
-    final data = await vendorRedemptionsExport();
-    final records = ((data['records'] as List?) ?? [])
-        .map((e) => Map<String, dynamic>.from(e as Map))
-        .toList();
-    return records.where((r) {
-      final at = DateTime.tryParse('${r['scanned_at'] ?? ''}');
-      if (at == null) return true;
-      if (from != null && at.isBefore(from)) return false;
-      if (to != null && at.isAfter(to.add(const Duration(days: 1)))) {
-        return false;
-      }
-      return true;
-    }).toList();
+  // The list and raw CSV use the same server-side calendar date filter.
+  Map<String, String> _redemptionDateQuery(DateTime? from, DateTime? to) {
+    String day(DateTime date) =>
+        '${date.year.toString().padLeft(4, '0')}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
+    final start = from == null ? null : day(from);
+    final end = to == null ? null : day(to);
+    if (start != null && end != null && start.compareTo(end) > 0) {
+      throw ArgumentError('Start date must not be after end date');
+    }
+    return {if (start != null) 'from': start, if (end != null) 'to': end};
   }
 
-  Future<String> vendorRedemptionsCsv() async {
+  Future<List<Map<String, dynamic>>> vendorRedemptions(
+      {DateTime? from, DateTime? to}) async {
+    final query = _redemptionDateQuery(from, to);
+    final data = await get('/vendor/redemptions/export',
+        query: query.isEmpty ? null : query);
+    final records = data['records'];
+    if (records is! List || records.any((item) => item is! Map)) {
+      throw const FormatException('Invalid redemption records');
+    }
+    return records.map((e) => Map<String, dynamic>.from(e as Map)).toList();
+  }
+
+  Future<String> vendorRedemptionsCsv({DateTime? from, DateTime? to}) async {
     final uri = Uri.parse('$baseUrl/api/v3/vendor/redemptions/export')
-        .replace(queryParameters: {'format': 'csv'});
+        .replace(queryParameters: {
+      'format': 'csv',
+      ..._redemptionDateQuery(from, to),
+    });
     final res = await http.get(uri, headers: _headers);
     if (res.statusCode >= 400) {
       throw ApiException(res.statusCode, '請求失敗');
     }
-    return res.body;
+    return utf8.decode(res.bodyBytes);
   }
 
   // ---- bargain 2C (line E) ----
