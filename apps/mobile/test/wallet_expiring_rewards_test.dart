@@ -10,6 +10,7 @@ import 'my_wallet_profile_test.dart' show MyFixtureApi, choose, key;
 class ExpiryApi extends MyFixtureApi {
   int expiring = 8;
   int? issuedWalletId;
+  int? issuedCouponId;
   bool timeOut = false;
   bool issueDuringTimeout = true;
   bool exposeLedger = true;
@@ -54,10 +55,10 @@ class ExpiryApi extends MyFixtureApi {
           if (issuedWalletId != null)
             {
               'id': issuedWalletId,
-              'coupon_id': 91,
+              'coupon_id': issuedCouponId,
               'status': 1,
               'source': 'exchange',
-              'coupon_name': 'Tea reward',
+              'coupon_name': issuedCouponId == 91 ? 'Tea reward' : 'Extra reward',
               'shop_name': 'Tea Shop',
             },
         ],
@@ -71,7 +72,8 @@ class ExpiryApi extends MyFixtureApi {
     exchanges++;
     await waitForExchange?.future;
     if (!timeOut || issueDuringTimeout) {
-      issuedWalletId = 22;
+      issuedCouponId = id;
+      issuedWalletId = id == 91 ? 22 : 23;
       // Deliberately distinct from subtracting the old numbers locally.
       balance = 13;
       expiring = 2;
@@ -152,6 +154,20 @@ void main() {
       });
     }
   }
+
+  testWidgets('a second exchange opens only the newest receipt', (tester) async {
+    final api = ExpiryApi();
+    addTearDown(api.dispose);
+    await wallet(tester, api, english: true, size: const Size(390, 844));
+    await choose(tester, key('wallet-expiring-rewards'));
+    await choose(tester, key('wallet-exchange-91'));
+    await choose(tester, key('wallet-exchange-92'));
+    expect(find.text('Show in wallet'), findsOneWidget);
+    expect(key('wallet-exchange-show-91'), findsNothing);
+    await choose(tester, key('wallet-exchange-show-92'));
+    expect(find.text('Extra reward'), findsOneWidget);
+    expect(find.text('Tea reward'), findsNothing);
+  });
 
   testWidgets('zero expiry keeps balance and guest reads none', (tester) async {
     final api = ExpiryApi()..expiring = 0;

@@ -1396,7 +1396,7 @@ class _PointsExchangeState extends State<_PointsExchange> {
   late int? _balance = widget.initialBalance;
   late Future<Map<String, dynamic>> _options;
   final Set<int> _exchanged = {};
-  final Map<int, int> _issuedItems = {};
+  ({int couponId, int walletId})? _latestReceipt;
   bool _busy = false;
 
   bool get _current => mounted && _session == widget.api.sessionRevision;
@@ -1436,7 +1436,9 @@ class _PointsExchangeState extends State<_PointsExchange> {
     setState(() {
       _balance = balance;
       _exchanged.add(couponId);
-      if (walletId != null && walletId > 0) _issuedItems[couponId] = walletId;
+      _latestReceipt = walletId != null && walletId > 0
+          ? (couponId: couponId, walletId: walletId)
+          : null;
       _exchangeState = 'redeemed';
       _uncertain = false;
     });
@@ -1593,13 +1595,13 @@ class _PointsExchangeState extends State<_PointsExchange> {
                     ),
                     if (_notice(context) case final notice?)
                       ListTile(title: Semantics(liveRegion: true, child: Text(notice))),
-                    for (final issued in _issuedItems.entries)
+                    if (_latestReceipt case final receipt?)
                       ListTile(
                         title: TextButton(
-                          key: ValueKey('wallet-exchange-show-${issued.key}'),
+                          key: ValueKey('wallet-exchange-show-${receipt.couponId}'),
                           onPressed: _busy || !_current ? null : () =>
                             openClaimedCouponWallet(context, widget.api,
-                              couponId: issued.key, walletItemId: issued.value),
+                              couponId: receipt.couponId, walletItemId: receipt.walletId),
                           child: Text(context.tr('去錢包出示', 'Show in wallet')),
                         ),
                       ),
