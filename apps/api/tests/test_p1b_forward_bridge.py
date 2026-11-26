@@ -15,10 +15,11 @@ import pytest
 from sqlalchemy import MetaData, Table, create_engine, inspect, text
 from sqlalchemy.engine import make_url
 
+from tests.migration_contract import EXPECTED_MIGRATION_HEAD
+
 
 API = Path(__file__).resolve().parents[1]
 BRIDGE = '0022_p1b_forward_bridge'
-HEAD = '0031_dianping_mgmt_bridge'
 OLD = '0021_p1b_stripe_connect'
 LEGAL = '0020_m92_legal_consents'
 
@@ -109,7 +110,7 @@ def test_fresh_upgrade_has_one_head_and_nullable_fields(database_url):
     _alembic(database_url, 'upgrade', 'head')
     engine = create_engine(database_url)
     with engine.connect() as connection:
-        assert _versions(connection) == {HEAD}
+        assert _versions(connection) == {EXPECTED_MIGRATION_HEAD}
         expected = {
             'redemptions': ['commission_rate_snapshot'],
             'connect_ledger_entries': ['dispatch_started', 'retry_count', 'manual_notified'],
@@ -149,7 +150,7 @@ def test_upgrade_known_existing_heads_preserves_data_and_runs_missing_parent(dat
     if prior == 'old_0021_only':
         assert 'Running upgrade 0019_invoice_credits -> 0020_m92_legal_consents' in result.stderr
     with engine.connect() as connection:
-        assert _versions(connection) == {HEAD}
+        assert _versions(connection) == {EXPECTED_MIGRATION_HEAD}
         assert inspect(connection).has_table('legal_acceptances')
         if prior != 'legal_0020_only':
             assert connection.execute(text('SELECT face_value FROM redemptions WHERE id=1')).scalar_one() == 100
@@ -240,13 +241,16 @@ def test_rewriting_applied_ancestry_silently_skips_legal_migration(database_url,
     assert result.returncode == 0, result.stdout + result.stderr
     assert 'Running upgrade 0019_invoice_credits -> 0020_m92_legal_consents' not in result.stderr
     with engine.connect() as connection:
-        assert _versions(connection) == {HEAD}
+        assert _versions(connection) == {EXPECTED_MIGRATION_HEAD}
         assert not inspect(connection).has_table('legal_acceptances')
     engine.dispose()
 
 
 def test_downgrade_refuses_to_drop_existing_data(database_url):
-    _alembic(database_url, 'upgrade', 'head')
+    # Verify the historical bridge's own forward-only boundary. Newer
+    # revisions can support individual downgrades before reaching it.
+    bridge_head = '0031_dianping_mgmt_bridge'
+    _alembic(database_url, 'upgrade', bridge_head)
     engine = create_engine(database_url)
     with engine.begin() as connection:
         _insert_sample(connection)
@@ -255,7 +259,7 @@ def test_downgrade_refuses_to_drop_existing_data(database_url):
     result = _alembic(database_url, 'downgrade', LEGAL, ok=False)
     assert 'coordinated restore' in result.stderr
     with engine.connect() as connection:
-        assert _versions(connection) == {HEAD}
+        assert _versions(connection) == {bridge_head}
         assert float(connection.execute(text('SELECT commission_rate_snapshot FROM redemptions WHERE id=1')).scalar_one()) == 0.125
         assert connection.execute(text('SELECT settlement_allocated_amount FROM wallet_items WHERE id=1')).scalar_one() == 100
         assert connection.execute(text('SELECT refund_hold_previous_status FROM wallet_items WHERE id=1')).scalar_one() == 3
