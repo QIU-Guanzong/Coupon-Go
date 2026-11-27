@@ -15,7 +15,7 @@ from fastapi.staticfiles import StaticFiles
 from . import config
 from .database import init_db
 from .errors import ApiError
-from .routers import (admin, admin_v2, auth, bargain, cashback, connect, coupons,
+from .routers import (admin, admin_v2, auth, bargain, cashback, connect, coupons, gifts,
                       home, merchant_onboarding, merchant_stats, nearby, notifications,
                       packages, qbot, redemption, reviews, search, uploads,
                       vendor, wallet)
@@ -42,7 +42,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-for router in (auth.router, home.router, coupons.router, wallet.router,
+for router in (auth.router, home.router, coupons.router, wallet.router, gifts.router,
                search.router, notifications.router, vendor.router,
                redemption.router, nearby.router, reviews.router,
                admin.router, admin_v2.router, uploads.router,

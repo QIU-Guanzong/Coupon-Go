@@ -6,7 +6,9 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../api_client.dart';
+import '../feature_flags.dart';
 import '../language.dart';
+import '../share_links.dart';
 import 'discovery.dart';
 import 'guest_auth.dart' show guestLoginPrompt;
 export 'discovery.dart' show DiscoveryScreen;
@@ -935,10 +937,14 @@ class _SearchScreenState extends State<SearchScreen> {
 
 /// Coupon detail: image, amount, validity, terms, claim button (>=56px).
 class CouponDetailScreen extends StatefulWidget {
-  const CouponDetailScreen({super.key, required this.api, required this.coupon});
+  const CouponDetailScreen({super.key, required this.api, required this.coupon,
+    this.fromShare = false, this.readOnly = false, this.shareKey});
 
   final ApiClient api;
   final Coupon coupon;
+  final bool fromShare;
+  final bool readOnly;
+  final String? shareKey;
 
   @override
   State<CouponDetailScreen> createState() => _CouponDetailScreenState();
@@ -947,6 +953,7 @@ class CouponDetailScreen extends StatefulWidget {
 class _CouponDetailScreenState extends State<CouponDetailScreen> {
   bool _claimed = false;
   bool _claiming = false;
+  bool _checkingShare = false;
   int? _remaining, _claimedWalletItemId;
   late int _session;
   late String _purchaseRef;
@@ -957,7 +964,7 @@ class _CouponDetailScreenState extends State<CouponDetailScreen> {
     _purchaseRef = 'coupon-${widget.coupon.id}-${DateTime.now().microsecondsSinceEpoch}';
     _session = widget.api.sessionRevision;
     widget.api.addListener(_sessionChanged);
-    if (widget.api.isLoggedIn && widget.coupon.packageId == null) _readClaim();
+    if (!widget.readOnly && widget.api.isLoggedIn && widget.coupon.packageId == null) _readClaim();
   }
 
   @override
@@ -973,10 +980,53 @@ class _CouponDetailScreenState extends State<CouponDetailScreen> {
       _claimed = false;
       _claimedWalletItemId = _remaining = null;
     });
-    if (widget.api.isLoggedIn && widget.coupon.packageId == null) {
+    if (!widget.readOnly && widget.api.isLoggedIn && widget.coupon.packageId == null) {
       unawaited(_readClaim());
     }
   }
+
+  Future<void> _shareCoupon() async {
+    final coupon = widget.coupon;
+    if (_checkingShare) return;
+    setState(() => _checkingShare = true);
+    try {
+      final share = await _loadSharedCoupon(widget.api, coupon.id, key: widget.shareKey);
+      final published = share.coupon;
+      if (publicTrial &&
+          (published.name != coupon.name || published.shopName != coupon.shopName ||
+           published.terms != coupon.terms || published.salePrice != coupon.salePrice ||
+           published.minSpend != coupon.minSpend ||
+           published.type != coupon.type || published.amountText != coupon.amountText)) {
+        if (mounted) _shareUnavailable();
+        return;
+      }
+      final link = customerShareUri('coupon', publicTrial ? '${coupon.id}-${share.key}' : '${coupon.id}');
+      if (link == null) throw const FormatException('Invalid share address');
+      if (mounted) {
+        await showCustomerShare(context,
+          title: context.tr('分享優惠券', 'Share coupon'), uri: link,
+          message: publicTrial
+              ? context.tr('朋友會看到試用目錄中的優惠詳情。', 'Friends will see this offer in the trial catalog.')
+              : context.tr('朋友可開啟連結查看優惠詳情。', 'Friends can open the link to view this offer.'));
+      }
+    } on ApiException catch (error) {
+      if (mounted) {
+        if (error.status == 404) {
+          _shareUnavailable();
+        } else {
+          showCgToast(context, context.tr('暫時未能分享，請重試。', 'Could not share right now. Try again.'));
+        }
+      }
+    } catch (_) {
+      if (mounted) showCgToast(context, context.tr('暫時未能分享，請重試。', 'Could not share right now. Try again.'));
+    } finally {
+      if (mounted) setState(() => _checkingShare = false);
+    }
+  }
+
+  void _shareUnavailable() => showCgToast(context, publicTrial
+      ? context.tr('只有試用目錄內的公開優惠可分享。', 'Only public offers in the trial catalog can be shared.')
+      : context.tr('此優惠券暫不能分享。', 'This coupon is unavailable for sharing.'));
 
   Future<void> _readClaim() async {
     final session = _session;
@@ -999,6 +1049,8 @@ class _CouponDetailScreenState extends State<CouponDetailScreen> {
     final validText = validDate?.toLocal().toString().split(' ').first;
     final remaining = _remaining ?? c.remaining;
     final amount = context.tr(c.amountText, c.amountTextEnglish);
+    final expired = widget.fromShare && c.status == 'expired';
+    final unavailable = widget.fromShare && (expired || c.status == 'sold_out' || remaining <= 0);
     if (c.packageId != null) {
       return PackageDetailScreen(api: widget.api, packageId: c.packageId!);
     }
@@ -1006,7 +1058,14 @@ class _CouponDetailScreenState extends State<CouponDetailScreen> {
       appBar: AppBar(
         title: Text(context.tr('優惠券詳情', 'Coupon details')),
         actions: [
-          FavoriteControl(api: widget.api, id: c.id, initial: c.isFavorite),
+          if (customerShareUri('coupon', '${c.id}') != null)
+            IconButton(
+              onPressed: _checkingShare ? null : _shareCoupon,
+              tooltip: context.tr('分享優惠券', 'Share coupon'),
+              icon: const Icon(Icons.share_outlined),
+            ),
+          if (!widget.readOnly)
+            FavoriteControl(api: widget.api, id: c.id, initial: c.isFavorite),
         ],
       ),
       body: ListView(
@@ -1027,7 +1086,8 @@ class _CouponDetailScreenState extends State<CouponDetailScreen> {
             runSpacing: 6,
             crossAxisAlignment: WrapCrossAlignment.center,
             children: [
-              Text(amount,
+              if (amount.isNotEmpty && amount != c.name)
+                Text(amount,
                   style: const TextStyle(
                       color: CgColors.primary,
                       fontSize: 26,
@@ -1049,6 +1109,9 @@ class _CouponDetailScreenState extends State<CouponDetailScreen> {
           if (validText != null)
             Text(context.tr('有效日期：至 $validText', 'Valid until $validText')),
           Text(context.tr('剩餘數量：$remaining / ${c.total}', 'Remaining: $remaining / ${c.total}')),
+          if (unavailable)
+            Text(expired ? context.tr('此優惠已到期', 'This offer has expired')
+                : context.tr('此優惠已售罄', 'This offer has sold out')),
           if (c.minSpend > 0) Text(context.tr(
               '於本店惠顧滿 ${formatHkd(c.minSpend)}',
               'Minimum spend ${formatHkd(c.minSpend)}')),
@@ -1060,10 +1123,10 @@ class _CouponDetailScreenState extends State<CouponDetailScreen> {
           ],
         ],
       ),
-      bottomNavigationBar: Padding(
+      bottomNavigationBar: widget.readOnly ? null : Padding(
         padding: const EdgeInsets.all(16),
         child: ElevatedButton(
-          onPressed: _claiming || (c.isPaid && remaining <= 0) ||
+          onPressed: _claiming || (unavailable && !_claimed) || (c.isPaid && remaining <= 0) ||
                   (c.isPaid && (c.salePrice == null || c.salePrice! <= 0))
               ? null
               : () async {
@@ -1130,7 +1193,9 @@ class _CouponDetailScreenState extends State<CouponDetailScreen> {
                     }
                   }
                 },
-          child: Text(c.isPaid && remaining <= 0
+          child: Text(unavailable && !_claimed
+              ? expired ? context.tr('已到期', 'Expired') : context.tr('已售罄', 'Sold out')
+              : c.isPaid && remaining <= 0
               ? context.tr('已售罄', 'Sold out')
               : c.isPaid && (c.salePrice == null || c.salePrice! <= 0)
               ? context.tr('價格暫不可用', 'Price unavailable')
@@ -1145,6 +1210,73 @@ class _CouponDetailScreenState extends State<CouponDetailScreen> {
       ),
     );
   }
+}
+
+typedef _SharedCoupon = ({Coupon coupon, String? key});
+
+Future<_SharedCoupon> _loadSharedCoupon(ApiClient api, int id, {String? key}) async {
+  final path = publicTrial ? '/trial/public-coupons/$id' : '/public-coupons/$id';
+  final result = await api.get(path, query: key == null ? null : {'key': key})
+      .timeout(const Duration(seconds: 12));
+  final coupon = Coupon.fromJson(result['coupon'] as Map<String, dynamic>);
+  if (coupon.id != id) throw const FormatException('Unexpected coupon');
+  return (coupon: coupon, key: result['share_key'] as String?);
+}
+
+class SharedCouponScreen extends StatefulWidget {
+  const SharedCouponScreen({super.key, required this.api, required this.couponId,
+    this.shareKey});
+
+  final ApiClient api;
+  final int couponId;
+  final String? shareKey;
+
+  @override
+  State<SharedCouponScreen> createState() => _SharedCouponScreenState();
+}
+
+class _SharedCouponScreenState extends State<SharedCouponScreen> {
+  late Future<_SharedCoupon> _coupon = _load();
+
+  Future<_SharedCoupon> _load() async {
+    if (publicTrial != (widget.shareKey != null)) {
+      throw ApiException(404, 'Invalid share address');
+    }
+    return _loadSharedCoupon(widget.api, widget.couponId, key: widget.shareKey);
+  }
+
+  @override
+  Widget build(BuildContext context) => FutureBuilder<_SharedCoupon>(
+    future: _coupon,
+    builder: (context, snapshot) {
+      if (snapshot.data case final share?) {
+        return CouponDetailScreen(api: widget.api, coupon: share.coupon, fromShare: true,
+          shareKey: share.key,
+          readOnly: publicTrial || publicDemo);
+      }
+      final error = snapshot.error;
+      final unavailable = error is ApiException && error.status == 404;
+      return Scaffold(
+        appBar: AppBar(title: Text(context.tr('優惠券詳情', 'Coupon details'))),
+        body: Center(child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: error == null
+              ? const CircularProgressIndicator()
+              : Column(mainAxisSize: MainAxisSize.min, children: [
+                  Text(unavailable
+                    ? context.tr('此優惠券連結暫不可用。', 'This coupon link is unavailable.')
+                    : context.tr('未能載入優惠券。', 'Could not load the coupon.'),
+                    textAlign: TextAlign.center),
+                  if (!unavailable)
+                    TextButton(
+                      onPressed: () => setState(() => _coupon = _load()),
+                      child: Text(context.tr('重試', 'Retry')),
+                    ),
+                ]),
+        )),
+      );
+    },
+  );
 }
 
 /// Shop detail: photos, info, branches, coupons from this shop.

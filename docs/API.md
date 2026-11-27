@@ -52,6 +52,7 @@ Endpoint 名稱沿用 Coupon GO! 1.2.6 APK 逆向出的原始名稱（含原始�
 | GET | `/branch-details?branch_id=` | 分店詳情 |
 | GET | `/get-nearest-branchs?shop_id=` | 分店列表 |
 | GET | `/coupon-details-new?coupon_id=` | 券詳情 |
+| GET | `/public-coupons/{coupon_id}` | 分享連結的公開券詳情。無需登入。下架、未公開、積分及套餐券返回 404。已公開的售罄或過期券保留其狀態。 |
 | GET | `/get-collection-shops` | 收藏商户 |
 | GET | `/favorite-coupon-list` | 收藏券 |
 | POST | `/favorite-shop`、`/favorite-coupon-all` | 收藏/取消收藏 |
@@ -77,6 +78,14 @@ Endpoint 名稱沿用 Coupon GO! 1.2.6 APK 逆向出的原始名稱（含原始�
 | POST | `/review?wallet_item_id=` | 【舊版】評價已用券，+15 分（一次）；不寫評價記錄、不影響星級 |
 | GET | `/points/exchange-options` | 顧客可兌換的積分券及本次成本；`Cache-Control: no-store` |
 | POST | `/points/exchange?coupon_id=` | 扣積分、扣庫存並發出錢包券；成功回傳 `wallet_item_id`（見積分一節） |
+| POST | `/wallet/items/{item_id}/gift` | 建立或重新取得仍有效的一次性轉贈連結，回傳 `{token, expires_at}` |
+| DELETE | `/wallet/items/{item_id}/gift` | 取消尚未領取的連結，回傳 204；好友已領取時回傳 409 |
+| POST | `/wallet/gifts/preview` | 傳入 `{token}`，查看券名稱、商戶及連結到期時間。已領取時，僅原收券帳戶會收到 `wallet_item_id` |
+| POST | `/wallet/gifts/accept` | 傳入 `{token}` 領取好友轉贈的券，回傳 `{wallet_item_id}`。同一收券帳戶重試會得到相同結果 |
+
+轉贈四個接口均需要顧客登入。只有直接免費領取、仍可使用且沒有核銷紀錄的券可轉贈。轉贈連結最長有效 24 小時，券到期更早時以券到期為準。
+贈送人可在好友領取前繼續使用券或取消連結。好友領取時，原券和核銷碼同步失效，新券以 `source=gift` 存入收券人的 Q Wallet。轉贈不改庫存、領券數或積分。每人領券上限同樣適用於透過轉贈取得的券。
+錢包列表以 `gift_eligible` 顯示可否轉贈，以 `gift_status` 顯示 `pending`、`sent` 或 `null`。已送出原券仍保留在失效紀錄，手機端可標記為「已轉贈」。
 
 ## 地圖（線 A）
 

@@ -168,6 +168,8 @@ class WalletItem {
         validTo = DateTime.tryParse(j['valid_to'] as String? ?? ''),
         reviewed = j['reviewed'] as bool? ?? false,
         source = j['source'] as String? ?? 'claim',
+        giftEligible = j['gift_eligible'] == true,
+        giftStatus = j['gift_status'] as String?,
         orderId = j['order_id'] as int?,
         quantity = j['quantity'] as int? ?? 1,
         orderQuantity = j['order_quantity'] as int? ?? j['quantity'] as int? ?? 1,
@@ -188,7 +190,9 @@ class WalletItem {
   final DateTime? qrExpiresAt;
   final DateTime? validTo;
   final bool reviewed;
-  final String source; // claim | purchase | bargain | exchange
+  final String source; // claim | purchase | bargain | exchange | gift
+  final bool giftEligible;
+  final String? giftStatus;
   final int? orderId;
   final int quantity;
   final int orderQuantity;

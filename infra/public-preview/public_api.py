@@ -56,6 +56,7 @@ PUBLIC_GET = frozenset({
     "/api/v3/package-details",
 })
 PUBLIC_SHOP = re.compile(r"^/api/v3/shops/[1-9][0-9]{0,9}/(?:map|reviews|rating)$")
+PUBLIC_COUPON = re.compile(r"^/api/v3/public-coupons/[1-9][0-9]{0,9}$")
 SEARCH = "/api/v3/auto-suggestion-new"
 CAMPAIGNS = "/api/v3/bargain-campaigns"
 APP_CONFIG = "/api/v3/app-config"
@@ -196,7 +197,8 @@ class PreviewGateway:
             await JSONResponse(result)(scope, receive, send)
             return
         allowed = (method == "GET" and
-                   (path in PUBLIC_GET or PUBLIC_SHOP.fullmatch(path) is not None))
+                   (path in PUBLIC_GET or PUBLIC_SHOP.fullmatch(path) is not None
+                    or (PUBLIC_COUPON.fullmatch(path) is not None and not request.query_params)))
         if method == "POST" and path == SEARCH:
             keyword = request.query_params.get("keyword", "")
             allowed = len(keyword) <= 100

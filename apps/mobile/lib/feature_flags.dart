@@ -7,3 +7,6 @@ const cashbackEnabled = bool.fromEnvironment(
 
 /// Public web interactions use a browser-isolated gateway and identity.
 const publicTrial = bool.fromEnvironment('PUBLIC_TRIAL');
+
+/// The public catalogue demonstrates offers with a read-only gateway.
+const publicDemo = bool.fromEnvironment('PUBLIC_DEMO');

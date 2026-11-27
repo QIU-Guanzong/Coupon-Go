@@ -275,6 +275,29 @@ def test_token_version_single_downgrade_still_succeeds(database_url):
     engine.dispose()
 
 
+def test_gift_table_upgrades_real_0032_shape_and_preserves_history(database_url):
+    _alembic(database_url, 'upgrade', '0032_user_token_version')
+    engine = create_engine(database_url)
+    with engine.begin() as connection:
+        # Revision 0001 references live metadata. Re-create the old schema.
+        connection.execute(text('DROP TABLE IF EXISTS coupon_gifts'))
+        _insert_sample(connection)
+    _alembic(database_url, 'upgrade', 'head')
+    with engine.begin() as connection:
+        assert _versions(connection) == {EXPECTED_MIGRATION_HEAD}
+        assert connection.execute(text('SELECT user_id, status, source FROM wallet_items WHERE id=1')).one() == (
+            1, 1, 'purchase')
+        assert inspect(connection).has_table('coupon_gifts')
+        connection.execute(text("INSERT INTO coupon_gifts(sender_wallet_item_id, nonce, expires_at) "
+                                "VALUES (1, 'fixture', '2027-01-01')"))
+    result = _alembic(database_url, 'downgrade', '0032_user_token_version', ok=False)
+    assert 'coordinated restore' in result.stderr
+    with engine.connect() as connection:
+        assert _versions(connection) == {EXPECTED_MIGRATION_HEAD}
+        assert connection.execute(text('SELECT nonce FROM coupon_gifts WHERE sender_wallet_item_id=1')).scalar_one() == 'fixture'
+    engine.dispose()
+
+
 def test_original_0021_retry_fields_survive_forward_upgrade(database_url):
     """The published 0021 revision already included both retry fields."""
     _alembic(database_url, 'upgrade', OLD)

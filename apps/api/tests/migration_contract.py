@@ -1,3 +1,3 @@
 """Latest supported database schema; kept explicit for historical upgrade tests."""
 
-EXPECTED_MIGRATION_HEAD = "0032_user_token_version"
+EXPECTED_MIGRATION_HEAD = "0033_coupon_gifts"

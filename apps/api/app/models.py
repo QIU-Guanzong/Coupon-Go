@@ -225,7 +225,7 @@ class WalletItem(Base):
     used_at = Column(DateTime, nullable=True)
     reviewed = Column(Boolean, default=False)
     # --- line C (套餐 2A) / line E (bargain) shared: voucher provenance ---
-    # source: claim | purchase | bargain | exchange. order_id is line C's
+    # source: claim | purchase | bargain | exchange | gift. order_id is line C's
     # orders.id (FK); line E created the columns without the FK.
     source = Column(String(20), default="claim", nullable=False)
     order_id = Column(Integer, ForeignKey("orders.id"), nullable=True)
@@ -233,6 +233,17 @@ class WalletItem(Base):
     refund_hold_previous_status = Column(Integer, nullable=True)
     user = relationship("User", back_populates="wallet_items")
     coupon = relationship("Coupon")
+
+
+class CouponGift(Base):
+    """One outstanding or completed gift linked to an issued wallet item."""
+    __tablename__ = "coupon_gifts"
+    sender_wallet_item_id = Column(Integer, ForeignKey("wallet_items.id"), primary_key=True)
+    nonce = Column(String(32), nullable=False, unique=True)
+    expires_at = Column(DateTime, nullable=False)
+    cancelled_at = Column(DateTime, nullable=True)
+    recipient_wallet_item_id = Column(Integer, ForeignKey("wallet_items.id"), nullable=True,
+                                      unique=True)
 
 
 class Redemption(Base):

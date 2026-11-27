@@ -39,7 +39,11 @@ def get_wallet(page: int = Query(1, ge=1),
         i.coupon.valid_to if sortby == "expiry" else i.claimed_at, i.id
     ))
     out = paginate(items, page, page_size)
-    return {**out, "items": [wallet_out(db, i) for i in out["items"]]}
+    gifts = {gift.sender_wallet_item_id: gift for gift in db.query(models.CouponGift)
+             .filter(models.CouponGift.sender_wallet_item_id.in_(
+                 item.id for item in out["items"])).all()} if out["items"] else {}
+    return {**out, "items": [wallet_out(db, item, gifts.get(item.id))
+                             for item in out["items"]]}
 
 
 @router.get("/wallet/revision")
@@ -55,7 +59,13 @@ def wallet_revision(user: models.User = Depends(get_current_user), db: Session =
                     refunds.filter_by(status="rejected").count(),
                     refunds.filter_by(status="refunded").count())
     suffix = ":p" + ":".join(map(str, order_counts)) if any(order_counts) else ""
-    return {"revision": f"{counts[0]}:{counts[1]}" + (f":{changes}" if changes else "") + suffix}
+    sent = db.query(models.CouponGift).join(
+        models.WalletItem, models.WalletItem.id == models.CouponGift.sender_wallet_item_id
+    ).filter(models.WalletItem.user_id == user.id,
+             models.CouponGift.recipient_wallet_item_id.is_not(None)).count()
+    received = db.query(models.WalletItem).filter_by(user_id=user.id, source="gift").count()
+    gifts = f":g{sent}:{received}" if sent or received else ""
+    return {"revision": f"{counts[0]}:{counts[1]}" + (f":{changes}" if changes else "") + suffix + gifts}
 
 
 @router.get("/wallet/items/{item_id}/status")

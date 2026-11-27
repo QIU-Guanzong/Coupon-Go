@@ -21,6 +21,7 @@ import threading
 import time
 
 from fastapi import Request
+from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse, Response
 from starlette.datastructures import UploadFile
 from starlette.exceptions import HTTPException as StarletteHTTPException
@@ -30,6 +31,7 @@ import trial_coupon_images as coupon_images
 import jwt
 import httpx
 from sqlalchemy import create_engine
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import NullPool
 
@@ -46,6 +48,7 @@ from app.database import get_db
 from app.main import app as backend
 from app.models_line_b import Review
 from app.routers import qbot
+from app.routers.home import public_coupon_summary
 
 ROOT = Path(os.environ['TRIAL_STATE_DIR']).resolve()
 TEMPLATE = ROOT / 'template.db'
@@ -266,7 +269,10 @@ WRITE_PATHS = tuple(re.compile(p) for p in (
     r'/api/v3/(?:packages|coupons)/[0-9]+/refund',
     r'/api/v3/notifications/(?:read-all|[0-9]+/read)',
 ))
-DENY_READ = re.compile(r'/api/v3/(?:_dev|dev|merchant-files|uploads|qbot)(?:/|$)')
+DENY_READ = re.compile(
+    r'/api/v3/(?:_dev|dev|merchant-files|uploads|qbot|public-coupons|'
+    r'wallet/gifts|wallet/items/[0-9]+/gift)(?:/|$)'
+)
 SETTLE_ACTION = re.compile(r'/api/v3/(?:new-scan-coupon(?:/batch)?|redemptions/[0-9]+/revoke|orders/[0-9]+/refund|packages/[0-9]+/refund|coupons/[0-9]+/refund)')
 EXCHANGE_OPTIONS = '/api/v3/points/exchange-options'
 MY_REVIEWS = '/api/v3/reviews/mine'
@@ -403,9 +409,30 @@ async def _upload_coupon_image(scope, receive, sid, path, request):
 # Only a reviewed fixture from the immutable trial template is shareable.
 # Slugs are not session IDs and never resolve against a browser's private DB.
 PUBLIC_PACKAGES_PATH = '/api/v3/trial/public-packages/'
+PUBLIC_COUPONS_PATH = '/api/v3/trial/public-coupons/'
+PUBLIC_COUPON_KEY = re.compile(r'[0-9a-f]{24}')
 PUBLIC_PACKAGE_FIXTURES = {
     'shu-xiang-hotpot-for-four': ('麻辣火鍋四人特價套餐', '蜀香麻辣火鍋城'),
 }
+
+
+def _public_trial_coupon(coupon_id: int):
+    # The projection can only read the published synthetic template, never a
+    # cookie-scoped copy. Read-only mode also protects the source on regressions.
+    engine = create_engine('sqlite://', poolclass=NullPool, creator=lambda: sqlite3.connect(
+        f'{TEMPLATE.as_uri()}?mode=ro', uri=True,
+    ))
+    try:
+        with Session(engine) as db:
+            summary = public_coupon_summary(db, coupon_id)
+    finally:
+        engine.dispose()
+    if summary is None:
+        return None
+    coupon = summary['coupon']
+    identity = json.dumps([coupon['shop_name'], coupon['coupon_name']],
+                          ensure_ascii=False, separators=(',', ':')).encode('utf-8')
+    return {**summary, 'share_key': hashlib.sha256(identity).hexdigest()[:24]}
 
 
 def _public_package(slug: str, *, now: datetime | None = None):
@@ -485,6 +512,28 @@ class TrialGateway:
         origin = request.headers.get('origin')
         if origin and origin.rstrip('/') != PUBLIC_ORIGIN:
             return await JSONResponse({'detail': '來源不符'}, 403)(scope, receive, send)
+        if path.startswith(PUBLIC_COUPONS_PATH):
+            headers = {'Cache-Control': 'no-store'}
+            if method != 'GET':
+                return await JSONResponse({'detail': '此操作不可用'}, 405, headers={
+                    **headers, 'Allow': 'GET',
+                })(scope, receive, send)
+            coupon_id = path[len(PUBLIC_COUPONS_PATH):]
+            params = request.query_params.multi_items()
+            key = request.query_params.get('key')
+            valid_query = not params or (len(params) == 1 and key is not None
+                                         and PUBLIC_COUPON_KEY.fullmatch(key))
+            coupon = None
+            if (valid_query and re.fullmatch(r'[1-9][0-9]{0,9}', coupon_id)
+                    and int(coupon_id) <= 2_147_483_647):
+                try:
+                    coupon = await asyncio.to_thread(_public_trial_coupon, int(coupon_id))
+                except SQLAlchemyError:
+                    return await JSONResponse({'detail': '暫時無法顯示優惠券'}, 503,
+                                              headers=headers)(scope, receive, send)
+            if coupon is None or (key is not None and coupon['share_key'] != key):
+                return await JSONResponse({'detail': '此連結已失效'}, 404, headers=headers)(scope, receive, send)
+            return await JSONResponse(jsonable_encoder(coupon), headers=headers)(scope, receive, send)
         if path.startswith(PUBLIC_PACKAGES_PATH):
             headers = {'Cache-Control': 'no-store'}
             if method != 'GET':

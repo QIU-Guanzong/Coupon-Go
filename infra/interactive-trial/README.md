@@ -134,6 +134,18 @@ before serving the new package at /coupongo/.
   reuse, review photos and merchant-document uploads remain unchanged.
   This is a trial-only SQLite table, not a production migration or route.
 
+### Public voucher links (read-only)
+
+Standard voucher details use `#/coupon/{id}-{key}` on the current web entry and
+`GET /api/v3/trial/public-coupons/{id}`. This read-only endpoint resolves
+public synthetic catalogue offers from the unmodified template even when
+the sender edits a private demo copy. It does not require or create a trial
+session. An expired or sold-out listing can still show its public terms.
+The response provides a `share_key` bound to the offer and shop names.
+A recipient resolves the link with `?key=...`, so an old link will not
+display a replacement offer if the catalogue later reuses a numeric ID.
+Gift links require a shared account and inventory service.
+
 ### Public package link (read-only)
 
 - Open `/coupongo/#/p/shu-xiang-hotpot-for-four` in the PUBLIC_TRIAL Web

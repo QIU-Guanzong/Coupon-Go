@@ -79,7 +79,7 @@ def issue_wallet_item(db: Session, user_id: int, coupon_id: int,
     """Mint one unused wallet item. Flushes; the caller commits.
 
     ``source`` is one of ``claim`` | ``purchase`` | ``bargain`` |
-    ``exchange`` (see ``WalletItem.source``).
+    ``exchange`` | ``gift`` (see ``WalletItem.source``).
     """
     item = models.WalletItem(user_id=user_id, coupon_id=coupon_id,
                              status=1, source=source, order_id=order_id)
