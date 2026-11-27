@@ -20,7 +20,7 @@ _NEGATION = re.compile(r"唔[食要鍾]|不[吃食要喜]|別|别|避免|\b(?:no
 _CLEAR = re.compile(r"不限口味|[沒没]有偏好|任何口味|\b(?:any cuisine|no preference)\b", re.I)
 _USAGE = re.compile(r"退款|[積积]分|點樣用|怎麼用|怎么用|點樣[買搶]|如何[搶抢領领买買]|過敏|过敏|"
                     r"\b(?:refund|points|allerg\w*|how to|how do i)\b", re.I)
-_PARTY = re.compile(r"(?<!\d)([1-9]\d?|[一二三四五六七八九十兩两双雙])\s*(?:[個个]?人|位|\bpeople\b|"
+_PARTY = re.compile(r"(?<!\d)([1-9]\d?|[一二三四五六七八九十兩两双雙])\s*(?:[個个]?人|位(?![數数碼码])|\bpeople\b|"
                     r"\bpersons?\b|\bdiners?\b)", re.I)
 _FOR_PARTY = re.compile(r"\bfor\s+([1-9]\d?)\b", re.I)
 _PARTY_RANGE = re.compile(r"\d+\s*(?:至|到|[-–]|to)\s*\d+\s*(?:[個个]?人|位|people|diners)", re.I)

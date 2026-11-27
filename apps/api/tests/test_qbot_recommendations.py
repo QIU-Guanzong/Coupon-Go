@@ -159,3 +159,35 @@ def test_flash_uses_hk_midnight_sellable_stock_and_coupon_price(offers):
     assert [item["id"] for item in result["offers"]] == [11, 12, 18]
     assert all(item["type"] == "coupon" for item in result["offers"])
     assert "HKT" in result["answer"]
+
+
+@pytest.mark.parametrize(("message", "lang", "new_code", "expired_voucher"), [
+    ("張套餐券本身過咗期，唔係六位碼過期，可以再出示一個新碼嗎？", "zh-Hant", "重新出示就會換新碼", "券本身已過期"),
+    ("店員話個兌換碼過期喇，張券仲用得嗎？", "zh-Hant", "重新出示就會換新碼", "券本身已過期"),
+    ("My redemption code expired. Can I show the package voucher again?", "en", "generate a new code", "voucher itself expired"),
+])
+def test_expiry_help_ignores_shopping_context(message, lang, new_code, expired_voucher):
+    question = qbot.Question(message=message, language=lang, shopping_context={
+        "package": True, "district": "旺角", "people": 2,
+    })
+    lookup = qbot.local_request(question)
+    assert lookup == "voucher_expiry"
+    result = qbot.local_answer(None, question, lookup, preview=True)
+    assert result["offers"] == []
+    assert new_code in result["answer"]
+    assert expired_voucher in result["answer"]
+
+
+def test_six_guests_and_flash_expiry_still_use_catalogue():
+    party = qbot.local_request(qbot.Question(message="比較六位套餐"))
+    assert party.context.people == 6
+    flash = qbot.local_request(qbot.Question(message="今日到期的限時秒殺優惠券"))
+    assert flash.kind == "coupon" and flash.ending_today
+
+
+@pytest.mark.parametrize("message", [
+    "店員已撤銷核銷，但券仲未過期。我喺邊度撳退款？",
+    "套餐券過期後可以退款嗎？",
+])
+def test_refund_questions_are_not_treated_as_code_expiry(message):
+    assert qbot.local_request(qbot.Question(message=message)) is None

@@ -211,6 +211,28 @@ class PublicPreviewTest(unittest.TestCase):
         os.environ["PUBLIC_QBOT_ENABLED"] = "0"
         self.assertEqual(self.client.post("/api/v3/qbot/chat", json=payload).status_code, 503)
 
+    def test_refund_help_does_not_attach_catalogue_cards(self):
+        from app.routers import qbot
+
+        detail = self.client.get("/api/v3/package-details", params={"package_id": 1}).json()
+        name = detail["package"]["name"]
+        env = dict(PUBLIC_QBOT_ENABLED="1", PUBLIC_QBOT_QUOTA_DB=str(directory / "refund.sqlite"),
+                   DEEPSEEK_API_KEY="synthetic-test-key")
+        with patch.dict(os.environ, env), patch.object(qbot.qbot_providers.httpx, "post") as provider:
+            provider.return_value.json.return_value = {"choices": [{"message": {"content": name}}]}
+            support = self.client.post("/api/v3/qbot/chat", json={
+                "message": "店員已撤銷核銷，但券仲未過期。我喺邊度撳退款？",
+            })
+            self.assertEqual(support.status_code, 200, support.text)
+            self.assertEqual(support.json()["offers"], [])
+            context = json.loads(provider.call_args.kwargs["json"]["messages"][1]["content"])
+            self.assertEqual(context["public_offers"], [])
+
+            shopping = self.client.post("/api/v3/qbot/chat", json={"message": "推薦可以退款的套餐"})
+            self.assertEqual(shopping.status_code, 200, shopping.text)
+            context = json.loads(provider.call_args.kwargs["json"]["messages"][1]["content"])
+            self.assertTrue(context["public_offers"])
+
     def test_guest_compares_packages_against_detail_without_calling_provider(self):
         from decimal import Decimal
         from app.routers import qbot
