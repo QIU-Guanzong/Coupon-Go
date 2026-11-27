@@ -407,6 +407,9 @@ def dashboard(admin: models.User = Depends(admin_only),
     wallet_status = {
         s: c for s, c in
         db.query(models.WalletItem.status, func.count(models.WalletItem.id))
+        .filter(~db.query(models.CouponGift).filter(
+            models.CouponGift.sender_wallet_item_id == models.WalletItem.id,
+            models.CouponGift.recipient_wallet_item_id.is_not(None)).exists())
         .group_by(models.WalletItem.status).all()
     }
     return {

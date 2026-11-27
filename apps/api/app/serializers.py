@@ -5,6 +5,7 @@ from decimal import Decimal
 from sqlalchemy.orm import Session
 
 from . import models
+from .coupon_gifts import wallet_gift_flags
 from .geo import haversine_km
 
 
@@ -147,7 +148,7 @@ def shop_out(db: Session, s: models.Shop, user_id=None):
     }
 
 
-def wallet_out(db: Session, w: models.WalletItem):
+def wallet_out(db: Session, w: models.WalletItem, gift=None):
     c = db.query(models.Coupon).filter(models.Coupon.id == w.coupon_id).first()
     shop = db.query(models.Shop).filter(models.Shop.id == c.shop_id).first() if c else None
     order = db.get(models.Order, w.order_id) if w.order_id else None
@@ -161,6 +162,7 @@ def wallet_out(db: Session, w: models.WalletItem):
         order_refundable = False
         order_wallet_status = "ok"
     return {
+        **wallet_gift_flags(db, w, c, shop, gift),
         "quantity": (order.quantity or 1) if order and len(items) == 1 else 1,
         "order_quantity": (order.quantity or 1) if order else None,
         "order_paid_amount": (float(order.paid_amount) if order and order.payment_status == "paid" and order.paid_amount is not None else None),

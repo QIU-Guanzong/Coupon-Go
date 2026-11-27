@@ -274,6 +274,7 @@ def shop_dashboard(db: Session, shop: models.Shop, days: int = 30,
     claims = (db.query(models.WalletItem.coupon_id,
                        func.count(models.WalletItem.id))
               .filter(models.WalletItem.coupon_id.in_(coupon_ids),
+                      models.WalletItem.source != "gift",
                       models.WalletItem.claimed_at >= start,
                       models.WalletItem.claimed_at < stop)
               .group_by(models.WalletItem.coupon_id).all()) if coupon_ids else []
@@ -287,7 +288,10 @@ def shop_dashboard(db: Session, shop: models.Shop, days: int = 30,
                .filter(models.WalletItem.coupon_id.in_(coupon_ids),
                        models.WalletItem.claimed_at >= start,
                        models.WalletItem.claimed_at < stop,
-                       models.WalletItem.status == 3)
+                       models.WalletItem.status == 3,
+                       ~db.query(models.CouponGift).filter(
+                           models.CouponGift.sender_wallet_item_id == models.WalletItem.id,
+                           models.CouponGift.recipient_wallet_item_id.is_not(None)).exists())
                .group_by(models.WalletItem.coupon_id).all()) if coupon_ids else []
     for coupon_id, count in expired:
         row = by_coupon.setdefault(coupon_id, {

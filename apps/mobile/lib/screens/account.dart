@@ -14,6 +14,7 @@ import '../theme.dart';
 import '../widgets/widgets.dart';
 import '../widgets/wallet_updates.dart';
 import 'cashback.dart';
+import 'coupon_gift.dart';
 import 'reviews_admin.dart';
 import 'merchant_staff.dart';
 
@@ -138,9 +139,11 @@ class _WalletScreenState extends State<WalletScreen> with WalletUpdates<WalletSc
     });
   }
 
+  bool get _focused => widget.focusCouponId != null || widget.focusWalletItemId != null;
+
   Future<void> _refresh({bool quiet = false}) async {
     if (widget.guest) return;
-    if (widget.focusCouponId != null) {
+    if (_focused) {
       await _load(quiet: quiet);
     } else {
       await Future.wait([_load(quiet: quiet), _loadOverview()]);
@@ -250,20 +253,20 @@ class _WalletScreenState extends State<WalletScreen> with WalletUpdates<WalletSc
       if (!current()) return;
       final pages = wallet['total_pages'] as int? ?? 1;
       final focus = widget.focusCouponId;
-      final last = focus != null ? pages : (quiet ? _page : 1).clamp(1, pages);
+      final last = _focused ? pages : (quiet ? _page : 1).clamp(1, pages);
       List<WalletItem> matching(Map<String, dynamic> data) {
         final items = _walletRows(data, status);
-        if (focus == null) return items;
+        if (!_focused) return items;
         return items.where((item) =>
           !item.isPackage &&
-          item.couponId == focus &&
+          (focus == null || item.couponId == focus) &&
           (widget.focusWalletItemId == null || item.id == widget.focusWalletItemId)
         ).toList();
       }
 
       final items = matching(wallet);
       for (var page = 2; page <= last; page++) {
-        if (focus != null && items.isNotEmpty) break;
+        if (_focused && items.isNotEmpty) break;
         final more = await api.wallet(status: status, page: page);
         if (!current()) return;
         items.addAll(matching(more));
@@ -411,6 +414,7 @@ class _WalletScreenState extends State<WalletScreen> with WalletUpdates<WalletSc
   }
 
   String _couponStatus(BuildContext context, WalletItem item) {
+    if (item.giftStatus == 'sent') return context.tr('已轉贈', 'Gifted');
     if (item.refundStatus == 'refunded') return context.tr('已退款', 'Refunded');
     if (item.refundStatus == 'requested') {
       return context.tr('退款處理中', 'Refund in progress');
@@ -473,53 +477,84 @@ class _WalletScreenState extends State<WalletScreen> with WalletUpdates<WalletSc
     }
   }
 
+  Future<void> _gift(WalletItem item) async {
+    final api = widget.api, session = _session;
+    await showDialog<void>(
+      context: context,
+      builder: (_) => CouponGiftDialog(api: api, item: item, session: session),
+    );
+    if (_current(api, session)) await _refresh();
+  }
+
   Widget _couponTile(BuildContext context, WalletItem item) {
-    return Card(
-      child: ListTile(
-        leading: const Icon(Icons.local_offer, color: CgColors.primary),
-        title: Text(item.couponName),
-        subtitle: Text(
-          '${item.shopName} · ${_couponStatus(context, item)}'
-          '${item.orderNeedsReview ? ' · ${context.tr('券資料待核對', 'Voucher details need review')}' : item.isPackage ? ' · ${context.tr('套餐券', 'Package vouchers')} ×${item.quantity}' : ''}',
-        ),
-        trailing: item.status == 1
-            ? Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  if (item.canRefund)
-                    IconButton(
-                      tooltip: context.tr('申請退款', 'Request a refund'),
-                      onPressed: () => _refund(item),
-                      icon: const Icon(Icons.assignment_return_outlined),
-                    ),
-                  ElevatedButton(
-                    style: ElevatedButton.styleFrom(minimumSize: const Size(64, 44), maximumSize: const Size(96, 56)),
-                    onPressed: item.orderNeedsReview
-                        ? null
-                        : () async {
-                            final api = widget.api, session = _session;
-                            await widget.onShowQr(item);
-                            if (_current(api, session)) await _refresh();
-                          },
-                    child: Text(context.tr('出示', 'Show')),
-                  ),
-                ],
-              )
-            : item.status == 2 && !item.reviewed
-                ? TextButton(
-                    onPressed: () async {
-                      final api = widget.api, session = _session;
-                      final ok = await Navigator.of(context).push<bool>(
-                        MaterialPageRoute(
-                          builder: (_) => ReviewFormScreen(api: api, item: item),
-                        ),
-                      );
-                      if (ok == true && _current(api, session)) await _refresh();
-                    },
-                    child: Text(context.tr('去評價', 'Review')),
-                  )
-                : null,
+    final canGift = couponGiftAvailable && item.status == 1 &&
+        (item.giftEligible || item.giftStatus == 'pending');
+    final tile = ListTile(
+      leading: const Icon(Icons.local_offer, color: CgColors.primary),
+      title: Text(item.couponName),
+      subtitle: Text(
+        '${item.shopName} · ${_couponStatus(context, item)}'
+        '${item.giftStatus == 'pending' ? ' · ${context.tr('待好友領取', 'Gift pending')}' : ''}'
+        '${item.orderNeedsReview ? ' · ${context.tr('券資料待核對', 'Voucher details need review')}' : item.isPackage ? ' · ${context.tr('套餐券', 'Package vouchers')} ×${item.quantity}' : ''}',
       ),
+      trailing: item.status == 1
+          ? Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (item.canRefund)
+                  IconButton(
+                    tooltip: context.tr('申請退款', 'Request a refund'),
+                    onPressed: () => _refund(item),
+                    icon: const Icon(Icons.assignment_return_outlined),
+                  ),
+                ElevatedButton(
+                  style: ElevatedButton.styleFrom(minimumSize: const Size(64, 44), maximumSize: const Size(96, 56)),
+                  onPressed: item.orderNeedsReview
+                      ? null
+                      : () async {
+                          final api = widget.api, session = _session;
+                          await widget.onShowQr(item);
+                          if (_current(api, session)) await _refresh();
+                        },
+                  child: Text(context.tr('出示', 'Show')),
+                ),
+              ],
+            )
+          : item.status == 2 && !item.reviewed
+              ? TextButton(
+                  onPressed: () async {
+                    final api = widget.api, session = _session;
+                    final ok = await Navigator.of(context).push<bool>(
+                      MaterialPageRoute(
+                        builder: (_) => ReviewFormScreen(api: api, item: item),
+                      ),
+                    );
+                    if (ok == true && _current(api, session)) await _refresh();
+                  },
+                  child: Text(context.tr('去評價', 'Review')),
+                )
+              : null,
+    );
+    return Card(
+      child: canGift
+          ? Column(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                tile,
+                Padding(
+                  padding: const EdgeInsetsDirectional.only(end: 12, bottom: 4),
+                  child: TextButton.icon(
+                    key: ValueKey('wallet-gift-${item.id}'),
+                    icon: const Icon(Icons.card_giftcard_outlined),
+                    onPressed: () => _gift(item),
+                    label: Text(item.giftStatus == 'pending'
+                        ? context.tr('管理轉贈', 'Manage gift')
+                        : context.tr('轉贈好友', 'Gift to a friend')),
+                  ),
+                ),
+              ],
+            )
+          : tile,
     );
   }
 
@@ -996,7 +1031,7 @@ class _WalletScreenState extends State<WalletScreen> with WalletUpdates<WalletSc
 
   @override
   Widget build(BuildContext context) {
-    if (widget.focusCouponId != null) {
+    if (_focused) {
       return RefreshIndicator(
         onRefresh: _refresh,
         child: ListView(
@@ -1174,10 +1209,10 @@ class _WalletScreenState extends State<WalletScreen> with WalletUpdates<WalletSc
 Future<void> openClaimedCouponWallet(
   BuildContext context,
   ApiClient api, {
-  required int couponId,
+  int? couponId,
   int? walletItemId,
 }) async {
-  if (!api.isLoggedIn) return;
+  if (!api.isLoggedIn || (couponId == null && walletItemId == null)) return;
   final session = api.sessionRevision;
   final navigator = Navigator.of(context);
   await navigator.push<void>(

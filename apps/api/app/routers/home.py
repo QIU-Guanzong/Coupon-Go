@@ -7,7 +7,7 @@ the original misspellings: `recomandation-coupons`, `get-used-merchents-shop`,
 import math
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy.orm import Session
 
 from .. import config, models
@@ -229,6 +229,47 @@ def coupon_details(coupon_id: int, db: Session = Depends(get_db),
         user_id=user.id, coupon_id=c.id).first() is not None
     return {"is_claimed": claimed, "coupon": coupon_out(db, c),
             "shop": shop_out(db, shop) if shop else None}
+
+
+def public_coupon_summary(db: Session, coupon_id: int) -> dict | None:
+    """Read only the customer-facing fields of a published coupon."""
+    now = _now()
+    row = (db.query(models.Coupon, models.Shop.name)
+           .join(models.Shop, models.Shop.id == models.Coupon.shop_id)
+           .filter(models.Coupon.id == coupon_id,
+                   models.Shop.is_approved.is_(True),
+                   models.Coupon.kind == "coupon", models.Coupon.package_id.is_(None),
+                   models.Coupon.is_points_exchange.is_(False),
+                   models.Coupon.valid_from <= now,
+                   models.Coupon.status.in_(("active", "sold_out", "expired")))
+           .first())
+    if row is None:
+        return None
+    coupon, shop_name = row
+    status = coupon.status
+    if coupon.valid_to <= now:
+        status = "expired"
+    elif status == "active" and coupon.remaining <= 0:
+        status = "sold_out"
+    return {"coupon": {
+        "coupon_id": coupon.id, "coupon_name": coupon.coupon_name, "shop_name": shop_name,
+        "coupon_type": coupon.coupon_type, "cash_amount": coupon.cash_amount,
+        "percentage": coupon.percentage, "gift": coupon.gift,
+        "discount_price": coupon.discount_price, "regular_price": coupon.regular_price,
+        "sale_price": coupon.sale_price, "min_spend": coupon.min_spend,
+        "image": coupon.image, "valid_to": coupon.valid_to, "status": status,
+        "remaining": coupon.remaining, "total": coupon.total,
+        "additional_terms": coupon.additional_terms,
+    }}
+
+
+@router.get("/public-coupons/{coupon_id}")
+def get_public_coupon(coupon_id: int, response: Response, db: Session = Depends(get_db)):
+    payload = public_coupon_summary(db, coupon_id) if 0 < coupon_id <= 2_147_483_647 else None
+    if payload is None:
+        raise HTTPException(404, "此優惠券連結暫不可用", headers={"Cache-Control": "no-store"})
+    response.headers["Cache-Control"] = "no-store"
+    return payload
 
 
 @router.get("/get-collection-shops")

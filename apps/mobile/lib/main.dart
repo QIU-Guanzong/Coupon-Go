@@ -19,12 +19,14 @@ import 'screens/account.dart';
 import 'screens/admin_v2.dart';
 import 'screens/bargain.dart';
 import 'screens/cashback.dart';
+import 'screens/coupon_gift.dart';
 import 'screens/customer.dart';
 import 'screens/nearby.dart';
 import 'screens/packages.dart';
 import 'screens/personal_activity.dart';
 import 'screens/reviews_admin.dart';
 import 'screens/vendor.dart';
+import 'share_links.dart';
 import 'theme.dart';
 import 'widgets/widgets.dart';
 
@@ -188,6 +190,19 @@ class _CouponGoAppState extends State<CouponGoApp> {
             ),
       onGenerateRoute: (settings) {
         final route = settings.name ?? '';
+        final shared = sharedCouponRoute(route);
+        if (shared != null) {
+          return MaterialPageRoute<void>(settings: settings,
+            builder: (_) => SharedCouponScreen(api: _api, couponId: shared.id,
+              shareKey: shared.key));
+        }
+        final giftToken = couponGiftToken(route);
+        if (giftToken != null) {
+          return MaterialPageRoute<void>(settings: settings,
+            builder: (_) => CouponGiftReceiveScreen(api: _api, token: giftToken,
+              onOpenWallet: (context, itemId) => openClaimedCouponWallet(
+                context, _api, walletItemId: itemId)));
+        }
         if (publicTrial && route.startsWith('/p/') && route.indexOf('/', 3) < 0) {
           return MaterialPageRoute<void>(
             settings: settings,

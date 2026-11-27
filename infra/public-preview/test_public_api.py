@@ -87,6 +87,22 @@ class PublicPreviewTest(unittest.TestCase):
             with self.subTest(method=method, path=path):
                 self.assertEqual(self.client.request(method, path).status_code, 403)
 
+    def test_voucher_share_resolves_without_account_access(self):
+        route = "/api/v3/public-coupons/1"
+        shared = self.client.get(route, headers={
+            "Authorization": "Bearer ignored", "Cookie": "session=ignored",
+        })
+        self.assertEqual(shared.status_code, 200, shared.text)
+        self.assertIn("coupon_name", shared.json()["coupon"])
+        self.assertNotIn("wallet_item_id", shared.json()["coupon"])
+        self.assertIn("no-store", shared.headers["cache-control"])
+        for method, path in (("POST", route), ("GET", route + "?account=1"),
+                             ("GET", route + "/accept"), ("HEAD", route),
+                             ("POST", "/api/v3/wallet/gifts/preview"),
+                             ("POST", "/api/v3/wallet/gifts/accept")):
+            with self.subTest(method=method, path=path):
+                self.assertEqual(self.client.request(method, path).status_code, 403)
+
     def test_public_app_config_only_exposes_five_display_fields(self):
         from app.routers.home import app_config
         actual = self.client.get("/api/v3/app-config")
