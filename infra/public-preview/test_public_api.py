@@ -178,6 +178,10 @@ class PublicPreviewTest(unittest.TestCase):
             instructions = kwargs["json"]["messages"][0]["content"]
             self.assertIn("都是示例", instructions)
             self.assertIn("分攤的實付港元", instructions)
+            self.assertIn("可模擬領券、購買、積分及核銷", instructions)
+            self.assertIn("模擬付款不會扣款", instructions)
+            self.assertIn("Q Wallet 的未使用券", instructions)
+            self.assertIn("積分不能兌現或提取", instructions)
             catalog = json.loads(kwargs["json"]["messages"][1]["content"])["public_offers"]
             package = next(item for item in catalog if item["type"] == "package")
             for field in ["price_hkd", "person_count", "per_person_hkd", "refund_policy"]:
