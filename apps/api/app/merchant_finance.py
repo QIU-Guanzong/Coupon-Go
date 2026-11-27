@@ -337,6 +337,55 @@ def shop_dashboard(db: Session, shop: models.Shop, days: int = 30,
     }
 
 
+_WEEKLY_COMPARISON_FIELDS = (
+    "claims", "redemptions", "redeemed_claims", "gross_amount", "commission", "net_amount",
+)
+
+
+def shop_weekly_report(db: Session, shop: models.Shop, *, as_of: datetime = None) -> dict:
+    """Compare adjacent completed UTC calendar weeks in existing dashboard terms."""
+    as_of = as_of or _now()
+    if as_of.tzinfo is not None:
+        as_of = as_of.astimezone(timezone.utc)
+    today = as_of.date()
+    current_monday = today - timedelta(days=today.weekday())
+    current_end = current_monday - timedelta(days=1)
+    previous_end = current_end - timedelta(days=7)
+
+    def period_ending(sunday):
+        dashboard = shop_dashboard(db, shop, days=7,
+                                   end=datetime.combine(sunday, datetime.min.time()))
+        totals = dict(dashboard["totals"])
+        # Zero claims is missing evidence for a conversion rate, not 0%.
+        if not totals["claims"]:
+            totals["conversion_rate"] = None
+        return {"period": dashboard["period"], "totals": totals}
+
+    current = period_ending(current_end)
+    previous = period_ending(previous_end)
+    current_totals, previous_totals = current["totals"], previous["totals"]
+
+    def compare(field):
+        new = current_totals[field]
+        prior = Decimal(str(previous_totals[field]))
+        delta = Decimal(str(new)) - prior
+        return {"delta": int(delta) if isinstance(new, int) else float(delta),
+                "percent": float((delta * 100 / prior).quantize(CENT)) if prior else None}
+
+    def rate(totals):
+        return Decimal(totals["redeemed_claims"]) / totals["claims"] if totals["claims"] else None
+
+    cur_rate, prev_rate = rate(current_totals), rate(previous_totals)
+    shift = (((cur_rate - prev_rate) * 100).quantize(CENT)
+             if cur_rate is not None and prev_rate is not None else None)
+    return {
+        "shop_id": shop.id, "shop_name": shop.name, "currency": "HKD", "timezone": "UTC",
+        "current": current, "previous": previous,
+        "changes": {**{field: compare(field) for field in _WEEKLY_COMPARISON_FIELDS},
+                    "conversion_percentage_points": float(shift) if shift is not None else None},
+    }
+
+
 # ---------- settlement generation (shared core, §2.3) ----------
 def generate_settlement_for_shop(db: Session, shop: models.Shop,
                                  period: str, actor_id=None,

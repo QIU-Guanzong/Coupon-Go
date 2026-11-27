@@ -231,6 +231,27 @@ reviewed_by, reviewed_at, created_at}`。P1-D 新增：`br_number, documents{br,
   `coupon_rejected` / `settlement_generated` / `settlement_approved` / `settlement_paid` /
   `review_received`（站内信，`GET /get-notification-list` 可見）。
 
+
+### 單店經營週報
+
+`GET /merchant/shops/{shop_id}/weekly-report` 免費、唯讀，沿用單店看板的結算查看權限。
+未登入回 401、無權限回 403、店舖不存在回 404。按 UTC 取最近**完整**週一至週日及緊接
+前一週，不含尚未完結的本週。區間為起日 00:00 至期末翌日 00:00（不含），日期均為 UTC；
+不提供自訂跨店或日期查詢。響應不允許快取。
+
+響應包含 `shop_id`、`shop_name`、`timezone: "UTC"`、`currency: "HKD"`；
+`current` 和 `previous` 各為 `{period: {from, to, days}, totals}`。兩期數字直接採看板：
+`claims`、`redemptions`（核銷次數）、`redeemed_claims`（同一期領取並已有效核銷的券數）、
+`redeemed_orders`、`gross_amount`、`commission`、`net_amount`、`avg_order_value`、
+`conversion_rate`。撤銷／已退款核銷不計，免費券可計核銷次數；金額是看板結算口徑，
+不等於已到帳金額。查閱時以最新核銷及退款狀態回看兩期。
+
+`conversion_rate` 是 0–1 的比例；無領取時為 `null`。 `changes` 含領取、核銷次數、
+同期領取與核銷數、總額、佣金和淨額，各有 `{delta, percent}`（本期減上期；
+`percent` 以百分數表示，上期為 0 時為 `null`）。`conversion_percentage_points`
+是兩期轉化率的百分點差，任一期無分母時為 `null`。不包含客人、訂單、券碼、付款或
+模型生成資料。
+
 ## 砍價 2C（分享助力，線 E）
 
 分享助力砍價（不是荷蘭式降價）：發起 → 分享 → 好友助力降價 → 到底價 / 成團 → 低價拿套餐券進 Q Wallet。金額為港幣（HKD）。發起時記錄一筆模擬預付（原價，未收真錢）；未成團 / 超時全額退款、成團後退回砍價差價，退款走支付網關（見下），不發生真實轉賬。

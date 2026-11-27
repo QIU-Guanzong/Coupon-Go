@@ -5,7 +5,7 @@ Connect is the only merchant payout and balance mechanism.
 from datetime import datetime, timezone
 from decimal import Decimal
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy.orm import Session
 
 from .. import merchant_finance as mf
@@ -96,6 +96,17 @@ def shop_dashboard_endpoint(shop_id: int,
     if not can_view_settlement_shop(db, user, shop):
         raise HTTPException(status_code=403, detail="沒有權限查看此商户")
     return mf.shop_dashboard(db, shop, days=days)
+
+
+@router.get("/merchant/shops/{shop_id}/weekly-report")
+def shop_weekly_report_endpoint(shop_id: int, response: Response,
+                                user: models.User = Depends(get_current_user),
+                                db: Session = Depends(get_db)):
+    shop = get_shop_or_404(db, shop_id)
+    if not can_view_settlement_shop(db, user, shop):
+        raise HTTPException(status_code=403, detail="沒有權限查看此商户")
+    response.headers["Cache-Control"] = "no-store"
+    return mf.shop_weekly_report(db, shop)
 
 
 @router.get("/merchant/dashboard")
