@@ -35,6 +35,8 @@ def test_provider_timeout_and_billing_error_fall_through(configured, monkeypatch
     monkeypatch.setattr(providers.httpx, "post", send)
     assert providers.answer(configured, "test policy", "public test question") == "打開 Q Wallet。"
     assert [request["json"]["model"] for request in requests] == [p[3] for p in configured]
+    assert requests[-1]["json"]["model"] == "gpt-6-luna"
+    assert requests[-1]["json"]["reasoning_effort"] == "none"
     assert requests[-1]["json"]["store"] is False
     assert all(request["json"]["messages"][1]["content"] == "public test question" for request in requests)
 

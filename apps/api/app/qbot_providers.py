@@ -26,7 +26,7 @@ def configured_providers(allow_fallback):
              "gemini-3.1-flash-lite", {"max_tokens": 450, "reasoning_effort": "minimal"}),
             ("OpenAI", os.getenv("QBOT_OPENAI_API_KEY"),
              "https://api.openai.com/v1/chat/completions",
-             "gpt-4.1-mini", {"max_completion_tokens": 450, "store": False}),
+             "gpt-6-luna", {"max_completion_tokens": 450, "reasoning_effort": "none", "store": False}),
         ]
     return [provider for provider in providers if provider[1]]
 
