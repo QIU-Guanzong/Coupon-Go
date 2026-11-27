@@ -5,6 +5,7 @@ import '../api_client.dart';
 import '../language.dart';
 import '../theme.dart';
 import '../merchant_usage_data.dart';
+import 'merchant_dashboard.dart';
 
 /// Uses only the count fields in the existing per-shop settlement dashboard.
 class MerchantUsageScreen extends StatefulWidget {
@@ -168,6 +169,17 @@ class _MerchantUsageScreenState extends State<MerchantUsageScreen> {
     );
   }
 
+  void _openShop(ShopUsage shop) => Navigator.of(context).push(
+        MaterialPageRoute<void>(
+          builder: (_) => MerchantShopDashboardScreen(
+            api: widget.api,
+            shopId: shop.id,
+            shopName: shop.name,
+            days: _days,
+          ),
+        ),
+      );
+
   @override
   Widget build(BuildContext context) {
     final data = _data;
@@ -175,9 +187,15 @@ class _MerchantUsageScreenState extends State<MerchantUsageScreen> {
     final claimsLabel = context.tr('領券次數', 'Coupon claims');
     final redemptionsLabel = context.tr('可對賬核銷', 'Reconciled redemptions');
     return Scaffold(
+      backgroundColor: const Color(0xFFFAF7F1),
       appBar: AppBar(
         title: Text(context.tr('使用數據', 'Usage data')),
         actions: [
+          IconButton(
+            onPressed: _loading ? null : _load,
+            icon: const Icon(Icons.refresh),
+            tooltip: context.tr('更新資料', 'Refresh data'),
+          ),
           if (data != null && data.shops.isNotEmpty)
             IconButton(
               onPressed: () => _showCsv(data),
@@ -186,87 +204,181 @@ class _MerchantUsageScreenState extends State<MerchantUsageScreen> {
             ),
         ],
       ),
-      body: Center(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: CgTheme.listMaxWidth),
-          child: RefreshIndicator(
-            onRefresh: _load,
-            child: ListView(
-              physics: const AlwaysScrollableScrollPhysics(),
-              padding: const EdgeInsets.all(CgTheme.pageInset),
-              children: [
-                Wrap(
-                  spacing: CgTheme.space8,
-                  runSpacing: CgTheme.space4,
-                  children: [
-                    for (final days in const [7, 30, 90])
-                      ChoiceChip(
-                        key: ValueKey('usage-days-$days'),
-                        label: Text(context.tr('$days 日', '$days days')),
-                        selected: days == _days,
-                        onSelected: (selected) {
-                          if (selected && days != _days) _load(days: days);
-                        },
-                      ),
-                  ],
-                ),
-                const SizedBox(height: CgTheme.space16),
-                if (_loading) const LinearProgressIndicator(),
-                if (_failure != null)
-                  Semantics(
-                    liveRegion: true,
-                    child: Text(
-                      _failure == _Failure.denied
-                          ? context.tr(
-                              '沒有權限查看此門店數據。',
-                              'You don’t have access to this shop data.',
-                            )
-                          : context.tr(
-                              '未能讀取這段日期的數據。',
-                              'Could not load data for this period.',
+      body: RefreshIndicator(
+        onRefresh: _load,
+        child: SingleChildScrollView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          padding: const EdgeInsets.all(16),
+          child: Center(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 1200),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  DecoratedBox(
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF26221B),
+                      borderRadius: BorderRadius.circular(16),
+                    ),
+                    child: Padding(
+                      padding: const EdgeInsets.all(20),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Icon(Icons.bar_chart_outlined,
+                              color: CgColors.vendorGold),
+                          const SizedBox(height: 8),
+                          Semantics(
+                            header: true,
+                            child: Text(
+                              context.tr('門店優惠券成效', 'Coupon activity by shop'),
+                              style: Theme.of(context)
+                                  .textTheme
+                                  .headlineMedium
+                                  ?.copyWith(
+                                    color: Colors.white,
+                                    fontWeight: FontWeight.w700,
+                                  ),
                             ),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            context.tr('領券及可對帳核銷 · UTC 日期',
+                                'Claims and reconciled redemptions · UTC dates'),
+                            style: TextStyle(
+                                color: Colors.white.withValues(alpha: .84)),
+                          ),
+                        ],
+                      ),
                     ),
                   ),
-                if (_failure != null)
-                  Align(
-                    alignment: AlignmentDirectional.centerStart,
-                    child: TextButton(
-                      onPressed: _load,
-                      child: Text(context.tr('重試', 'Try again')),
-                    ),
+                  const SizedBox(height: 16),
+                  _UsageSection(
+                    children: [
+                      Wrap(
+                        alignment: WrapAlignment.spaceBetween,
+                        crossAxisAlignment: WrapCrossAlignment.center,
+                        spacing: 12,
+                        runSpacing: 8,
+                        children: [
+                          Text(context.tr('日期範圍', 'Date range'),
+                              style: Theme.of(context).textTheme.titleSmall),
+                          Wrap(
+                            spacing: CgTheme.space8,
+                            runSpacing: CgTheme.space4,
+                            children: [
+                              for (final days in const [7, 30, 90])
+                                ChoiceChip(
+                                  key: ValueKey('usage-days-$days'),
+                                  label:
+                                      Text(context.tr('$days 日', '$days days')),
+                                  selected: days == _days,
+                                  onSelected: (selected) {
+                                    if (selected && days != _days) {
+                                      _load(days: days);
+                                    }
+                                  },
+                                ),
+                            ],
+                          ),
+                        ],
+                      ),
+                      if (_loading) ...[
+                        const SizedBox(height: 10),
+                        LinearProgressIndicator(
+                            semanticsLabel:
+                                context.tr('正在載入資料', 'Loading data')),
+                      ],
+                      if (_failure != null) ...[
+                        const SizedBox(height: 10),
+                        Semantics(
+                          liveRegion: true,
+                          child: Text(
+                            _failure == _Failure.denied
+                                ? context.tr('沒有權限查看此門店數據。',
+                                    'You don’t have access to this shop data.')
+                                : context.tr('未能讀取這段日期的數據。',
+                                    'Could not load data for this period.'),
+                          ),
+                        ),
+                        Align(
+                          alignment: AlignmentDirectional.centerStart,
+                          child: TextButton(
+                            onPressed: _load,
+                            child: Text(context.tr('重試', 'Try again')),
+                          ),
+                        ),
+                      ],
+                      if (data != null && data.shops.isEmpty) ...[
+                        const SizedBox(height: 10),
+                        Text(context.tr('沒有可查看數據的門店。', 'No shops to show.')),
+                      ],
+                      if (data != null && data.shops.isNotEmpty) ...[
+                        const SizedBox(height: 10),
+                        Text('${data.from} – ${data.to} (UTC)'),
+                        const SizedBox(height: 12),
+                        DecoratedBox(
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFFFF1CE),
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          child: Padding(
+                            padding: const EdgeInsets.all(12),
+                            child: _UsageRow(
+                              title: context.tr('門店合計', 'Shop totals'),
+                              counts: data.totals,
+                              claimsLabel: claimsLabel,
+                              redemptionsLabel: redemptionsLabel,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ],
                   ),
-                if (data != null && data.shops.isEmpty)
-                  Text(context.tr('沒有可查看數據的門店。', 'No shops to show.')),
-                if (data != null && data.shops.isNotEmpty) ...[
-                  Text('${data.from} – ${data.to} (UTC)'),
-                  const SizedBox(height: CgTheme.space8),
-                  _UsageCard(
-                    title: context.tr('門店合計', 'Shop totals'),
-                    counts: data.totals,
-                    claimsLabel: claimsLabel,
-                    redemptionsLabel: redemptionsLabel,
-                  ),
-                  for (final shop in data.shops)
-                    _UsageCard(
-                      key: ValueKey('usage-shop-${shop.id}'),
-                      title: shop.name,
-                      counts: shop.counts,
-                      claimsLabel: claimsLabel,
-                      redemptionsLabel: redemptionsLabel,
+                  if (data != null && data.shops.isNotEmpty) ...[
+                    const SizedBox(height: 16),
+                    _UsageSection(
+                      children: [
+                        Semantics(
+                          header: true,
+                          child: Text(
+                            context.tr('門店明細', 'Shop breakdown'),
+                            style: Theme.of(context)
+                                .textTheme
+                                .titleLarge
+                                ?.copyWith(fontWeight: FontWeight.w700),
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        for (var i = 0; i < data.shops.length; i++) ...[
+                          if (i != 0) const Divider(height: 1),
+                          _UsageRow(
+                            key: ValueKey('usage-shop-${data.shops[i].id}'),
+                            title: data.shops[i].name,
+                            counts: data.shops[i].counts,
+                            claimsLabel: claimsLabel,
+                            redemptionsLabel: redemptionsLabel,
+                            onOpen: () => _openShop(data.shops[i]),
+                          ),
+                        ],
+                      ],
                     ),
+                  ],
+                  if (legacyBuilder != null) ...[
+                    const SizedBox(height: CgTheme.space16),
+                    Align(
+                      alignment: AlignmentDirectional.centerStart,
+                      child: TextButton.icon(
+                        onPressed: () => Navigator.of(context).push(
+                            MaterialPageRoute<void>(builder: legacyBuilder)),
+                        icon: const Icon(Icons.history),
+                        label: Text(context.tr(
+                            '全部時間的優惠券記錄', 'All-time coupon activity')),
+                      ),
+                    ),
+                  ],
                 ],
-                if (legacyBuilder != null) ...[
-                  const SizedBox(height: CgTheme.space16),
-                  TextButton(
-                    onPressed: () => Navigator.of(
-                      context,
-                    ).push(MaterialPageRoute<void>(builder: legacyBuilder)),
-                    child: Text(
-                      context.tr('全部時間的優惠券記錄', 'All-time coupon activity'),
-                    ),
-                  ),
-                ],
-              ],
+              ),
             ),
           ),
         ),
@@ -275,35 +387,80 @@ class _MerchantUsageScreenState extends State<MerchantUsageScreen> {
   }
 }
 
-class _UsageCard extends StatelessWidget {
-  const _UsageCard({
+class _UsageSection extends StatelessWidget {
+  const _UsageSection({required this.children});
+  final List<Widget> children;
+
+  @override
+  Widget build(BuildContext context) => Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          border: Border.all(color: const Color(0xFFE5DED0)),
+          borderRadius: BorderRadius.circular(14),
+        ),
+        child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch, children: children),
+      );
+}
+
+class _UsageRow extends StatelessWidget {
+  const _UsageRow({
     super.key,
     required this.title,
     required this.counts,
     required this.claimsLabel,
     required this.redemptionsLabel,
+    this.onOpen,
   });
 
   final String title;
   final UsageCounts counts;
   final String claimsLabel;
   final String redemptionsLabel;
+  final VoidCallback? onOpen;
 
   @override
   Widget build(BuildContext context) {
-    return Card(
-      margin: const EdgeInsets.only(bottom: CgTheme.space8),
+    final name = Text(title, style: Theme.of(context).textTheme.titleMedium);
+    final claims = Text('$claimsLabel: ${counts.claims}',
+        style: const TextStyle(fontFeatures: [FontFeature.tabularFigures()]));
+    final redemptions = Text('$redemptionsLabel: ${counts.redemptions}',
+        style: const TextStyle(fontFeatures: [FontFeature.tabularFigures()]));
+    final content = LayoutBuilder(
+      builder: (context, constraints) {
+        if (constraints.maxWidth < 740) {
+          return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                name,
+                const SizedBox(height: 4),
+                Wrap(
+                    spacing: 20,
+                    runSpacing: 4,
+                    children: [claims, redemptions]),
+              ]);
+        }
+        return Row(children: [
+          Expanded(flex: 2, child: name),
+          const SizedBox(width: 12),
+          Expanded(child: claims),
+          const SizedBox(width: 12),
+          Expanded(child: redemptions),
+        ]);
+      },
+    );
+    if (onOpen == null) return content;
+    return InkWell(
+      onTap: onOpen,
+      borderRadius: BorderRadius.circular(8),
       child: Padding(
-        padding: const EdgeInsets.all(CgTheme.space16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(title, style: Theme.of(context).textTheme.titleMedium),
-            const SizedBox(height: CgTheme.space4),
-            Text('$claimsLabel: ${counts.claims}'),
-            Text('$redemptionsLabel: ${counts.redemptions}'),
-          ],
-        ),
+        padding: const EdgeInsets.symmetric(vertical: 12),
+        child: Row(children: [
+          Expanded(child: content),
+          const SizedBox(width: 12),
+          const Icon(Icons.chevron_right),
+        ]),
       ),
     );
   }

@@ -17,13 +17,27 @@ class MerchantPackageApi extends ApiClient {
   final List<Map<String, dynamic>> entries = [];
 
   @override
-  Future<Map<String, dynamic>> get(String path, {Map<String, String>? query}) async {
+  Future<Map<String, dynamic>> get(String path,
+      {Map<String, String>? query}) async {
     if (path == '/merchant/shops') {
-      return {'shops': [{'id': 8, 'name': '灣仔店', 'is_owner': true, 'can_manage_branches': true,
-        'can_manage_members': true, 'can_manage_coupons': true, 'can_view_settlement': true, 'can_redeem': true}]};
+      return {
+        'shops': [
+          {
+            'id': 8,
+            'name': '灣仔店',
+            'is_owner': true,
+            'can_manage_branches': true,
+            'can_manage_members': true,
+            'can_manage_coupons': true,
+            'can_view_settlement': true,
+            'can_redeem': true
+          }
+        ]
+      };
     }
     throw ApiException(404, '找不到');
   }
+
   @override
   Future<Map<String, dynamic>> usageData() async => {};
   @override
@@ -96,18 +110,38 @@ class CashierHomeApi extends MerchantPackageApi {
   int usageCalls = 0;
   int couponCalls = 0;
   @override
-  Future<Map<String, dynamic>> get(String path, {Map<String, String>? query}) async => {
-    'shops': [{'id': 8, 'name': '灣仔店', 'is_owner': false, 'can_manage_branches': false,
-      'can_manage_members': false, 'can_manage_coupons': false, 'can_view_settlement': false, 'can_redeem': true}]
-  };
+  Future<Map<String, dynamic>> get(String path,
+          {Map<String, String>? query}) async =>
+      {
+        'shops': [
+          {
+            'id': 8,
+            'name': '灣仔店',
+            'is_owner': false,
+            'can_manage_branches': false,
+            'can_manage_members': false,
+            'can_manage_coupons': false,
+            'can_view_settlement': false,
+            'can_redeem': true
+          }
+        ]
+      };
   @override
-  Future<Map<String, dynamic>> usageData() async { usageCalls++; return {}; }
+  Future<Map<String, dynamic>> usageData() async {
+    usageCalls++;
+    return {};
+  }
+
   @override
-  Future<List<dynamic>> vendorCoupons({String? status}) async { couponCalls++; return []; }
+  Future<List<dynamic>> vendorCoupons({String? status}) async {
+    couponCalls++;
+    return [];
+  }
 }
 
 void main() {
-  testWidgets('cashier home does not call or show owner-only functions', (tester) async {
+  testWidgets('cashier home does not call or show owner-only functions',
+      (tester) async {
     final api = CashierHomeApi();
     await tester.pumpWidget(app(VendorHomeScreen(api: api)));
     await tester.pumpAndSettle();
@@ -286,6 +320,90 @@ void main() {
     await tester.tap(find.text('儲存套餐'));
     await tester.pumpAndSettle();
     expect(api.lastBody?['shop_id'], 12);
+  });
+
+  for (final width in [390.0, 1220.0]) {
+    testWidgets('package filters combine and clear at width $width',
+        (tester) async {
+      tester.view.physicalSize = Size(width, 844);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final api = MerchantPackageApi();
+      api.entries.addAll([
+        {
+          'id': 31,
+          'shop_id': 8,
+          'shop_name': '灣仔店',
+          'name': 'Harbour breakfast set',
+          'package_price': 79,
+          'stock_left': 5,
+          'sold_count': 6,
+          'status': 'active',
+        },
+        {
+          'id': 32,
+          'shop_id': 12,
+          'shop_name': '中環店',
+          'name': 'Harbour evening menu',
+          'package_price': 289,
+          'stock_left': 11,
+          'sold_count': 0,
+          'status': 'pending_review',
+        },
+      ]);
+      await tester.pumpWidget(LanguageScope(
+        language: AppLanguage()..english = true,
+        child: MaterialApp(
+          theme: CgTheme.light(merchant: true),
+          builder: (context, child) => MediaQuery(
+            data: MediaQuery.of(context).copyWith(
+              textScaler: const TextScaler.linear(1.3),
+              disableAnimations: true,
+            ),
+            child: child!,
+          ),
+          home: VendorPackagesScreen(api: api),
+        ),
+      ));
+      await tester.pumpAndSettle();
+      final search = find.byKey(const ValueKey('package-search'));
+      await tester.enterText(search, 'HARBOUR');
+      await tester.pumpAndSettle();
+      expect(find.text('2 packages'), findsOneWidget);
+      await tester.tap(find.text('All statuses'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Pending review').last);
+      await tester.pumpAndSettle();
+      expect(find.text('1 package'), findsOneWidget);
+      expect(find.text('Harbour evening menu'), findsOneWidget);
+      await tester.tap(find.text('All stores'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('灣仔店').last);
+      await tester.pumpAndSettle();
+      expect(find.text('No packages match these filters.'), findsOneWidget);
+      await tester.tap(find.text('Clear filters'));
+      await tester.pumpAndSettle();
+      expect(tester.widget<TextField>(search).controller!.text, isEmpty);
+      expect(find.text('2 packages'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+  }
+
+  testWidgets(
+      'package draft cannot be saved after the merchant account changes',
+      (tester) async {
+    final api = MerchantPackageApi()..activateTrialToken('first-merchant');
+    await tester.pumpWidget(app(VendorPackagesScreen(api: api)));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('建立套餐'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextFormField).first, '私密草稿');
+    api.activateTrialToken('replacement-merchant');
+    await tester.pumpAndSettle();
+    expect(find.text('私密草稿'), findsNothing);
+    expect(find.text('儲存套餐'), findsNothing);
+    expect(api.submissions, 0);
   });
 
   testWidgets('keyboard opens creation with reduced motion', (tester) async {

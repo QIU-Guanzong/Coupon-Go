@@ -5,6 +5,7 @@ import '../api_client.dart';
 import '../models.dart';
 import '../language.dart';
 import '../theme.dart';
+import '../widgets/merchant_layout.dart';
 import '../widgets/widgets.dart';
 import 'reviews_admin.dart';
 import 'withdrawal_review.dart';
@@ -781,29 +782,60 @@ class _SettlementsScreenState extends State<SettlementsScreen> {
   int _total = 0;
   bool _acting = false;
   bool _canWrite = false;
+  String? _merchantError;
+  int _request = 0, _detailRequest = 0;
+  late int _merchantSession;
 
   @override
   void initState() {
     super.initState();
+    _merchantSession = widget.api.sessionRevision;
+    if (widget.merchant) widget.api.addListener(_onMerchantSession);
     _load();
   }
 
   @override
   void dispose() {
+    if (widget.merchant) widget.api.removeListener(_onMerchantSession);
     _shopCtrl.dispose();
     _periodCtrl.dispose();
 
     super.dispose();
   }
 
+  void _onMerchantSession() {
+    if (_merchantSession == widget.api.sessionRevision) return;
+    _merchantSession = widget.api.sessionRevision;
+    _detailRequest++;
+    _scaffoldKey.currentState?.closeEndDrawer();
+    setState(() {
+      _selected = null;
+      _total = 0;
+      _page = 1;
+    });
+    _load();
+  }
+
   Future<void> _load() async {
-    setState(() => _loading = true);
+    final request = ++_request;
+    setState(() {
+      _loading = true;
+      if (widget.merchant) {
+        _merchantError = null;
+        _items = [];
+      }
+    });
     try {
       final data = widget.merchant
-          ? await widget.api.get('/merchant/settlements', query: {'page': '$_page'})
-          : await widget.api.settlements(page: _page,
-          status: _statusFilter == 'all' ? null : _statusFilter);
-      if (!mounted) return;
+          ? await widget.api.get(
+              '/merchant/settlements',
+              query: {'page': '$_page'},
+            )
+          : await widget.api.settlements(
+              page: _page,
+              status: _statusFilter == 'all' ? null : _statusFilter,
+            );
+      if (!mounted || (widget.merchant && request != _request)) return;
       setState(() {
         _items = data['settlements'] as List<dynamic>;
         _canWrite = !widget.merchant && data['can_write'] == true;
@@ -811,11 +843,32 @@ class _SettlementsScreenState extends State<SettlementsScreen> {
         _loading = false;
       });
     } on ApiException catch (e) {
-      if (!mounted) return;
-      setState(() => _loading = false);
-      showCgToast(context, e.message);
+      if (!mounted || (widget.merchant && request != _request)) return;
+      setState(() {
+        _loading = false;
+        if (widget.merchant) _merchantError = e.message;
+      });
+      if (!widget.merchant) showCgToast(context, e.message);
+    } catch (_) {
+      if (!widget.merchant) rethrow;
+      if (!mounted || request != _request) return;
+      setState(() {
+        _loading = false;
+        _merchantError = context.tr('未能讀取結算單。', 'Could not load statements.');
+      });
     }
   }
+
+  String _merchantStatus(Object? status) => switch (status) {
+    'pending' => context.tr('待確認', 'Pending'),
+    'approved' => context.tr('已確認', 'Approved'),
+    'disputed' => context.tr('有爭議', 'Disputed'),
+    'paid' => context.tr('已付款', 'Paid'),
+    _ => context.tr('狀態待確認', 'Status unconfirmed'),
+  };
+
+  String _statementCopy(String chinese, String english) =>
+      widget.merchant ? context.tr(chinese, english) : chinese;
 
   String _settlementStatusText(String s) => switch (s) {
         'pending' => '待確認',
@@ -829,43 +882,84 @@ class _SettlementsScreenState extends State<SettlementsScreen> {
       formatHkd((v as num?)?.toDouble() ?? 0);
 
   Future<void> _exportCsv() async {
+    final session = _merchantSession;
+    String cell(Object? field) {
+      if (!widget.merchant) return '$field';
+      final text = field?.toString() ?? '';
+      final protected =
+          field is String && RegExp(r'^[=+＝＋－@＠-]').hasMatch(text.trimLeft())
+          ? "'$text"
+          : text;
+      return '"${protected.replaceAll('"', '""')}"';
+    }
+
     final lines = [
-      'id,shop_name,period,gross_amount,commission,net_amount,transferred_net,outstanding_net,status'
+      'id,shop_name,period,gross_amount,commission,net_amount,transferred_net,outstanding_net,status',
     ];
     for (final s in _items) {
-      lines.add([
-        '${s['id']}',
-        '${s['shop_name']}',
-        '${s['period']}',
-        '${s['gross_amount']}',
-        '${s['commission']}',
-        '${s['net_amount']}',
-        '${s['transferred_net']}', '${s['outstanding_net']}',
-        '${s['status']}',
-      ].join(','));
+      lines.add(
+        [
+          cell(s['id']),
+          cell(s['shop_name']),
+          cell(s['period']),
+          cell(s['gross_amount']),
+          cell(s['commission']),
+          cell(s['net_amount']),
+          cell(s['transferred_net']),
+          cell(s['outstanding_net']),
+          cell(s['status']),
+        ].join(','),
+      );
     }
     final csv = lines.join('\n');
     await showDialog<void>(
       context: context,
-      builder: (c) => AlertDialog(
-        title: Text('本頁結算單 CSV（ ${_items.length} 條）'),
-        content: SingleChildScrollView(
-          child: SelectableText(
-              csv.length > 2000 ? '${csv.substring(0, 2000)}…' : csv),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () {
-              Clipboard.setData(ClipboardData(text: csv));
-              Navigator.pop(c);
-              showCgToast(context, 'CSV 已複製，可粘貼保存');
-            },
-            child: const Text('複製全部'),
-          ),
-          TextButton(
-              onPressed: () => Navigator.pop(c),
-              child: const Text('關閉')),
-        ],
+      builder: (dialogContext) => ListenableBuilder(
+        listenable: widget.api,
+        builder: (context, _) {
+          final current =
+              !widget.merchant || session == widget.api.sessionRevision;
+          return AlertDialog(
+            title: Text(
+              widget.merchant
+                  ? context.tr('本頁結算單 CSV', 'Statements on this page')
+                  : '本頁結算單 CSV（ ${_items.length} 條）',
+            ),
+            content: !current
+                ? Text(context.tr('帳戶已切換。', 'The account changed.'))
+                : SingleChildScrollView(
+                    child: SelectableText(
+                      csv.length > 2000 ? '${csv.substring(0, 2000)}…' : csv,
+                    ),
+                  ),
+            actions: [
+              if (current)
+                TextButton(
+                  onPressed: () {
+                    if (widget.merchant &&
+                        session != widget.api.sessionRevision) {
+                      return;
+                    }
+                    Clipboard.setData(ClipboardData(text: csv));
+                    Navigator.pop(dialogContext);
+                    showCgToast(
+                      this.context,
+                      widget.merchant
+                          ? context.tr('已複製 CSV', 'CSV copied')
+                          : 'CSV 已複製，可粘貼保存',
+                    );
+                  },
+                  child: Text(
+                    widget.merchant ? context.tr('複製 CSV', 'Copy CSV') : '複製全部',
+                  ),
+                ),
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext),
+                child: Text(widget.merchant ? context.tr('關閉', 'Close') : '關閉'),
+              ),
+            ],
+          );
+        },
       ),
     );
   }
@@ -881,28 +975,32 @@ class _SettlementsScreenState extends State<SettlementsScreen> {
             Text('#${s['id']} · ${s['shop_name']}',
                 style:
                     const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-            Text('${s['period']} · ${_settlementStatusText('${s['status']}')}'),
+            Text('${s['period']} · ${widget.merchant
+                ? _merchantStatus(s['status'])
+                : _settlementStatusText('${s['status']}')}'),
             TextButton(onPressed: () => _detail(s['id'] as int, open: false),
-                child: const Text('更新結算明細')),
+                child: Text(_statementCopy('更新結算明細', 'Refresh statement'))),
             const Divider(),
-            _drawerRow('核銷筆數', '${s['redemption_count'] ?? 0}'),
-            _drawerRow('毛額', _moneyText(s['gross_amount'])),
-            _drawerRow('佣金', _moneyText(s['commission'])),
-            _drawerRow('商家應收', _moneyText(s['net_amount'])),
-            _drawerRow('已付淨額', _moneyText(s['transferred_net'])),
-            _drawerRow(_balanceLabel(s), _moneyText((s['outstanding_net'] as num).abs())),
+            _drawerRow(_statementCopy('核銷筆數', 'Redemptions'), '${s['redemption_count'] ?? 0}'),
+            _drawerRow(_statementCopy('毛額', 'Gross amount'), _moneyText(s['gross_amount'])),
+            _drawerRow(_statementCopy('佣金', 'Commission'), _moneyText(s['commission'])),
+            _drawerRow(_statementCopy('商家應收', 'Merchant net'), _moneyText(s['net_amount'])),
+            _drawerRow(_statementCopy('已付淨額', 'Paid net'), _moneyText(s['transferred_net'])),
+            _drawerRow((s['outstanding_net'] as num) < 0
+                  ? _statementCopy('待收回', 'Recovery due')
+                  : _statementCopy('待付', 'Outstanding'), _moneyText((s['outstanding_net'] as num).abs())),
             if (_canWrite && s['status'] == 'paid' && (s['outstanding_net'] as num) != 0)
               OutlinedButton(onPressed: _acting ? null : () => _recordTransfer(s),
                   child: Text((s['outstanding_net'] as num) < 0 ? '登記已收回' : '登記已補付')),
             const Divider(),
-            const Text('發票', style: TextStyle(fontWeight: FontWeight.bold)),
-            _drawerRow('已開票', _moneyText(s['invoice_issued_amount'])),
-            _drawerRow('已沖紅', _moneyText(s['invoice_credited_amount'])),
-            _drawerRow('開票淨額', _moneyText(s['invoice_net_issued_amount'])),
-            _drawerRow('申請中', _moneyText(s['invoice_reserved_amount'])),
-            _drawerRow('可開票', _moneyText(s['invoice_available_amount'])),
+            Text(_statementCopy('發票', 'Invoices'), style: const TextStyle(fontWeight: FontWeight.bold)),
+            _drawerRow(_statementCopy('已開票', 'Issued'), _moneyText(s['invoice_issued_amount'])),
+            _drawerRow(_statementCopy('已沖紅', 'Credited'), _moneyText(s['invoice_credited_amount'])),
+            _drawerRow(_statementCopy('開票淨額', 'Net invoiced'), _moneyText(s['invoice_net_issued_amount'])),
+            _drawerRow(_statementCopy('申請中', 'Reserved'), _moneyText(s['invoice_reserved_amount'])),
+            _drawerRow(_statementCopy('可開票', 'Available to invoice'), _moneyText(s['invoice_available_amount'])),
             if ((s['invoice_excess_amount'] as num? ?? 0) > 0)
-              _drawerRow('待處理超額', _moneyText(s['invoice_excess_amount'])),
+              _drawerRow(_statementCopy('待處理超額', 'Excess to review'), _moneyText(s['invoice_excess_amount'])),
             for (final inv in s['invoices'] as List? ?? []) ...[
               Text("發票 #${inv['id']} · ${inv['title']} · ${_moneyText(inv['amount'])} · ${switch (inv['status']) { 'issued' => '已開具', 'pending' => '待審核', 'approved' => '已批准', 'rejected' => '已拒絕', _ => inv['status'] }}"),
               if (inv['status'] == 'issued') ...[
@@ -914,7 +1012,7 @@ class _SettlementsScreenState extends State<SettlementsScreen> {
             if (widget.merchant && (s['invoice_available_amount'] as num? ?? 0) > 0)
               OutlinedButton(
                 onPressed: _acting ? null : () => _requestInvoice(s),
-                child: const Text('申請發票'),
+                child: Text(_statementCopy('申請發票', 'Request invoice')),
               ),
             const Divider(),
             for (final line in s['items'] as List? ?? []) ...[
@@ -926,10 +1024,10 @@ class _SettlementsScreenState extends State<SettlementsScreen> {
               Text("${t['kind'] == 'recovery' ? '收回' : t['kind'] == 'supplement' ? '補付' : '付款'} · ${_moneyText(t['amount'])} · ${t['reference']}"),
             const Divider(),
             if ((s['dispute_reason'] as String? ?? '').isNotEmpty)
-              _drawerRow('爭議原因', '${s['dispute_reason']}'),
-            _drawerRow('建立時間', _ledgerTime(s['created_at'] as String?)),
-            _drawerRow('最後決定', _ledgerTime(s['decided_at'] as String?)),
-            _drawerRow('付款時間', _ledgerTime(s['paid_at'] as String?)),
+              _drawerRow(_statementCopy('爭議原因', 'Dispute reason'), '${s['dispute_reason']}'),
+            _drawerRow(_statementCopy('建立時間', 'Created'), _ledgerTime(s['created_at'] as String?)),
+            _drawerRow(_statementCopy('最後決定', 'Last decision'), _ledgerTime(s['decided_at'] as String?)),
+            _drawerRow(_statementCopy('付款時間', 'Payment date'), _ledgerTime(s['paid_at'] as String?)),
           ],
         ),
       ),
@@ -937,36 +1035,37 @@ class _SettlementsScreenState extends State<SettlementsScreen> {
   }
 
   Future<void> _requestInvoice(Map<String, dynamic> s) async {
+    final session = _merchantSession;
     var title = '';
     var amount = '${s['invoice_available_amount']}';
     var taxId = '';
     final result = await showDialog<Map<String, dynamic>>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('申請發票'),
+        title: Text(_statementCopy('申請發票', 'Request invoice')),
         content: SingleChildScrollView(child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             Text('可開票 ${_moneyText(s['invoice_available_amount'])}'),
             TextField(maxLength: 160, onChanged: (value) => title = value,
-                decoration: const InputDecoration(labelText: '發票抬頭')),
+                decoration: InputDecoration(labelText: _statementCopy('發票抬頭', 'Invoice title'))),
             TextFormField(initialValue: amount, onChanged: (value) => amount = value,
                 keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                decoration: const InputDecoration(labelText: '申請金額')),
+                decoration: InputDecoration(labelText: _statementCopy('申請金額', 'Amount'))),
             TextField(maxLength: 60, onChanged: (value) => taxId = value,
-                decoration: const InputDecoration(labelText: '稅號（選填）')),
+                decoration: InputDecoration(labelText: _statementCopy('稅號（選填）', 'Tax ID (optional)'))),
           ],
         )),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('取消')),
+          TextButton(onPressed: () => Navigator.pop(ctx), child: Text(_statementCopy('取消', 'Cancel'))),
           TextButton(onPressed: () => Navigator.pop(ctx, {
             'title': title.trim(), 'amount': double.tryParse(amount.trim()),
             'tax_id': taxId.trim(), 'shop_id': s['shop_id'], 'settlement_id': s['id'],
-          }), child: const Text('提交申請')),
+          }), child: Text(_statementCopy('提交申請', 'Submit request'))),
         ],
       ),
     );
-    if (!mounted || result == null) return;
+    if (!mounted || result == null || session != widget.api.sessionRevision) return;
     final value = result['amount'] as double?;
     if ((result['title'] as String).isEmpty || value == null || value <= 0) {
       showCgToast(context, '請填寫發票抬頭和有效金額');
@@ -988,9 +1087,10 @@ class _SettlementsScreenState extends State<SettlementsScreen> {
       (s['outstanding_net'] as num) < 0 ? '待收回' : '待付';
 
   Future<void> _detail(int id, {bool open = true}) async {
+    final request = ++_detailRequest;
     try {
       final data = await widget.api.get('/admin/settlements/$id');
-      if (!mounted) return;
+      if (!mounted || (widget.merchant && request != _detailRequest)) return;
       setState(() => _selected = data['settlement'] as Map<String, dynamic>);
       if (open) _scaffoldKey.currentState?.openEndDrawer();
     } on ApiException catch (e) {
@@ -1050,8 +1150,233 @@ class _SettlementsScreenState extends State<SettlementsScreen> {
     }
   }
 
+  Widget _merchantStatements() {
+    return Scaffold(
+      key: _scaffoldKey,
+      backgroundColor: const Color(0xFFFAF7F1),
+      appBar: AppBar(
+        title: Text(context.tr('結算單', 'Statements')),
+        actions: [
+          IconButton(
+            onPressed: _loading ? null : _load,
+            tooltip: context.tr('更新結算單', 'Refresh statements'),
+            icon: const Icon(Icons.refresh),
+          ),
+          IconButton(
+            onPressed: _items.isEmpty ? null : _exportCsv,
+            tooltip: context.tr('匯出本頁 CSV', 'Export this page as CSV'),
+            icon: const Icon(Icons.download_outlined),
+          ),
+        ],
+      ),
+      endDrawer: _detailDrawer(),
+      body: RefreshIndicator(
+        onRefresh: _load,
+        child: SingleChildScrollView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          padding: const EdgeInsets.all(16),
+          child: Center(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 1200),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  DecoratedBox(
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF26221B),
+                      borderRadius: BorderRadius.circular(16),
+                    ),
+                    child: Padding(
+                      padding: const EdgeInsets.all(20),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Icon(
+                            Icons.receipt_long_outlined,
+                            color: CgColors.vendorGold,
+                          ),
+                          const SizedBox(height: 8),
+                          Semantics(
+                            header: true,
+                            child: Text(
+                              context.tr(
+                                '月結與發票',
+                                'Monthly statements and invoices',
+                              ),
+                              style: Theme.of(context).textTheme.headlineMedium
+                                  ?.copyWith(
+                                    color: Colors.white,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            context.tr(
+                              '核對扣佣、已付款與待付金額 · 港幣 HKD',
+                              'Review commission, paid amounts and outstanding balances · HKD',
+                            ),
+                            style: TextStyle(
+                              color: Colors.white.withValues(alpha: .84),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  if (_loading)
+                    LinearProgressIndicator(
+                      semanticsLabel: context.tr('載入結算單', 'Loading statements'),
+                    )
+                  else if (_merchantError != null || _items.isEmpty)
+                    Card(
+                      margin: EdgeInsets.zero,
+                      child: Padding(
+                        padding: const EdgeInsets.all(20),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Semantics(
+                              liveRegion: true,
+                              child: Text(
+                                _merchantError ??
+                                    context.tr('暫時沒有結算單', 'No statements yet'),
+                              ),
+                            ),
+                            TextButton(
+                              onPressed: _load,
+                              child: Text(context.tr('重新載入', 'Reload')),
+                            ),
+                          ],
+                        ),
+                      ),
+                    )
+                  else ...[
+                    for (final item in _items)
+                      if (item is Map && item['id'] is int)
+                        _merchantStatement(item),
+                    if (_total > 20)
+                      Wrap(
+                        alignment: WrapAlignment.end,
+                        crossAxisAlignment: WrapCrossAlignment.center,
+                        spacing: 8,
+                        children: [
+                          TextButton(
+                            onPressed: _page <= 1
+                                ? null
+                                : () {
+                                    _page--;
+                                    _load();
+                                  },
+                            child: Text(context.tr('上一頁', 'Previous')),
+                          ),
+                          Text(context.tr('第 $_page 頁', 'Page $_page')),
+                          TextButton(
+                            onPressed: _page * 20 >= _total
+                                ? null
+                                : () {
+                                    _page++;
+                                    _load();
+                                  },
+                            child: Text(context.tr('下一頁', 'Next')),
+                          ),
+                        ],
+                      ),
+                  ],
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _merchantStatement(Map item) {
+    final balance = item['outstanding_net'];
+    String amount(Object? value) =>
+        value is num ? formatHkd(value.toDouble()) : '—';
+    final awaiting = balance is num && balance < 0
+        ? context.tr('待收回', 'Recovery due')
+        : context.tr('待付', 'Outstanding');
+    final status = _merchantStatus(item['status']);
+    return Card(
+      margin: const EdgeInsets.only(bottom: 10),
+      clipBehavior: Clip.antiAlias,
+      color: Colors.white,
+      shape: RoundedRectangleBorder(
+        side: const BorderSide(color: Color(0xFFE5DED0)),
+        borderRadius: BorderRadius.circular(14),
+      ),
+      child: InkWell(
+        onTap: () => _detail(item['id'] as int),
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          '${item['shop_name'] ?? context.tr('店舖', 'Shop')}',
+                          style: Theme.of(context).textTheme.titleMedium
+                              ?.copyWith(fontWeight: FontWeight.w700),
+                        ),
+                        Text('${item['period'] ?? '—'} · #${item['id']}'),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Flexible(
+                    child: MerchantStatusPill(
+                      label: status,
+                      active: item['status'] == 'paid',
+                      listingStatus: item['status'] == 'disputed'
+                          ? 'rejected'
+                          : null,
+                    ),
+                  ),
+                  const Icon(Icons.chevron_right),
+                ],
+              ),
+              const Divider(height: 24),
+              MerchantAmountRow(
+                label: context.tr('核銷毛額', 'Gross amount'),
+                value: amount(item['gross_amount']),
+              ),
+              MerchantAmountRow(
+                label: context.tr('佣金', 'Commission'),
+                value: amount(item['commission']),
+              ),
+              MerchantAmountRow(
+                label: context.tr('商戶淨額', 'Merchant net'),
+                value: amount(item['net_amount']),
+                emphasized: true,
+              ),
+              MerchantAmountRow(
+                label: context.tr('已付淨額', 'Paid net'),
+                value: amount(item['transferred_net']),
+              ),
+              MerchantAmountRow(
+                label: awaiting,
+                value: amount(balance is num ? balance.abs() : null),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
+    if (widget.merchant) return _merchantStatements();
     return Scaffold(
       key: _scaffoldKey,
       appBar: AppBar(

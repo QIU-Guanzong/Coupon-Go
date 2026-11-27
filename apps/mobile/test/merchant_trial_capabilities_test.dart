@@ -93,7 +93,11 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('示例套餐'), findsOneWidget);
     expect(tester.widget<FilledButton>(filledButton('建立套餐')).onPressed, isNotNull);
-    expect(tester.widget<TextButton>(find.widgetWithText(TextButton, '編輯')).onPressed, isNotNull);
+    final edit = find.ancestor(
+      of: find.text('編輯'),
+      matching: find.byWidgetPredicate((widget) => widget is TextButton),
+    );
+    expect(tester.widget<TextButton>(edit).onPressed, isNotNull);
     expect(tester.widget<TextButton>(find.widgetWithText(TextButton, '暫停上架')).onPressed, isNotNull);
     expect(api.writes, 0);
   }, skip: !trial);

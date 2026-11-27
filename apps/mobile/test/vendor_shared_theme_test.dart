@@ -143,11 +143,16 @@ void main() {
       ));
       await tester.pumpAndSettle();
       final grid = find.byKey(const ValueKey('vendor-tools'));
-      expect(grid, findsOneWidget);
-      final sizes = tester.widget<Wrap>(grid).children.cast<SizedBox>();
-      expect(sizes.length, greaterThan(2));
-      expect(sizes.first.width, scale == 1 ? 175 : 358);
       expect(find.text('Issue coupon'), findsOneWidget);
+      await tester.scrollUntilVisible(grid, 240,
+          scrollable: find.byType(Scrollable).first);
+      await tester.pumpAndSettle();
+      expect(grid, findsOneWidget);
+      final wrap = tester.widget<Wrap>(grid);
+      final sizes = wrap.children.cast<SizedBox>();
+      expect(sizes.length, greaterThan(2));
+      final available = tester.getSize(grid).width;
+      expect(sizes.first.width, scale == 1 ? (available - wrap.spacing) / 2 : available);
       expect(find.text('Business tools'), findsOneWidget);
       expect(tester.takeException(), isNull);
       await tester.pumpWidget(const SizedBox());
@@ -157,7 +162,7 @@ void main() {
   for (final english in [false, true]) {
     for (final theme in [CgTheme.light(), CgTheme.dark()]) {
       testWidgets(
-          'merchant nav retains four branded destinations: '
+          'merchant nav shows four readable destinations: '
           '$english/${theme.brightness}', (tester) async {
         SharedPreferences.setMockInitialValues({});
         tester.view.devicePixelRatio = 1;
@@ -192,26 +197,18 @@ void main() {
             english
                 ? ['Home', 'Scan', 'Analytics', 'Account']
                 : ['主頁', '掃碼', '數據', '我的']);
-        final icons = bar.items.map((item) => item.icon as Image).toList();
-        expect(
-            icons.map((icon) => (icon.image as AssetImage).assetName).toList(),
-            [
-              'assets/images/ic_home.png',
-              'assets/images/ic_scanqr_code.png',
-              'assets/images/ic_usage_data.png',
-              'assets/images/ic_user.png',
-            ]);
-        expect(
-            icons.first.color,
-            theme.brightness == Brightness.dark
-                ? CgColors.primaryOnDark
-                : CgColors.primary);
-        // The existing multicolor scan mark needs its original glyph contrast.
-        expect(icons[1].color, isNull);
-        expect(
-            icons.skip(2).every(
-                (icon) => icon.color == theme.colorScheme.onSurfaceVariant),
-            isTrue);
+        expect(bar.items.map((item) => (item.icon as Icon).icon), [
+          Icons.space_dashboard_outlined,
+          Icons.qr_code_scanner_rounded,
+          Icons.insert_chart_outlined_rounded,
+          Icons.person_outline_rounded,
+        ]);
+        tester.view.physicalSize = const Size(1440, 900);
+        await tester.pumpAndSettle();
+        final rail = tester.widget<NavigationRail>(find.byType(NavigationRail));
+        expect(rail.destinations.map((item) => (item.label as Text).data),
+            bar.items.map((item) => item.label));
+        expect(find.byType(BottomNavigationBar), findsNothing);
         expect(tester.takeException(), isNull);
         await tester.pumpWidget(const SizedBox());
       });

@@ -67,17 +67,19 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('disposed merchant page does not request coupons after usage completes', (tester) async {
+  testWidgets('disposed merchant page ignores late usage after its parallel coupon read', (tester) async {
     final api = DeferredVendorApi();
     await tester.pumpWidget(shell(VendorHomeScreen(api: api)));
     api.shops.complete(merchant);
     await tester.pump();
     expect(api.usageCalls, 1);
+    expect(api.couponCalls, 1);
     await tester.pumpWidget(const MaterialApp(home: Text('guest home')));
     api.activateTrialToken(null);
     api.usage.complete({});
     await tester.pump();
-    expect(api.couponCalls, 0);
+    expect(api.couponCalls, 1);
+    expect(find.text('guest home'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 

@@ -188,11 +188,13 @@ void main() {
     final buttons =
         find.descendant(of: grid, matching: find.byType(OutlinedButton));
     final labels = find.descendant(of: grid, matching: find.byType(Text));
-    final tiles = tester.widget<Wrap>(grid).children.cast<SizedBox>();
+    final wrap = tester.widget<Wrap>(grid);
+    final tiles = wrap.children.cast<SizedBox>();
+    final columnWidth = (tester.getSize(grid).width - wrap.spacing) / 2;
     expect(tiles.length, greaterThanOrEqualTo(7));
     for (final tile in tiles) {
-      expect(tile.width, 175);
-      expect(tile.height, CgTheme.buttonHeight);
+      expect(tile.width, columnWidth);
+      expect(tester.getSize(find.byWidget(tile)).height, greaterThanOrEqualTo(44));
     }
     expect(buttons, findsWidgets);
     for (var i = 0; i < labels.evaluate().length; i++) {

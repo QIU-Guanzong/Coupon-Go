@@ -11,6 +11,9 @@ class CgColors {
   static const vendorGold = Color(0xFFFFB025);
   static const vendorInk = Color(0xFF30200A);
   static const vendorLink = Color(0xFF805000);
+  static const vendorPage = Color(0xFFFAF7F1);
+  static const vendorBorder = Color(0xFFE9E1D5);
+  static const vendorDark = Color(0xFF26221C);
   static const pageBg = Color(0xFFF5F5F6);
   static const cardBorder = Color(0xFFE0E0E0);
   static const textPrimary = Color(0xFF1A1A1A);
@@ -147,7 +150,7 @@ class CgTheme {
         seedColor: bar,
         primary: action,
       ),
-      scaffoldBackgroundColor: CgColors.pageBg,
+      scaffoldBackgroundColor: merchant ? CgColors.vendorPage : CgColors.pageBg,
       appBarTheme: AppBarTheme(
         backgroundColor: bar,
         foregroundColor: ink,
@@ -175,7 +178,7 @@ class CgTheme {
         elevation: 0,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(12),
-          side: const BorderSide(color: CgColors.cardBorder),
+          side: BorderSide(color: merchant ? CgColors.vendorBorder : CgColors.cardBorder),
         ),
       ),
       inputDecorationTheme: InputDecorationTheme(

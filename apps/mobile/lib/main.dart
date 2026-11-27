@@ -770,67 +770,133 @@ class _HomeShellState extends State<HomeShell> {
     _syncTabHistory();
   }
 
-  Widget _vendorNavIcon(
-    String asset,
-    IconData fallback,
-    int index, {
-    bool preserveBrandColors = false,
-  }) {
-    final theme = Theme.of(context);
-    final color = _vendorIndex == index
-        ? theme.bottomNavigationBarTheme.selectedItemColor ?? CgColors.primary
-        : theme.colorScheme.onSurfaceVariant;
-    return Image.asset(
-      'assets/images/$asset.png',
-      width: 24,
-      height: 24,
-      color: preserveBrandColors ? null : color,
-      colorBlendMode: preserveBrandColors ? null : BlendMode.srcIn,
-      excludeFromSemantics: true,
-      errorBuilder: (_, __, ___) => Icon(fallback, size: 24, color: color),
-    );
-  }
-
   Widget _vendorShell() {
     String tr(String zh, String en) => context.tr(zh, en);
-    return Scaffold(
-      key: _vendorScaffoldKey,
-      drawer: _drawer(),
-      body: switch (_vendorIndex) {
-        1 => ScanScreen(api: widget.api),
-        2 => MerchantUsageScreen(
-            api: widget.api,
-            legacyUsageBuilder: (_) => UsageScreen(api: widget.api),
-          ),
-        3 => VendorAccountScreen(api: widget.api),
-        _ => VendorHomeScreen(api: widget.api, showAdmin: _role == 'admin',
-            onOpenMenu: () => _vendorScaffoldKey.currentState?.openDrawer()),
-      },
-      bottomNavigationBar: BottomNavigationBar(
-        currentIndex: _vendorIndex,
-        type: BottomNavigationBarType.fixed,
-        onTap: _selectVendorTab,
-        items: [
-          BottomNavigationBarItem(
-              icon: _vendorNavIcon('ic_home', Icons.home_outlined, 0),
-              label: tr('主頁', 'Home')),
-          BottomNavigationBarItem(
-              icon: _vendorNavIcon(
-                'ic_scanqr_code',
-                Icons.qr_code_scanner,
-                1,
-                preserveBrandColors: true,
-              ),
-              label: tr('掃碼', 'Scan')),
-          BottomNavigationBarItem(
-              icon: _vendorNavIcon('ic_usage_data', Icons.bar_chart, 2),
-              label: tr('數據', 'Analytics')),
-          BottomNavigationBarItem(
-              icon: _vendorNavIcon('ic_user', Icons.person_outline, 3),
-              label: tr('我的', 'Account')),
-        ],
+    final tabs = [
+      (
+        icon: Icons.space_dashboard_outlined,
+        selected: Icons.space_dashboard_rounded,
+        label: tr('主頁', 'Home')
       ),
-    );
+      (
+        icon: Icons.qr_code_scanner_rounded,
+        selected: Icons.qr_code_scanner_rounded,
+        label: tr('掃碼', 'Scan')
+      ),
+      (
+        icon: Icons.insert_chart_outlined_rounded,
+        selected: Icons.insert_chart_rounded,
+        label: tr('數據', 'Analytics')
+      ),
+      (
+        icon: Icons.person_outline_rounded,
+        selected: Icons.person_rounded,
+        label: tr('我的', 'Account')
+      ),
+    ];
+    void openMenu() => _vendorScaffoldKey.currentState?.openDrawer();
+    return LayoutBuilder(builder: (context, layout) {
+      final scheme = Theme.of(context).colorScheme;
+      final dark = scheme.brightness == Brightness.dark;
+      final wide = layout.maxWidth >= 1000 &&
+          layout.maxHeight >= 450 &&
+          MediaQuery.textScalerOf(context).scale(14) <= 19;
+      return Scaffold(
+        key: _vendorScaffoldKey,
+        drawer: _drawer(),
+        body: Row(
+          children: [
+            if (wide)
+              DecoratedBox(
+                decoration: BoxDecoration(
+                  color: scheme.surface,
+                  border: Border(right: BorderSide(
+                    color: dark ? scheme.outlineVariant : CgColors.vendorBorder)),
+                ),
+                child: SafeArea(
+                  right: false,
+                  child: NavigationRail(
+                    backgroundColor: scheme.surface,
+                    extended: true,
+                    minExtendedWidth: 208,
+                    groupAlignment: -1,
+                    selectedIndex: _vendorIndex,
+                    onDestinationSelected: _selectVendorTab,
+                    indicatorColor: dark ? scheme.surfaceContainerHighest : CgColors.statusPendingBg,
+                    selectedIconTheme: IconThemeData(color: dark ? CgColors.vendorGold : CgColors.vendorLink),
+                    selectedLabelTextStyle: TextStyle(
+                        color: scheme.onSurface, fontWeight: FontWeight.w700),
+                    leading: Padding(
+                      padding: const EdgeInsets.fromLTRB(14, 16, 8, 24),
+                      child: Row(mainAxisSize: MainAxisSize.min, children: [
+                        Text('Coupon GO!',
+                            style: TextStyle(
+                                color: scheme.onSurface,
+                                fontSize: 18,
+                                fontWeight: FontWeight.w900)),
+                        const SizedBox(width: 8),
+                        IconButton(
+                          onPressed: openMenu,
+                          tooltip: MaterialLocalizations.of(context)
+                              .openAppDrawerTooltip,
+                          icon: const Icon(Icons.menu_rounded),
+                        ),
+                      ]),
+                    ),
+                    destinations: [
+                      for (final tab in tabs)
+                        NavigationRailDestination(
+                          icon: Icon(tab.icon),
+                          selectedIcon: Icon(tab.selected),
+                          label: Text(tab.label),
+                        ),
+                    ],
+                  ),
+                ),
+              )
+            else
+              const SizedBox.shrink(),
+            Expanded(
+              child: IndexedStack(
+                index: _vendorIndex == 0 ? 0 : 1,
+                children: [
+                  VendorHomeScreen(
+                    api: widget.api,
+                    showAdmin: _role == 'admin',
+                    active: _vendorIndex == 0,
+                    onOpenMenu: wide ? null : openMenu,
+                    onOpenScan: () => _selectVendorTab(1),
+                  ),
+                  switch (_vendorIndex) {
+                    1 => ScanScreen(api: widget.api),
+                    2 => MerchantUsageScreen(
+                        api: widget.api,
+                        legacyUsageBuilder: (_) => UsageScreen(api: widget.api),
+                      ),
+                    3 => VendorAccountScreen(api: widget.api),
+                    _ => const SizedBox.shrink(),
+                  },
+                ],
+              ),
+            ),
+          ],
+        ),
+        bottomNavigationBar: wide
+            ? null
+            : BottomNavigationBar(
+                currentIndex: _vendorIndex,
+                type: BottomNavigationBarType.fixed,
+                onTap: _selectVendorTab,
+                items: [
+                  for (final tab in tabs)
+                    BottomNavigationBarItem(
+                        icon: Icon(tab.icon),
+                        activeIcon: Icon(tab.selected),
+                        label: tab.label),
+                ],
+              ),
+      );
+    });
   }
 
   bool get _showVendorNotifications =>

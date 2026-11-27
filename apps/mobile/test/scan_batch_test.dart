@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:coupon_go/api_client.dart';
+import 'package:coupon_go/language.dart';
 import 'package:coupon_go/screens/scan_batch.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -80,4 +81,30 @@ void main() {
     expect(find.textContaining('登入狀態已變更'), findsOneWidget);
   });
 
+  testWidgets(
+      '320px larger English text can prepare and confirm with the keyboard',
+      (tester) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(320, 640);
+    tester.platformDispatcher.textScaleFactorTestValue = 1.3;
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+    final api = BatchApi();
+    final language = AppLanguage()..english = true;
+    await tester.pumpWidget(LanguageScope(
+      language: language,
+      child: MaterialApp(home: ScanBatchScreen(api: api)),
+    ));
+    await tester.enterText(find.byType(TextField), '222222');
+    await tester.testTextInput.receiveAction(TextInputAction.done);
+    await tester.pumpAndSettle();
+    expect(find.text('Checked 1 / 20'), findsOneWidget);
+    await tester.tap(find.text('Confirm batch redemption'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Confirm redemption'));
+    await tester.pumpAndSettle();
+    expect(find.text('Retry original request'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
 }

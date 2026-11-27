@@ -23,6 +23,7 @@ class _Api extends ApiClient {
   final batches = <_Submission>[];
   final singles = <(String, String?, String?, int?)>[];
   bool loseFirstBatchReply = false;
+  bool loseFirstSingleReply = false;
 
   @override
   Future<Map<String, dynamic>> prepareScan(String code, {int? branchId}) async {
@@ -66,6 +67,9 @@ class _Api extends ApiClient {
   Future<Map<String, dynamic>> scanCoupon(String code,
       {String? idempotencyKey, String? prepareToken, int? branchId}) async {
     singles.add((code, idempotencyKey, prepareToken, branchId));
+    if (loseFirstSingleReply && singles.length == 1) {
+      throw TimeoutException('Synthetic lost reply');
+    }
     return {'coupon_name': 'Second voucher'};
   }
 }
@@ -118,6 +122,23 @@ Finder _remove(String title) => find.descendant(
     );
 
 void main() {
+  testWidgets('single redemption keeps the original request after a lost reply',
+      (tester) async {
+    final api = _Api()..loseFirstSingleReply = true;
+    addTearDown(api.dispose);
+    await _phone(tester, ScanScreen(api: api));
+    await tester.enterText(find.byType(TextField), '222222');
+    await tester.testTextInput.receiveAction(TextInputAction.done);
+    await tester.pumpAndSettle();
+    await _tap(tester, find.text('Confirm redemption'));
+    expect(api.singles, hasLength(1));
+    expect(find.text('Cancel'), findsNothing);
+    await _tap(tester, find.text('Retry this redemption'));
+    expect(api.singles, hasLength(2));
+    expect(api.singles.last, api.singles.first);
+    expect(find.text('Redeemed'), findsOneWidget);
+  });
+
   testWidgets(
       'merchant scanner batch: repeated tap opens only one confirmation',
       (tester) async {
@@ -126,8 +147,10 @@ void main() {
     await _phone(tester, ScanScreen(api: api));
     await _tap(tester, find.text('Batch redemption'));
     await _add(tester, '222222');
-    final submit =
-        find.widgetWithText(FilledButton, 'Confirm batch redemption');
+    final submit = find.ancestor(
+      of: find.text('Confirm batch redemption'),
+      matching: find.byWidgetPredicate((widget) => widget is FilledButton),
+    );
     await tester.ensureVisible(submit);
     final go = tester.widget<FilledButton>(submit).onPressed!;
     // Two input callbacks in the same frame, before the modal has been built.
@@ -155,8 +178,10 @@ void main() {
         tester.widget<IconButton>(_remove('First voucher')).onPressed!;
     await _tap(tester, _remove('Second voucher'));
     expect(find.text('Checked 1 / 20'), findsOneWidget);
-    final submit =
-        find.widgetWithText(FilledButton, 'Confirm batch redemption');
+    final submit = find.ancestor(
+      of: find.text('Confirm batch redemption'),
+      matching: find.byWidgetPredicate((widget) => widget is FilledButton),
+    );
     await tester.ensureVisible(submit);
     tester.widget<FilledButton>(submit).onPressed!();
     // A remove callback queued before the new frame may not alter consented contents.

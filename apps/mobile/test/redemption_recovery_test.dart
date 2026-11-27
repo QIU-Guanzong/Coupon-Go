@@ -78,22 +78,32 @@ Future<void> searchVoucher(WidgetTester tester) async {
 
 void main() {
   testWidgets('補錄失聯後使用同一請求編號重試', (tester) async {
-    final api = RecoveryApi()..failFirst = true;
+    final api = RecoveryApi()
+      ..failFirst = true
+      ..restricted = true;
     await tester.pumpWidget(
       MaterialApp(home: MerchantRedemptionRecoveryScreen(api: api)),
     );
     await searchVoucher(tester);
     await tester.tap(find.text('補記這張券'));
     await tester.pumpAndSettle();
+    await tester.tap(find.text('核銷分店（必選）'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('中環分店').last);
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField).last, '顧客離店後補記');
     await tester.tap(find.text('確認補記'));
     await tester.pumpAndSettle();
     expect(find.textContaining('結果未確認'), findsOneWidget);
-    await tester.tap(find.text('補記這張券'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('確認補記'));
+    expect(
+        tester.widget<TextField>(find.byType(TextField).first).enabled, false);
+    expect(find.text('補記這張券'), findsNothing);
+    await tester.tap(find.text('使用原請求重試'));
     await tester.pumpAndSettle();
     expect(api.calls.length, 2);
-    expect(api.calls[0]['idempotency_key'], api.calls[1]['idempotency_key']);
+    expect(api.calls[0]['branch_id'], 9);
+    expect(api.calls[0]['reason'], '顧客離店後補記');
+    expect(api.calls[0], api.calls[1]);
     expect(find.text('已補記核銷，記錄編號 7。'), findsOneWidget);
   });
 
@@ -149,6 +159,27 @@ void main() {
     api.changeSession();
     await tester.pumpAndSettle();
     expect(find.text('測試券'), findsNothing);
+  });
+  testWidgets('撤銷失聯後須重新查詢才可再次操作', (tester) async {
+    final api = RecoveryApi()..failFirst = true;
+    await tester.pumpWidget(
+      MaterialApp(home: ForceRevokeRedemptionScreen(api: api)),
+    );
+    await tester.enterText(find.byType(TextField).first, '7');
+    await tester.tap(find.text('查詢'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField).last, '顧客確認');
+    await tester.tap(find.text('繼續撤銷'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('確認撤銷'));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('請重新查詢核銷狀態'), findsOneWidget);
+    expect(find.text('繼續撤銷'), findsNothing);
+    api.revoked = true;
+    await tester.tap(find.text('查詢'));
+    await tester.pumpAndSettle();
+    expect(find.widgetWithText(MerchantStatusPill, '已撤銷'), findsOneWidget);
+    expect(api.calls, hasLength(1));
   });
   testWidgets('確認補錄期間切換帳號不會提交舊券', (tester) async {
     final api = RecoveryApi();

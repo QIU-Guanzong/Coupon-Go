@@ -50,7 +50,7 @@ void main() {
     var opened = false;
     await showShell(tester, api, vendor: true,
         onTrialRoleSwitch: (_) => opened = true);
-    await tester.tap(find.byIcon(Icons.menu));
+    await tester.tap(find.byTooltip('Open navigation menu'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Switch identity'));
     await tester.pumpAndSettle();
