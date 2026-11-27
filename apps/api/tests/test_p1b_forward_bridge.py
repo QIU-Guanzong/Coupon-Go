@@ -247,22 +247,31 @@ def test_rewriting_applied_ancestry_silently_skips_legal_migration(database_url,
 
 
 def test_downgrade_refuses_to_drop_existing_data(database_url):
-    # Verify the historical bridge's own forward-only boundary. Newer
-    # revisions can support individual downgrades before reaching it.
-    bridge_head = '0031_dianping_mgmt_bridge'
-    _alembic(database_url, 'upgrade', bridge_head)
+    _alembic(database_url, 'upgrade', 'head')
     engine = create_engine(database_url)
     with engine.begin() as connection:
         _insert_sample(connection)
+        connection.execute(text('UPDATE users SET token_version=4 WHERE id=1'))
         connection.execute(text('UPDATE redemptions SET commission_rate_snapshot = 0.125 WHERE id=1'))
         connection.execute(text('UPDATE wallet_items SET settlement_allocated_amount = 100, refund_hold_previous_status = 3 WHERE id=1'))
     result = _alembic(database_url, 'downgrade', LEGAL, ok=False)
     assert 'coordinated restore' in result.stderr
     with engine.connect() as connection:
-        assert _versions(connection) == {bridge_head}
+        assert _versions(connection) == {EXPECTED_MIGRATION_HEAD}
+        assert connection.execute(text('SELECT token_version FROM users WHERE id=1')).scalar_one() == 4
         assert float(connection.execute(text('SELECT commission_rate_snapshot FROM redemptions WHERE id=1')).scalar_one()) == 0.125
         assert connection.execute(text('SELECT settlement_allocated_amount FROM wallet_items WHERE id=1')).scalar_one() == 100
         assert connection.execute(text('SELECT refund_hold_previous_status FROM wallet_items WHERE id=1')).scalar_one() == 3
+    engine.dispose()
+
+
+def test_token_version_single_downgrade_still_succeeds(database_url):
+    _alembic(database_url, 'upgrade', '0032_user_token_version')
+    _alembic(database_url, 'downgrade', '0031_dianping_mgmt_bridge')
+    engine = create_engine(database_url)
+    with engine.connect() as connection:
+        assert _versions(connection) == {'0031_dianping_mgmt_bridge'}
+        assert 'token_version' not in _columns(connection, 'users')
     engine.dispose()
 
 
