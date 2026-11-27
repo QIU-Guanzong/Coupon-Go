@@ -7,6 +7,8 @@ import sys
 
 import pytest
 
+from tests.migration_contract import EXPECTED_MIGRATION_HEAD
+
 
 @pytest.mark.parametrize('starting_revision', ['0021_p1a_paid_coupons', '0024_listing_template_versions'])
 def test_old_database_upgrades_to_single_paid_coupon_head(tmp_path, starting_revision):
@@ -29,7 +31,7 @@ def test_old_database_upgrades_to_single_paid_coupon_head(tmp_path, starting_rev
     result = alembic('upgrade', 'head')
     assert result.returncode == 0, result.stderr
     with sqlite3.connect(database) as db:
-        assert db.execute('SELECT version_num FROM alembic_version').fetchall() == [('0031_dianping_mgmt_bridge',)]
+        assert db.execute('SELECT version_num FROM alembic_version').fetchall() == [(EXPECTED_MIGRATION_HEAD,)]
         assert db.execute('SELECT sale_price,remaining FROM coupons WHERE id=1').fetchone() == (19.95, 7)
         order = db.execute('SELECT order_type,coupon_id,amount,paid_amount FROM orders WHERE id=1').fetchone()
         assert order == (('coupon', 1, 19.95, 19.95) if starting_revision == '0021_p1a_paid_coupons'

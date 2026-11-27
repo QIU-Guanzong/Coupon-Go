@@ -7,8 +7,9 @@ from pathlib import Path
 import pytest
 from sqlalchemy import create_engine, text
 
+from tests.migration_contract import EXPECTED_MIGRATION_HEAD
+
 API = Path(__file__).resolve().parents[1]
-HEAD = '0031_dianping_mgmt_bridge'
 
 
 def alembic(url, *args, ok=True):
@@ -35,7 +36,7 @@ def test_both_histories_upgrade_without_rewriting_application(tmp_path, prior):
         conn.execute(text('INSERT INTO merchant_contract_signatures(id,application_id,user_id,contract_version_id,pdf_file_id) VALUES (1,1,1,:version,1)'), {'version': version_id})
     alembic(url, 'upgrade', 'head')
     with engine.connect() as conn:
-        assert list(conn.execute(text('SELECT version_num FROM alembic_version')).scalars()) == [HEAD]
+        assert list(conn.execute(text('SELECT version_num FROM alembic_version')).scalars()) == [EXPECTED_MIGRATION_HEAD]
         assert conn.execute(text('SELECT business_license,br_number,stripe_account_id FROM merchant_applications WHERE id=1')).one() == ('license-record', '12345678', 'acct_existing')
         assert conn.execute(text('SELECT pdf_file_id FROM merchant_contract_signatures WHERE id=1')).scalar_one() == 1
         assert conn.execute(text('SELECT stored_name FROM merchant_files WHERE id=1')).scalar_one() == 'archived.pdf'
@@ -54,7 +55,7 @@ def test_incompatible_onboarding_schema_fails_before_version_advances(tmp_path):
     result = alembic(url, 'upgrade', 'head', ok=False)
     assert 'Incompatible onboarding column: merchant_applications.br_number' in result.stderr
     with engine.connect() as conn:
-        assert HEAD not in set(conn.execute(text('SELECT version_num FROM alembic_version')).scalars())
+        assert EXPECTED_MIGRATION_HEAD not in set(conn.execute(text('SELECT version_num FROM alembic_version')).scalars())
     engine.dispose()
 
 
