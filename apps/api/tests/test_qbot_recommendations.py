@@ -97,6 +97,58 @@ def test_uses_explicit_user_preferences_and_can_clear_them(offers):
     assert qbot.local_request(qbot.Question(message="旺角附近有咩火鍋套餐？")).place[0] == "旺角"
 
 
+def test_multi_turn_updates_replace_only_supplied_conditions(offers):
+    result = ask(offers, "比較旺角2人套餐，總預算HK$220，偏好火鍋")
+    assert [item["id"] for item in result["offers"]] == [2, 1]
+
+    def follow(text, expected, **extra):
+        nonlocal result
+        result = ask(offers, text, shopping_context=result["shopping_context"], **extra)
+        assert [item["id"] for item in result["offers"]] == expected
+        return result["shopping_context"]
+
+    state = follow("每人HK$70", [2])
+    assert state["total"] is None and state["per_person"] == "70"
+    state = follow("改食壽司", [])
+    assert (state["district"], state["people"], state["likes"]) == ("旺角", 2, ["sushi"])
+    assert follow("預算改到HK$90", [3])["per_person"] == "90"
+    state = follow("總預算HK$200", [3])
+    assert state["per_person"] is None and state["total"] == "200"
+    assert follow("唔去旺角，改去沙田", [])["district"] == "沙田"
+    assert follow("改食火鍋", [4])["likes"] == ["hotpot"]
+    assert follow("改做1個人", [])["people"] == 1
+    follow("地區不限", [5])
+    assert follow("不限口味", [5])["likes"] == []
+
+
+def test_short_budget_scope_reply_and_manual_district_keep_other_fields(offers):
+    result = ask(offers, "比較2人套餐，預算HK$100，偏好火鍋")
+    assert "HK$100 係整份定每人預算" in result["answer"]
+    state = result["shopping_context"]
+    assert state["needs_budget"] and state["total"] is None
+    unresolved = ask(offers, "旺角", shopping_context=state)
+    assert unresolved["shopping_context"]["district"] == "旺角"
+    assert unresolved["offers"] == []
+    per_person = ask(offers, "每人", shopping_context=unresolved["shopping_context"])
+    assert [item["id"] for item in per_person["offers"]] == [2]
+    assert per_person["shopping_context"]["people"] == 2
+
+    nearby = ask(offers, "比較附近套餐", shopping_context=per_person["shopping_context"])
+    assert nearby["needs_location"] is True
+    manual = ask(offers, "比較附近套餐 · 沙田", shopping_context=nearby["shopping_context"])
+    assert [item["id"] for item in manual["offers"]] == [4]
+    assert manual["shopping_context"]["district"] == "沙田"
+    assert manual["shopping_context"]["per_person"] == "100"
+
+
+def test_comparison_form_resets_omitted_budget_and_cuisine_only(offers):
+    result = ask(offers, "比較旺角1人套餐，總預算HK$1，偏好壽司")
+    form = ask(offers, "比較2人套餐", comparison_form=True,
+               shopping_context=result["shopping_context"])
+    assert [item["id"] for item in form["offers"]] == [2, 3, 1]
+    assert form["shopping_context"]["district"] == "旺角"
+
+
 def test_flash_uses_hk_midnight_sellable_stock_and_coupon_price(offers):
     today = ask(offers, "限時秒殺，今日截止")
     assert [item["id"] for item in today["offers"]] == [11, 12]

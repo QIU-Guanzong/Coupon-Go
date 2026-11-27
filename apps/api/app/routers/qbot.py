@@ -20,8 +20,10 @@ from ..deps import get_optional_user, points_balance
 from ..models_packages import Package
 from ..models_bargain import BargainCampaign
 from ..qbot_budget import admit
-from ..qbot_places import PlaceLookup, place_answer, place_lookup
-from ..qbot_recommendations import OfferSearch, match_terms, preference_summary, request_for
+from ..qbot_places import PlaceLookup, place_answer, place_lookup, saved_place
+from ..qbot_recommendations import (
+    Cuisine, OfferSearch, ShoppingContext, match_terms, preference_summary, request_for,
+)
 from .nearby import published_shops
 from ..serializers_packages import REFUND_POLICY_TEXT
 
@@ -44,8 +46,9 @@ class Question(BaseModel):
     history: list[Turn] = Field(default_factory=list, max_length=6)
     language: Literal["zh-Hant", "en"] = "zh-Hant"
     location: SearchPosition | None = None
-    preference: Literal["hotpot", "sushi", "dim_sum", "coffee", "vegetarian", "cantonese",
-                        "seafood", "japanese", "korean", "thai", "sichuan"] | None = None
+    preference: Cuisine | None = None
+    comparison_form: bool = False
+    shopping_context: ShoppingContext | None = None
 
 
 # Only parse a whole, unambiguous request. Per-person budgets, ranges and
@@ -104,24 +107,25 @@ def catalog(db, question, comparison=None, *, search=None, shop_ids=None, now=No
         elif kind == "coupon":
             rows = rows.add_columns(c.remaining, c.sale_price, c.min_spend)
         if search:
+            options = search.context
             if shop_ids is not None:
                 rows = rows.filter(shop.id.in_(shop_ids))
             preference_columns = [name, name_en, shop.name, shop.name_en, shop.description]
             if kind == "package":
                 preference_columns.append(p.items)
-            for keys, exclude in ((search.likes, False), (search.dislikes, True)):
+            for keys, exclude in ((options.likes, False), (options.dislikes, True)):
                 matches = [func.lower(func.coalesce(column, "")).contains(term, autoescape=True)
                            for group in match_terms(keys) for term in group for column in preference_columns]
                 if matches:
                     rows = rows.filter(~or_(*matches) if exclude else or_(*matches))
             if kind == "package":
                 rows = rows.filter(p.person_count > 0)
-                if search.people is not None:
-                    rows = rows.filter(p.person_count == search.people)
-                if search.total is not None:
-                    rows = rows.filter(p.package_price <= search.total)
-                if search.per_person is not None:
-                    rows = rows.filter(p.package_price <= search.per_person * p.person_count)
+                if options.people is not None:
+                    rows = rows.filter(p.person_count == options.people)
+                if options.total is not None:
+                    rows = rows.filter(p.package_price <= options.total)
+                if options.per_person is not None:
+                    rows = rows.filter(p.package_price <= options.per_person * p.person_count)
                 rows = rows.order_by(p.package_price)
             else:
                 rows = rows.filter(c.is_limited_time.is_(True)).order_by(expires)
@@ -228,7 +232,18 @@ def comparison_answer(public, language, preview, search=None):
         lines.append("These are demo packages." if en else "以下為示例套餐。")
     offers = []
     if search:
-        summary = preference_summary(search, en)
+        options = search.context
+        filters = []
+        if district := saved_place(options.district):
+            filters.append(district[int(en)])
+        if options.people:
+            filters.append(f"{options.people} people" if en else f"{options.people} 人")
+        if options.total is not None:
+            filters.append(f"Total budget HK${options.total}" if en else f"整份預算 HK${options.total}")
+        if options.per_person is not None:
+            filters.append(f"Up to HK${options.per_person} per person" if en else
+                           f"每人預算 HK${options.per_person}")
+        summary = " · ".join(filter(None, (*filters, preference_summary(options, en))))
         if summary:
             lines.append(summary)
     if public:
@@ -267,7 +282,7 @@ def comparison_answer(public, language, preview, search=None):
     if not offers:
         lines.append("No available package matches. Try a different party size, budget or preference."
                      if en else "暫時沒有符合條件的套餐。可試試其他人數、預算或口味。")
-    if search and (search.likes or search.dislikes):
+    if search and (search.context.likes or search.context.dislikes):
         lines.append("Preferences match catalogue descriptions. Check ingredients with the shop."
                      if en else "口味按目錄描述配對，食材請向商戶確認。")
     return {"answer": "\n\n".join(lines), "points_balance": None, "offers": offers}
@@ -286,7 +301,7 @@ def _flash_answer(items, language, preview, search):
         lines = ["No active flash coupons match right now." if en else "目前沒有符合條件的限時優惠。"]
     if preview:
         lines.insert(0, "These are demo offers." if en else "以下為示例優惠。")
-    summary = preference_summary(search, en)
+    summary = preference_summary(search.context, en)
     if summary:
         lines.append(summary)
     offers = []
@@ -313,17 +328,32 @@ def _flash_answer(items, language, preview, search):
 
 def local_answer(db, question, lookup: OfferSearch | PlaceLookup, *, preview):
     if isinstance(lookup, PlaceLookup):
-        return place_answer(db, lookup, question.language, preview)
-    if lookup.clarify:
-        return dict(answer=("How many people, and what is your HKD budget for the whole package "
-                            "or per person?" if question.language == "en" else
-                            "請問幾多人用？預算係整份定每人幾多港元？"),
-                    points_balance=None, offers=[])
+        result = place_answer(db, lookup, question.language, preview)
+        if lookup.place or lookup.position:
+            options = question.shopping_context or ShoppingContext()
+            options = options.model_copy(update={"district": lookup.place[0] if lookup.place else None})
+            result["shopping_context"] = options.model_dump(mode="json")
+        return result
+
+    options = lookup.context
+    context = {"shopping_context": options.model_dump(mode="json")} if lookup.kind == "package" else {}
+    if options.needs_people or options.needs_budget:
+        en = question.language == "en"
+        prompts = []
+        if options.needs_people:
+            prompts.append("How many people are dining?" if en else "請問最後係幾多人用？")
+        if options.needs_budget:
+            amount = f"HK${options.pending_budget}" if options.pending_budget is not None else None
+            prompts.append(
+                (f"Is {amount} the total or per person?" if en else f"{amount} 係整份定每人預算？")
+                if amount else ("What is your HKD budget for the whole package or per person?" if en else
+                                "預算係整份定每人幾多港元？"))
+        return dict(answer=" ".join(prompts), points_balance=None, offers=[], **context)
     shop_ids = None
     if lookup.place:
         place = lookup.place
         if place.place is None and place.position is None:
-            return place_answer(db, place, question.language, preview)
+            return {**place_answer(db, place, question.language, preview), **context}
         center = place.place[2] if place.place else place.position
         area = place.place[3] if place.place else ()
         shops = published_shops(db, center=center, area_terms=area,
@@ -333,7 +363,7 @@ def local_answer(db, question, lookup: OfferSearch | PlaceLookup, *, preview):
     items = catalog(db, question.message, search=lookup, shop_ids=shop_ids)
     if lookup.kind == "coupon":
         return _flash_answer(items, question.language, preview, lookup)
-    return comparison_answer(items, question.language, preview, lookup)
+    return {**comparison_answer(items, question.language, preview, lookup), **context}
 
 
 @router.post("/qbot/chat")

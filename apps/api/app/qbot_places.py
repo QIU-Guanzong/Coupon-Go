@@ -67,15 +67,29 @@ def _contains(text, terms):
     return False
 
 
-def _place(text):
-    # A longer name wins even if it also contains a broader region name.
-    for zh, en, lat, lng, aliases in _NEIGHBOURHOODS:
-        if _contains(text, (zh, en, *aliases)):
-            return zh, en, (lat, lng), ()
-    for zh, en, aliases in _REGIONS:
-        if _contains(text, (zh, en, *(alias for alias in aliases if alias != "香港"))):
-            return zh, en, None, aliases
-    return None
+_PLACES = {
+    **{zh: (zh, en, (lat, lng), ()) for zh, en, lat, lng, _ in _NEIGHBOURHOODS},
+    **{zh: (zh, en, None, aliases) for zh, en, aliases in _REGIONS},
+}
+_PLACE_ALIASES = {
+    alias.casefold(): zh
+    for zh, en, *rest in (*_NEIGHBOURHOODS, *_REGIONS)
+    for alias in (zh, en, *rest[-1]) if alias != "香港"
+}
+_PLACE_PATTERN = re.compile("|".join(
+    (rf"(?<![a-z0-9]){re.escape(alias)}(?![a-z0-9])" if alias.isascii() else re.escape(alias))
+    for alias in sorted(_PLACE_ALIASES, key=len, reverse=True)
+))
+
+
+def named_place(text):
+    # Nonoverlapping matches prefer the more specific name, then the last mention.
+    match = next(iter(reversed(list(_PLACE_PATTERN.finditer(text.casefold())))), None)
+    return _PLACES[_PLACE_ALIASES[match[0]]] if match else None
+
+
+def saved_place(district):
+    return _PLACES.get(district)
 
 
 @dataclass(frozen=True)
@@ -91,7 +105,7 @@ def place_lookup(question):
     text = question.message.casefold().strip()
     if _contains(text, _USAGE) and question.location is None:
         return None
-    place = _place(text)
+    place = named_place(text)
     position = ((question.location.lat, question.location.lng)
                 if question.location is not None else None)
     nearby = _contains(text, _NEARBY)
@@ -107,8 +121,12 @@ def place_lookup(question):
     # Follow-up such as “有咖啡嗎？” can reuse the latest named area.
     # Explicit new locations and device coordinates are never inferred from the assistant.
     if (specialty or category or offer) and len(text) < 40:
-        last = next((turn for turn in reversed(question.history) if turn.role == "user"), None)
-        if last and (place := _place(last.text.casefold())):
+        if question.shopping_context is not None:
+            place = saved_place(question.shopping_context.district)
+        else:
+            last = next((turn for turn in reversed(question.history) if turn.role == "user"), None)
+            place = named_place(last.text) if last else None
+        if place:
             return PlaceLookup(place, None, category, specialty, offer)
     return None
 

@@ -11,6 +11,7 @@ class _QbotApi extends ApiClient {
   int? nextError;
   bool loggedIn = false;
   String answer = 'Test reply';
+  Map<String, dynamic>? context;
 
   @override
   bool get isLoggedIn => loggedIn;
@@ -26,7 +27,7 @@ class _QbotApi extends ApiClient {
     final status = nextError;
     nextError = null;
     if (status != null) throw ApiException(status, 'Test error');
-    return {'answer': answer};
+    return {'answer': answer, if (context != null) 'shopping_context': context};
   }
 }
 
@@ -151,6 +152,7 @@ void main() {
     expect(api.sent.single, {
       'message': r'比較2人套餐，總預算HK$200',
       'language': 'zh-Hant',
+      'comparison_form': true,
       'history': [],
     });
     expect(tester.widget<TextField>(composer).controller!.text, '晚餐草稿');
@@ -182,11 +184,38 @@ void main() {
     expect(api.sent.single, {
       'message': 'Compare packages for 5',
       'language': 'en',
+      'comparison_form': true,
       'history': [],
     });
     expect(find.text(api.answer), findsOneWidget);
     expect(find.byType(Card), findsNothing);
     expect(compare, findsOneWidget);
+  });
+
+  testWidgets('carries structured search conditions until clearing the chat',
+      (tester) async {
+    final api = await open(tester);
+    api.context = {'package': true, 'district': '沙田', 'people': 2};
+    await tester.tap(find.text('選擇地區'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('沙田'));
+    await tester.pumpAndSettle();
+    expect(api.sent.single['shopping_context'], isNull);
+    await tester.enterText(composer, r'每人HK$100');
+    await tester.pump();
+    await tester.tap(find.byTooltip('送出'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('同意並送出'));
+    await tester.pumpAndSettle();
+    expect(api.sent.last['shopping_context'], api.context);
+    await tester.tap(find.byTooltip('清除對話'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('選擇地區'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('旺角'));
+    await tester.pumpAndSettle();
+    expect(api.sent.last['shopping_context'], isNull);
+    expect(api.sent.last['history'], isEmpty);
   });
 
   testWidgets(

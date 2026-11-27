@@ -114,7 +114,7 @@ LOCK = threading.RLock()
 IMAGE_SLOTS = threading.BoundedSemaphore(2)
 IN_FLIGHT: dict[str, int] = {}
 CREATIONS: list[float] = []
-QBOT_CALLS: dict[str, list[float]] = {}
+QBOT_CALLS: dict[str, dict[bool, list[float]]] = {}
 QBOT_URL = os.environ.get('TRIAL_QBOT_PROXY_URL', '')
 if QBOT_URL and QBOT_URL != 'http://127.0.0.1:18760/api/v3/qbot/chat':
     raise RuntimeError('trial Q仔 must use the existing local quota gateway')
@@ -621,11 +621,14 @@ class TrialGateway:
             if not QBOT_URL and lookup is None:
                 return await JSONResponse({'detail': 'Q仔暫未開放，請稍後再試'}, 503)(scope, receive, send)
             with LOCK:
-                calls = [t for t in QBOT_CALLS.get(sid, []) if time.time() - t < 60]
-                limited = len(calls) >= 5
+                local = lookup is not None
+                budgets = QBOT_CALLS.setdefault(sid, {})
+                now = time.time()
+                calls = [t for t in budgets.get(local, []) if now - t < 60]
+                limited = len(calls) >= (15 if local else 5)
                 if not limited:
-                    calls.append(time.time())
-                    QBOT_CALLS[sid] = calls
+                    calls.append(now)
+                    budgets[local] = calls
             if limited:
                 return await JSONResponse({'detail': 'Q仔忙碌中，請稍後再試'}, 429)(scope, receive, send)
             try:

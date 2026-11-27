@@ -215,11 +215,12 @@ def test_qbot_uses_only_the_existing_local_quota_gateway(gateway, monkeypatch):
     assert "HK$0.73" in match["answer"]
     other = trial_browser(gateway)
     assert other.post("/api/v3/qbot/chat", json=prompt).json()["offers"] == []
-    for _ in range(4):
+    for _ in range(5):
         result = client.post('/api/v3/qbot/chat', json={'message': '優惠'})
         assert result.status_code == 200 and result.json()['reply'] == '來自現有服務'
     assert client.post('/api/v3/qbot/chat', json={'message': '優惠'}).status_code == 429
-    assert len(calls) == 4
+    assert client.post('/api/v3/qbot/chat', json=prompt).status_code == 200
+    assert len(calls) == 5
     assert all(url == gateway.QBOT_URL and headers == {'Content-Type': 'application/json'}
                for url, headers, _ in calls)
 

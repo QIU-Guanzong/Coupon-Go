@@ -169,6 +169,7 @@ class _QBotScreenState extends State<QBotScreen> {
   final _ctrl = TextEditingController();
   final _scroll = ScrollController();
   final _messages = <(String, String, String?, List<QBotOffer>, List<Shop>)>[];
+  Map<String, dynamic>? _shoppingContext;
   bool _locating = false;
   bool _failedLocal = false;
   String? _failedPreference;
@@ -237,7 +238,10 @@ class _QBotScreenState extends State<QBotScreen> {
         preference: selected == null ? null : comparison.preference);
   }
 
-  Future<void> _chooseArea({String? followUp}) async {
+  Future<void> _chooseArea(
+      {String? followUp, bool locationUnavailable = false}) async {
+    final generation = _conversation;
+    final pendingQuestion = followUp ?? _nearbyQuestion;
     final area = await showModalBottomSheet<(String, String)>(
       context: context,
       showDragHandle: true,
@@ -252,6 +256,9 @@ class _QBotScreenState extends State<QBotScreen> {
           children: [
             Text(sheet.tr('選擇地區', 'Choose a district'),
                 style: Theme.of(sheet).textTheme.titleLarge),
+            if (locationUnavailable)
+              Text(sheet.tr('未能取得位置。選一個地區繼續搜尋。',
+                  'Location is unavailable. Choose a district to keep searching.')),
             const SizedBox(height: 12),
             Wrap(spacing: 8, runSpacing: 4, children: [
               for (final area in const [
@@ -275,17 +282,21 @@ class _QBotScreenState extends State<QBotScreen> {
         ),
       ),
     );
-    if (!mounted || area == null) return;
+    if (!mounted || area == null || generation != _conversation) return;
     final t = context.tr;
-    final question = followUp == null
-        ? t('${area.$1}有咩商戶？', 'Shops in ${area.$2}?')
-        : '${t(area.$1, area.$2)} · $followUp';
+    final name = t(area.$1, area.$2);
+    final question = pendingQuestion != null
+        ? '$pendingQuestion · $name'
+        : _shoppingContext?['package'] == true
+            ? name
+            : t('${area.$1}有咩商戶？', 'Shops in ${area.$2}?');
     await _ask(question, localLookup: true);
   }
 
   Future<void> _useLocation({String? followUp}) async {
     if (_locating || _sending || _askingPermission) return;
     final generation = _conversation;
+    final pendingQuestion = followUp ?? _nearbyQuestion;
     setState(() => _locating = true);
     try {
       final position = await findDiscoveryPosition();
@@ -293,7 +304,8 @@ class _QBotScreenState extends State<QBotScreen> {
       if (position != null) {
         _devicePosition = position;
         await _ask(
-            followUp ?? context.tr('我附近有咩商戶？', 'What shops are near me?'),
+            pendingQuestion ??
+                context.tr('我附近有咩商戶？', 'What shops are near me?'),
             localLookup: true,
             position: position);
         return;
@@ -304,10 +316,8 @@ class _QBotScreenState extends State<QBotScreen> {
       if (mounted) setState(() => _locating = false);
     }
     if (mounted && generation == _conversation) {
-      showCgToast(
-          context,
-          context.tr('未能取得位置，可以手動選擇地區。',
-              'Location is unavailable. You can choose a district instead.'));
+      _devicePosition = null;
+      await _chooseArea(followUp: pendingQuestion, locationUnavailable: true);
     }
   }
 
@@ -325,8 +335,8 @@ class _QBotScreenState extends State<QBotScreen> {
         title: Text(dialog.tr('使用 Q仔', 'Use Q仔')),
         content: Text(catalogComparison
             ? dialog.tr(
-                '這次只會用人數、預算和選擇的口味查詢 Coupon GO 套餐，不會把對話傳送給 DeepSeek。',
-                'Coupon GO checks the package catalogue using the party size, budget and selected cuisine. This lookup does not send your chat to DeepSeek.',
+                'Q仔會用本次對話的地區、人數、預算和口味查詢 Coupon GO 套餐，不會把對話傳送給 DeepSeek。',
+                'Q仔 checks the Coupon GO catalogue using the district, party size, budget and cuisine from this conversation. This lookup does not send your chat to DeepSeek.',
               )
             : dialog.tr(
                 '自由問答可能會把你的問題及最近最多 6 則對話傳送給 DeepSeek。地區和固定格式的套餐比較直接查詢 Coupon GO 目錄。請勿輸入密碼、驗證碼、兌換碼或其他個人資料。',
@@ -394,6 +404,8 @@ class _QBotScreenState extends State<QBotScreen> {
       final data = await widget.api.post('/qbot/chat', body: {
         'message': q,
         'language': english ? 'en' : 'zh-Hant',
+        if (catalogComparison) 'comparison_form': true,
+        if (_shoppingContext != null) 'shopping_context': _shoppingContext,
         if (preference != null) 'preference': preference,
         if (searchPosition != null)
           'location': {'lat': searchPosition.lat, 'lng': searchPosition.lng},
@@ -412,6 +424,9 @@ class _QBotScreenState extends State<QBotScreen> {
         throw const FormatException('missing answer');
       }
       setState(() {
+        if (data['shopping_context'] case final Map<String, dynamic> options) {
+          _shoppingContext = options;
+        }
         _nearbyQuestion = data['needs_location'] == true ? q : null;
         _messages.add((
           'assistant',
@@ -544,6 +559,7 @@ class _QBotScreenState extends State<QBotScreen> {
                       _failedPreference = null;
                       _location = null;
                       _devicePosition = null;
+                      _shoppingContext = null;
                       _nearbyQuestion = null;
                       _rateLimited = false;
                       _invalidInput = false;
