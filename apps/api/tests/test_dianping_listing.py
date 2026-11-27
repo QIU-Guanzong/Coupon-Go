@@ -349,10 +349,10 @@ def test_paid_coupon_cannot_be_exchanged_for_points_but_free_can(client):
         db.add(models.PointTransaction(user_id=user.id, delta=100, reason="test", ref_id=0))
         paid = models.Coupon(shop_id=1, vendor_id=1, coupon_type="Price", coupon_name="付費積分券",
             valid_from=_now() - timedelta(days=1), valid_to=_now() + timedelta(days=1),
-            status="active", kind="coupon", is_points_exchange=True, sale_price=10)
+            status="active", kind="coupon", is_points_exchange=True, sale_price=10, total=1, remaining=1)
         free = models.Coupon(shop_id=1, vendor_id=1, coupon_type="Price", coupon_name="免費積分券",
             valid_from=_now() - timedelta(days=1), valid_to=_now() + timedelta(days=1),
-            status="active", kind="coupon", is_points_exchange=True, sale_price=0)
+            status="active", kind="coupon", is_points_exchange=True, sale_price=0, total=1, remaining=1)
         db.add_all([paid, free]); db.commit()
         paid_id, free_id = paid.id, free.id
     finally:

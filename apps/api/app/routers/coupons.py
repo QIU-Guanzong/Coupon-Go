@@ -51,9 +51,11 @@ def ensure_paid_voucher(db, item):
             raise errors.voucher_unpaid()
 
 
-def ensure_redeemable(coupon, *, purchased_order=False):
+def ensure_redeemable(coupon, *, purchased_order=False, points_exchange=False):
     allowed = ("active", "paused", "pending_review", "scheduled", "sold_out", "draft")
-    if coupon.status != "active" and not (purchased_order and coupon.status in allowed):
+    # Selling out prevents new issuance, not use of an already-issued point reward.
+    if (coupon.status != "active" and not (purchased_order and coupon.status in allowed)
+            and not (points_exchange and coupon.status == "sold_out")):
         raise errors.coupon_inactive()
     if coupon.valid_to <= _now():
         raise errors.coupon_expired()
@@ -144,7 +146,8 @@ def generate_qr(wallet_item_id: int, user: models.User = Depends(get_current_use
     if item.status != 1:
         raise errors.coupon_not_usable()
     ensure_paid_voucher(db, item)
-    ensure_redeemable(item.coupon, purchased_order=item.source == "purchase")
+    ensure_redeemable(item.coupon, purchased_order=item.source == "purchase",
+                      points_exchange=item.source == "exchange")
     # Line A anti-screenshot: a fresh code is generated on EVERY present,
     # so a screenshot / forwarded photo of an older code is dead as soon
     # as the owner re-presents. Each code is single-use (cleared on scan).
@@ -234,7 +237,8 @@ def _redeem_item(db: Session, item: models.WalletItem,
     if reason:
         raise HTTPException(400, reason)
     ensure_paid_voucher(db, item)
-    ensure_redeemable(coupon, purchased_order=item.source == "purchase")
+    ensure_redeemable(coupon, purchased_order=item.source == "purchase",
+                      points_exchange=item.source == "exchange")
     connect_service.ensure_prior_transfer_closed(db, item.id)
     today_start = _now().replace(hour=0, minute=0, second=0, microsecond=0)
     scans_today = db.query(models.Redemption).filter(

@@ -70,12 +70,12 @@ def test_exchange_commits_before_expiry_recalculates(sessions, monkeypatch):
         db.commit()
     exchange_has_lock, finish_exchange, sweep_started = Event(), Event(), Event()
     observe_sweep_lock(monkeypatch, sweep_started)
-    original_balance = wallet_router.points_balance
+    original_balance = points_service.points_balance
     def paused_balance(db, uid):
         exchange_has_lock.set()
         assert finish_exchange.wait(10)
         return original_balance(db, uid)
-    monkeypatch.setattr(wallet_router, "points_balance", paused_balance)
+    monkeypatch.setattr(points_service, "points_balance", paused_balance)
     def exchange():
         with sessions() as db:
             return wallet_router.exchange_points(coupon_id, user=db.get(models.User, account_id), db=db)
