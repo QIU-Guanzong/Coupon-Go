@@ -8,6 +8,7 @@ import 'package:coupon_go/screens/bargain.dart';
 import 'package:coupon_go/screens/customer.dart';
 import 'package:coupon_go/screens/packages.dart';
 import 'package:coupon_go/screens/qbot.dart';
+import 'package:coupon_go/theme.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -16,6 +17,10 @@ class _BotApi extends ApiClient {
   Object? offers;
   final reads = <String>[];
   final posts = <String>[];
+  final postBodies = <Map<String, dynamic>?>[];
+  String answer = 'Here are three offers.';
+  double packageTotal = 25;
+  int packageStock = 5;
 
   @override
   Future<Map<String, dynamic>> home({double? lat, double? lng}) async => {};
@@ -28,9 +33,10 @@ class _BotApi extends ApiClient {
   Future<Map<String, dynamic>> post(String path,
       {Map<String, dynamic>? body, Map<String, String>? query}) async {
     posts.add(path);
+    postBodies.add(body);
     expect(path, '/qbot/chat');
     return {
-      'answer': 'Here are three offers.',
+      'answer': answer,
       if (offers != null) 'offers': offers,
     };
   }
@@ -47,7 +53,14 @@ class _BotApi extends ApiClient {
   @override
   Future<Map<String, dynamic>> packageDetails(int id) async {
     reads.add('package:$id');
-    return {'package_id': id, 'name': 'Lunch package', 'shop_name': 'Bistro', 'stock_left': 5, 'package_price': 25};
+    return {
+      'package_id': id,
+      'name': 'Lunch package',
+      'shop_name': 'Bistro',
+      'stock_left': packageStock,
+      'package_price': packageTotal,
+      'original_price': 300,
+    };
   }
 
   @override
@@ -164,6 +177,64 @@ void main() {
             .id,
         69);
     expect(api.reads, ['coupon:11', 'package:42', 'campaigns']);
+    expect(api.posts, ['/qbot/chat']);
+  });
+
+  testWidgets(
+      'comparison card rereads changed price and stock and back keeps chat',
+      (tester) async {
+    final api = _BotApi()
+      ..offers = [_offer('package', 42, 'Lunch package')]
+      ..answer = r'Lunch package · HK$199 total, about HK$99.50 per person.';
+    final language = AppLanguage()..english = true;
+    addTearDown(language.dispose);
+    addTearDown(api.dispose);
+    await tester.pumpWidget(LanguageScope(
+        language: language, child: MaterialApp(home: QBotScreen(api: api))));
+    await tester.enterText(find.byType(TextField), 'My dinner draft');
+    await tester.pump();
+    await tester.tap(find.byKey(const ValueKey('qbot-compare-packages')));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+        find.byKey(const ValueKey('qbot-compare-budget')), '200');
+    await tester.tap(find.byKey(const ValueKey('qbot-compare-submit')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Agree and send'));
+    await tester.pumpAndSettle();
+    expect(api.postBodies.single?['message'],
+        r'Compare packages for 2, total budget HK$200');
+    expect(find.text(api.answer), findsOneWidget);
+
+    Future<void> openCard() async {
+      await tester.ensureVisible(_tile('package', 42));
+      await tester.tap(_tile('package', 42));
+      await tester.pumpAndSettle();
+      expect(
+          tester
+              .widget<PackageDetailScreen>(find.byType(PackageDetailScreen))
+              .packageId,
+          42);
+    }
+
+    api.packageTotal = 220;
+    await openCard();
+    expect(find.text(formatHkd(220)), findsWidgets);
+    expect(find.text(formatHkd(199)), findsNothing);
+    expect(await tester.binding.handlePopRoute(), isTrue);
+    await tester.pumpAndSettle();
+    expect(find.text(api.answer), findsOneWidget);
+    expect(_tile('package', 42), findsOneWidget);
+    expect(tester.widget<TextField>(find.byType(TextField)).controller!.text,
+        'My dinner draft');
+
+    api.packageStock = 0;
+    await openCard();
+    final soldOut = find.widgetWithText(ElevatedButton, 'Sold out');
+    expect(tester.widget<ElevatedButton>(soldOut).onPressed, isNull);
+    await tester.tap(find.byTooltip('Back'));
+    await tester.pumpAndSettle();
+    expect(find.text(api.answer), findsOneWidget);
+    expect(api.reads, ['package:42', 'package:42']);
     expect(api.posts, ['/qbot/chat']);
   });
 
