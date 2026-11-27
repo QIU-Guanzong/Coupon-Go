@@ -33,7 +33,17 @@ TextSpan formatQBotAnswer(String raw) {
   return TextSpan(children: spans);
 }
 
-typedef _PackageComparison = ({int people, String budget});
+typedef _PackageComparison = ({int people, String budget, String preference});
+const _packagePreferences = {
+  'hotpot': ('火鍋', 'Hot pot'),
+  'sushi': ('壽司', 'Sushi'),
+  'dim_sum': ('點心', 'Dim sum'),
+  'coffee': ('咖啡', 'Coffee'),
+  'vegetarian': ('素食', 'Vegetarian'),
+  'cantonese': ('粵菜', 'Cantonese'),
+  'seafood': ('海鮮', 'Seafood'),
+  'sichuan': ('川菜', 'Sichuan'),
+};
 
 class _PackageComparisonDialog extends StatefulWidget {
   const _PackageComparisonDialog();
@@ -48,6 +58,7 @@ class _PackageComparisonDialogState extends State<_PackageComparisonDialog> {
   final _people = TextEditingController(text: '2');
   final _budget = TextEditingController();
   bool _submitted = false;
+  String _preference = '';
 
   @override
   void dispose() {
@@ -62,6 +73,7 @@ class _PackageComparisonDialogState extends State<_PackageComparisonDialog> {
     Navigator.pop<_PackageComparison>(context, (
       people: int.parse(_people.text.trim()),
       budget: _budget.text.trim(),
+      preference: _preference,
     ));
   }
 
@@ -109,6 +121,23 @@ class _PackageComparisonDialogState extends State<_PackageComparisonDialog> {
               },
               onFieldSubmitted: (_) => _submit(),
             ),
+            const SizedBox(height: 12),
+            DropdownButtonFormField<String>(
+              key: const ValueKey('qbot-compare-preference'),
+              initialValue: _preference,
+              isExpanded: true,
+              decoration:
+                  InputDecoration(labelText: t('口味偏好', 'Cuisine preference')),
+              onChanged: (value) => setState(() => _preference = value ?? ''),
+              items: [
+                DropdownMenuItem(
+                    value: '', child: Text(t('不限口味', 'Any cuisine'))),
+                for (final entry in _packagePreferences.entries)
+                  DropdownMenuItem(
+                      value: entry.key,
+                      child: Text(t(entry.value.$1, entry.value.$2))),
+              ],
+            ),
           ],
         ),
       ),
@@ -142,6 +171,7 @@ class _QBotScreenState extends State<QBotScreen> {
   final _messages = <(String, String, String?, List<QBotOffer>, List<Shop>)>[];
   bool _locating = false;
   bool _failedLocal = false;
+  String? _failedPreference;
   ({double lat, double lng})? _location;
   ({double lat, double lng})? _devicePosition;
   String? _nearbyQuestion;
@@ -198,7 +228,13 @@ class _QBotScreenState extends State<QBotScreen> {
       '比較${comparison.people}人套餐${total.isEmpty ? '' : '，總預算$amount'}',
       'Compare packages for ${comparison.people}${total.isEmpty ? '' : ', total budget $amount'}',
     );
-    await _ask(question, catalogComparison: true);
+    final selected = _packagePreferences[comparison.preference];
+    final description = selected == null
+        ? question
+        : '$question · ${context.tr('偏好 ${selected.$1}', 'I prefer ${selected.$2}')}';
+    await _ask(description,
+        catalogComparison: true,
+        preference: selected == null ? null : comparison.preference);
   }
 
   Future<void> _chooseArea({String? followUp}) async {
@@ -289,8 +325,8 @@ class _QBotScreenState extends State<QBotScreen> {
         title: Text(dialog.tr('使用 Q仔', 'Use Q仔')),
         content: Text(catalogComparison
             ? dialog.tr(
-                '這次只會用人數和整份預算查詢 Coupon GO 套餐，不會把對話傳送給 DeepSeek。',
-                'Coupon GO checks the package catalog using only the party size and total budget. This lookup does not send your chat to DeepSeek.',
+                '這次只會用人數、預算和選擇的口味查詢 Coupon GO 套餐，不會把對話傳送給 DeepSeek。',
+                'Coupon GO checks the package catalogue using the party size, budget and selected cuisine. This lookup does not send your chat to DeepSeek.',
               )
             : dialog.tr(
                 '自由問答可能會把你的問題及最近最多 6 則對話傳送給 DeepSeek。地區和固定格式的套餐比較直接查詢 Coupon GO 目錄。請勿輸入密碼、驗證碼、兌換碼或其他個人資料。',
@@ -322,6 +358,7 @@ class _QBotScreenState extends State<QBotScreen> {
       {bool retry = false,
       bool catalogComparison = false,
       bool localLookup = false,
+      String? preference,
       ({double lat, double lng})? position}) async {
     final q = input.trim();
     final searchPosition = position ??
@@ -357,6 +394,7 @@ class _QBotScreenState extends State<QBotScreen> {
       final data = await widget.api.post('/qbot/chat', body: {
         'message': q,
         'language': english ? 'en' : 'zh-Hant',
+        if (preference != null) 'preference': preference,
         if (searchPosition != null)
           'location': {'lat': searchPosition.lat, 'lng': searchPosition.lng},
         'history': [
@@ -395,6 +433,7 @@ class _QBotScreenState extends State<QBotScreen> {
           _failed = true;
           _failedComparison = catalogComparison;
           _failedLocal = useCatalog;
+          _failedPreference = preference;
           _rateLimited = error is ApiException && error.status == 429;
           _invalidInput = error is ApiException && error.status == 422;
           if (_invalidInput) {
@@ -502,6 +541,7 @@ class _QBotScreenState extends State<QBotScreen> {
                       _failed = false;
                       _failedComparison = false;
                       _failedLocal = false;
+                      _failedPreference = null;
                       _location = null;
                       _devicePosition = null;
                       _nearbyQuestion = null;
@@ -555,6 +595,16 @@ class _QBotScreenState extends State<QBotScreen> {
                                 key: const ValueKey('qbot-compare-packages'),
                                 label: Text(t('比較套餐', 'Compare packages')),
                                 onPressed: _sending ? null : _openComparison,
+                              ),
+                              ActionChip(
+                                key: const ValueKey('qbot-flash-deals'),
+                                avatar:
+                                    const Icon(Icons.bolt_outlined, size: 17),
+                                label: Text(t('限時秒殺', 'Flash deals')),
+                                onPressed: _sending
+                                    ? null
+                                    : () => _ask(t('限時秒殺', 'Flash deals'),
+                                        localLookup: true),
                               ),
                               if (_messages.isEmpty)
                                 for (final question in [
@@ -678,6 +728,7 @@ class _QBotScreenState extends State<QBotScreen> {
                                         retry: true,
                                         catalogComparison: _failedComparison,
                                         localLookup: _failedLocal,
+                                        preference: _failedPreference,
                                         position: _location),
                                     child: Text(t('重試', 'Retry'))),
                             ]),

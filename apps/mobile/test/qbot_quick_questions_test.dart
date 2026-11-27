@@ -75,8 +75,45 @@ void main() {
     expect(api.sent.single['message'], '點樣領取優惠券');
     expect(api.sent.single['language'], 'zh-Hant');
     expect(find.text('Test reply'), findsOneWidget);
-    expect(find.byType(ActionChip), findsNWidgets(3));
+    expect(find.byType(ActionChip), findsNWidgets(4));
     expect(compare, findsOneWidget);
+  });
+
+  testWidgets(
+      'comparison retries with the selected cuisine without losing the draft',
+      (tester) async {
+    final api = await open(tester);
+    await tester.enterText(composer, '留住草稿');
+    await tester.tap(compare);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('qbot-compare-preference')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('壽司').last);
+    await tester.pumpAndSettle();
+    await tester.tap(submit);
+    await tester.pumpAndSettle();
+    api.nextError = 503;
+    await tester.tap(find.text('同意並送出'));
+    await tester.pumpAndSettle();
+    expect(api.sent.single['preference'], 'sushi');
+    await tester.tap(find.text('重試'));
+    await tester.pumpAndSettle();
+    expect(api.sent.last, api.sent.first);
+    expect(tester.widget<TextField>(composer).controller!.text, '留住草稿');
+  });
+
+  testWidgets(
+      'flash deals quick action uses the catalogue without sharing chat',
+      (tester) async {
+    final api = await open(tester);
+    await tester.tap(find.byKey(const ValueKey('qbot-flash-deals')));
+    await tester.pumpAndSettle();
+    expect(find.text('同意並送出'), findsNothing);
+    expect(api.sent.single, {
+      'message': '限時秒殺',
+      'language': 'zh-Hant',
+      'history': [],
+    });
   });
 
   testWidgets('English typed send uses the same first-send consent',

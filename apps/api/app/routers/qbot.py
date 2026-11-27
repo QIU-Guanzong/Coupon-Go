@@ -2,7 +2,8 @@
 import json
 import os
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 from decimal import Decimal, ROUND_HALF_UP
 from ipaddress import ip_address
 from typing import Annotated, Literal
@@ -10,7 +11,7 @@ from typing import Annotated, Literal
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field, StringConstraints
-from sqlalchemy import case, or_
+from sqlalchemy import case, func, or_
 from sqlalchemy.orm import Session
 
 from .. import config, models
@@ -19,7 +20,9 @@ from ..deps import get_optional_user, points_balance
 from ..models_packages import Package
 from ..models_bargain import BargainCampaign
 from ..qbot_budget import admit
-from ..qbot_places import place_answer, place_lookup
+from ..qbot_places import PlaceLookup, place_answer, place_lookup
+from ..qbot_recommendations import OfferSearch, match_terms, preference_summary, request_for
+from .nearby import published_shops
 from ..serializers_packages import REFUND_POLICY_TEXT
 
 router = APIRouter()
@@ -41,6 +44,8 @@ class Question(BaseModel):
     history: list[Turn] = Field(default_factory=list, max_length=6)
     language: Literal["zh-Hant", "en"] = "zh-Hant"
     location: SearchPosition | None = None
+    preference: Literal["hotpot", "sushi", "dim_sum", "coffee", "vegetarian", "cantonese",
+                        "seafood", "japanese", "korean", "thai", "sichuan"] | None = None
 
 
 # Only parse a whole, unambiguous request. Per-person budgets, ranges and
@@ -65,8 +70,11 @@ def comparison_request(message):
     return None
 
 
-def catalog(db, question, comparison=None):
-    now = datetime.now(timezone.utc).replace(tzinfo=None)
+_HK = ZoneInfo("Asia/Hong_Kong")
+
+
+def catalog(db, question, comparison=None, *, search=None, shop_ids=None, now=None):
+    now = now or datetime.now(timezone.utc).replace(tzinfo=None)
     c, p, b, shop = models.Coupon, Package, BargainCampaign, models.Shop
     sources = {
         "coupon": (c, c.coupon_name, c.name_en, c.valid_to, c.additional_terms,
@@ -82,9 +90,9 @@ def catalog(db, question, comparison=None):
     terms = list(dict.fromkeys(terms))[:24] + re.findall(r"[A-Za-z0-9]{2,}", question)[:8]
     results = []
     for kind, (model, name, name_en, expires, extra, filters) in sources.items():
-        if comparison and kind != "package":
+        if (comparison and kind != "package") or (search and kind != search.kind):
             continue
-        if ("限時" in question or "限时" in question):
+        if not search and ("限時" in question or "限时" in question):
             if kind != "coupon":
                 continue
             filters = [*filters, c.is_limited_time.is_(True)]
@@ -92,8 +100,36 @@ def catalog(db, question, comparison=None):
             shop, model.shop_id == shop.id).filter(
             shop.is_approved.is_(True), model.status == "active", expires > now, *filters)
         if kind == "package":
-            rows = rows.add_columns(p.person_count, p.refund_policy, p.usage_rules)
-        if comparison:
+            rows = rows.add_columns(p.person_count, p.refund_policy, p.usage_rules, p.original_price)
+        elif kind == "coupon":
+            rows = rows.add_columns(c.remaining, c.sale_price, c.min_spend)
+        if search:
+            if shop_ids is not None:
+                rows = rows.filter(shop.id.in_(shop_ids))
+            preference_columns = [name, name_en, shop.name, shop.name_en, shop.description]
+            if kind == "package":
+                preference_columns.append(p.items)
+            for keys, exclude in ((search.likes, False), (search.dislikes, True)):
+                matches = [func.lower(func.coalesce(column, "")).contains(term, autoescape=True)
+                           for group in match_terms(keys) for term in group for column in preference_columns]
+                if matches:
+                    rows = rows.filter(~or_(*matches) if exclude else or_(*matches))
+            if kind == "package":
+                rows = rows.filter(p.person_count > 0)
+                if search.people is not None:
+                    rows = rows.filter(p.person_count == search.people)
+                if search.total is not None:
+                    rows = rows.filter(p.package_price <= search.total)
+                if search.per_person is not None:
+                    rows = rows.filter(p.package_price <= search.per_person * p.person_count)
+                rows = rows.order_by(p.package_price)
+            else:
+                rows = rows.filter(c.is_limited_time.is_(True)).order_by(expires)
+                if search.ending_today:
+                    local_now = now.replace(tzinfo=timezone.utc).astimezone(_HK)
+                    midnight = (local_now + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+                    rows = rows.filter(expires < midnight.astimezone(timezone.utc).replace(tzinfo=None))
+        elif comparison:
             people, budget = comparison
             rows = rows.filter(p.person_count == people)
             if budget is not None:
@@ -108,9 +144,18 @@ def catalog(db, question, comparison=None):
                           shop=shop_name[:100], valid_to=date.date().isoformat())
             if kind == "coupon":
                 record["terms"] = (value or "")[:180]
+                stock, sale_price, minimum = details
+                record.update(stock=stock, claim_price_hkd=str(sale_price or Decimal("0.00")),
+                              min_spend_hkd=str(minimum or Decimal("0.00")))
+                record["ends_at_hkt"] = date.replace(tzinfo=timezone.utc).astimezone(_HK).isoformat()
             elif kind == "package":
-                people, policy, raw_rules = details
+                people, policy, raw_rules, original_price = details
                 record["price_hkd"] = str(value)
+                if original_price and original_price > value:
+                    saving = original_price - value
+                    record.update(listed_price_hkd=str(original_price), saving_hkd=str(saving),
+                                  saving_pct=str((saving / original_price * 100).quantize(
+                                      Decimal("0.1"), rounding=ROUND_HALF_UP)))
                 if people and people > 0:
                     record["person_count"] = people
                     record["per_person_hkd"] = str((value / people).quantize(
@@ -127,7 +172,7 @@ def catalog(db, question, comparison=None):
                 record["floor_price_hkd"] = str(value)
             results.append(record)
 
-    if comparison:
+    if comparison or search:
         return results
 
     def order(item):
@@ -176,34 +221,119 @@ def mentioned_offers(answer, public, language):
     return matches
 
 
-def comparison_answer(public, language, preview):
+def comparison_answer(public, language, preview, search=None):
     en = language == "en"
     lines = []
     if preview:
         lines.append("These are demo packages." if en else "以下為示例套餐。")
     offers = []
+    if search:
+        summary = preference_summary(search, en)
+        if summary:
+            lines.append(summary)
     if public:
-        lines.append("From the catalog, lowest total price first:" if en else "按目錄內整份套餐售價，由低至高排列。")
+        lines.append("Lowest listed package price first." if en else "按目錄內整份套餐售價，由低至高排列。")
     for item in public[:3]:
         name = (item["name_en"] or item["name"]) if en else item["name"]
         offers.append(dict(type="package", id=item["id"], name=name, shop=item["shop"]))
         price, average = item["price_hkd"], item["per_person_hkd"]
         booking = item.get("need_booking")
+        original = item.get("listed_price_hkd")
+        saving = item.get("saving_hkd")
+        pct = item.get("saving_pct")
         if en:
             terms = {"anytime": "Refundable before use; automatic refund at expiry",
                      "expiry_only": "Automatic refund at expiry only",
                      "non_refundable": "Non-refundable"}
             reserve = {True: "Booking required", False: "No booking required"}.get(booking, "Booking terms unlisted")
             refund = terms.get(item.get("refund_policy"), "Refund terms unlisted")
-            lines.append(f"{name} ({item['shop']}) · HK${price} total, about HK${average} per person. {reserve}. {refund}.")
+            saving_note = f" Listed original HK${original}; save HK${saving} ({pct}%)." if saving else ""
+            lines.append(f"{name} ({item['shop']}) · {item['person_count']} people, HK${price} total, "
+                         f"about HK${average} per person.{saving_note} {reserve}. {refund}.")
         else:
             reserve = {True: "須預約", False: "毋須預約"}.get(booking, "預約要求未列明")
             refund = REFUND_POLICY_TEXT.get(item.get("refund_policy"), "退款條款未列明")
-            lines.append(f"{name}（{item['shop']}）· 全份 HK${price}，人均約 HK${average}。{reserve}。{refund}。")
+            saving_note = f"標示原價 HK${original}，慳 HK${saving}（{pct}%）。" if saving else ""
+            lines.append(f"{name}（{item['shop']}）· {item['person_count']} 人用，"
+                         f"全份 HK${price}，人均約 HK${average}。{saving_note}{reserve}。{refund}。")
+    if len(offers) > 1:
+        featured = [item for item in public[:3] if item.get("saving_pct")]
+        if featured:
+            biggest = max(featured, key=lambda item: Decimal(item["saving_pct"]))
+            name = (biggest["name_en"] or biggest["name"]) if en else biggest["name"]
+            pct = biggest["saving_pct"]
+            lines.append(f"Largest listed percentage saving shown: {name} ({pct}%)." if en else
+                         f"上述套餐中，{name}的標示折扣幅度最大（慳 {pct}%）。")
     if not offers:
-        lines.append("No available package matches. Try another party size or total budget."
-                     if en else "暫時沒有符合條件的套餐。可試試其他人數或總預算。")
+        lines.append("No available package matches. Try a different party size, budget or preference."
+                     if en else "暫時沒有符合條件的套餐。可試試其他人數、預算或口味。")
+    if search and (search.likes or search.dislikes):
+        lines.append("Preferences match catalogue descriptions. Check ingredients with the shop."
+                     if en else "口味按目錄描述配對，食材請向商戶確認。")
     return {"answer": "\n\n".join(lines), "points_balance": None, "offers": offers}
+
+
+def local_request(question):
+    search = request_for(question, comparison_request(question.message))
+    return search if search is not None else place_lookup(question)
+
+
+def _flash_answer(items, language, preview, search):
+    en = language == "en"
+    if items:
+        lines = ["Active flash coupons, earliest deadline first." if en else "現正可領或購買的限時優惠，按截止時間排列。"]
+    else:
+        lines = ["No active flash coupons match right now." if en else "目前沒有符合條件的限時優惠。"]
+    if preview:
+        lines.insert(0, "These are demo offers." if en else "以下為示例優惠。")
+    summary = preference_summary(search, en)
+    if summary:
+        lines.append(summary)
+    offers = []
+    for item in items[:3]:
+        name = (item["name_en"] or item["name"]) if en else item["name"]
+        deadline = datetime.fromisoformat(item["ends_at_hkt"]).strftime("%Y-%m-%d %H:%M")
+        price = item["claim_price_hkd"]
+        cost = (f"Coupon costs HK${price}" if Decimal(price) else "Free to claim") if en else (
+            f"券價 HK${price}" if Decimal(price) else "免費領券")
+        if Decimal(item["min_spend_hkd"]):
+            cost += (f"; minimum shop spend HK${item['min_spend_hkd']}" if en
+                     else f"；店內最低消費 HK${item['min_spend_hkd']}")
+        stock = item["stock"]
+        availability = (f"Ends {deadline} HKT; {stock} left when checked." if en else
+                        f"香港時間 {deadline} 截止，查詢時尚餘 {stock} 張。")
+        shop = item["shop"]
+        lines.append(f"{name} ({shop}) · {cost}. {availability}" if en else
+                     f"{name}（{shop}）· {cost}。{availability}")
+        offers.append(dict(type="coupon", id=item["id"], shop=item["shop"], name=name))
+    if items:
+        lines.append("Check the offer for current stock and terms." if en else "庫存及使用條款以優惠詳情為準。")
+    return {"answer": "\n\n".join(lines), "points_balance": None, "offers": offers}
+
+
+def local_answer(db, question, lookup: OfferSearch | PlaceLookup, *, preview):
+    if isinstance(lookup, PlaceLookup):
+        return place_answer(db, lookup, question.language, preview)
+    if lookup.clarify:
+        return dict(answer=("How many people, and what is your HKD budget for the whole package "
+                            "or per person?" if question.language == "en" else
+                            "請問幾多人用？預算係整份定每人幾多港元？"),
+                    points_balance=None, offers=[])
+    shop_ids = None
+    if lookup.place:
+        place = lookup.place
+        if place.place is None and place.position is None:
+            return place_answer(db, place, question.language, preview)
+        center = place.place[2] if place.place else place.position
+        area = place.place[3] if place.place else ()
+        shops = published_shops(db, center=center, area_terms=area,
+                                radius_km=1.5 if place.place else 2.0,
+                                category_terms=place.category)
+        shop_ids = [shop["id"] for shop in shops]
+    items = catalog(db, question.message, search=lookup, shop_ids=shop_ids)
+    if lookup.kind == "coupon":
+        return _flash_answer(items, question.language, preview, lookup)
+    return comparison_answer(items, question.language, preview, lookup)
 
 
 @router.post("/qbot/chat")
@@ -224,10 +354,9 @@ def chat(body: Question, request: Request, db: Session = Depends(get_db),
                 address = "unknown"
             admit(f"ip:{address}")
     preview = request.scope.get("state", {}).get("qbot_preview")
-    comparison = comparison_request(body.message)
-    local_lookup = place_lookup(body) if not comparison else None
-    if local_lookup is not None:
-        return place_answer(db, local_lookup, body.language, preview)
+    lookup = local_request(body)
+    if lookup is not None:
+        return local_answer(db, body, lookup, preview=preview)
     key = os.getenv("DEEPSEEK_API_KEY")
     if not key:
         raise HTTPException(503, "Q仔暫時未能連線，請稍後再試")
@@ -235,9 +364,6 @@ def chat(body: Question, request: Request, db: Session = Depends(get_db),
     # optional account result separately from the model's public advice.
     asks_points = bool(re.search(r"積分|积分|幾多分|多少分|points?", body.message, re.I))
     balance = points_balance(db, user.id) if asks_points and user is not None else None
-    if comparison:
-        public = catalog(db, body.message, comparison)
-        return comparison_answer(public, body.language, preview)
     public = catalog(db, body.message)
     db.close()  # do not hold a database connection during provider I/O
     instructions = (
@@ -248,8 +374,9 @@ def chat(body: Question, request: Request, db: Session = Depends(get_db),
         f"兌換碼最長 {config.QR_TTL_SECONDS // 60} 分鐘，重新出示會換碼。"
         f"免費領券 +{config.POINTS_CLAIM} 分，免費券核銷 +{config.POINTS_REDEEM} 分；符合資格的評價 +{config.POINTS_REVIEW} 分。"
         f"付費券及套餐在核銷時按該張券分攤的實付港元乘以 {config.POINTS_PER_HKD} 後向下取整計分。"
-        "比較套餐時可引用樣本內的套餐總價、人數、約計人均價和預約要求；缺少資料須說明未列明。"
+        "比較套餐只依據目錄總價、標示原價、適用人數、約計人均價和預約要求。口味只用用戶明確提供的偏好和目錄描述；缺少資料須說明未列明。"
         "不能由有限樣本斷言全平台最抵；遇到未指定按全份或人均的預算，請先問清楚。"
+        "遇到食物過敏，不可用餐廳名稱或描述推斷食材安全，請用戶直接向商戶確認。"
         "如想按總預算找最平套餐，可輸入「比較2人套餐，總預算HK$200」或 Compare packages for 2, total budget HK$200。"
         "退款條款 anytime 為未使用隨時退及過期自動退，expiry_only 僅過期自動退，non_refundable 不設退款。"
         "套餐退款以商品條款及訂單狀態為準；已核銷不可退，不承諾退款結果。砍價活動以頁面所列價格及條款為準，不承諾成交。"

@@ -20,7 +20,7 @@ from app.main import app as backend
 from app.models_bargain import BargainCampaign
 from app.routers.bargain import campaign_out
 from app.routers.home import app_config
-from app.routers.qbot import Question, comparison_request, place_lookup
+from app.routers.qbot import Question, local_request
 
 # This attaches to every newly opened SQLite connection. The public service
 # receives a separately seeded read-only database and never changes it.
@@ -139,7 +139,7 @@ async def _qbot(scope, receive, send):
     if not _qbot_slots.acquire(blocking=False):
         return await reject("Q仔忙碌中，請稍後再試", 429)
     try:
-        local_lookup = not comparison_request(question.message) and place_lookup(question) is not None
+        local_lookup = local_request(question) is not None
         if not local_lookup and not await run_in_threadpool(_reserve_qbot_budget):
             return await reject("Q仔今日或目前的使用額度已滿，請稍後再試", 429)
         # Provide the same body to the backend; mark only this request as a

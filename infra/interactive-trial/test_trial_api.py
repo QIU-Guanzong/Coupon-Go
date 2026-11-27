@@ -219,7 +219,7 @@ def test_qbot_uses_only_the_existing_local_quota_gateway(gateway, monkeypatch):
         result = client.post('/api/v3/qbot/chat', json={'message': '優惠'})
         assert result.status_code == 200 and result.json()['reply'] == '來自現有服務'
     assert client.post('/api/v3/qbot/chat', json={'message': '優惠'}).status_code == 429
-    assert len(calls) == 6
+    assert len(calls) == 4
     assert all(url == gateway.QBOT_URL and headers == {'Content-Type': 'application/json'}
                for url, headers, _ in calls)
 

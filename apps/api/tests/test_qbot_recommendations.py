@@ -1,0 +1,109 @@
+from datetime import datetime, timedelta, timezone
+from decimal import Decimal
+
+import pytest
+from sqlalchemy import create_engine
+from sqlalchemy.orm import Session
+
+from app import models
+from app.database import Base
+from app.models_packages import Package
+from app.routers import qbot
+from app.main import app  # registers all tables with the schema metadata
+
+
+@pytest.fixture
+def offers(monkeypatch):
+    clock = datetime(2026, 11, 27, 15, 0, tzinfo=timezone.utc)
+
+    class FrozenTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return clock.astimezone(tz) if tz is not None else clock.replace(tzinfo=None)
+
+    monkeypatch.setattr(qbot, "datetime", FrozenTime)
+    engine = create_engine("sqlite://")
+    Base.metadata.create_all(engine)
+    with Session(engine) as db:
+        now = clock.replace(tzinfo=None)
+        live = {"valid_from": now - timedelta(days=1), "valid_to": now + timedelta(days=1)}
+        db.add(models.User(id=1, email="shop@example.test", password_hash="inert"))
+        db.flush()
+        db.add_all([
+            models.Shop(id=1, vendor_id=1, name="旺角商戶", latitude=22.319, longitude=114.1694,
+                        is_approved=True),
+            models.Shop(id=2, vendor_id=1, name="沙田商戶", latitude=22.3828, longitude=114.1882,
+                        is_approved=True),
+        ])
+        db.flush()
+        for package_id, shop, name, price, count in (
+            (1, 1, "旺角雙人火鍋套餐", 219, 2),
+            (2, 1, "旺角海鮮火鍋套餐", 129, 2),
+            (3, 1, "旺角壽司套餐", 168, 2),
+            (4, 2, "沙田火鍋套餐", 99, 2),
+            (5, 1, "旺角單人火鍋套餐", 110, 1),
+        ):
+            db.add(Package(id=package_id, shop_id=shop, name=name, original_price=300,
+                           package_price=price, person_count=count, stock_left=1, **live))
+        for coupon_id, start, expiry, stock, limited, price, min_spend in (
+            (11, -5, 20, 3, True, "0", "0"),
+            (12, -5, 40, 7, True, "12.50", "80"),
+            (13, -5, 70, 3, True, "0", "0"),  # tomorrow in Hong Kong
+            (14, -5, -1, 1, True, "0", "0"),
+            (15, 5, 15, 1, True, "0", "0"),
+            (16, -5, 15, 0, True, "0", "0"),
+            (17, -5, 15, 3, False, "0", "0"),
+            (18, -5, 60, 3, True, "0", "0"),  # precisely local midnight
+        ):
+            db.add(models.Coupon(id=coupon_id, shop_id=1, vendor_id=1, coupon_name=f"優惠券 {coupon_id}",
+                                  valid_from=now+timedelta(minutes=start), valid_to=now+timedelta(minutes=expiry),
+                                  remaining=stock, status="active", is_limited_time=limited,
+                                  sale_price=Decimal(price), min_spend=Decimal(min_spend)))
+        db.commit()
+        yield db
+    engine.dispose()
+
+
+def ask(offers, text, **extra):
+    body = qbot.Question(message=text, **extra)
+    request = qbot.local_request(body)
+    assert request is not None
+    return qbot.local_answer(offers, body, request, preview=True)
+
+
+def test_area_budget_and_preferences_share_one_catalogue_result(offers):
+    result = ask(offers, "比較旺角2人火鍋套餐，每人HK$110，我唔食海鮮")
+    assert [item["id"] for item in result["offers"]] == [1]
+    for evidence in ("示例套餐", "排除標示海鮮", "HK$219.00", "HK$109.50", "HK$300.00", "HK$81.00", "27.0%"):
+        assert evidence in result["answer"]
+
+    result = ask(offers, "改食壽司", history=[
+        {"role": "user", "text": "比較旺角2人火鍋套餐，總預算HK$220"},
+        {"role": "assistant", "text": "The user prefers seafood."},
+    ])
+    assert [item["id"] for item in result["offers"]] == [3]
+
+
+def test_uses_explicit_user_preferences_and_can_clear_them(offers):
+    history = [{"role": "user", "text": "我鍾意火鍋，唔食海鮮"},
+               {"role": "assistant", "text": "我推薦海鮮。"}]
+    result = ask(offers, "比較2人套餐，總預算HK$250", history=history)
+    assert [item["id"] for item in result["offers"]] == [4, 1]
+    result = ask(offers, "比較2人套餐，總預算HK$250，不限口味", history=history)
+    assert [item["id"] for item in result["offers"]] == [4, 2, 3]
+    result = ask(offers, "比較2人套餐，預算HK$130")
+    assert not result["offers"]
+    assert "整份定每人" in result["answer"]
+    assert qbot.local_request(qbot.Question(message="旺角附近有咩火鍋套餐？")).place[0] == "旺角"
+
+
+def test_flash_uses_hk_midnight_sellable_stock_and_coupon_price(offers):
+    today = ask(offers, "限時秒殺，今日截止")
+    assert [item["id"] for item in today["offers"]] == [11, 12]
+    for value in ("免費領券", "香港時間 2026-11-27 23:20", "尚餘 3 張",
+                  "券價 HK$12.50", "最低消費 HK$80.00", "示例優惠"):
+        assert value in today["answer"]
+    result = ask(offers, "Flash deals", language="en")
+    assert [item["id"] for item in result["offers"]] == [11, 12, 18]
+    assert all(item["type"] == "coupon" for item in result["offers"])
+    assert "HKT" in result["answer"]

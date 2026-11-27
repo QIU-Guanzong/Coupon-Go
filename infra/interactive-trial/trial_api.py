@@ -225,13 +225,10 @@ def _db(path):
     return engine, Session(engine)
 
 
-def _session_qbot(path, question, comparison=None, lookup=None):
+def _session_qbot(path, question, lookup):
     engine, db = _db(path)
     try:
-        if lookup is not None:
-            return qbot.place_answer(db, lookup, question.language, preview=True)
-        offers = qbot.catalog(db, question.message, comparison)
-        return qbot.comparison_answer(offers, question.language, preview=True)
+        return qbot.local_answer(db, question, lookup, preview=True)
     finally:
         db.close()
         engine.dispose()
@@ -620,8 +617,7 @@ class TrialGateway:
                 if not QBOT_URL:
                     return await JSONResponse({'detail': 'Q仔暫未開放，請稍後再試'}, 503)(scope, receive, send)
                 return await JSONResponse({'detail': '請檢查問題內容'}, 422)(scope, receive, send)
-            comparison = qbot.comparison_request(question.message)
-            lookup = qbot.place_lookup(question) if not comparison else None
+            lookup = qbot.local_request(question)
             if not QBOT_URL and lookup is None:
                 return await JSONResponse({'detail': 'Q仔暫未開放，請稍後再試'}, 503)(scope, receive, send)
             with LOCK:
@@ -640,10 +636,6 @@ class TrialGateway:
                     result = await client.post(QBOT_URL, content=bytes(body),
                                                headers={'Content-Type': 'application/json'})
                 data = result.json()
-                # Only after the existing shared gateway admitted this request.
-                # The browser's own demo shop may have changed price or stock.
-                if result.status_code == 200 and comparison:
-                    data = await asyncio.to_thread(_session_qbot, session_path, question, comparison)
                 return await JSONResponse(data, result.status_code,
                                           headers={'Cache-Control': 'no-store'})(scope, receive, send)
             except (httpx.HTTPError, ValueError):
