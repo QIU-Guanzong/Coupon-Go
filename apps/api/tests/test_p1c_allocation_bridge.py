@@ -9,8 +9,9 @@ import pytest
 from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.engine import make_url
 
+from tests.migration_contract import EXPECTED_MIGRATION_HEAD
+
 API = Path(__file__).resolve().parents[1]
-HEAD = '0031_dianping_mgmt_bridge'
 
 
 @pytest.fixture(params=['sqlite', 'postgres'])
@@ -72,7 +73,7 @@ def test_old_heads_upgrade_preserving_ledger_and_adding_missing_columns(database
             conn.execute(text("INSERT INTO point_transactions(user_id,delta,reason,created_at) VALUES (1,10,'claim','2026-01-01 00:00:00')"))
     alembic(database_url, 'upgrade', 'head')
     with engine.connect() as conn:
-        assert set(conn.execute(text('SELECT version_num FROM alembic_version')).scalars()) == {HEAD}
+        assert set(conn.execute(text('SELECT version_num FROM alembic_version')).scalars()) == {EXPECTED_MIGRATION_HEAD}
         assert float(conn.execute(text('SELECT paid_amount FROM orders WHERE id=1')).scalar_one()) == 19.95
         assert conn.execute(text('SELECT delta FROM point_transactions WHERE user_id=1')).scalar_one() == 10
         assert conn.execute(text('SELECT expires_at FROM point_transactions WHERE user_id=1')).scalar_one() is not None

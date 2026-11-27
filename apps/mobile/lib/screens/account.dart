@@ -374,6 +374,10 @@ class _WalletScreenState extends State<WalletScreen> with WalletUpdates<WalletSc
   }
 
   Future<void> _exchangePoints() async {
+    if (widget.guest) {
+      widget.onRequireSignIn?.call();
+      return;
+    }
     final api = widget.api, session = _session, balance = _balance;
     await Navigator.of(context).push(
       MaterialPageRoute(
@@ -632,6 +636,16 @@ class _WalletScreenState extends State<WalletScreen> with WalletUpdates<WalletSc
               ],
             ),
           ),
+          if (!widget.guest && (_expiring ?? 0) > 0)
+            TextButton(
+              key: const ValueKey('wallet-expiring-rewards'),
+              style: TextButton.styleFrom(
+                foregroundColor: Colors.white,
+                minimumSize: const Size(44, 44),
+              ),
+              onPressed: _exchangePoints,
+              child: Text(context.tr('查看可兌換優惠', 'View redeemable offers')),
+            ),
           if (cashbackEnabled) ...[
             const SizedBox(height: 10),
             InkWell(
@@ -1382,6 +1396,7 @@ class _PointsExchangeState extends State<_PointsExchange> {
   late int? _balance = widget.initialBalance;
   late Future<Map<String, dynamic>> _options;
   final Set<int> _exchanged = {};
+  ({int couponId, int walletId})? _latestReceipt;
   bool _busy = false;
 
   bool get _current => mounted && _session == widget.api.sessionRevision;
@@ -1395,6 +1410,86 @@ class _PointsExchangeState extends State<_PointsExchange> {
   String? _exchangeState;
   bool _uncertain = false;
 
+  Iterable<Map<String, dynamic>> _ledger(Map<String, dynamic> points) {
+    final rows = points['transactions'];
+    return rows is List ? rows.whereType<Map<String, dynamic>>() : const [];
+  }
+
+  Future<int?> _ledgerCursor() async {
+    try {
+      final points = await widget.api.points();
+      if (points['transactions'] is! List) return null;
+      var maxId = 0;
+      for (final row in _ledger(points)) {
+        final id = row['id'];
+        if (id is int && id > maxId) maxId = id;
+      }
+      return maxId;
+    } catch (_) {
+      // A direct exchange response can still confirm success.
+      return null;
+    }
+  }
+
+  void _confirmed(int couponId, int? balance, int? walletId) {
+    if (!_current) return;
+    setState(() {
+      _balance = balance;
+      _exchanged.add(couponId);
+      _latestReceipt = walletId != null && walletId > 0
+          ? (couponId: couponId, walletId: walletId)
+          : null;
+      _exchangeState = 'redeemed';
+      _uncertain = false;
+    });
+    widget.onExchanged(balance);
+  }
+
+  Future<void> _checkUncertain(int couponId, int cost, int? cursor) async {
+    if (!_current) return;
+    setState(() {
+      _exchangeState = 'uncertain';
+      _uncertain = true;
+    });
+    try {
+      final points = await widget.api.points();
+      if (!_current) return;
+      int? walletId;
+      // A receipt is useful only together with a newer debit for this coupon.
+      // Keep uncertainty on gaps or failed reads; never resend the exchange.
+      var page = 1;
+      var lastPage = 1;
+      do {
+        final data = await widget.api.wallet(status: 1, page: page);
+        if (!_current) return;
+        final pages = data['total_pages'];
+        final items = data['items'];
+        if (pages is! int || pages < 1 || items is! List) return;
+        lastPage = pages;
+        for (final row in items.whereType<Map<String, dynamic>>()) {
+          final candidate = row['id'];
+          if (candidate is int && candidate > 0 && row['coupon_id'] == couponId &&
+              row['status'] == 1 && row['source'] == 'exchange' && row['is_package'] != true) {
+            walletId = candidate;
+            break;
+          }
+        }
+        page++;
+      } while (walletId == null && page <= lastPage);
+      final debit = cursor != null && _ledger(points).any((row) {
+        final id = row['id'];
+        return id is int && id > cursor && row['ref_id'] == couponId &&
+            row['reason'] == 'exchange' && row['delta'] == -cost;
+      });
+      if (walletId != null && debit) {
+        final balance = points['balance'];
+        _confirmed(couponId, balance is int ? balance : null, walletId);
+      }
+    } catch (_) {
+      // Without both readbacks, keep the original result uncertain.
+    }
+  }
+
   Future<void> _submit(int id, int cost) async {
     if (!_current || _busy || _uncertain || _exchanged.contains(id)) return;
     if (_balance != null && _balance! < cost) {
@@ -1406,30 +1501,25 @@ class _PointsExchangeState extends State<_PointsExchange> {
       _exchangeState = null;
     });
     try {
-      final result = await widget.api.exchangePoints(id);
+      final cursor = await _ledgerCursor();
       if (!_current) return;
-      setState(() {
-        _balance = result['balance'] as int?;
-        _exchanged.add(id);
-        _exchangeState = 'redeemed';
-      });
-      widget.onExchanged(_balance);
-    } on ApiException catch (error) {
-      if (!_current) return;
-      setState(() {
-        _uncertain = error.status <= 0 || error.status >= 500;
-        _exchangeState = error.code == 'points_insufficient'
-            ? 'insufficient'
-            : _uncertain
-                ? 'uncertain'
-                : 'failed';
-      });
-    } catch (_) {
-      if (_current) {
-        setState(() {
-          _exchangeState = 'uncertain';
-          _uncertain = true;
-        });
+      try {
+        final result = await widget.api.exchangePoints(id);
+        if (!_current) return;
+        final balance = result['balance'];
+        final walletId = result['wallet_item_id'];
+        _confirmed(id, balance is int ? balance : null, walletId is int ? walletId : null);
+      } on ApiException catch (error) {
+        if (!_current) return;
+        if (error.status <= 0 || error.status >= 500) {
+          await _checkUncertain(id, cost, cursor);
+        } else {
+          setState(() => _exchangeState = error.code == 'points_insufficient'
+              ? 'insufficient'
+              : 'failed');
+        }
+      } catch (_) {
+        await _checkUncertain(id, cost, cursor);
       }
     } finally {
       if (_current) setState(() => _busy = false);
@@ -1505,6 +1595,16 @@ class _PointsExchangeState extends State<_PointsExchange> {
                     ),
                     if (_notice(context) case final notice?)
                       ListTile(title: Semantics(liveRegion: true, child: Text(notice))),
+                    if (_latestReceipt case final receipt?)
+                      ListTile(
+                        title: TextButton(
+                          key: ValueKey('wallet-exchange-show-${receipt.couponId}'),
+                          onPressed: _busy || !_current ? null : () =>
+                            openClaimedCouponWallet(context, widget.api,
+                              couponId: receipt.couponId, walletItemId: receipt.walletId),
+                          child: Text(context.tr('去錢包出示', 'Show in wallet')),
+                        ),
+                      ),
                     if (available.isEmpty)
                       ListTile(
                         title: Text(

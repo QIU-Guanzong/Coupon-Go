@@ -73,9 +73,10 @@ Endpoint 名稱沿用 Coupon GO! 1.2.6 APK 逆向出的原始名稱（含原始�
 | GET | `/vendor/redemptions/export?format=json\|csv` | **線 A** 商戶核銷記錄導出 / 匯總（對賬用；admin 看全部） |
 | GET | `/get-favorite-coupons-list?page=&status=&sortby=` | 錢包三狀態：1 未使用 / 2 已使用 / 3 已失效 |
 | GET | `/get-user-record-list` | 消費記錄 |
-| GET | `/points` | 積分餘額 + 明細 + 30 天內即將過期分數（`{balance, expiring_soon, expiring_soon_days, transactions[]}`，明細含 `expires_at`） |
+| GET | `/points` | 積分餘額 + 明細 + 30 天內即將過期分數（`{balance, expiring_soon, expiring_soon_days, transactions[]}`，明細含 `expires_at`；兌換流水含券 ID `ref_id`） |
 | POST | `/review?wallet_item_id=` | 【舊版】評價已用券，+15 分（一次）；不寫評價記錄、不影響星級 |
-| POST | `/points/exchange?coupon_id=` | 9 積分兌換 9 分分券；餘額為負時 400（退款扣回所致，見積分一節） |
+| GET | `/points/exchange-options` | 顧客可兌換的積分券及本次成本；`Cache-Control: no-store` |
+| POST | `/points/exchange?coupon_id=` | 扣積分、扣庫存並發出錢包券；成功回傳 `wallet_item_id`（見積分一節） |
 
 ## 地圖（線 A）
 
@@ -1077,7 +1078,8 @@ reviews[]}`；`sort=latest`（默認）/ `helpful`，非法值 422
 | GET | `/get-favorite-coupons-list?page=&status=&sortby=` | 錢包列表，三狀態：1 未使用 / 2 已使用 / 3 已失效；20/頁 |
 | GET | `/get-user-record-list` | 消費記錄 |
 | GET | `/points` | 積分餘額 + 明細（最新 50 條）+ 30 天內即將過期分數（`{balance, expiring_soon, expiring_soon_days, transactions[]}`，明細含 `expires_at`） |
-| POST | `/points/exchange?coupon_id=` | 9 積分兌換 9 分分券；餘額為負時 400（退款扣回所致） |
+| GET | `/points/exchange-options` | 顧客可兌換積分券及服務端設定的成本 |
+| POST | `/points/exchange?coupon_id=` | 原子兌換；餘額不足或負數時 400 |
 
 領券：`POST /api/v3/new-favorite-coupon?coupon_id=5`，成功響應
 `{message: "已存入 Q Wallet", wallet_item_id, coupon}`；錯誤：
@@ -1131,14 +1133,27 @@ redemption_id, duplicate}`；同 `idempotency_key` 重放只算一次
 `discount_price` 計。不要用券面值或 `min_spend` 自己算返現。
 
 積分：`GET /points` 響應 `{balance, expiring_soon, expiring_soon_days,
-transactions[]}`，明細項 `{id, delta, reason, created_at, expires_at}`。
+transactions[]}`，明細項 `{id, delta, reason, created_at, expires_at, ref_id}`。
+只有 `reason=exchange` 的 `ref_id` 為兌換券 ID，其他明細為 `null`。
 積分規則：領券 +10、免費券核銷 +20、付費券核銷按實付金額
 `floor(實付 × POINTS_PER_HKD)`（默認 HK$1 = 1 分）、評價（領積分時）+15；
 每筆積分自獲得起 12 個月有效（`POINTS_EXPIRE_MONTHS`），過期由調度器
 `points-expire` 清掉並寫 `reason=expire` 流水；退款扣回該訂單核銷所得
 積分（`reason=refund_clawback`），餘額可為負，負數期間兌換/轉出返回 400。
 積分行用「分」後綴、中性色，返現行用 HK$ 前綴，兩者絕不相加。
-`POST /points/exchange?coupon_id=` 為 9 積分兌換。詳見 `docs/P1C_API.md`。
+`GET /points/exchange-options`（顧客登入）返回
+`{"cost":9,"coupons":[{"id":123,"coupon_name":"…","shop_name":"…"}]}`，
+按 ID 升序最多 100 筆。成本讀 `POINTS_EXCHANGE_COST`（預設 9），不以餘額決定列表內容。
+只列已上架、時間有效、核准店舖、庫存大於零的免費積分專用券（不包括套餐）；
+同一顧客已取得過的同款券（含已用／已失效）不再列出。
+
+`POST /points/exchange?coupon_id=123` 使用同一組資格條件。
+在同一交易中鎖顧客、扣庫存、發錢包券與扣分，任何一步失敗不留下部分結果；
+成功返回 `{message,balance,wallet_item_id}`，可憑最後一張券照常出示，
+不需付款。未登入返回 401、非顧客返回 403；券不適用、已持有、餘額不足或為負則拒絕。
+若提交回應逾時，請先重讀 `/get-favorite-coupons-list` 和 `/points`，按券 ID
+核對本次新產生、未使用且 `source=exchange` 的錢包券及新 `reason=exchange` 流水，
+未確認前不重送請求。詳見 `docs/P1C_API.md`。
 
 ### 搜尋 / 通知
 
@@ -1206,11 +1221,9 @@ subtitle, has_branch: 0|1}], keyword}`（券與商户各最多 5 條）。
 ### 公共網站隔離會話（不適用正式 API）
 
 在獨立的 `/coupongo-trial/api/v3` 網關建立瀏覽器會話及顧客／商戶身份後，
-顧客可用 `GET /points/exchange-options` 取得
-`{"cost":9,"coupons":[{"id":123,"coupon_name":"…","shop_name":"…"}]}`。
-此處的積分成本讀取服務端配置，列表只含目前可兌換的免費券、不含已持有或已失效的券。
-發送 `POST /points/exchange?coupon_id=123` 前仍會再次核對券狀態與身份；
-餘額以正式既有積分規則核對，所產生的紀錄僅存在該瀏覽器的獨立資料庫。
+顧客的 `GET /points/exchange-options` 與 `POST /points/exchange` 使用上節相同的原生
+資格與原子寫入規則；網關仍核對瀏覽器會話綁定及顧客身份，所產生的紀錄僅存在
+該瀏覽器的獨立資料庫。
 
 此網關的 `POST /reviews` 只接受文字評價，必須是同一身份已核銷的券。
 `GET /reviews/mine` 按時間倒序返回當前顧客自己的最近 100 筆評價，

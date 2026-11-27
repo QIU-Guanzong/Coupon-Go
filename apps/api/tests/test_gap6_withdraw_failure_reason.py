@@ -263,9 +263,13 @@ def test_demo_catalogue_repeat_preserves_stock(client):
         from app.serializers_packages import package_out
         seed_bargain_campaigns(db)
         covers = [s.image for s in db.query(models.Shop).all()]
-        for (merchant, name), slug in OFFER_COVERS.items():
+        # Legacy and current discount names refer to the same seeded offer.
+        titles_by_cover = {}
+        for (merchant, title), slug in OFFER_COVERS.items():
+            titles_by_cover.setdefault((merchant, slug), []).append(title)
+        for (merchant, slug), titles in titles_by_cover.items():
             offer = db.query(models.Coupon).join(models.Shop).filter(
-                models.Shop.name_en == merchant, models.Coupon.coupon_name == name).one()
+                models.Shop.name_en == merchant, models.Coupon.coupon_name.in_(titles)).one()
             assert offer.image == cover_path(slug)
             covers.append(offer.image)
         for package in db.query(models.Package):

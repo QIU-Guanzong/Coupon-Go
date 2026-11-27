@@ -72,7 +72,8 @@ def _check_item(db: Session, item: models.WalletItem, vendor: models.User, branc
         return coupon, reason
     try:
         ensure_paid_voucher(db, item)
-        ensure_redeemable(coupon, purchased_order=item.source == "purchase")
+        ensure_redeemable(coupon, purchased_order=item.source == "purchase",
+                          points_exchange=item.source == "exchange")
         connect_service.ensure_prior_transfer_closed(db, item.id)
     except HTTPException as exc:
         return coupon, exc.detail
@@ -309,7 +310,8 @@ def lookup_redemption(phone: str | None = None, code_suffix: str | None = None,
             continue
         try:
             ensure_paid_voucher(db, item)
-            ensure_redeemable(coupon, purchased_order=item.source == 'purchase')
+            ensure_redeemable(coupon, purchased_order=item.source == 'purchase',
+                              points_exchange=item.source == 'exchange')
             connect_service.ensure_prior_transfer_closed(db, item.id)
         except HTTPException:
             continue

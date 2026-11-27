@@ -275,6 +275,14 @@ def test_review_and_point_exchange_share_only_current_browser(gateway):
     exchanged = a.post('/api/v3/points/exchange', headers=customer, params={'coupon_id': coupon['id']})
     assert exchanged.status_code == 200, exchanged.text
     assert exchanged.json()['balance'] == before_exchange - data['cost']
+    item_id = exchanged.json()['wallet_item_id']
+    rows = a.get('/api/v3/get-favorite-coupons-list', headers=customer).json()['items']
+    assert [(w['id'], w['source']) for w in rows if w['coupon_id'] == coupon['id']] == [
+        (item_id, 'exchange')]
+    txs = a.get('/api/v3/points', headers=customer).json()['transactions']
+    assert [(t['ref_id'], t['delta']) for t in txs if t['reason'] == 'exchange'] == [
+        (coupon['id'], -data['cost'])]
+    assert b.get(f'/api/v3/wallet/items/{item_id}/status', headers=other).status_code == 404
     assert coupon not in a.get('/api/v3/points/exchange-options', headers=customer).json()['coupons']
     assert coupon in b.get('/api/v3/points/exchange-options', headers=other).json()['coupons']
     assert b.get('/api/v3/points/exchange-options', headers=customer).status_code == 401
@@ -385,7 +393,7 @@ def test_real_trial_accepts_paid_coupon_actions_without_upload(gateway):
     assert edited.status_code == 200, edited.text
 
 
-@pytest.mark.parametrize('state', ['paid', 'future', 'expired', 'sold-out', 'paused'])
+@pytest.mark.parametrize('state', ['paid', 'future', 'expired', 'sold-out', 'paused', 'shop-unapproved', 'package'])
 def test_exchange_options_and_write_reject_the_same_ineligible_coupon(gateway, state):
     from datetime import timedelta
 
@@ -406,6 +414,10 @@ def test_exchange_options_and_write_reject_the_same_ineligible_coupon(gateway, s
             coupon.valid_to = today - timedelta(days=1)
         elif state == 'sold-out':
             coupon.remaining = 0
+        elif state == 'shop-unapproved':
+            coupon.shop.is_approved = False
+        elif state == 'package':
+            coupon.kind = 'package'
         else:
             coupon.status = 'paused'
         db.commit()

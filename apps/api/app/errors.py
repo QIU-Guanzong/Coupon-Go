@@ -147,6 +147,10 @@ def points_insufficient():
     return ApiError(400, "points_insufficient", "積分不足")
 
 
+def points_coupon_unavailable():
+    return ApiError(400, "points_coupon_unavailable", "此優惠券現時不可兌換")
+
+
 def points_coupon_already_exchanged():
     return ApiError(400, "points_coupon_already_exchanged", "已經兌換過此券")
 

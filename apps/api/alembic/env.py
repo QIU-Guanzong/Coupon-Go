@@ -33,8 +33,14 @@ def run_migrations_online():
         config.get_section(config.config_ini_section, {}),
         prefix="sqlalchemy.", poolclass=pool.NullPool)
     with connectable.connect() as connection:
-        context.configure(connection=connection, target_metadata=target_metadata)
+        sqlite = connection.dialect.name == "sqlite"
+        context.configure(connection=connection, target_metadata=target_metadata,
+                          transactional_ddl=True if sqlite else None)
         with context.begin_transaction():
+            # In legacy mode sqlite3 delays BEGIN until the first DML. Include
+            # the first DDL and all subsequent revision stamps in this transaction.
+            if sqlite and not connection.connection.driver_connection.in_transaction:
+                connection.exec_driver_sql("BEGIN")
             context.run_migrations()
 
 

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:coupon_go/api_client.dart';
 import 'package:coupon_go/language.dart';
@@ -30,12 +31,18 @@ class _QbotApi extends ApiClient {
 }
 
 void main() {
-  Future<_QbotApi> open(WidgetTester tester, {bool english = false}) async {
+  final compare = find.byKey(const ValueKey('qbot-compare-packages'));
+  final people = find.byKey(const ValueKey('qbot-compare-people'));
+  final budget = find.byKey(const ValueKey('qbot-compare-budget'));
+  final submit = find.byKey(const ValueKey('qbot-compare-submit'));
+  final composer = find.widgetWithText(TextField, '問 Q仔…');
+  Future<_QbotApi> open(WidgetTester tester,
+      {bool english = false, AppLanguage? appLanguage}) async {
     tester.view.devicePixelRatio = 1;
     tester.view.physicalSize = const Size(390, 844);
     addTearDown(tester.view.resetDevicePixelRatio);
     addTearDown(tester.view.resetPhysicalSize);
-    final language = AppLanguage()..english = english;
+    final language = appLanguage ?? (AppLanguage()..english = english);
     final api = _QbotApi();
     addTearDown(language.dispose);
     addTearDown(api.dispose);
@@ -56,7 +63,7 @@ void main() {
     await tester.tap(find.text('有咩優惠'));
     await tester.pumpAndSettle();
     expect(api.sent, isEmpty);
-    expect(find.text('你的問題及最近最多 6 則對話會傳送給 DeepSeek 以產生回覆。請勿輸入密碼、驗證碼、兌換碼或其他個人資料。'), findsOneWidget);
+    expect(find.textContaining('自由問答會把你的問題及最近最多 6 則對話傳送給 DeepSeek。'), findsOneWidget);
     await tester.tap(find.text('取消'));
     await tester.pumpAndSettle();
     expect(api.sent, isEmpty);
@@ -67,7 +74,8 @@ void main() {
     expect(api.sent.single['message'], '點樣領取優惠券');
     expect(api.sent.single['language'], 'zh-Hant');
     expect(find.text('Test reply'), findsOneWidget);
-    expect(find.byType(ActionChip), findsNothing);
+    expect(find.byType(ActionChip), findsOneWidget);
+    expect(compare, findsOneWidget);
   });
 
   testWidgets('English typed send uses the same first-send consent',
@@ -83,6 +91,132 @@ void main() {
     await tester.pumpAndSettle();
     expect(api.sent.single['message'], 'Any offers?');
     expect(api.sent.single['language'], 'en');
+  });
+
+  testWidgets('two diners and HKD200 check catalog with no history and preserve draft',
+      (tester) async {
+    final api = await open(tester);
+    await tester.enterText(composer, '晚餐草稿');
+    await tester.pump();
+    await tester.tap(compare);
+    await tester.pumpAndSettle();
+    expect(tester.widget<TextFormField>(people).controller!.text, '2');
+    expect(find.text(r'整份預算（HK$，可留空）'), findsWidgets);
+    await tester.enterText(budget, '200');
+    await tester.tap(submit);
+    await tester.pumpAndSettle();
+    expect(api.sent, isEmpty);
+    expect(find.textContaining('不會把對話傳送給 DeepSeek'), findsOneWidget);
+    await tester.tap(find.text('同意並送出'));
+    await tester.pumpAndSettle();
+    expect(api.sent.single, {
+      'message': r'比較2人套餐，總預算HK$200',
+      'language': 'zh-Hant',
+      'history': [],
+    });
+    expect(tester.widget<TextField>(composer).controller!.text, '晚餐草稿');
+
+    // Acceptance for the catalog lookup must not opt in to sending free text.
+    await tester.tap(find.byTooltip('送出'));
+    await tester.pumpAndSettle();
+    expect(api.sent, hasLength(1));
+    expect(find.textContaining('自由問答會把你的問題'), findsOneWidget);
+    await tester.tap(find.text('同意並送出'));
+    await tester.pumpAndSettle();
+    expect(api.sent.last['message'], '晚餐草稿');
+  });
+
+  testWidgets('editable party size, blank budget and no match in English',
+      (tester) async {
+    final api = await open(tester, english: true);
+    api.answer = 'No available package matches. Try another party size or total budget.';
+    expect(find.text('Compare packages'), findsOneWidget);
+    await tester.tap(compare);
+    await tester.pumpAndSettle();
+    expect(find.text(r'Total budget (HK$, optional)'), findsWidgets);
+    await tester.enterText(people, '5');
+    await tester.tap(submit);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Agree and send'));
+    await tester.pumpAndSettle();
+    expect(api.sent.single, {
+      'message': 'Compare packages for 5',
+      'language': 'en',
+      'history': [],
+    });
+    expect(find.text(api.answer), findsOneWidget);
+    expect(find.byType(Card), findsNothing);
+    expect(compare, findsOneWidget);
+  });
+
+  testWidgets('invalid numbers and cancelling either dialog never send or clear draft',
+      (tester) async {
+    final api = await open(tester);
+    await tester.enterText(composer, '保留草稿');
+    await tester.pump();
+    await tester.tap(compare);
+    await tester.pumpAndSettle();
+    await tester.enterText(people, '0');
+    await tester.enterText(budget, '20.123');
+    await tester.tap(submit);
+    await tester.pumpAndSettle();
+    expect(find.text('請輸入 1 至 99 人。'), findsOneWidget);
+    expect(find.text('請輸入港元金額，最多兩位小數。'), findsOneWidget);
+    expect(api.sent, isEmpty);
+    await tester.tap(find.text('取消'));
+    await tester.pumpAndSettle();
+    expect(tester.widget<TextField>(composer).controller!.text, '保留草稿');
+    await tester.tap(compare);
+    await tester.pumpAndSettle();
+    await tester.tap(submit);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('取消'));
+    await tester.pumpAndSettle();
+    expect(api.sent, isEmpty);
+    expect(tester.widget<TextField>(composer).controller!.text, '保留草稿');
+  });
+
+  testWidgets('language changes while dialog is open keep fields and submit localized fixed format',
+      (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    final language = AppLanguage();
+    final api = await open(tester, appLanguage: language);
+    await tester.tap(compare);
+    await tester.pumpAndSettle();
+    await tester.enterText(people, '3');
+    await tester.enterText(budget, '200.50');
+    await language.commit(true);
+    await tester.pumpAndSettle();
+    expect(find.text(r'Total budget (HK$, optional)'), findsWidgets);
+    expect(tester.widget<TextFormField>(people).controller!.text, '3');
+    await tester.tap(submit);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Agree and send'));
+    await tester.pumpAndSettle();
+    expect(api.sent.single['message'],
+        r'Compare packages for 3, total budget HK$200.50');
+    expect(api.sent.single['language'], 'en');
+  });
+
+  testWidgets('retry for lookup stays on the catalog path and keeps draft',
+      (tester) async {
+    final api = await open(tester, english: true);
+    api.nextError = 429;
+    await tester.enterText(find.byType(TextField), 'Dinner draft');
+    await tester.pump();
+    await tester.tap(compare);
+    await tester.pumpAndSettle();
+    await tester.tap(submit);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Agree and send'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Retry'));
+    await tester.pumpAndSettle();
+    expect(api.sent, hasLength(2));
+    expect(api.sent.first, api.sent.last);
+    expect(api.sent.last['history'], isEmpty);
+    expect(tester.widget<TextField>(find.byType(TextField)).controller!.text,
+        'Dinner draft');
   });
 
   testWidgets('rate limit offers retry without sending duplicate history', (tester) async {
