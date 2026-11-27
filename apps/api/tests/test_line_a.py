@@ -333,7 +333,7 @@ def test_qbot_public_offers_and_private_points(client, monkeypatch):
         return httpx.Response(200, request=httpx.Request("POST", url),
                               json={"choices": [{"message": {"content": "打開 Q Wallet。"}}]})
 
-    monkeypatch.setattr(qbot.httpx, "post", provider)
+    monkeypatch.setattr(qbot.qbot_providers.httpx, "post", provider)
     body = {"message": "我有幾多積分？"}
     result = client.post("/api/v3/qbot/chat", headers=h, json=body)
     assert result.status_code == 200

@@ -1,6 +1,5 @@
 """Read-only Coupon GO assistant. Ground answers in public catalog data and user-supplied chat text."""
 import json
-import os
 import re
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
@@ -8,13 +7,12 @@ from decimal import Decimal, ROUND_HALF_UP
 from ipaddress import ip_address
 from typing import Annotated, Literal
 
-import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field, StringConstraints
 from sqlalchemy import case, func, or_
 from sqlalchemy.orm import Session
 
-from .. import config, models
+from .. import config, models, qbot_providers
 from ..database import get_db
 from ..deps import get_optional_user, points_balance
 from ..models_packages import Package
@@ -49,6 +47,7 @@ class Question(BaseModel):
     preference: Cuisine | None = None
     comparison_form: bool = False
     shopping_context: ShoppingContext | None = None
+    allow_provider_fallback: bool = False
 
 
 # Only parse a whole, unambiguous request. Per-person budgets, ranges and
@@ -387,8 +386,8 @@ def chat(body: Question, request: Request, db: Session = Depends(get_db),
     lookup = local_request(body)
     if lookup is not None:
         return local_answer(db, body, lookup, preview=preview)
-    key = os.getenv("DEEPSEEK_API_KEY")
-    if not key:
+    providers = qbot_providers.configured_providers(body.allow_provider_fallback)
+    if not providers:
         raise HTTPException(503, "Q仔暫時未能連線，請稍後再試")
     # Keep balances and identity in this service. The app renders this
     # optional account result separately from the model's public advice.
@@ -423,18 +422,8 @@ def chat(body: Question, request: Request, db: Session = Depends(get_db),
                           "history": [turn.model_dump() for turn in body.history], "question": body.message},
                          ensure_ascii=False)
     try:
-        res = httpx.post("https://api.deepseek.com/chat/completions",
-                         headers={"Authorization": f"Bearer {key}"},
-                         json={"model": os.getenv("DEEPSEEK_MODEL") or "deepseek-flash",
-                               "messages": [{"role": "system", "content": instructions},
-                                            {"role": "user", "content": content}],
-                               "max_tokens": 450, "thinking": {"type": "disabled"}},
-                         timeout=httpx.Timeout(25.0, connect=6.0))
-        res.raise_for_status()
-        answer = res.json()["choices"][0]["message"]["content"]
-        if not isinstance(answer, str) or not answer.strip():
-            raise ValueError("empty answer")
-    except (httpx.HTTPError, KeyError, IndexError, ValueError, TypeError):
+        answer = qbot_providers.answer(providers, instructions, content)
+    except qbot_providers.ProviderUnavailable:
         raise HTTPException(503, "Q仔暫時未能回答，請重試") from None
-    return {"answer": answer.strip(), "points_balance": balance,
+    return {"answer": answer, "points_balance": balance,
             "offers": mentioned_offers(answer, public, body.language)}

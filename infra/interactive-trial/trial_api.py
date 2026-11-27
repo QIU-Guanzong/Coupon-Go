@@ -59,6 +59,7 @@ if os.environ.get('DATABASE_URL') != f'sqlite:///{TEMPLATE}':
     raise RuntimeError('trial database must be its isolated template')
 if any(os.environ.get(k) for k in ('STRIPE_SECRET_KEY', 'STRIPE_PUBLISHABLE_KEY',
                                     'STRIPE_WEBHOOK_SECRET', 'DEEPSEEK_API_KEY',
+                                    'QBOT_GEMINI_API_KEY', 'QBOT_OPENAI_API_KEY',
                                     'COUPON_WEB_DIR')):
     raise RuntimeError('trial process must not have payment/AI credentials or mount a web root')
 if not config.SECRET_KEY or config.SECRET_KEY == config.DEFAULT_SECRET_KEY:

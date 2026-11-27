@@ -28,7 +28,8 @@ def gateway(tmp_path_factory):
         'SECRET_KEY': secrets.token_urlsafe(48),
     }
     forbidden = ('STRIPE_SECRET_KEY', 'STRIPE_PUBLISHABLE_KEY', 'STRIPE_WEBHOOK_SECRET',
-                 'DEEPSEEK_API_KEY', 'REDIS_URL', 'COUPON_WEB_DIR', 'TRIAL_QBOT_PROXY_URL')
+                 'DEEPSEEK_API_KEY', 'QBOT_GEMINI_API_KEY', 'QBOT_OPENAI_API_KEY',
+                 'REDIS_URL', 'COUPON_WEB_DIR', 'TRIAL_QBOT_PROXY_URL')
     for key in forbidden:
         os.environ.pop(key, None)
     os.environ.update(settings)

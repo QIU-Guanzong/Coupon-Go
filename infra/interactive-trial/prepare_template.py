@@ -14,7 +14,8 @@ if not requested_root.is_absolute() or str(root) == '/':
     raise SystemExit('TRIAL_STATE_DIR must be a dedicated absolute directory')
 if os.environ.get('APP_ENV') != 'dev' or os.environ.get('SCHEDULER_ENABLED') != '0':
     raise SystemExit('trial requires development simulator with scheduler disabled')
-if any(os.environ.get(k) for k in ('STRIPE_SECRET_KEY', 'STRIPE_PUBLISHABLE_KEY', 'STRIPE_WEBHOOK_SECRET', 'DEEPSEEK_API_KEY')):
+if any(os.environ.get(k) for k in ('STRIPE_SECRET_KEY', 'STRIPE_PUBLISHABLE_KEY', 'STRIPE_WEBHOOK_SECRET',
+                                   'DEEPSEEK_API_KEY', 'QBOT_GEMINI_API_KEY', 'QBOT_OPENAI_API_KEY')):
     raise SystemExit('trial must not receive Stripe or AI credentials')
 template = root / 'template.db'
 if os.environ.get('DATABASE_URL') != f'sqlite:///{template}':

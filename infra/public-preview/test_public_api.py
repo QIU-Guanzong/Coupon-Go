@@ -184,7 +184,7 @@ class PublicPreviewTest(unittest.TestCase):
                 self.assertIn(field, package)
             self.assertNotIn("synthetic-test-key", str(kwargs["json"]))
             return ProviderResponse()
-        with patch.object(qbot.httpx, "post", side_effect=provider) as send:
+        with patch.object(qbot.qbot_providers.httpx, "post", side_effect=provider) as send:
             result = self.client.post("/api/v3/qbot/chat", json=payload,
                                       headers={"Authorization": "Bearer fake", "Cookie": "session=fake"})
             self.assertEqual(result.status_code, 200, result.text)
@@ -213,7 +213,7 @@ class PublicPreviewTest(unittest.TestCase):
 
         env = dict(PUBLIC_QBOT_ENABLED="1", PUBLIC_QBOT_QUOTA_DB=str(directory / "compare.sqlite"),
                    DEEPSEEK_API_KEY="synthetic-test-key")
-        with patch.dict(os.environ, env), patch.object(qbot.httpx, "post") as provider:
+        with patch.dict(os.environ, env), patch.object(qbot.qbot_providers.httpx, "post") as provider:
             for question, lang, marker in [
                 ("比较 2 人套餐，总预算 HK$298", "zh-Hant", "示例套餐"),
                 ("Compare packages for 2, total budget HK$298", "en", "demo packages"),

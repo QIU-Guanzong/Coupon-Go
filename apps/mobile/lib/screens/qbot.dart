@@ -335,12 +335,12 @@ class _QBotScreenState extends State<QBotScreen> {
         title: Text(dialog.tr('使用 Q仔', 'Use Q仔')),
         content: Text(catalogComparison
             ? dialog.tr(
-                'Q仔會用本次對話的地區、人數、預算和口味查詢 Coupon GO 套餐，不會把對話傳送給 DeepSeek。',
-                'Q仔 checks the Coupon GO catalogue using the district, party size, budget and cuisine from this conversation. This lookup does not send your chat to DeepSeek.',
+                'Q仔會用本次對話的地區、人數、預算和口味查詢 Coupon GO 套餐，不會把對話傳送給外部模型。',
+                'Q仔 checks the Coupon GO catalogue using the district, party size, budget and cuisine from this conversation. This lookup does not send your chat to external models.',
               )
             : dialog.tr(
-                '自由問答可能會把你的問題及最近最多 6 則對話傳送給 DeepSeek。地區和固定格式的套餐比較直接查詢 Coupon GO 目錄。請勿輸入密碼、驗證碼、兌換碼或其他個人資料。',
-                'Free-form questions and up to 6 recent messages may be sent to DeepSeek. District searches and fixed-format package comparisons check the Coupon GO catalog directly. Do not enter passwords, verification codes, redemption codes or other personal information.',
+                '自由問答可能會把你的問題及最近最多 6 則對話傳送給 DeepSeek、Google Gemini 或 OpenAI。地區和固定格式的套餐比較直接查詢 Coupon GO 目錄。請勿輸入密碼、驗證碼、兌換碼或其他個人資料。',
+                'Free-form questions and up to 6 recent messages may be sent to DeepSeek, Google Gemini or OpenAI. District searches and fixed-format package comparisons check the Coupon GO catalog directly. Do not enter passwords, verification codes, redemption codes or other personal information.',
               )),
         actions: [
           TextButton(
@@ -405,6 +405,8 @@ class _QBotScreenState extends State<QBotScreen> {
         'message': q,
         'language': english ? 'en' : 'zh-Hant',
         if (catalogComparison) 'comparison_form': true,
+        if (!catalogComparison && !useCatalog && _allowedForThisVisit)
+          'allow_provider_fallback': true,
         if (_shoppingContext != null) 'shopping_context': _shoppingContext,
         if (preference != null) 'preference': preference,
         if (searchPosition != null)

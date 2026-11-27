@@ -32,7 +32,7 @@ def build_app(monkeypatch, user):
     app.dependency_overrides[get_db] = lambda: type("DB", (), {"close": lambda self: None})()
     app.dependency_overrides[get_optional_user] = lambda: user
     monkeypatch.setenv("DEEPSEEK_API_KEY", "offline-provider-test")
-    monkeypatch.setattr(qbot.httpx, "post", mock_provider)
+    monkeypatch.setattr(qbot.qbot_providers.httpx, "post", mock_provider)
     monkeypatch.setattr(qbot, "catalog", lambda *_: [])
     return app
 

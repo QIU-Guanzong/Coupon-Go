@@ -12,7 +12,7 @@ Flutter 構建使用 --base-href=/coupongo/、--dart-define=API_BASE_URL=、--da
 
 在已安裝 requirements.lock 的 Python 環境執行 `python infra/public-preview/test_public_api.py`。測試會在系統臨時目錄生成並銷毀獨立示例資料庫，檢查匿名讀取、搜尋、拒絕其他接口、過期砍價活動無持久寫入及 SQLite 只讀限制。
 
-Q仔默認關閉。啟用時由系統管理員安全配置 `DEEPSEEK_API_KEY`、`PUBLIC_QBOT_ENABLED=1` 及 `PUBLIC_QBOT_QUOTA_DB`（專用、持久、服務用戶可寫目錄內的絕對路徑）。密鑰只放入 root 限權的服務環境文件，不能放進代碼、打包檔、前端或日誌。額度庫不包含聊天內容或 IP，必須保留以維持跨重啟限制；無法寫入時會拒絕請求。網關按 UTC 每分鐘最多 20 次、每日最多 200 次，最多同時處理 3 次。部署必須固定一個 Uvicorn worker，並在可信 Nginx 對 `/coupongo/api/v3/qbot/chat` 使用 `$binary_remote_addr` 配置逐 IP `limit_req`；不得從客戶端自行提供的轉發頭判定身份。通用 API 日誌不能記錄聊天請求體或密鑰。禁用 Q仔時設 `PUBLIC_QBOT_ENABLED=0`，毋須改動目錄服務。
+Q仔默認關閉。啟用時由系統管理員安全配置 `DEEPSEEK_API_KEY`、`PUBLIC_QBOT_ENABLED=1` 及 `PUBLIC_QBOT_QUOTA_DB`（專用、持久、服務用戶可寫目錄內的絕對路徑）。自由問答可在同一服務的環境檔配置 `QBOT_GEMINI_API_KEY` 和 `QBOT_OPENAI_API_KEY`，用戶同意後才會在 DeepSeek 無法回答時按此順序切換。目錄查詢仍在 Coupon GO 內完成。密鑰只放入 root 限權的服務環境文件，不能放進代碼、打包檔、前端或日誌。額度庫不包含聊天內容或 IP，必須保留以維持跨重啟限制；無法寫入時會拒絕請求。網關按 UTC 每分鐘最多 20 次、每日最多 200 次，最多同時處理 3 次。部署必須固定一個 Uvicorn worker，並在可信 Nginx 對 `/coupongo/api/v3/qbot/chat` 使用 `$binary_remote_addr` 配置逐 IP `limit_req`；不得從客戶端自行提供的轉發頭判定身份。通用 API 日誌不能記錄聊天請求體或密鑰。禁用 Q仔時設 `PUBLIC_QBOT_ENABLED=0`，毋須改動目錄服務。
 
 伺服器部署程式可用以下方式一次性建立環境檔，無須提供密鑰。檔案已存在時此命令會停止，保留現有值。
 

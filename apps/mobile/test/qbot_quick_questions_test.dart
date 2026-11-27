@@ -64,8 +64,8 @@ void main() {
     await tester.tap(find.text('有咩優惠'));
     await tester.pumpAndSettle();
     expect(api.sent, isEmpty);
-    expect(find.textContaining('自由問答可能會把你的問題及最近最多 6 則對話傳送給 DeepSeek。'),
-        findsOneWidget);
+    expect(
+        find.textContaining('DeepSeek、Google Gemini 或 OpenAI'), findsOneWidget);
     await tester.tap(find.text('取消'));
     await tester.pumpAndSettle();
     expect(api.sent, isEmpty);
@@ -74,6 +74,7 @@ void main() {
     await tester.tap(find.text('同意並送出'));
     await tester.pumpAndSettle();
     expect(api.sent.single['message'], '點樣領取優惠券');
+    expect(api.sent.single['allow_provider_fallback'], isTrue);
     expect(api.sent.single['language'], 'zh-Hant');
     expect(find.text('Test reply'), findsOneWidget);
     expect(find.byType(ActionChip), findsNWidgets(4));
@@ -146,7 +147,7 @@ void main() {
     await tester.tap(submit);
     await tester.pumpAndSettle();
     expect(api.sent, isEmpty);
-    expect(find.textContaining('不會把對話傳送給 DeepSeek'), findsOneWidget);
+    expect(find.textContaining('不會把對話傳送給外部模型'), findsOneWidget);
     await tester.tap(find.text('同意並送出'));
     await tester.pumpAndSettle();
     expect(api.sent.single, {
