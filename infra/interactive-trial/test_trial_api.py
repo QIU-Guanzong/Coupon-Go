@@ -459,3 +459,38 @@ def test_trial_seed_labels_are_neutral_without_overwriting_a_custom_name(gateway
         assert source.execute("SELECT name FROM users WHERE role='customer'").fetchone() == ('Demo 用戶',)
     finally:
         source.close()
+
+
+def test_qbot_places_and_categories_use_current_catalog_without_model_proxy(gateway, monkeypatch):
+    monkeypatch.setattr(gateway, 'QBOT_URL', None)
+    client = TestClient(gateway.app)
+    assert client.post('/api/v3/trial/session').status_code == 200
+
+    def ask(message, **extra):
+        response = client.post('/api/v3/qbot/chat', json={'message': message, **extra})
+        assert response.status_code == 200, response.text
+        return response.json()
+
+    result = ask('旺角附近有咩火鍋套餐？')
+    assert '直線距離' in result['answer']
+    assert '示例' in result['answer']
+    assert result['places']
+    assert all(shop['has_packages'] for shop in result['places'])
+    assert all(shop['distance_km'] <= 1.5 for shop in result['places'])
+    assert result['places'][0]['shop_name'] == '蜀香麻辣火鍋城'
+    assert not result['offers']
+
+    prompt = ask('What shops are near me?', language='en')
+    assert prompt['needs_location'] is True and not prompt['places']
+    nearby = ask('What shops are near me?', language='en', location={'lat': 22.319, 'lng': 114.169})
+    assert nearby['places'] and not nearby['needs_location']
+    assert nearby['places'][0]['distance_km'] <= nearby['places'][-1]['distance_km']
+    assert 'straight-line' in nearby['answer']
+    follow_up = ask('有火鍋嗎？', history=[{'role': 'user', 'text': '旺角有咩商戶？'}])
+    assert follow_up['places'][0]['shop_name'] == '蜀香麻辣火鍋城'
+
+    shops = client.get('/api/v3/discover/shops', params={'category_id': 1}).json()
+    assert shops['category']['name'] == '飲食'
+    assert shops['shops'] and all(shop['category_id'] == 1 for shop in shops['shops'])
+    shop_id = result['places'][0]['shop_id']
+    assert client.get('/api/v3/shop-details', params={'shop_id': shop_id}).status_code == 200

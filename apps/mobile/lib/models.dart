@@ -111,6 +111,7 @@ class Shop {
       : id = j['shop_id'] as int? ?? j['id'] as int? ?? 0,
         name = j['shop_name'] as String? ?? '',
         categoryName = j['category_name'] as String? ?? '',
+        categoryId = j['category_id'] as int?,
         areaName = j['area_name'] as String? ?? '',
         address = j['address'] as String? ?? '',
         phone = j['phone'] as String? ?? '',
@@ -138,6 +139,7 @@ class Shop {
   final int id;
   final String name;
   final String categoryName;
+  final int? categoryId;
   final String areaName;
   final String address;
   final String phone;

@@ -2,7 +2,7 @@
 
 Connect is the only merchant payout and balance mechanism.
 """
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
@@ -118,7 +118,17 @@ def merchant_dashboard(days: int = Query(30, ge=1, le=90),
     shop_ids = _merchant_shop_ids(db, user)
     shops = (db.query(models.Shop).filter(models.Shop.id.in_(shop_ids))
              .order_by(models.Shop.id).all()) if shop_ids else []
-    per_shop = [mf.shop_dashboard(db, s, days=days) for s in shops]
+    as_of = datetime.now(timezone.utc)
+    per_shop = [mf.shop_dashboard(db, shop, days=days, end=as_of) for shop in shops]
+    trend = []
+    if per_shop:
+        for rows in zip(*(shop["trend"] for shop in per_shop), strict=True):
+            trend.append({
+                "date": rows[0]["date"],
+                "redemptions": sum(row["redemptions"] for row in rows),
+                **{key: _sum_money(row[key] for row in rows)
+                   for key in ("gross_amount", "net_amount")},
+            })
     totals = {
         "redemptions": sum(s["totals"]["redemptions"] for s in per_shop),
         "redeemed_orders": sum(s["totals"]["redeemed_orders"] for s in per_shop),
@@ -136,10 +146,11 @@ def merchant_dashboard(days: int = Query(30, ge=1, le=90),
         if totals["claims"] else 0)
     return {
         "period": per_shop[0]["period"] if per_shop else {
-            "from": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
-            "to": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+            "from": (as_of.date() - timedelta(days=days - 1)).isoformat(),
+            "to": as_of.date().isoformat(),
             "days": days},
         "totals": totals,
+        "trend": trend,
         "shops": [{"shop_id": s["shop_id"], "shop_name": s["shop_name"],
                    "totals": s["totals"]} for s in per_shop],
     }

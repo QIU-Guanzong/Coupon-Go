@@ -225,9 +225,11 @@ def _db(path):
     return engine, Session(engine)
 
 
-def _session_comparison(path, question, comparison):
+def _session_qbot(path, question, comparison=None, lookup=None):
     engine, db = _db(path)
     try:
+        if lookup is not None:
+            return qbot.place_answer(db, lookup, question.language, preview=True)
         offers = qbot.catalog(db, question.message, comparison)
         return qbot.comparison_answer(offers, question.language, preview=True)
     finally:
@@ -612,7 +614,15 @@ class TrialGateway:
             return await JSONResponse({'detail': '連線已逾時，請重新載入'}, 401)(scope, receive, send)
         sid, session_path = found
         if path == '/api/v3/qbot/chat' and method == 'POST':
-            if not QBOT_URL:
+            try:
+                question = qbot.Question.model_validate_json(bytes(body))
+            except ValueError:
+                if not QBOT_URL:
+                    return await JSONResponse({'detail': 'Q仔暫未開放，請稍後再試'}, 503)(scope, receive, send)
+                return await JSONResponse({'detail': '請檢查問題內容'}, 422)(scope, receive, send)
+            comparison = qbot.comparison_request(question.message)
+            lookup = qbot.place_lookup(question) if not comparison else None
+            if not QBOT_URL and lookup is None:
                 return await JSONResponse({'detail': 'Q仔暫未開放，請稍後再試'}, 503)(scope, receive, send)
             with LOCK:
                 calls = [t for t in QBOT_CALLS.get(sid, []) if time.time() - t < 60]
@@ -623,17 +633,17 @@ class TrialGateway:
             if limited:
                 return await JSONResponse({'detail': 'Q仔忙碌中，請稍後再試'}, 429)(scope, receive, send)
             try:
-                async with httpx.AsyncClient(timeout=25, trust_env=False) as client:
+                if lookup is not None:
+                    data = await asyncio.to_thread(_session_qbot, session_path, question, lookup=lookup)
+                    return await JSONResponse(data, headers={'Cache-Control': 'no-store'})(scope, receive, send)
+                async with httpx.AsyncClient(timeout=29, trust_env=False) as client:
                     result = await client.post(QBOT_URL, content=bytes(body),
                                                headers={'Content-Type': 'application/json'})
                 data = result.json()
                 # Only after the existing shared gateway admitted this request.
                 # The browser's own demo shop may have changed price or stock.
-                if result.status_code == 200:
-                    question = qbot.Question.model_validate_json(bytes(body))
-                    comparison = qbot.comparison_request(question.message)
-                    if comparison:
-                        data = await asyncio.to_thread(_session_comparison, session_path, question, comparison)
+                if result.status_code == 200 and comparison:
+                    data = await asyncio.to_thread(_session_qbot, session_path, question, comparison)
                 return await JSONResponse(data, result.status_code,
                                           headers={'Cache-Control': 'no-store'})(scope, receive, send)
             except (httpx.HTTPError, ValueError):

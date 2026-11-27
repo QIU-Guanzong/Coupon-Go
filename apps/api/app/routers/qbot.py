@@ -19,6 +19,7 @@ from ..deps import get_optional_user, points_balance
 from ..models_packages import Package
 from ..models_bargain import BargainCampaign
 from ..qbot_budget import admit
+from ..qbot_places import place_answer, place_lookup
 from ..serializers_packages import REFUND_POLICY_TEXT
 
 router = APIRouter()
@@ -30,10 +31,16 @@ class Turn(BaseModel):
     text: MessageText
 
 
+class SearchPosition(BaseModel):
+    lat: float = Field(ge=-90, le=90)
+    lng: float = Field(ge=-180, le=180)
+
+
 class Question(BaseModel):
     message: MessageText
     history: list[Turn] = Field(default_factory=list, max_length=6)
     language: Literal["zh-Hant", "en"] = "zh-Hant"
+    location: SearchPosition | None = None
 
 
 # Only parse a whole, unambiguous request. Per-person budgets, ranges and
@@ -202,9 +209,6 @@ def comparison_answer(public, language, preview):
 @router.post("/qbot/chat")
 def chat(body: Question, request: Request, db: Session = Depends(get_db),
          user: models.User | None = Depends(get_optional_user)):
-    key = os.getenv("DEEPSEEK_API_KEY")
-    if not key:
-        raise HTTPException(503, "Q仔暫時未能連線，請稍後再試")
     # The isolated preview gateway enforces a persistent global budget and
     # the trusted reverse proxy applies per-client limits using remote_addr.
     # Its loopback address is not the visitor's address.
@@ -219,14 +223,21 @@ def chat(body: Question, request: Request, db: Session = Depends(get_db),
             except ValueError:
                 address = "unknown"
             admit(f"ip:{address}")
+    preview = request.scope.get("state", {}).get("qbot_preview")
+    comparison = comparison_request(body.message)
+    local_lookup = place_lookup(body) if not comparison else None
+    if local_lookup is not None:
+        return place_answer(db, local_lookup, body.language, preview)
+    key = os.getenv("DEEPSEEK_API_KEY")
+    if not key:
+        raise HTTPException(503, "Q仔暫時未能連線，請稍後再試")
     # Keep balances and identity in this service. The app renders this
     # optional account result separately from the model's public advice.
     asks_points = bool(re.search(r"積分|积分|幾多分|多少分|points?", body.message, re.I))
     balance = points_balance(db, user.id) if asks_points and user is not None else None
-    comparison = comparison_request(body.message)
     if comparison:
         public = catalog(db, body.message, comparison)
-        return comparison_answer(public, body.language, request.scope.get("state", {}).get("qbot_preview"))
+        return comparison_answer(public, body.language, preview)
     public = catalog(db, body.message)
     db.close()  # do not hold a database connection during provider I/O
     instructions = (

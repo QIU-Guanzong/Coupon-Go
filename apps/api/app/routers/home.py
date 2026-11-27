@@ -14,6 +14,7 @@ from .. import config, models
 from ..database import get_db
 from ..deps import get_current_user, get_optional_user
 from ..serializers import coupon_out, shop_out
+from .nearby import published_shops
 
 router = APIRouter()
 
@@ -43,14 +44,17 @@ def get_home(lat: float = Query(None), lng: float = Query(None),
     active = _active_coupons(db)
     popular = active.order_by(models.Coupon.downloads.desc()).limit(10).all()
     week = active.order_by(models.Coupon.id.desc()).limit(10).all()
-    most_grab = active.order_by(models.Coupon.downloads.desc()).limit(10).all()
     recommended = active.order_by(models.Coupon.id).limit(10).all()
     limited = active.filter(models.Coupon.is_limited_time.is_(True)).all()
-    shops = db.query(models.Shop).filter(models.Shop.is_approved.is_(True)).limit(10).all()
+    rendered_shops = published_shops(db, limit=10)
     # Gap 10: distance_km on the home coupon lists, only when the
     # caller sent a location (both lat and lng); otherwise null.
     has_loc = lat is not None and lng is not None
     loc = (lat, lng) if has_loc else (None, None)
+    rendered_coupons = {}
+    for coupon in (*popular, *week, *recommended, *limited):
+        if coupon.id not in rendered_coupons:
+            rendered_coupons[coupon.id] = coupon_out(db, coupon, lat=loc[0], lng=loc[1])
     return {
         "banners": [
             {"image": "assets/images/bg_main.png", "title": "全新優惠券平台",
@@ -60,16 +64,17 @@ def get_home(lat: float = Query(None), lng: float = Query(None),
         ],
         "categories": [
             {"id": c.id, "name": c.name, "name_en": c.name_en, "icon": c.icon}
-            for c in db.query(models.Category).all()
+            for c in db.query(models.Category).filter(models.Category.is_active.is_(True))
+                    .order_by(models.Category.id)
         ],
-        "popular_coupons": [coupon_out(db, c, lat=loc[0], lng=loc[1]) for c in popular],
-        "week_coupons": [coupon_out(db, c, lat=loc[0], lng=loc[1]) for c in week],
-        "most_grab": [coupon_out(db, c, lat=loc[0], lng=loc[1]) for c in most_grab],
-        "recommended": [coupon_out(db, c, lat=loc[0], lng=loc[1]) for c in recommended],
-        "limited_time_coupons": [coupon_out(db, c, lat=loc[0], lng=loc[1]) for c in limited],
-        "popular_merchants": [shop_out(db, s) for s in shops],
-        "frequently_used_shops": [shop_out(db, s) for s in shops[:6]],
-        "new_shops": [shop_out(db, s) for s in shops[:6]],
+        "popular_coupons": [rendered_coupons[c.id] for c in popular],
+        "week_coupons": [rendered_coupons[c.id] for c in week],
+        "most_grab": [rendered_coupons[c.id] for c in popular],
+        "recommended": [rendered_coupons[c.id] for c in recommended],
+        "limited_time_coupons": [rendered_coupons[c.id] for c in limited],
+        "popular_merchants": rendered_shops,
+        "frequently_used_shops": rendered_shops[:6],
+        "new_shops": rendered_shops[:6],
     }
 
 

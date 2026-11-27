@@ -53,9 +53,10 @@ Future<bool> requirePackageLogin(BuildContext context, ApiClient api) async {
 }
 
 class PackageListScreen extends StatefulWidget {
-  const PackageListScreen({super.key, required this.api});
+  const PackageListScreen({super.key, required this.api, this.shopId});
 
   final ApiClient api;
+  final int? shopId;
 
   @override
   State<PackageListScreen> createState() => _PackageListScreenState();
@@ -75,7 +76,7 @@ class _PackageListScreenState extends State<PackageListScreen> {
   Future<void> _load() async {
     if (mounted) setState(() => _loading = true);
     try {
-      final list = await widget.api.packages();
+      final list = await widget.api.packages(shopId: widget.shopId);
       if (!mounted) return;
       setState(() {
         _items = list.map((e) => Package.fromJson(e)).toList();

@@ -109,11 +109,15 @@ def coupon_out(db: Session, c: models.Coupon, user_id=None,
     }
 
 
-def shop_out(db: Session, s: models.Shop, user_id=None):
-    vendor = db.query(models.User).filter(models.User.id == s.vendor_id).first()
-    cat = db.query(models.Category).filter(models.Category.id == s.category_id).first()
-    area = db.query(models.Area).filter(models.Area.id == s.area_id).first()
-    branches = db.query(models.Branch).filter(models.Branch.shop_id == s.id).count()
+def shop_out(db: Session, s: models.Shop, user_id=None, *, related=None):
+    if related is None:
+        vendor = db.get(models.User, s.vendor_id)
+        cat = db.get(models.Category, s.category_id) if s.category_id else None
+        area = db.get(models.Area, s.area_id) if s.area_id else None
+        related = (vendor.name if vendor else "", cat.name if cat else "",
+                   area.name if area else "",
+                   db.query(models.Branch).filter(models.Branch.shop_id == s.id).count())
+    vendor_name, category_name, area_name, branches = related
     fav = False
     if user_id:
         fav = (
@@ -126,12 +130,12 @@ def shop_out(db: Session, s: models.Shop, user_id=None):
     return {
         "id": s.id,
         "shop_id": s.id,
-        "vendor_name": vendor.name if vendor else "",
+        "vendor_name": vendor_name or "",
         "shop_name": s.name,
         "name_en": s.name_en,
         "category_id": s.category_id,
-        "category_name": cat.name if cat else "",
-        "area_name": area.name if area else "",
+        "category_name": category_name or "",
+        "area_name": area_name or "",
         "address": s.address or "",
         "phone": s.phone or "",
         "description": s.description or "",

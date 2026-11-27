@@ -1,5 +1,3 @@
-import 'dart:math';
-
 import 'package:flutter/material.dart';
 
 import '../api_client.dart';
@@ -7,6 +5,7 @@ import '../feature_flags.dart';
 import '../language.dart';
 import '../theme.dart';
 import '../widgets/merchant_layout.dart';
+import '../widgets/merchant_trend.dart';
 import 'merchant_payout.dart';
 
 const _paper = Color(0xFFFAF7F1);
@@ -111,12 +110,15 @@ class _MerchantDashboardScreenState extends State<MerchantDashboardScreen> {
     await Future.wait([_loadMetrics(), _loadBalance()]);
   }
 
+  bool _metricsLoading = false;
+
   Future<void> _loadMetrics({int? days}) async {
     final request = ++_metricsRequest;
     setState(() {
+      if (days != null && days != _days) _dashboard = null;
       _days = days ?? _days;
-      _dashboard = null;
       _dashboardError = null;
+      _metricsLoading = true;
     });
     try {
       final report = await widget.api.merchantDashboard(_days);
@@ -126,6 +128,10 @@ class _MerchantDashboardScreenState extends State<MerchantDashboardScreen> {
     } catch (error) {
       if (mounted && request == _metricsRequest) {
         setState(() => _dashboardError = _errorText(context, error));
+      }
+    } finally {
+      if (mounted && request == _metricsRequest) {
+        setState(() => _metricsLoading = false);
       }
     }
   }
@@ -191,8 +197,12 @@ class _MerchantDashboardScreenState extends State<MerchantDashboardScreen> {
                 _ReportState(error: _dashboardError, retry: _loadMetrics)
               else if (shops.isEmpty)
                 Text(context.tr('暫無可查看的店舖。', 'No shops to show.'))
-              else
+              else ...[
+                if (_metricsLoading) const LinearProgressIndicator(),
+                if (_dashboardError != null)
+                  _ReportState(error: _dashboardError, retry: _loadMetrics),
                 _OperatingResults(report: report),
+              ],
             ],
           ),
           side: _ReportPanel(
@@ -357,7 +367,6 @@ class _MerchantShopDashboardScreenState
     final dashboard = _dashboard;
     final entries = _rows(_entries?['entries']).toList();
     final coupons = _rows(dashboard?['coupons']).toList();
-    final trend = _rows(dashboard?['trend']).toList();
     final canViewShop = dashboard != null || _balance != null;
     return _ReportPage(
       title: context.tr('店舖報告', 'Shop report'),
@@ -398,7 +407,6 @@ class _MerchantShopDashboardScreenState
                 _ReportState(error: _dashboardError, retry: _loadOverview)
               else ...[
                 _OperatingResults(report: dashboard),
-                if (trend.isNotEmpty) _DailyTrend(trend: trend),
               ],
             ],
           ),
@@ -692,17 +700,33 @@ class _ReportHero extends StatelessWidget {
           padding: const EdgeInsets.all(20),
           child:
               Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Icon(icon, color: CgColors.vendorGold),
-            const SizedBox(height: 10),
-            Semantics(
-              header: true,
-              child: Text(title,
-                  style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                      color: Colors.white, fontWeight: FontWeight.w700)),
-            ),
-            const SizedBox(height: 4),
-            Text(subtitle,
-                style: TextStyle(color: Colors.white.withValues(alpha: .84))),
+            Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Padding(
+                padding: const EdgeInsets.only(top: 5),
+                child: Icon(icon, color: CgColors.vendorGold),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                  child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Semantics(
+                    header: true,
+                    child: Text(title,
+                        style: Theme.of(context)
+                            .textTheme
+                            .headlineSmall
+                            ?.copyWith(
+                                color: Colors.white,
+                                fontWeight: FontWeight.w800)),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(subtitle,
+                      style: TextStyle(
+                          color: Colors.white.withValues(alpha: .84))),
+                ],
+              )),
+            ]),
             if (actions.isNotEmpty) ...[
               const SizedBox(height: 12),
               Wrap(spacing: 8, runSpacing: 8, children: actions),
@@ -795,8 +819,30 @@ class _OperatingResults extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final totals = _map(report['totals']);
+    final trend = _rows(report['trend']).toList();
     return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-      Text(_period(_map(report['period']))),
+      Text(_period(_map(report['period'])),
+          style: Theme.of(context).textTheme.labelMedium),
+      const SizedBox(height: 12),
+      DecoratedBox(
+        decoration: BoxDecoration(
+          color: _yellowPaper,
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.all(14),
+          child:
+              Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text(context.tr('扣佣後金額', 'After commission')),
+            const SizedBox(height: 4),
+            Text(_money(totals['net_amount']),
+                style: Theme.of(context)
+                    .textTheme
+                    .headlineSmall
+                    ?.copyWith(fontWeight: FontWeight.w800, color: _ink)),
+          ]),
+        ),
+      ),
       const SizedBox(height: 12),
       _ReportNumbers(values: [
         (context.tr('領券', 'Claims'), _count(totals['claims'])),
@@ -806,6 +852,7 @@ class _OperatingResults extends StatelessWidget {
           _rate(totals['conversion_rate'], totals['claims'])
         ),
       ]),
+      if (trend.isNotEmpty) MerchantTrend(days: trend),
       const Divider(height: 28),
       MerchantAmountRow(
           label: context.tr('已核銷金額', 'Redeemed amount'),
@@ -813,10 +860,6 @@ class _OperatingResults extends StatelessWidget {
       MerchantAmountRow(
           label: context.tr('佣金', 'Commission'),
           value: _money(totals['commission'])),
-      MerchantAmountRow(
-          label: context.tr('扣佣後金額', 'After commission'),
-          value: _money(totals['net_amount']),
-          emphasized: true),
       MerchantAmountRow(
           label: context.tr('已核銷訂單平均金額', 'Average redeemed order'),
           value: (totals['redeemed_orders'] as num? ?? 0) > 0
@@ -1005,52 +1048,6 @@ class _ReportLine extends StatelessWidget {
           Flexible(child: MerchantAmountValue(value: value)),
         ]),
       );
-}
-
-class _DailyTrend extends StatelessWidget {
-  const _DailyTrend({required this.trend});
-  final List<Map> trend;
-
-  @override
-  Widget build(BuildContext context) {
-    final peak = trend.fold<num>(
-        1,
-        (maxValue, day) => max(maxValue,
-            (day['redemptions'] as num? ?? 0).clamp(0, double.infinity)));
-    return ExpansionTile(
-      tilePadding: EdgeInsets.zero,
-      title: Text(context.tr('每日核銷', 'Daily redemptions')),
-      subtitle: Text(context.tr(
-          '按日查看核銷筆數及金額', 'See redemption counts and amounts by day')),
-      children: [
-        for (final day in trend.reversed)
-          Padding(
-            padding: const EdgeInsets.only(bottom: 10),
-            child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  _ReportLine(
-                    title: '${day['date']}',
-                    detail: context.tr('核銷 ${_count(day['redemptions'])}',
-                        '${_count(day['redemptions'])} redemptions'),
-                    value: _money(day['gross_amount']),
-                  ),
-                  ExcludeSemantics(
-                    child: LinearProgressIndicator(
-                      value: ((day['redemptions'] as num? ?? 0) / peak)
-                          .clamp(0, 1)
-                          .toDouble(),
-                      minHeight: 4,
-                      color: CgColors.vendorGold,
-                      backgroundColor: _paper,
-                      borderRadius: BorderRadius.circular(4),
-                    ),
-                  ),
-                ]),
-          ),
-      ],
-    );
-  }
 }
 
 String _entryState(BuildContext context, Object? value) => switch (value) {

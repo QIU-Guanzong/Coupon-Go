@@ -168,3 +168,21 @@ def test_nearby_sort_invalid_rejected(client):
                    params={"lat": CENTER["lat"], "lng": CENTER["lng"],
                            "sort": "price"})
     assert r.status_code == 400
+
+
+def test_nearby_reads_merchants_and_metadata_in_one_query(client):
+    from sqlalchemy import event
+
+    selects = []
+
+    def collect(_conn, _cursor, statement, _parameters, _context, _executemany):
+        if statement.lstrip().upper().startswith("SELECT"):
+            selects.append(statement)
+
+    event.listen(engine, "before_cursor_execute", collect)
+    try:
+        result = _nearby(client)
+    finally:
+        event.remove(engine, "before_cursor_execute", collect)
+    assert result["total"] == 3
+    assert len(selects) == 1

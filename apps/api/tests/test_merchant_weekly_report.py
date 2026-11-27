@@ -165,3 +165,26 @@ def test_completed_week_switches_at_utc_monday_not_local_monday(weekly, as_of, c
     start = datetime.fromisoformat(report["current"]["period"]["from"])
     previous_end = datetime.fromisoformat(report["previous"]["period"]["to"])
     assert (start - previous_end).days == 1
+
+
+def test_dashboard_trend_sums_visible_shops_without_refunds_or_revocations(weekly, monkeypatch):
+    from app.routers import merchant_stats
+
+    class FixedDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return cls.fromisoformat("2026-11-08T23:45:00+00:00")
+
+    monkeypatch.setattr(merchant_stats, "datetime", FixedDatetime)
+    client, headers, _, _ = weekly
+    for role, count, gross, net in (("owner", 3, 160, 149), ("admin", 4, 200, 185)):
+        response = client.get("/api/v3/merchant/dashboard", params={"days": 7}, headers=headers[role])
+        assert response.status_code == 200, response.text
+        report = response.json()
+        assert len(report["trend"]) == 7
+        assert report["trend"][0]["date"] == report["period"]["from"] == "2026-11-02"
+        assert report["trend"][-1]["date"] == report["period"]["to"] == "2026-11-08"
+        for metric, expected in [("redemptions", count), ("gross_amount", gross), ("net_amount", net)]:
+            assert report["totals"][metric] == sum(day[metric] for day in report["trend"]) == expected
+        assert report["trend"][3]["gross_amount"] == 0  # refunded
+        assert report["trend"][-1]["redemptions"] == 1  # free accepted; revoked excluded

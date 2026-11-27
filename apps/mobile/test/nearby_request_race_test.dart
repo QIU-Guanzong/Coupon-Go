@@ -58,7 +58,8 @@ void main() {
     return api;
   }
 
-  testWidgets('late area result cannot replace the latest area', (tester) async {
+  testWidgets('late area result cannot replace the latest area',
+      (tester) async {
     final api = await open(tester);
     await tester.tap(find.text('旺角'));
     await tester.pump();
@@ -74,10 +75,13 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('old request completion does not end newer loading', (tester) async {
+  testWidgets('old request completion does not end newer loading',
+      (tester) async {
     final api = await open(tester);
-    await tester.tap(find.text('1 公里'));
-    await tester.pump();
+    await tester.tap(find.byType(DropdownButton<double>));
+    await tester.pump(const Duration(milliseconds: 300));
+    await tester.tap(find.text('1 公里').last);
+    await tester.pump(const Duration(milliseconds: 300));
     api.requests[0].complete(_shops('舊結果'));
     await tester.pump();
     expect(find.byType(SkeletonBox), findsNWidgets(3));
@@ -92,8 +96,10 @@ void main() {
 
   testWidgets('late error cannot hide latest sorted results', (tester) async {
     final api = await open(tester);
-    await tester.tap(find.text('評分最高'));
-    await tester.pump();
+    await tester.tap(find.text('距離最近'));
+    await tester.pump(const Duration(milliseconds: 300));
+    await tester.tap(find.text('評分最高').last);
+    await tester.pump(const Duration(milliseconds: 300));
     api.requests[1].complete(_shops('最新結果'));
     await tester.pump();
 
@@ -143,5 +149,4 @@ void main() {
     expect(photo.url, 'assets/images/mvp-shop-sushi-bar.jpg');
     expect(tester.widget<Image>(find.byType(Image)).image, isA<AssetImage>());
   });
-
 }

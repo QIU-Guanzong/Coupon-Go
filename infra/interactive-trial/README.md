@@ -42,7 +42,8 @@ The API prefix is independent of the static base href and must stay
 browser-visible origin unchanged and permit the same-origin camera for merchant
 scanning. Do not reuse the read-only preview's database or static build.
 
-Q仔 is unavailable unless `TRIAL_QBOT_PROXY_URL` is set to exactly
+Q仔 district and nearby searches use the browser’s own catalogue and do not call the model.
+Free-form chat requires `TRIAL_QBOT_PROXY_URL` set to exactly
 `http://127.0.0.1:18760/api/v3/qbot/chat`. This forwards only the request body to
 the existing separately controlled Q仔 gateway, subject to its quota and an
 additional trial-session rate limit; it never exposes or loads the model key.

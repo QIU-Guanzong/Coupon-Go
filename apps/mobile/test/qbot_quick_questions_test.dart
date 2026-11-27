@@ -63,7 +63,8 @@ void main() {
     await tester.tap(find.text('有咩優惠'));
     await tester.pumpAndSettle();
     expect(api.sent, isEmpty);
-    expect(find.textContaining('自由問答會把你的問題及最近最多 6 則對話傳送給 DeepSeek。'), findsOneWidget);
+    expect(find.textContaining('自由問答可能會把你的問題及最近最多 6 則對話傳送給 DeepSeek。'),
+        findsOneWidget);
     await tester.tap(find.text('取消'));
     await tester.pumpAndSettle();
     expect(api.sent, isEmpty);
@@ -74,7 +75,7 @@ void main() {
     expect(api.sent.single['message'], '點樣領取優惠券');
     expect(api.sent.single['language'], 'zh-Hant');
     expect(find.text('Test reply'), findsOneWidget);
-    expect(find.byType(ActionChip), findsOneWidget);
+    expect(find.byType(ActionChip), findsNWidgets(3));
     expect(compare, findsOneWidget);
   });
 
@@ -93,7 +94,8 @@ void main() {
     expect(api.sent.single['language'], 'en');
   });
 
-  testWidgets('two diners and HKD200 check catalog with no history and preserve draft',
+  testWidgets(
+      'two diners and HKD200 check catalog with no history and preserve draft',
       (tester) async {
     final api = await open(tester);
     await tester.enterText(composer, '晚餐草稿');
@@ -120,7 +122,7 @@ void main() {
     await tester.tap(find.byTooltip('送出'));
     await tester.pumpAndSettle();
     expect(api.sent, hasLength(1));
-    expect(find.textContaining('自由問答會把你的問題'), findsOneWidget);
+    expect(find.textContaining('自由問答可能會把你的問題'), findsOneWidget);
     await tester.tap(find.text('同意並送出'));
     await tester.pumpAndSettle();
     expect(api.sent.last['message'], '晚餐草稿');
@@ -129,7 +131,8 @@ void main() {
   testWidgets('editable party size, blank budget and no match in English',
       (tester) async {
     final api = await open(tester, english: true);
-    api.answer = 'No available package matches. Try another party size or total budget.';
+    api.answer =
+        'No available package matches. Try another party size or total budget.';
     expect(find.text('Compare packages'), findsOneWidget);
     await tester.tap(compare);
     await tester.pumpAndSettle();
@@ -149,7 +152,8 @@ void main() {
     expect(compare, findsOneWidget);
   });
 
-  testWidgets('invalid numbers and cancelling either dialog never send or clear draft',
+  testWidgets(
+      'invalid numbers and cancelling either dialog never send or clear draft',
       (tester) async {
     final api = await open(tester);
     await tester.enterText(composer, '保留草稿');
@@ -176,7 +180,8 @@ void main() {
     expect(tester.widget<TextField>(composer).controller!.text, '保留草稿');
   });
 
-  testWidgets('language changes while dialog is open keep fields and submit localized fixed format',
+  testWidgets(
+      'language changes while dialog is open keep fields and submit localized fixed format',
       (tester) async {
     SharedPreferences.setMockInitialValues({});
     final language = AppLanguage();
@@ -219,7 +224,8 @@ void main() {
         'Dinner draft');
   });
 
-  testWidgets('rate limit offers retry without sending duplicate history', (tester) async {
+  testWidgets('rate limit offers retry without sending duplicate history',
+      (tester) async {
     final api = await open(tester);
     api.nextError = 429;
     await tester.enterText(find.byType(TextField), '找咖啡券');
@@ -248,7 +254,8 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('問題無法處理，請修改後再送出。'), findsOneWidget);
     expect(find.text('重試'), findsNothing);
-    expect(tester.widget<TextField>(find.byType(TextField)).controller!.text, '找咖啡券');
+    expect(tester.widget<TextField>(find.byType(TextField)).controller!.text,
+        '找咖啡券');
     await tester.enterText(find.byType(TextField), '咖啡優惠');
     await tester.pump();
     await tester.tap(find.byTooltip('送出'));
@@ -257,16 +264,25 @@ void main() {
     expect(find.text('Test reply'), findsOneWidget);
   });
 
-  test('formats common bullets and bold without losing plain or unfinished text', () {
+  test(
+      'formats common bullets and bold without losing plain or unfinished text',
+      () {
     const raw = '一般文字\n- **商戶**：咖啡店\n* 另一項\n1. 有序項目\n未完 **標記';
     final result = formatQBotAnswer(raw);
     expect(result.toPlainText(), '一般文字\n• 商戶：咖啡店\n• 另一項\n1. 有序項目\n未完 **標記');
-    expect(result.children!.whereType<TextSpan>()
-        .singleWhere((span) => span.text == '商戶').style!.fontWeight, FontWeight.bold);
+    expect(
+        result.children!
+            .whereType<TextSpan>()
+            .singleWhere((span) => span.text == '商戶')
+            .style!
+            .fontWeight,
+        FontWeight.bold);
     expect(formatQBotAnswer('普通文字 * 與 **未完').toPlainText(), '普通文字 * 與 **未完');
   });
 
-  testWidgets('formatted answer is selectable while history retains original Markdown', (tester) async {
+  testWidgets(
+      'formatted answer is selectable while history retains original Markdown',
+      (tester) async {
     final semantics = tester.ensureSemantics();
     final api = await open(tester);
     api.answer = '- **商戶**：咖啡店';
@@ -277,7 +293,8 @@ void main() {
     await tester.tap(find.text('同意並送出'));
     await tester.pumpAndSettle();
     final answerFinder = find.byWidgetPredicate((widget) =>
-        widget is SelectableText && widget.textSpan?.toPlainText() == '• 商戶：咖啡店');
+        widget is SelectableText &&
+        widget.textSpan?.toPlainText() == '• 商戶：咖啡店');
     final answer = tester.widget<SelectableText>(answerFinder);
     expect(answer.textSpan!.toPlainText(), '• 商戶：咖啡店');
     final semanticData = tester.getSemantics(answerFinder).getSemanticsData();

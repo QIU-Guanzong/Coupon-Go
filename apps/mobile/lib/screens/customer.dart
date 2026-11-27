@@ -15,6 +15,7 @@ export 'discovery.dart' show DiscoveryScreen;
 import '../models.dart';
 import '../theme.dart';
 import '../widgets/widgets.dart';
+import '../widgets/shop_discovery_card.dart';
 import '../widgets/favorite_control.dart';
 import 'account.dart' show openClaimedCouponWallet;
 import 'bargain.dart';
@@ -1368,6 +1369,21 @@ class _ShopDetailScreenState extends State<ShopDetailScreen> {
                   style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
               Text('${shop.areaName} · ${shop.categoryName}'),
               if (shop.address.isNotEmpty) Text(shop.address),
+              Wrap(spacing: 8, runSpacing: 4, children: [
+                if (shopMapsUri(shop) case final map?)
+                  OutlinedButton.icon(
+                    onPressed: () => _launch(map),
+                    icon: const Icon(Icons.directions_outlined),
+                    label: Text(context.tr('地圖導航', 'Directions')),
+                  ),
+                OutlinedButton.icon(
+                  onPressed: () => Navigator.of(context).push(MaterialPageRoute<void>(
+                    builder: (_) => PackageListScreen(api: api, shopId: shop.id),
+                  )),
+                  icon: const Icon(Icons.restaurant_menu_outlined),
+                  label: Text(context.tr('店舖套餐', 'Shop packages')),
+                ),
+              ]),
               if (!const bool.fromEnvironment('PUBLIC_TRIAL') && phone.trim().isNotEmpty)
                 ListTile(
                   contentPadding: EdgeInsets.zero,
@@ -1422,8 +1438,8 @@ class _ShopDetailScreenState extends State<ShopDetailScreen> {
   }
 }
 
-/// Category page: coupons + shops of one category.
-class CategoryScreen extends StatelessWidget {
+/// Browse stores and coupons under the same published category.
+class CategoryScreen extends StatefulWidget {
   const CategoryScreen({super.key, required this.api, required this.categoryId,
     required this.onOpenCoupon});
 
@@ -1432,10 +1448,124 @@ class CategoryScreen extends StatelessWidget {
   final void Function(Coupon) onOpenCoupon;
 
   @override
+  State<CategoryScreen> createState() => _CategoryScreenState();
+}
+
+class _CategoryScreenState extends State<CategoryScreen> {
+  final _shops = <Shop>[];
+  Map? _category;
+  int? _next;
+  bool _loading = false;
+  bool _failed = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadShops();
+  }
+
+  Future<void> _loadShops({bool more = false}) async {
+    if (_loading || (more && _next == null)) return;
+    setState(() {
+      _loading = true;
+      _failed = false;
+    });
+    try {
+      final data = await widget.api.get('/discover/shops', query: {
+        'category_id': '${widget.categoryId}',
+        if (more) 'after_id': '$_next',
+      });
+      if (!mounted) return;
+      final rows = (data['shops'] as List).whereType<Map<String, dynamic>>();
+      setState(() {
+        _category = data['category'] as Map?;
+        if (!more) _shops.clear();
+        _shops.addAll(rows.map(Shop.fromJson));
+        _next = data['next_after_id'] as int?;
+      });
+    } catch (_) {
+      if (mounted) setState(() => _failed = true);
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: const Text('分類')),
-      body: CouponResults(api: api, load: () => api.classification(categoryId: categoryId), onOpenCoupon: onOpenCoupon),
+    final t = context.tr;
+    final name = _category?['name'] as String? ?? '分類';
+    final english = _category?['name_en'] as String?;
+    final titleEn = english?.isNotEmpty == true
+        ? english!
+        : (_category == null ? 'Category' : name);
+    return DefaultTabController(
+      length: 2,
+      animationDuration: MediaQuery.disableAnimationsOf(context) ? Duration.zero : null,
+      child: Scaffold(
+        appBar: AppBar(
+          title: Text(t(name, titleEn)),
+          bottom: TabBar(
+            labelColor: Colors.white,
+            unselectedLabelColor: Colors.white,
+            indicatorColor: Colors.white,
+            tabs: [
+              Tab(text: t('商戶', 'Shops')),
+              Tab(text: t('優惠券', 'Coupons')),
+            ],
+          ),
+        ),
+        body: Align(
+          alignment: Alignment.topCenter,
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 900),
+            child: TabBarView(children: [
+              RefreshIndicator(
+                onRefresh: _loadShops,
+                child: ListView.builder(
+                  key: const PageStorageKey('category-shops'),
+                  physics: const AlwaysScrollableScrollPhysics(),
+                  padding: const EdgeInsets.all(16),
+                  itemCount: _shops.length + 1,
+                  itemBuilder: (context, index) {
+                    if (index == _shops.length) {
+                      if (_loading) {
+                        return const Padding(padding: EdgeInsets.all(16),
+                            child: Center(child: CircularProgressIndicator()));
+                      }
+                      if (_failed || _next != null) {
+                        return Center(child: TextButton(
+                          onPressed: () => _loadShops(more: _next != null),
+                          child: Text(_failed ? t('重試', 'Retry') : t('載入更多商戶', 'More shops')),
+                        ));
+                      }
+                      return _shops.isEmpty
+                          ? Center(child: Text(t('這個分類暫時未有商戶。', 'No shops in this category yet.')))
+                          : const SizedBox.shrink();
+                    }
+                    final shop = _shops[index];
+                    return Padding(
+                      padding: const EdgeInsets.only(bottom: 8),
+                      child: ShopDiscoveryCard(
+                        shop: shop,
+                        apiBaseUrl: widget.api.baseUrl,
+                        onOpen: () => Navigator.of(context).push(MaterialPageRoute<void>(
+                          builder: (_) => ShopDetailScreen(
+                            api: widget.api, shop: shop, onOpenCoupon: widget.onOpenCoupon),
+                        )),
+                      ),
+                    );
+                  },
+                ),
+              ),
+              CouponResults(
+                api: widget.api,
+                load: () => widget.api.classification(categoryId: widget.categoryId),
+                onOpenCoupon: widget.onOpenCoupon,
+              ),
+            ]),
+          ),
+        ),
+      ),
     );
   }
 }

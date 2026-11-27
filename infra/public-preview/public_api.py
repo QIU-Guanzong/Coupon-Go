@@ -20,7 +20,7 @@ from app.main import app as backend
 from app.models_bargain import BargainCampaign
 from app.routers.bargain import campaign_out
 from app.routers.home import app_config
-from app.routers.qbot import Question
+from app.routers.qbot import Question, comparison_request, place_lookup
 
 # This attaches to every newly opened SQLite connection. The public service
 # receives a separately seeded read-only database and never changes it.
@@ -52,6 +52,7 @@ PUBLIC_GET = frozenset({
     "/api/v3/get-subscription-plan-list",
     "/api/v3/new-filter-details",
     "/api/v3/nearby-shops",
+    "/api/v3/discover/shops",
     "/api/v3/packages",
     "/api/v3/package-details",
 })
@@ -132,13 +133,14 @@ async def _qbot(scope, receive, send):
         if not event.get("more_body", False):
             break
     try:
-        Question.model_validate_json(bytes(body))
+        question = Question.model_validate_json(bytes(body))
     except ValidationError:
         return await reject("請檢查問題內容", 422)
     if not _qbot_slots.acquire(blocking=False):
         return await reject("Q仔忙碌中，請稍後再試", 429)
     try:
-        if not await run_in_threadpool(_reserve_qbot_budget):
+        local_lookup = not comparison_request(question.message) and place_lookup(question) is not None
+        if not local_lookup and not await run_in_threadpool(_reserve_qbot_budget):
             return await reject("Q仔今日或目前的使用額度已滿，請稍後再試", 429)
         # Provide the same body to the backend; mark only this request as a
         # demo so its model instructions cannot present seed data as real.

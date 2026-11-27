@@ -245,10 +245,10 @@ def shop_dashboard(db: Session, shop: models.Shop, days: int = 30,
     gross = Decimal("0")
     net = Decimal("0")
     for red in redemptions:
-        amount = settlement_basis(db, redemption=red)
+        item = wallets.get(red.wallet_item_id)
+        amount = settlement_basis(db, redemption=red, wallet_item=item)
         if amount is None:
             continue
-        item = wallets.get(red.wallet_item_id)
         order_keys.add(('order', item.order_id) if item and item.order_id
                        else ('voucher', red.wallet_item_id or red.id))
         fee = (amount * redemption_commission_rate(red, rate)).quantize(CENT)
