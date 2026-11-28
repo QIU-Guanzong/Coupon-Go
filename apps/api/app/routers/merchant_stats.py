@@ -9,10 +9,12 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy.orm import Session
 
 from .. import merchant_finance as mf
+from .. import merchant_weekly_summary as weekly_summary
 from .. import models
 from ..database import get_db
 from ..deps import get_current_user
 from ..permissions_line_f import can_view_settlement_shop, get_shop_or_404
+from ..qbot_budget import admit
 from ..settlement_basis import BASIS_EXPLAINER
 from . import admin_v2
 from .admin_v2 import _settlement_out
@@ -106,7 +108,40 @@ def shop_weekly_report_endpoint(shop_id: int, response: Response,
     if not can_view_settlement_shop(db, user, shop):
         raise HTTPException(status_code=403, detail="沒有權限查看此商户")
     response.headers["Cache-Control"] = "no-store"
-    return mf.shop_weekly_report(db, shop)
+    report = mf.shop_weekly_report(db, shop)
+    revision = None
+    if weekly_summary.enabled() and weekly_summary.provider_key():
+        payload = weekly_summary.aggregate_payload(report)
+        if payload["facts"]:
+            revision = weekly_summary.revision(shop.id, payload)
+    return {**report, "summary_available": revision is not None,
+            "summary_revision": revision}
+
+
+@router.post("/merchant/shops/{shop_id}/weekly-report/summary")
+def shop_weekly_summary_endpoint(shop_id: int, body: weekly_summary.WeeklySummaryRequest,
+                                 response: Response,
+                                 user: models.User = Depends(get_current_user),
+                                 db: Session = Depends(get_db)):
+    shop = get_shop_or_404(db, shop_id)
+    if not can_view_settlement_shop(db, user, shop):
+        raise HTTPException(status_code=403, detail="沒有權限查看此商户")
+    response.headers["Cache-Control"] = "no-store"
+    key = weekly_summary.provider_key() if weekly_summary.enabled() else ""
+    if not key:
+        return {"summary": None}
+    payload = weekly_summary.aggregate_payload(mf.shop_weekly_report(db, shop))
+    user_id, authorized_shop_id = user.id, shop.id
+    db.close()
+    if not payload["facts"] or body.summary_revision != weekly_summary.revision(authorized_shop_id, payload):
+        return {"summary": None}
+    try:
+        # Use the existing assistant allowance, rather than opening another
+        # independent per-account or global provider quota.
+        admit(f"user:{user_id}")
+    except HTTPException:
+        return {"summary": None}
+    return {"summary": weekly_summary.summarize(payload, body.language, key=key)}
 
 
 @router.get("/merchant/dashboard")

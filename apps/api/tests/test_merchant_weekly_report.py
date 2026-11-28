@@ -96,7 +96,8 @@ def test_weekly_matches_both_dashboard_windows_and_exposes_only_totals(weekly):
     assert response.headers["cache-control"] == "no-store"
     report = response.json()
     assert set(report) == {"shop_id", "shop_name", "currency", "timezone", "current",
-                           "previous", "changes"}
+                           "previous", "changes", "summary_available", "summary_revision"}
+    assert report["summary_available"] is False and report["summary_revision"] is None
     assert report["shop_id"] == a
     assert report["currency"] == "HKD" and report["timezone"] == "UTC"
     assert report["previous"]["period"] == {"from": "2026-10-26", "to": "2026-11-01", "days": 7}
